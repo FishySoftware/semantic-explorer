@@ -2,7 +2,7 @@ use anyhow::Result;
 use sqlx::{Pool, Postgres};
 use std::time::Instant;
 
-use crate::datasets::models::{Dataset, DatasetItem};
+use crate::datasets::models::{ChunkWithMetadata, Dataset, DatasetItem};
 use semantic_explorer_core::observability::record_database_query;
 
 const GET_DATASET_QUERY: &str = r#"
@@ -141,13 +141,14 @@ pub(crate) async fn create_dataset_item(
     pool: &Pool<Postgres>,
     dataset_id: i32,
     title: &str,
-    chunks: &[String],
+    chunks: &[ChunkWithMetadata],
     metadata: serde_json::Value,
 ) -> Result<DatasetItem> {
+    let chunks_json = serde_json::to_value(chunks)?;
     let item = sqlx::query_as::<_, DatasetItem>(INSERT_DATASET_ITEM_QUERY)
         .bind(dataset_id)
         .bind(title)
-        .bind(chunks)
+        .bind(&chunks_json)
         .bind(&metadata)
         .fetch_one(pool)
         .await?;

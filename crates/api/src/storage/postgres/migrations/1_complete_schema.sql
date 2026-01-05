@@ -19,20 +19,18 @@ CREATE TABLE IF NOT EXISTS DATASETS
     dataset_id       SERIAL PRIMARY KEY,
     title            TEXT                     NOT NULL,
     details          TEXT                     NULL,
-    owner           TEXT                     NOT NULL,
+    owner            TEXT                     NOT NULL,
     tags             TEXT[]                   NOT NULL,
     created_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_datasets_owner ON datasets(owner);
 
--- Dataset items with chunks and metadata
 CREATE TABLE IF NOT EXISTS DATASET_ITEMS
 (
     item_id          SERIAL PRIMARY KEY,
     dataset_id       INTEGER             NOT NULL,
     title            TEXT                NOT NULL,
-    chunks           TEXT[]              NOT NULL,
+    chunks           JSONB               NOT NULL,
     metadata         JSONB               NOT NULL,
     FOREIGN KEY (dataset_id) REFERENCES DATASETS(dataset_id) ON DELETE CASCADE
 );
@@ -48,22 +46,25 @@ CREATE TABLE IF NOT EXISTS EMBEDDERS
 (
     embedder_id          SERIAL PRIMARY KEY,
     name                 TEXT                     NOT NULL,
-    owner               TEXT                     NOT NULL,
+    owner                TEXT                     NOT NULL,
     provider             TEXT                     NOT NULL,
     base_url             TEXT                     NOT NULL,
     api_key              TEXT                     NULL,
     config               JSONB                    NOT NULL DEFAULT '{}',
     batch_size           INTEGER                  NOT NULL DEFAULT 100,
-    collection_name      TEXT                     NOT NULL,
+    max_batch_size       INTEGER                  NOT NULL DEFAULT 96,
+    dimensions           INTEGER                  NOT NULL DEFAULT 1536,
+    collection_name      TEXT                     NULL,
     created_at           TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at           TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 CREATE INDEX idx_embedders_owner ON EMBEDDERS(owner);
 CREATE INDEX idx_embedders_provider ON EMBEDDERS(provider);
 CREATE INDEX idx_embedders_batch_size ON EMBEDDERS(batch_size);
+CREATE INDEX IF NOT EXISTS idx_embedders_max_batch_size ON EMBEDDERS(max_batch_size);
+CREATE INDEX IF NOT EXISTS idx_embedders_dimensions ON EMBEDDERS(dimensions);
 
 -- Index for embedder batch lookups by ID
--- Used by: get_embedders_by_ids batch validation
 CREATE INDEX IF NOT EXISTS idx_embedders_owner_id
     ON EMBEDDERS(owner, embedder_id);
 
@@ -82,6 +83,7 @@ CREATE TABLE IF NOT EXISTS TRANSFORMS
     target_dataset_id   INTEGER                  NULL,                   -- Target dataset for GenericTransform
     embedder_ids        INTEGER[]                NULL,                   -- Array of embedder IDs for DatasetToVectorStorage
     job_config          JSONB                    NOT NULL DEFAULT '{}',
+    collection_mappings JSONB                    NOT NULL DEFAULT '{}',  -- Mapping of embedder IDs to collection names
     created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     FOREIGN KEY (collection_id) REFERENCES COLLECTIONS(collection_id) ON DELETE CASCADE,
@@ -95,7 +97,6 @@ CREATE INDEX IF NOT EXISTS idx_transforms_enabled ON TRANSFORMS(is_enabled);
 CREATE INDEX IF NOT EXISTS idx_transforms_job_type ON TRANSFORMS(job_type);
 
 -- Composite index for querying active transforms by owner
--- Used by: GET_ACTIVE_TRANSFORMS_QUERY, scanning enabled transforms
 CREATE INDEX IF NOT EXISTS idx_transforms_owner_enabled
     ON TRANSFORMS(owner, is_enabled)
     WHERE is_enabled = TRUE;
@@ -119,12 +120,10 @@ CREATE INDEX IF NOT EXISTS idx_transform_processed_files_transform_id ON TRANSFO
 CREATE INDEX IF NOT EXISTS idx_transform_processed_files_status ON TRANSFORM_PROCESSED_FILES(process_status);
 
 -- Composite index for transform stats queries
--- Used by: get_transform_stats, counting processed files by status
 CREATE INDEX IF NOT EXISTS idx_transform_processed_files_transform_status
     ON TRANSFORM_PROCESSED_FILES(transform_id, process_status);
 
 -- Partial index for finding unprocessed/failed files efficiently
--- Used by: scanner to find files that need reprocessing
 CREATE INDEX IF NOT EXISTS idx_transform_processed_files_incomplete
     ON TRANSFORM_PROCESSED_FILES(transform_id, file_key)
     WHERE process_status != 'completed';

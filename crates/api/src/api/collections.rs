@@ -12,7 +12,8 @@ use uuid::Uuid;
 use crate::{
     auth::extract_username,
     collections::models::{
-        Collection, CollectionUpload, CollectionUploadResponse, CreateCollection, FileListQuery,
+        Collection, CollectionSearchQuery, CollectionUpload, CollectionUploadResponse,
+        CreateCollection, FileListQuery, PaginatedCollections,
     },
     storage::{
         self,
@@ -43,6 +44,63 @@ pub(crate) async fn get_collections(
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch collections");
             HttpResponse::InternalServerError().body(format!("error fetching collections: {e:?}"))
+        }
+    }
+}
+
+#[utoipa::path(
+    params(
+        ("q" = Option<String>, Query, description = "Search query for title, details, or tags"),
+        ("limit" = Option<i64>, Query, description = "Maximum number of results to return (default: 100)"),
+        ("offset" = Option<i64>, Query, description = "Number of results to skip (default: 0)"),
+    ),
+    responses(
+        (status = 200, description = "OK", body = PaginatedCollections),
+        (status = 500, description = "Internal Server Error"),
+    ),
+    tag = "Collections",
+)]
+#[get("/api/collections/search")]
+#[tracing::instrument(name = "search_collections", skip(auth, postgres_pool), fields(query = ?query.q, limit = %query.limit, offset = %query.offset))]
+pub(crate) async fn search_collections(
+    auth: Authenticated,
+    postgres_pool: Data<Pool<Postgres>>,
+    web::Query(query): web::Query<CollectionSearchQuery>,
+) -> impl Responder {
+    let username = match extract_username(&auth) {
+        Ok(username) => username,
+        Err(e) => return e,
+    };
+
+    let postgres_pool = postgres_pool.into_inner();
+
+    let result = if let Some(search_query) = &query.q {
+        collections::search_collections(
+            &postgres_pool,
+            &username,
+            search_query,
+            query.limit,
+            query.offset,
+        )
+        .await
+    } else {
+        collections::get_collections_paginated(&postgres_pool, &username, query.limit, query.offset)
+            .await
+    };
+
+    match result {
+        Ok((collections, total_count)) => {
+            let response = PaginatedCollections {
+                collections,
+                total_count,
+                limit: query.limit,
+                offset: query.offset,
+            };
+            HttpResponse::Ok().json(response)
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "failed to search collections");
+            HttpResponse::InternalServerError().body(format!("error searching collections: {e:?}"))
         }
     }
 }

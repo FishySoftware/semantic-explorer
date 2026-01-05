@@ -4544,6 +4544,7 @@ name = "semantic-explorer-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-nats",
  "aws-config",
  "aws-sdk-s3",
  "opentelemetry",
@@ -6442,8 +6443,10 @@ dependencies = [
  "opentelemetry_sdk",
  "pdf-extract",
  "quick-xml",
+ "reqwest 0.13.1",
  "scraper",
  "semantic-explorer-core",
+ "serde",
  "serde_json",
  "tokio",
  "tracing",

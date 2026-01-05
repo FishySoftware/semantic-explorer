@@ -33,6 +33,9 @@
 		if (parts.length === 3 && parts[0] === 'datasets' && parts[2] === 'details') {
 			return { path: '/datasets/detail', params: { id: parts[1] } };
 		}
+		if (parts.length === 3 && parts[0] === 'transforms' && parts[2] === 'details') {
+			return { path: '/transforms/detail', params: { id: parts[1] } };
+		}
 
 		return { path: '/' + parts.join('/'), params: {} };
 	}
@@ -45,12 +48,6 @@
 			selectedCollectionId = parseInt(params.id, 10);
 		} else if (path !== '/collections/detail') {
 			selectedCollectionId = null;
-		}
-
-		if (path === '/datasets/detail' && params.id) {
-			selectedDatasetId = parseInt(params.id, 10);
-		} else if (path !== '/datasets/detail') {
-			selectedDatasetId = null;
 		}
 	}
 

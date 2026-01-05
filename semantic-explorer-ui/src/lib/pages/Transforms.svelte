@@ -80,6 +80,31 @@
 	let newEmbedderIds = $state<number[]>([]);
 	let creating = $state(false);
 	let createError = $state<string | null>(null);
+	let extractionStrategy = $state<'plain_text' | 'structure_preserving' | 'markdown'>('plain_text');
+	let preserveFormatting = $state(false);
+	let extractTables = $state(true);
+	let tableFormat = $state<'markdown' | 'csv' | 'plain_text'>('plain_text');
+	let preserveHeadings = $state(false);
+	let headingFormat = $state<'markdown' | 'plain_text'>('plain_text');
+	let preserveLists = $state(false);
+	let preserveCodeBlocks = $state(false);
+	let includeMetadata = $state(false);
+	let chunkingStrategy = $state<
+		'sentence' | 'recursive_character' | 'semantic' | 'fixed_size' | 'markdown_aware'
+	>('sentence');
+	let chunkOverlap = $state(0);
+	let semanticEmbedderId = $state<number | null>(null);
+	let semanticSimilarityThreshold = $state(0.7);
+	let semanticMinChunkSize = $state(50);
+	let semanticMaxChunkSize = $state(500);
+	let semanticBufferSize = $state(1);
+	let recursiveSeparators = $state('\n\n, \n, . , , ');
+	let recursiveKeepSeparator = $state(true);
+	let markdownSplitOnHeaders = $state(true);
+	let markdownPreserveCodeBlocks = $state(false);
+	let preserveSentenceBoundaries = $state(true);
+	let trimWhitespace = $state(true);
+	let minChunkSize = $state(50);
 
 	$effect(() => {
 		if (showCreateForm && !newTitle) {
@@ -98,6 +123,7 @@
 	let transformPendingDelete = $state<Transform | null>(null);
 
 	let expandedTransformId = $state<number | null>(null);
+	let expandedConfigs = $state<Record<string, boolean>>({});
 	let transformStats = $state<Record<number, TransformStats>>({});
 	let processedFiles = $state<Record<number, ProcessedFile[]>>({});
 	let loadingStats = $state<Record<number, boolean>>({});
@@ -252,9 +278,72 @@
 				createError = 'Dataset is required';
 				return;
 			}
+			if (chunkingStrategy === 'semantic' && !semanticEmbedderId) {
+				createError = 'Embedder is required for semantic chunking';
+				return;
+			}
 			body.collection_id = newCollectionId;
 			body.dataset_id = newDatasetId;
 			body.chunk_size = newChunkSize;
+
+			// Build extraction config
+			const extractionConfig: any = {
+				strategy: extractionStrategy,
+				options: {
+					preserve_formatting: preserveFormatting,
+					extract_tables: extractTables,
+					table_format: tableFormat,
+					preserve_headings: preserveHeadings,
+					heading_format: headingFormat,
+					preserve_lists: preserveLists,
+					preserve_code_blocks: preserveCodeBlocks,
+					include_metadata: includeMetadata,
+				},
+			};
+
+			// Build chunking config
+			const chunkingConfig: any = {
+				strategy: chunkingStrategy,
+				chunk_size: newChunkSize,
+				chunk_overlap: chunkOverlap,
+				options: {
+					preserve_sentence_boundaries: preserveSentenceBoundaries,
+					trim_whitespace: trimWhitespace,
+					min_chunk_size: minChunkSize,
+				},
+			};
+
+			// Add strategy-specific options
+			if (chunkingStrategy === 'semantic') {
+				chunkingConfig.embedder_id = semanticEmbedderId;
+				chunkingConfig.options.semantic = {
+					embedder_id: semanticEmbedderId,
+					similarity_threshold: semanticSimilarityThreshold,
+					min_chunk_size: semanticMinChunkSize,
+					max_chunk_size: semanticMaxChunkSize,
+					buffer_size: semanticBufferSize,
+				};
+			} else if (chunkingStrategy === 'recursive_character') {
+				const separators = recursiveSeparators
+					.split(',')
+					.map((s) => s.trim())
+					.filter((s) => s);
+				chunkingConfig.options.recursive_character = {
+					separators,
+					keep_separator: recursiveKeepSeparator,
+				};
+			} else if (chunkingStrategy === 'markdown_aware') {
+				chunkingConfig.options.markdown_aware = {
+					split_on_headers: markdownSplitOnHeaders,
+					preserve_code_blocks: markdownPreserveCodeBlocks,
+				};
+			}
+
+			// Add to body as job_config
+			body.job_config = {
+				extraction: extractionConfig,
+				chunking: chunkingConfig,
+			};
 		} else if (newJobType === 'dataset_to_vector_storage') {
 			if (!newDatasetId) {
 				createError = 'Dataset is required';
@@ -290,6 +379,8 @@
 
 			resetCreateForm();
 			showCreateForm = false;
+			// Expand the newly created transform to show its details
+			await toggleExpand(newTransform.transform_id);
 		} catch (e) {
 			const message = formatError(e, 'Failed to create transform');
 			createError = message;
@@ -307,6 +398,33 @@
 		newChunkSize = 200;
 		newEmbedderIds = [];
 		createError = null;
+
+		// Reset extraction config
+		extractionStrategy = 'plain_text';
+		preserveFormatting = false;
+		extractTables = true;
+		tableFormat = 'plain_text';
+		preserveHeadings = false;
+		headingFormat = 'plain_text';
+		preserveLists = false;
+		preserveCodeBlocks = false;
+		includeMetadata = false;
+
+		// Reset chunking config
+		chunkingStrategy = 'sentence';
+		chunkOverlap = 0;
+		semanticEmbedderId = null;
+		semanticSimilarityThreshold = 0.7;
+		semanticMinChunkSize = 50;
+		semanticMaxChunkSize = 500;
+		semanticBufferSize = 1;
+		recursiveSeparators = '\\n\\n, \\n, . , , ';
+		recursiveKeepSeparator = true;
+		markdownSplitOnHeaders = true;
+		markdownPreserveCodeBlocks = false;
+		preserveSentenceBoundaries = true;
+		trimWhitespace = true;
+		minChunkSize = 50;
 	}
 
 	function startEdit(transform: Transform) {
@@ -758,6 +876,416 @@
 									  focus:ring-2 focus:ring-blue-500 focus:border-transparent"
 						/>
 					</div>
+
+					<!-- Extraction Configuration -->
+					<div class="border-t border-gray-200 dark:border-gray-700 pt-4 mt-4">
+						<h3 class="text-lg font-medium text-gray-900 dark:text-white mb-3">
+							Extraction Configuration
+						</h3>
+
+						<div class="space-y-4">
+							<div>
+								<label
+									for="extraction-strategy"
+									class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+								>
+									Extraction Strategy
+								</label>
+								<select
+									id="extraction-strategy"
+									bind:value={extractionStrategy}
+									class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md
+											  bg-white dark:bg-gray-700 text-gray-900 dark:text-white
+											  focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+								>
+									<option value="plain_text">Plain Text</option>
+									<option value="structure_preserving">Structure Preserving</option>
+									<option value="markdown">Markdown</option>
+								</select>
+								<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+									{#if extractionStrategy === 'plain_text'}
+										Extract raw text without formatting
+									{:else if extractionStrategy === 'structure_preserving'}
+										Preserve document structure (headings, lists, tables)
+									{:else if extractionStrategy === 'markdown'}
+										Convert to Markdown format
+									{/if}
+								</p>
+							</div>
+
+							<div class="grid grid-cols-2 gap-4">
+								<label class="flex items-center space-x-2">
+									<input
+										type="checkbox"
+										bind:checked={preserveFormatting}
+										class="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+									/>
+									<span class="text-sm text-gray-700 dark:text-gray-300">Preserve Formatting</span>
+								</label>
+
+								<label class="flex items-center space-x-2">
+									<input
+										type="checkbox"
+										bind:checked={extractTables}
+										class="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+									/>
+									<span class="text-sm text-gray-700 dark:text-gray-300">Extract Tables</span>
+								</label>
+
+								<label class="flex items-center space-x-2">
+									<input
+										type="checkbox"
+										bind:checked={preserveHeadings}
+										class="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+									/>
+									<span class="text-sm text-gray-700 dark:text-gray-300">Preserve Headings</span>
+								</label>
+
+								<label class="flex items-center space-x-2">
+									<input
+										type="checkbox"
+										bind:checked={preserveLists}
+										class="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+									/>
+									<span class="text-sm text-gray-700 dark:text-gray-300">Preserve Lists</span>
+								</label>
+
+								<label class="flex items-center space-x-2">
+									<input
+										type="checkbox"
+										bind:checked={preserveCodeBlocks}
+										class="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+									/>
+									<span class="text-sm text-gray-700 dark:text-gray-300">Preserve Code Blocks</span>
+								</label>
+
+								<label class="flex items-center space-x-2">
+									<input
+										type="checkbox"
+										bind:checked={includeMetadata}
+										class="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+									/>
+									<span class="text-sm text-gray-700 dark:text-gray-300">Include Metadata</span>
+								</label>
+							</div>
+
+							{#if extractTables}
+								<div>
+									<label
+										for="table-format"
+										class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+									>
+										Table Format
+									</label>
+									<select
+										id="table-format"
+										bind:value={tableFormat}
+										class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md
+												  bg-white dark:bg-gray-700 text-gray-900 dark:text-white
+												  focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+									>
+										<option value="plain_text">Plain Text</option>
+										<option value="markdown">Markdown</option>
+										<option value="csv">CSV</option>
+									</select>
+								</div>
+							{/if}
+
+							{#if preserveHeadings}
+								<div>
+									<label
+										for="heading-format"
+										class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+									>
+										Heading Format
+									</label>
+									<select
+										id="heading-format"
+										bind:value={headingFormat}
+										class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md
+												  bg-white dark:bg-gray-700 text-gray-900 dark:text-white
+												  focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+									>
+										<option value="plain_text">Plain Text</option>
+										<option value="markdown">Markdown</option>
+									</select>
+								</div>
+							{/if}
+						</div>
+					</div>
+
+					<!-- Chunking Configuration -->
+					<div class="border-t border-gray-200 dark:border-gray-700 pt-4 mt-4">
+						<h3 class="text-lg font-medium text-gray-900 dark:text-white mb-3">
+							Chunking Configuration
+						</h3>
+
+						<div class="space-y-4">
+							<div>
+								<label
+									for="chunking-strategy"
+									class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+								>
+									Chunking Strategy
+								</label>
+								<select
+									id="chunking-strategy"
+									bind:value={chunkingStrategy}
+									class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md
+											  bg-white dark:bg-gray-700 text-gray-900 dark:text-white
+											  focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+								>
+									<option value="sentence">Sentence</option>
+									<option value="recursive_character">Recursive Character</option>
+									<option value="semantic">Semantic</option>
+									<option value="fixed_size">Fixed Size</option>
+									<option value="markdown_aware">Markdown Aware</option>
+								</select>
+								<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+									{#if chunkingStrategy === 'sentence'}
+										Split by sentences for natural language
+									{:else if chunkingStrategy === 'recursive_character'}
+										Split by separators recursively
+									{:else if chunkingStrategy === 'semantic'}
+										Group by semantic similarity
+									{:else if chunkingStrategy === 'fixed_size'}
+										Fixed character size chunks
+									{:else if chunkingStrategy === 'markdown_aware'}
+										Split by markdown structure
+									{/if}
+								</p>
+							</div>
+
+							<div>
+								<label
+									for="chunk-overlap"
+									class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+								>
+									Chunk Overlap
+								</label>
+								<input
+									id="chunk-overlap"
+									type="number"
+									bind:value={chunkOverlap}
+									min="0"
+									max="500"
+									class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md
+											  bg-white dark:bg-gray-700 text-gray-900 dark:text-white
+											  focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+								/>
+								<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+									Number of overlapping characters between chunks
+								</p>
+							</div>
+
+							{#if chunkingStrategy === 'semantic'}
+								<div
+									class="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md p-4 space-y-3"
+								>
+									<p class="text-sm font-medium text-blue-900 dark:text-blue-300">
+										Semantic Chunking Options
+									</p>
+
+									<div>
+										<label
+											for="semantic-embedder"
+											class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+										>
+											Embedder for Semantic Chunking
+										</label>
+										<select
+											id="semantic-embedder"
+											bind:value={semanticEmbedderId}
+											class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md
+													  bg-white dark:bg-gray-700 text-gray-900 dark:text-white
+													  focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+										>
+											<option value={null}>Select an embedder...</option>
+											{#each embedders as embedder (embedder.embedder_id)}
+												<option value={embedder.embedder_id}>
+													{embedder.name} ({embedder.provider})
+												</option>
+											{/each}
+										</select>
+									</div>
+
+									<div class="grid grid-cols-2 gap-3">
+										<div>
+											<div class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+												Similarity Threshold
+											</div>
+											<input
+												type="number"
+												bind:value={semanticSimilarityThreshold}
+												min="0"
+												max="1"
+												step="0.1"
+												class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md
+														  bg-white dark:bg-gray-700 text-gray-900 dark:text-white
+														  focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+											/>
+										</div>
+
+										<div>
+											<div class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+												Buffer Size
+											</div>
+											<input
+												type="number"
+												bind:value={semanticBufferSize}
+												min="1"
+												max="10"
+												class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md
+														  bg-white dark:bg-gray-700 text-gray-900 dark:text-white
+														  focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+											/>
+										</div>
+
+										<div>
+											<div class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+												Min Chunk Size
+											</div>
+											<input
+												type="number"
+												bind:value={semanticMinChunkSize}
+												min="10"
+												max="1000"
+												class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md
+														  bg-white dark:bg-gray-700 text-gray-900 dark:text-white
+														  focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+											/>
+										</div>
+
+										<div>
+											<div class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+												Max Chunk Size
+											</div>
+											<input
+												type="number"
+												bind:value={semanticMaxChunkSize}
+												min="100"
+												max="10000"
+												class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md
+														  bg-white dark:bg-gray-700 text-gray-900 dark:text-white
+														  focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+											/>
+										</div>
+									</div>
+								</div>
+							{:else if chunkingStrategy === 'recursive_character'}
+								<div
+									class="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-md p-4 space-y-3"
+								>
+									<p class="text-sm font-medium text-green-900 dark:text-green-300">
+										Recursive Character Options
+									</p>
+
+									<div>
+										<label
+											for="recursive-separators"
+											class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+										>
+											Separators (comma-separated)
+										</label>
+										<input
+											id="recursive-separators"
+											type="text"
+											bind:value={recursiveSeparators}
+											placeholder="\\n\\n, \\n, . , , "
+											class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md
+													  bg-white dark:bg-gray-700 text-gray-900 dark:text-white
+													  focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+										/>
+										<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+											Separators to split text, tried in order
+										</p>
+									</div>
+
+									<label class="flex items-center space-x-2">
+										<input
+											type="checkbox"
+											bind:checked={recursiveKeepSeparator}
+											class="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+										/>
+										<span class="text-sm text-gray-700 dark:text-gray-300"
+											>Keep Separator in Chunks</span
+										>
+									</label>
+								</div>
+							{:else if chunkingStrategy === 'markdown_aware'}
+								<div
+									class="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-md p-4 space-y-3"
+								>
+									<p class="text-sm font-medium text-purple-900 dark:text-purple-300">
+										Markdown Aware Options
+									</p>
+
+									<label class="flex items-center space-x-2">
+										<input
+											type="checkbox"
+											bind:checked={markdownSplitOnHeaders}
+											class="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+										/>
+										<span class="text-sm text-gray-700 dark:text-gray-300">Split on Headers</span>
+									</label>
+
+									<label class="flex items-center space-x-2">
+										<input
+											type="checkbox"
+											bind:checked={markdownPreserveCodeBlocks}
+											class="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+										/>
+										<span class="text-sm text-gray-700 dark:text-gray-300"
+											>Preserve Code Blocks</span
+										>
+									</label>
+								</div>
+							{/if}
+
+							<div class="grid grid-cols-2 gap-4">
+								<div>
+									<label
+										for="min-chunk-size"
+										class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+									>
+										Minimum Chunk Size
+									</label>
+									<input
+										id="min-chunk-size"
+										type="number"
+										bind:value={minChunkSize}
+										min="10"
+										max="1000"
+										class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md
+												  bg-white dark:bg-gray-700 text-gray-900 dark:text-white
+												  focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+									/>
+								</div>
+
+								<div class="flex items-center">
+									<label class="flex items-center space-x-2">
+										<input
+											type="checkbox"
+											bind:checked={preserveSentenceBoundaries}
+											class="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+										/>
+										<span class="text-sm text-gray-700 dark:text-gray-300"
+											>Preserve Sentence Boundaries</span
+										>
+									</label>
+								</div>
+							</div>
+
+							<label class="flex items-center space-x-2">
+								<input
+									type="checkbox"
+									bind:checked={trimWhitespace}
+									class="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+								/>
+								<span class="text-sm text-gray-700 dark:text-gray-300">Trim Whitespace</span>
+							</label>
+						</div>
+					</div>
 				{:else if newJobType === 'dataset_to_vector_storage'}
 					<div>
 						<label
@@ -999,7 +1527,7 @@
 											<p>
 												<span class="font-medium">Source:</span>
 												<a
-													href={`#/collections/${transform.collection_id}/details`}
+													href={`#/collections/${transform.collection_id}`}
 													class="text-blue-600 dark:text-blue-400 hover:underline"
 												>
 													{getCollectionTitle(transform.collection_id || 0)}
@@ -1008,7 +1536,7 @@
 											<p>
 												<span class="font-medium">Target:</span>
 												<a
-													href={`#/datasets/${transform.dataset_id}/details`}
+													href={`#/datasets/${transform.dataset_id}`}
 													class="text-blue-600 dark:text-blue-400 hover:underline"
 												>
 													{getDatasetTitle(transform.dataset_id)}
@@ -1022,7 +1550,7 @@
 											<p>
 												<span class="font-medium">Dataset:</span>
 												<a
-													href={`#/datasets/${transform.dataset_id}/details`}
+													href={`#/datasets/${transform.dataset_id}`}
 													class="text-blue-600 dark:text-blue-400 hover:underline"
 												>
 													{getDatasetTitle(transform.dataset_id)}
@@ -1045,20 +1573,99 @@
 													N/A
 												{/if}
 											</p>
-											<p>
-												<span class="font-medium">Collection:</span>
-												<code class="text-xs bg-gray-100 dark:bg-gray-700 px-1 rounded">
-													{transform.job_config?.collection_name || 'N/A'}
-												</code>
-											</p>
 										{/if}
 										<p>
 											<span class="font-medium">Created:</span>
 											{formatDate(transform.created_at)}
 										</p>
+
+										{#if Object.keys(transform.job_config).length > 0}
+											<div class="mb-4">
+												<button
+													onclick={() => {
+														const key = `job_config_${transform.transform_id}`;
+														expandedConfigs[key] = !expandedConfigs[key];
+													}}
+													class="flex items-center gap-2 font-semibold mb-1 text-gray-900 dark:text-white cursor-pointer hover:text-blue-600 dark:hover:text-blue-400"
+												>
+													<span
+														class="inline-block transform transition-transform duration-200"
+														style="transform: rotate({expandedConfigs[
+															`job_config_${transform.transform_id}`
+														]
+															? '90deg'
+															: '0deg'})">▶</span
+													>
+													Job Config
+												</button>
+												{#if expandedConfigs[`job_config_${transform.transform_id}`]}
+													<pre
+														class="bg-gray-100 dark:bg-gray-900 rounded p-2 overflow-x-auto text-xs mt-2">{JSON.stringify(
+															transform.job_config,
+															null,
+															2
+														)}</pre>
+												{/if}
+											</div>
+										{/if}
+
+										{#if transform.job_config?.chunking}
+											<div class="mb-4">
+												<button
+													onclick={() => {
+														const key = `chunking_${transform.transform_id}`;
+														expandedConfigs[key] = !expandedConfigs[key];
+													}}
+													class="flex items-center gap-2 font-semibold mb-1 text-gray-900 dark:text-white cursor-pointer hover:text-blue-600 dark:hover:text-blue-400"
+												>
+													<span
+														class="inline-block transform transition-transform duration-200"
+														style="transform: rotate({expandedConfigs[
+															`chunking_${transform.transform_id}`
+														]
+															? '90deg'
+															: '0deg'})">▶</span
+													>
+													Chunking Config
+												</button>
+												{#if expandedConfigs[`chunking_${transform.transform_id}`]}
+													<pre
+														class="bg-gray-100 dark:bg-gray-900 rounded p-2 overflow-x-auto text-xs mt-2">
+														{JSON.stringify(transform.job_config.chunking, null, 2)}
+													</pre>
+												{/if}
+											</div>
+										{/if}
+
+										{#if transform.job_config?.extraction}
+											<div class="mb-4">
+												<button
+													onclick={() => {
+														const key = `extraction_${transform.transform_id}`;
+														expandedConfigs[key] = !expandedConfigs[key];
+													}}
+													class="flex items-center gap-2 font-semibold mb-1 text-gray-900 dark:text-white cursor-pointer hover:text-blue-600 dark:hover:text-blue-400"
+												>
+													<span
+														class="inline-block transform transition-transform duration-200"
+														style="transform: rotate({expandedConfigs[
+															`extraction_${transform.transform_id}`
+														]
+															? '90deg'
+															: '0deg'})">▶</span
+													>
+													Extraction Config
+												</button>
+												{#if expandedConfigs[`extraction_${transform.transform_id}`]}
+													<pre
+														class="bg-gray-100 dark:bg-gray-900 rounded p-2 overflow-x-auto text-xs mt-2">
+														{JSON.stringify(transform.job_config.extraction, null, 2)}
+													</pre>
+												{/if}
+											</div>
+										{/if}
 									</div>
 								</div>
-
 								<div class="flex gap-2 shrink-0">
 									{#if transform.job_type === 'collection_to_dataset'}
 										<button

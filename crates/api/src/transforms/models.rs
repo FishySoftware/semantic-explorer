@@ -16,6 +16,8 @@ pub(crate) enum CreateTransformConfig {
         dataset_id: i32,
         #[serde(default = "default_chunk_size")]
         chunk_size: i32,
+        #[serde(default)]
+        job_config: serde_json::Value,
     },
     DatasetToVectorStorage {
         dataset_id: i32,

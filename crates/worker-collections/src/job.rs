@@ -5,7 +5,8 @@ use semantic_explorer_core::storage::{DocumentUpload, get_file, upload_document}
 use std::time::Instant;
 use tracing::{error, info, instrument};
 
-use crate::{chunk, extract};
+use crate::chunk::{ChunkingService, config::ChunkingConfig};
+use crate::extract::{ExtractionService, config::ExtractionConfig};
 
 #[derive(Clone)]
 pub(crate) struct WorkerContext {
@@ -40,12 +41,35 @@ pub(crate) async fn process_file_job(job: TransformFileJob, ctx: WorkerContext) 
         "Downloaded file successfully"
     );
 
+    let extraction_config: ExtractionConfig =
+        match serde_json::from_value(job.extraction_config.clone()) {
+            Ok(config) => config,
+            Err(e) => {
+                let duration = start_time.elapsed().as_secs_f64();
+                record_worker_job("transform-file", duration, "failed_config_parse");
+                error!(error = %e, "Failed to parse extraction config");
+                send_result(
+                    &ctx.nats_client,
+                    &job,
+                    Err(format!("Invalid extraction config: {}", e)),
+                    Some((duration * 1000.0) as i64),
+                )
+                .await?;
+                return Ok(());
+            }
+        };
+
     let mime_type = mime_guess::from_path(&job.source_file_key).first_or_octet_stream();
-    info!(mime_type = %mime_type, "Extracting text");
-    let extracted_text = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        extract::extract_text(&mime_type, &file_content)
+    info!(
+        mime_type = %mime_type,
+        strategy = ?extraction_config.strategy,
+        "Extracting text"
+    );
+
+    let extraction_result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        ExtractionService::extract(&mime_type, &file_content, &extraction_config)
     })) {
-        Ok(Ok(text)) => text,
+        Ok(Ok(result)) => result,
         Ok(Err(e)) => {
             let duration = start_time.elapsed().as_secs_f64();
             record_worker_job("transform-file", duration, "failed_extraction");
@@ -74,19 +98,48 @@ pub(crate) async fn process_file_job(job: TransformFileJob, ctx: WorkerContext) 
         }
     };
     info!(
-        text_length_chars = extracted_text.len(),
+        text_length_chars = extraction_result.text.len(),
         "Text extracted successfully"
     );
 
-    let chunk_size = job.chunk_size;
-    info!(chunk_size, "Chunking text");
+    let chunking_config: ChunkingConfig = match serde_json::from_value(job.chunking_config.clone())
+    {
+        Ok(config) => config,
+        Err(e) => {
+            let duration = start_time.elapsed().as_secs_f64();
+            record_worker_job("transform-file", duration, "failed_config_parse");
+            error!(error = %e, "Failed to parse chunking config");
+            send_result(
+                &ctx.nats_client,
+                &job,
+                Err(format!("Invalid chunking config: {}", e)),
+                Some((duration * 1000.0) as i64),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
 
-    let chunks = match chunk::chunk_text(extracted_text, chunk_size) {
+    info!(
+        chunk_size = chunking_config.chunk_size,
+        strategy = ?chunking_config.strategy,
+        overlap = chunking_config.chunk_overlap,
+        "Chunking text"
+    );
+
+    let chunks_with_metadata = match ChunkingService::chunk_text(
+        extraction_result.text,
+        &chunking_config,
+        extraction_result.metadata,
+        job.embedder_config.as_ref(),
+    )
+    .await
+    {
         Ok(c) => c,
         Err(e) => {
             let duration = start_time.elapsed().as_secs_f64();
             record_worker_job("transform-file", duration, "failed_chunking");
-            error!(error = %e, chunk_size, "Chunking failed");
+            error!(error = %e, "Chunking failed");
             send_result(
                 &ctx.nats_client,
                 &job,
@@ -97,10 +150,13 @@ pub(crate) async fn process_file_job(job: TransformFileJob, ctx: WorkerContext) 
             return Ok(());
         }
     };
-    info!(chunk_count = chunks.len(), "Text chunked successfully");
+    info!(
+        chunk_count = chunks_with_metadata.len(),
+        "Text chunked successfully"
+    );
 
     let chunks_key = format!("chunks/{}.json", job.job_id);
-    let chunks_json = serde_json::to_vec(&chunks)?;
+    let chunks_json = serde_json::to_vec(&chunks_with_metadata)?;
     let chunks_size = chunks_json.len();
 
     info!(chunks_size_bytes = chunks_size, "Uploading chunks");
@@ -129,7 +185,7 @@ pub(crate) async fn process_file_job(job: TransformFileJob, ctx: WorkerContext) 
     send_result(
         &ctx.nats_client,
         &job,
-        Ok((chunks_key, chunks.len())),
+        Ok((chunks_key, chunks_with_metadata.len())),
         Some((duration * 1000.0) as i64),
     )
     .await?;
