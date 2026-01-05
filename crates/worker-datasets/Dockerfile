@@ -4,7 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Install dependencies
-RUN apt-get update && apt-get upgrade -yq && apt-get install curl build-essential cmake musl-tools musl-dev -yq && apt-get clean
+RUN apt-get update && apt-get upgrade -yq && apt-get install curl build-essential cmake musl-tools musl-dev ca-certificates -yq && apt-get clean
 RUN ln -s "/usr/bin/g++" "/usr/bin/musl-g++"
 
 # Install Rust
@@ -26,7 +26,7 @@ RUN useradd -u 10001 appuser
 ##### Runtime
 FROM scratch
 
-# Copy binary
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /usr/src/app/target/x86_64-unknown-linux-musl/release/worker-datasets /worker-datasets
 COPY --from=builder /etc/passwd /etc/passwd
 

@@ -13,13 +13,13 @@ scrape_configs:
     metrics_path: '/metrics'
     scrape_interval: 10s
 
-  - job_name: 'apalis-workers'
+  - job_name: 'workers'
     static_configs:
       - targets: ['localhost:8080']
     metrics_path: '/metrics'
     metric_relabel_configs:
       - source_labels: [__name__]
-        regex: 'apalis_.*'
+        regex: 'workers_.*'
         action: keep
 
   - job_name: 'prometheus'

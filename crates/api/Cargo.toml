@@ -40,7 +40,6 @@ opentelemetry-appender-tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 mime_guess = { workspace = true }
 uuid = { workspace = true }
-tokio = { workspace = true }
 reqwest = { version = "0.13.1", features = ["json"] }
 
 [target.'cfg(target_env = "musl")'.dependencies]

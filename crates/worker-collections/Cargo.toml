@@ -21,7 +21,6 @@ aws-sdk-s3 = { workspace = true }
 mime_guess = { workspace = true }
 pdf-extract = { workspace = true }
 unicode-segmentation = { workspace = true }
-prometheus = { workspace = true }
 quick-xml = { workspace = true }
 zip = { workspace = true }
 scraper = { workspace = true }

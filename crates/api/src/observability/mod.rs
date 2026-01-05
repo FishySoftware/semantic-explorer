@@ -99,7 +99,7 @@ pub(crate) fn init_observability() -> Result<PrometheusMetrics> {
     global::set_meter_provider(meter_provider);
     global::set_text_map_propagator(TraceContextPropagator::new());
 
-    semantic_explorer_core::observability::init_metrics(&prometheus.registry)
+    semantic_explorer_core::observability::init_metrics_otel()
         .map_err(|e| anyhow!("Failed to initialize core metrics: {}", e))?;
 
     let env_filter = EnvFilter::try_from_default_env()

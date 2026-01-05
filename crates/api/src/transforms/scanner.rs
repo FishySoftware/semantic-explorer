@@ -123,7 +123,7 @@ pub(crate) async fn process_collection_scan(
                 };
 
                 let payload = serde_json::to_vec(&job)?;
-                nats.publish("apalis.transform-file-worker".to_string(), payload.into())
+                nats.publish("workers.transform-file-worker".to_string(), payload.into())
                     .await?;
                 jobs_sent += 1;
             }
@@ -294,7 +294,7 @@ pub(crate) async fn process_vector_scan(
         };
 
         let payload = serde_json::to_vec(&job)?;
-        nats.publish("apalis.vector-embed-worker".to_string(), payload.into())
+        nats.publish("workers.vector-embed-worker".to_string(), payload.into())
             .await?;
 
         info!(

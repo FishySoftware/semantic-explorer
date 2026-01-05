@@ -1,13 +1,11 @@
-use actix_multipart::form::{MultipartForm, tempfile::TempFile};
+use actix_multipart::form::MultipartForm;
 use actix_web::{
     HttpResponse, Responder, delete, get, post,
     web::{self, Data, Json, Path},
 };
 use actix_web_openidconnect::openid_middleware::Authenticated;
-use anyhow::Result;
 use aws_sdk_s3::Client;
 use sqlx::{Pool, Postgres};
-use tokio::io::AsyncReadExt;
 use tracing::error;
 use uuid::Uuid;
 
@@ -175,7 +173,10 @@ pub(crate) async fn upload_to_collection(
 ) -> impl Responder {
     let username = match extract_username(&auth) {
         Ok(username) => username,
-        Err(e) => return e,
+        Err(e) => {
+            tracing::error!("Failed to extract username from authentication");
+            return e;
+        }
     };
     let s3_client = s3_client.into_inner();
     let postgres_pool = postgres_pool.into_inner();
@@ -184,7 +185,13 @@ pub(crate) async fn upload_to_collection(
     let collection =
         match collections::get_collection(&postgres_pool, &username, collection_id).await {
             Ok(collection) => collection,
-            Err(_) => {
+            Err(e) => {
+                tracing::error!(
+                    collection_id = collection_id,
+                    username = %username,
+                    error = %e,
+                    "Collection not found or access denied"
+                );
                 return HttpResponse::BadRequest()
                     .body(format!("collection '{collection_id}' does not exists"));
             }
@@ -193,22 +200,32 @@ pub(crate) async fn upload_to_collection(
     let mut completed = Vec::with_capacity(payload.files.len());
     let mut failed = Vec::new();
 
-    for file in payload.files {
-        let file_name = file.file_name.clone().unwrap_or("unknown".to_string());
-        let document = match to_uploaded_document(&file, collection.bucket.clone()).await {
-            Ok(document) => document,
-            Err(e) => {
-                failed.push(file_name);
-                error!("error processing file: {file:?} due to: {e:?}");
-                continue;
-            }
-        };
+    for (idx, file_bytes) in payload.files.iter().enumerate() {
+        let file_name = file_bytes
+            .file_name
+            .as_ref()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("file_{}", idx));
+        let mime_type = mime_guess::from_path(&file_name)
+            .first_or_octet_stream()
+            .to_string();
 
+        let document = DocumentUpload {
+            collection_id: collection.bucket.clone(),
+            name: file_name.clone(),
+            content: file_bytes.data.to_vec(),
+            mime_type: mime_type.clone(),
+        };
         if let Err(e) = upload_document(&s3_client, document).await {
-            failed.push(file_name);
-            error!("error uploading file: {file:?} due to: {e:?}");
+            failed.push(file_name.clone());
+            tracing::error!(
+                file_name = %file_name,
+                error = %e,
+                "Failed to upload file to S3"
+            );
             continue;
         }
+
         completed.push(file_name);
     }
 
@@ -374,28 +391,4 @@ pub(crate) async fn delete_collection_file(
         Ok(_) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::InternalServerError().body(format!("error deleting file: {e:?}")),
     }
-}
-
-async fn to_uploaded_document(
-    temp_file: &TempFile,
-    collection_id: String,
-) -> Result<DocumentUpload> {
-    let name = match &temp_file.file_name {
-        Some(name) => name.clone(),
-        None => "unnamed".to_string(),
-    };
-    let mime_type = mime_guess::from_path(&name)
-        .first_or_octet_stream()
-        .to_string();
-
-    let mut file = tokio::fs::File::open(temp_file.file.path()).await?;
-    let mut content = Vec::with_capacity(temp_file.size);
-    file.read_to_end(&mut content).await?;
-
-    Ok(DocumentUpload {
-        collection_id,
-        name,
-        content,
-        mime_type,
-    })
 }

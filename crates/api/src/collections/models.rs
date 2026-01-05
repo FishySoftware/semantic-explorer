@@ -1,4 +1,4 @@
-use actix_multipart::form::{MultipartForm, tempfile::TempFile};
+use actix_multipart::form::{MultipartForm, bytes::Bytes};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use utoipa::ToSchema;
@@ -34,9 +34,9 @@ pub(crate) struct Collection {
 
 #[derive(MultipartForm, ToSchema)]
 pub(crate) struct CollectionUpload {
-    #[multipart(limit = "1024MB")]
-    #[schema(value_type = String, format = Binary, content_media_type = "application/octet-stream")]
-    pub(crate) files: Vec<TempFile>,
+    #[multipart(rename = "files", limit = "1024MB")]
+    #[schema(value_type = Vec<String>, format = Binary)]
+    pub(crate) files: Vec<Bytes>,
 }
 
 #[derive(Deserialize, ToSchema)]

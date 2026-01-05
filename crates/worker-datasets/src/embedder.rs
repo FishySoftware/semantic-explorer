@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::Result;
 use once_cell::sync::Lazy;
 use semantic_explorer_core::jobs::EmbedderConfig;
@@ -7,11 +9,11 @@ const DEFAULT_COHERE_BATCH_SIZE: usize = 96;
 
 static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
     reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
+        .timeout(Duration::from_secs(60))
         .pool_max_idle_per_host(10)
-        .pool_idle_timeout(std::time::Duration::from_secs(90))
+        .pool_idle_timeout(Duration::from_secs(90))
         .build()
-        .expect("Failed to create HTTP client")
+        .expect("Failed to build HTTP client")
 });
 
 pub async fn generate_batch_embeddings(

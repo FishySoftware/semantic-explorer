@@ -3,14 +3,14 @@ use anyhow::Result;
 use futures_util::StreamExt;
 use opentelemetry::{global, trace::TracerProvider};
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
-use opentelemetry_otlp::{LogExporter, SpanExporter, WithExportConfig};
+use opentelemetry_otlp::{LogExporter, MetricExporter, SpanExporter, WithExportConfig};
 use opentelemetry_sdk::{
     Resource,
     logs::SdkLoggerProvider,
+    metrics::SdkMeterProvider,
     propagation::TraceContextPropagator,
     trace::{RandomIdGenerator, Sampler, SdkTracerProvider},
 };
-use prometheus::Registry;
 use semantic_explorer_core::jobs::VectorEmbedJob;
 use semantic_explorer_core::observability;
 use semantic_explorer_core::storage::initialize_client;
@@ -68,7 +68,25 @@ async fn main() -> Result<()> {
         None
     };
 
+    let metric_exporter = MetricExporter::builder()
+        .with_tonic()
+        .with_endpoint(&otlp_endpoint)
+        .with_timeout(Duration::from_secs(10))
+        .build();
+
+    if let Ok(exporter) = metric_exporter {
+        let meter_provider = SdkMeterProvider::builder()
+            .with_periodic_exporter(exporter)
+            .with_resource(resource.clone())
+            .build();
+        global::set_meter_provider(meter_provider);
+    } else {
+        info!("Failed to initialize OpenTelemetry metrics exporter");
+    }
+
     global::set_text_map_propagator(TraceContextPropagator::new());
+
+    observability::init_metrics_otel()?;
 
     let env_filter = EnvFilter::try_from_default_env()
         .or_else(|_| EnvFilter::try_new("info"))
@@ -100,9 +118,6 @@ async fn main() -> Result<()> {
             .try_init()?;
     }
 
-    let registry = Registry::new();
-    observability::init_metrics(&registry)?;
-
     let nats_url =
         std::env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string());
     let nats_client = async_nats::connect(&nats_url).await?;
@@ -115,10 +130,10 @@ async fn main() -> Result<()> {
     };
 
     let mut subscriber = nats_client
-        .subscribe("apalis.vector-embed-worker".to_string())
+        .subscribe("workers.vector-embed-worker".to_string())
         .await?;
 
-    info!("Worker started, listening on apalis.vector-embed-worker");
+    info!("Worker started, listening on workers.vector-embed-worker");
 
     while let Some(msg) = subscriber.next().await {
         let job: VectorEmbedJob = match serde_json::from_slice(&msg.payload) {

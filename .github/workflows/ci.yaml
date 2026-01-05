@@ -4,15 +4,21 @@ on:
   push:
     branches:
       - '[0-9]+.[0-9]+.[0-9]+'
+    tags:
+      - 'v*.*.*'
 
 jobs:
   release-semantic-explorer:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Docker Build
+      - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Login to DockerHub
@@ -20,36 +26,96 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          
-      - name: build-push-semantic-explorer
+
+      - name: Docker meta - API
+        id: meta_api
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/semantic-explorer
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push API
         id: docker_build_api
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./crates/api/Dockerfile
           push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/semantic-explorer:${{ github.ref_name }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/semantic-explorer:latest
+          tags: ${{ steps.meta_api.outputs.tags }}
+          labels: ${{ steps.meta_api.outputs.labels }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+          outputs: type=image,name=${{ secrets.DOCKERHUB_USERNAME }}/semantic-explorer,push-by-digest=false
 
-      - name: build-push-worker-collections
+      - name: Docker meta - Worker Collections
+        id: meta_worker_collections
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/worker-collections
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Worker Collections
         id: docker_build_worker_collections
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./crates/worker-collections/Dockerfile
           push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/worker-collections:${{ github.ref_name }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/worker-collections:latest
+          tags: ${{ steps.meta_worker_collections.outputs.tags }}
+          labels: ${{ steps.meta_worker_collections.outputs.labels }}
+          cache-from: type=gha,scope=worker-collections
+          cache-to: type=gha,mode=max,scope=worker-collections
+          outputs: type=image,name=${{ secrets.DOCKERHUB_USERNAME }}/worker-collections,push-by-digest=false
 
-      - name: build-push-worker-datasets
+      - name: Docker meta - Worker Datasets
+        id: meta_worker_datasets
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/worker-datasets
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Worker Datasets
         id: docker_build_worker_datasets
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./crates/worker-datasets/Dockerfile
           push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/worker-datasets:${{ github.ref_name }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/worker-datasets:latest
+          tags: ${{ steps.meta_worker_datasets.outputs.tags }}
+          labels: ${{ steps.meta_worker_datasets.outputs.labels }}
+          cache-from: type=gha,scope=worker-datasets
+          cache-to: type=gha,mode=max,scope=worker-datasets
+          outputs: type=image,name=${{ secrets.DOCKERHUB_USERNAME }}/worker-datasets,push-by-digest=false
+
+      - name: Generate build summary
+        run: |
+          echo "# Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Images Built and Pushed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### API" >> $GITHUB_STEP_SUMMARY
+          echo "- **Digest:** \`${{ steps.docker_build_api.outputs.digest }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image ID:** \`${{ steps.docker_build_api.outputs.imageid }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Worker Collections" >> $GITHUB_STEP_SUMMARY
+          echo "- **Digest:** \`${{ steps.docker_build_worker_collections.outputs.digest }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image ID:** \`${{ steps.docker_build_worker_collections.outputs.imageid }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Worker Datasets" >> $GITHUB_STEP_SUMMARY
+          echo "- **Digest:** \`${{ steps.docker_build_worker_datasets.outputs.digest }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image ID:** \`${{ steps.docker_build_worker_datasets.outputs.imageid }}\`" >> $GITHUB_STEP_SUMMARY

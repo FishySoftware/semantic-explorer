@@ -80,7 +80,11 @@ async fn main() -> Result<()> {
             .app_data(web::Data::new(qdrant_client.clone()))
             .app_data(web::Data::new(postgres_pool.clone()))
             .app_data(web::Data::new(nats_client.clone()))
-            .app_data(MultipartFormConfig::default().total_limit(1024 * 1024 * 1024)) // 1GB
+            .app_data(
+                MultipartFormConfig::default()
+                    .total_limit(1024 * 1024 * 1024) // 1GB total
+                    .memory_limit(1024 * 1024 * 1024), // 1GB in memory
+            )
             .app_data(web::Data::new(static_files_directory.clone()))
             .into_utoipa_app()
             .openapi(ApiDoc::openapi())

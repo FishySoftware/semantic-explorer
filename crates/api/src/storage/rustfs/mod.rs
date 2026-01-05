@@ -33,25 +33,37 @@ pub(crate) struct PaginatedFiles {
 }
 
 pub(crate) async fn initialize_client() -> Result<aws_sdk_s3::Client> {
+    let aws_region = env::var("AWS_REGION")?;
+    let aws_access_key = env::var("AWS_ACCESS_KEY_ID")?;
+    let aws_endpoint_url = env::var("AWS_ENDPOINT_URL")?;
     let shard_config = aws_config::defaults(BehaviorVersion::latest())
-        .region(Region::new(env::var("AWS_REGION")?))
+        .region(Region::new(aws_region))
         .credentials_provider(Credentials::new(
-            env::var("AWS_ACCESS_KEY_ID")?,
+            aws_access_key,
             env::var("AWS_SECRET_ACCESS_KEY")?,
             None,
             None,
             "rustfs",
         ))
-        .endpoint_url(env::var("AWS_ENDPOINT_URL")?)
+        .endpoint_url(&aws_endpoint_url)
         .load()
         .await;
-    Ok(Client::new(&shard_config))
+    let client = Client::new(&shard_config);
+    Ok(client)
 }
 
 #[tracing::instrument(name = "s3.upload_document", skip(client, document), fields(storage.system = "s3", bucket = %document.collection_id, key = %document.name, size = document.content.len()))]
 pub(crate) async fn upload_document(client: &Client, document: DocumentUpload) -> Result<()> {
     let start = Instant::now();
     let file_size = document.content.len() as u64;
+
+    tracing::debug!(
+        bucket = %document.collection_id,
+        key = %document.name,
+        size = file_size,
+        mime_type = %document.mime_type,
+        "Uploading document to S3"
+    );
 
     let result = client
         .put_object()
@@ -66,6 +78,26 @@ pub(crate) async fn upload_document(client: &Client, document: DocumentUpload) -
     let success = result.is_ok();
     record_storage_operation("upload", duration, Some(file_size), success);
 
+    match &result {
+        Ok(_) => {
+            tracing::debug!(
+                bucket = %document.collection_id,
+                key = %document.name,
+                duration_ms = duration * 1000.0,
+                "Successfully uploaded document to S3"
+            );
+        }
+        Err(e) => {
+            tracing::error!(
+                bucket = %document.collection_id,
+                key = %document.name,
+                error = %e,
+                duration_ms = duration * 1000.0,
+                "Failed to upload document to S3. Check network connectivity and bucket permissions."
+            );
+        }
+    }
+
     result?;
     Ok(())
 }
@@ -78,6 +110,13 @@ pub(crate) async fn list_files(
     continuation_token: Option<&str>,
 ) -> Result<PaginatedFiles> {
     let start = Instant::now();
+
+    tracing::debug!(
+        bucket = %bucket,
+        page_size = page_size,
+        has_continuation_token = continuation_token.is_some(),
+        "Listing files in S3 bucket"
+    );
 
     let mut files = Vec::with_capacity(page_size as usize);
     let mut current_token = continuation_token.map(|s| s.to_string());
@@ -92,7 +131,17 @@ pub(crate) async fn list_files(
             request = request.start_after(token);
         }
 
-        let output = request.send().await?;
+        let output = match request.send().await {
+            Ok(output) => output,
+            Err(e) => {
+                tracing::error!(
+                    bucket = %bucket,
+                    error = %e,
+                    "Failed to list files in S3 bucket. Check network connectivity and bucket existence."
+                );
+                return Err(e.into());
+            }
+        };
 
         for obj in output.contents() {
             let key = obj.key().unwrap_or_default();
@@ -137,6 +186,14 @@ pub(crate) async fn list_files(
     let duration = start.elapsed().as_secs_f64();
     record_storage_operation("list", duration, None, true);
 
+    tracing::debug!(
+        bucket = %bucket,
+        file_count = files.len(),
+        has_more = has_more,
+        duration_ms = duration * 1000.0,
+        "Successfully listed files from S3 bucket"
+    );
+
     Ok(PaginatedFiles {
         files,
         page: 0,
@@ -151,6 +208,12 @@ pub(crate) async fn list_files(
 pub(crate) async fn get_file(client: &Client, bucket: &str, key: &str) -> Result<Vec<u8>> {
     let start = Instant::now();
 
+    tracing::debug!(
+        bucket = %bucket,
+        key = %key,
+        "Retrieving file from S3"
+    );
+
     let result = client.get_object().bucket(bucket).key(key).send().await;
 
     match result {
@@ -162,11 +225,28 @@ pub(crate) async fn get_file(client: &Client, bucket: &str, key: &str) -> Result
             let duration = start.elapsed().as_secs_f64();
             record_storage_operation("download", duration, Some(file_size), true);
 
+            tracing::debug!(
+                bucket = %bucket,
+                key = %key,
+                size = file_size,
+                duration_ms = duration * 1000.0,
+                "Successfully retrieved file from S3"
+            );
+
             Ok(bytes)
         }
         Err(e) => {
             let duration = start.elapsed().as_secs_f64();
             record_storage_operation("download", duration, None, false);
+
+            tracing::error!(
+                bucket = %bucket,
+                key = %key,
+                error = %e,
+                duration_ms = duration * 1000.0,
+                "Failed to retrieve file from S3. Check network connectivity, bucket existence, and file permissions."
+            );
+
             Err(e.into())
         }
     }
@@ -176,11 +256,37 @@ pub(crate) async fn get_file(client: &Client, bucket: &str, key: &str) -> Result
 pub(crate) async fn delete_file(client: &Client, bucket: &str, key: &str) -> Result<()> {
     let start = Instant::now();
 
+    tracing::debug!(
+        bucket = %bucket,
+        key = %key,
+        "Deleting file from S3"
+    );
+
     let result = client.delete_object().bucket(bucket).key(key).send().await;
 
     let duration = start.elapsed().as_secs_f64();
     let success = result.is_ok();
     record_storage_operation("delete", duration, None, success);
+
+    match &result {
+        Ok(_) => {
+            tracing::info!(
+                bucket = %bucket,
+                key = %key,
+                duration_ms = duration * 1000.0,
+                "Successfully deleted file from S3"
+            );
+        }
+        Err(e) => {
+            tracing::error!(
+                bucket = %bucket,
+                key = %key,
+                error = %e,
+                duration_ms = duration * 1000.0,
+                "Failed to delete file from S3. Check network connectivity and file permissions."
+            );
+        }
+    }
 
     result?;
     Ok(())
@@ -198,10 +304,19 @@ pub(crate) async fn count_files(client: &Client, bucket: &str) -> Result<i64> {
         .send();
 
     while let Some(result) = paginator.next().await {
-        let output = result?;
+        let output = match result {
+            Ok(output) => output,
+            Err(e) => {
+                tracing::error!(
+                    bucket = %bucket,
+                    error = %e,
+                    "Failed to count files in S3 bucket. Check network connectivity and bucket existence."
+                );
+                return Err(e.into());
+            }
+        };
         for obj in output.contents() {
             let key = obj.key().unwrap_or_default();
-            // Skip chunks directory as those are derived data, not source files
             if !key.starts_with("chunks/") {
                 count += 1;
             }
@@ -210,6 +325,13 @@ pub(crate) async fn count_files(client: &Client, bucket: &str) -> Result<i64> {
 
     let duration = start.elapsed().as_secs_f64();
     record_storage_operation("count", duration, None, true);
+
+    tracing::debug!(
+        bucket = %bucket,
+        file_count = count,
+        duration_ms = duration * 1000.0,
+        "Successfully counted files in S3 bucket"
+    );
 
     Ok(count)
 }
