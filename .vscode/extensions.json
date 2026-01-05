@@ -1,0 +1,9 @@
+{
+    "recommendations": [
+        "fill-labs.dependi",
+        "ms-azuretools.vscode-docker",
+        "rust-lang.rust-analyzer",
+        "redhat.vscode-yaml",
+        "ms-kubernetes-tools.vscode-kubernetes-tools"
+    ]
+}

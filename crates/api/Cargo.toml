@@ -1,0 +1,64 @@
+[package]
+name = "semantic-explorer"
+version = "0.1.0"
+edition = "2024"
+authors = ["Jonathan Poisson"]
+readme = "README.md"
+license-file = "LICENSE"
+
+[[bin]]
+name = "semantic-explorer"
+
+[dependencies]
+semantic-explorer-core = { path = "../core" }
+actix-web = { workspace = true }
+actix-cors = { workspace = true }
+actix-multipart = { workspace = true }
+actix-files = { workspace = true }
+actix_web_openidconnect = { workspace = true }
+actix-web-prom = { workspace = true }
+async-nats = { workspace = true }
+futures-util = { workspace = true }
+aws-sdk-s3 = { workspace = true }
+aws-config = { workspace = true }
+qdrant-client = { workspace = true }
+sqlx = { workspace = true }
+utoipa = { workspace = true }
+utoipa-swagger-ui = { workspace = true }
+utoipa-actix-web = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+dotenvy = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+opentelemetry-otlp = { workspace = true }
+opentelemetry-prometheus = { workspace = true }
+opentelemetry-appender-tracing = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+mime_guess = { workspace = true }
+uuid = { workspace = true }
+tokio = { workspace = true }
+reqwest = { version = "0.13.1", features = ["json"] }
+
+[target.'cfg(target_env = "musl")'.dependencies]
+mimalloc = { version = "0.1.48", features = ["v3"], default-features = false }
+
+[lints.clippy]
+enum_glob_use = "deny"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[profile.dev]
+incremental = true
+
+[profile.release]
+opt-level = 3
+strip = "debuginfo"
+lto = true
+
+[features]
+deprecated_attributes = []

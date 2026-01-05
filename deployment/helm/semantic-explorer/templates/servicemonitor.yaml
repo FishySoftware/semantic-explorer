@@ -1,0 +1,56 @@
+{{- if and .Values.api.metrics.enabled .Values.api.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.api.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "semantic-explorer.api.selectorLabels" . | nindent 6 }}
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: {{ .Values.api.metrics.serviceMonitor.interval }}
+    scrapeTimeout: {{ .Values.api.metrics.serviceMonitor.scrapeTimeout }}
+{{- end }}
+---
+{{- if and .Values.workerCollections.metrics.enabled .Values.workerCollections.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-worker-collections
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.workerCollections.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "semantic-explorer.workerCollections.selectorLabels" . | nindent 6 }}
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: {{ .Values.workerCollections.metrics.serviceMonitor.interval }}
+    scrapeTimeout: {{ .Values.workerCollections.metrics.serviceMonitor.scrapeTimeout }}
+{{- end }}
+---
+{{- if and .Values.workerDatasets.metrics.enabled .Values.workerDatasets.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-worker-datasets
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.workerDatasets.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "semantic-explorer.workerDatasets.selectorLabels" . | nindent 6 }}
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: {{ .Values.workerDatasets.metrics.serviceMonitor.interval }}
+    scrapeTimeout: {{ .Values.workerDatasets.metrics.serviceMonitor.scrapeTimeout }}
+{{- end }}

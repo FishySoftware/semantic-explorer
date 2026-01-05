@@ -1,0 +1,29 @@
+[package]
+name = "worker-collections"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+futures-util = { workspace = true }
+semantic-explorer-core = { path = "../core" }
+async-nats = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+opentelemetry-otlp = { workspace = true }
+opentelemetry-appender-tracing = { workspace = true }
+aws-sdk-s3 = { workspace = true }
+mime_guess = { workspace = true }
+pdf-extract = { workspace = true }
+unicode-segmentation = { workspace = true }
+prometheus = { workspace = true }
+quick-xml = { workspace = true }
+zip = { workspace = true }
+scraper = { workspace = true }
+mime = { workspace = true }
+unicode-normalization = { workspace = true }

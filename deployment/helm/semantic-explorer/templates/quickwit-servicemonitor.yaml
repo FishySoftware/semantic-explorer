@@ -1,0 +1,21 @@
+{{- if and .Values.observability.quickwit.enabled .Values.observability.quickwit.metrics.enabled .Values.observability.quickwit.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-quickwit
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.quickwit.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "semantic-explorer.quickwit.selectorLabels" . | nindent 6 }}
+  endpoints:
+  - port: rest
+    interval: {{ .Values.observability.quickwit.metrics.serviceMonitor.interval }}
+    path: /metrics
+{{- end }}

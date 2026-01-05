@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - '[0-9]+.[0-9]+.[0-9]+'
+
+jobs:
+  release-semantic-explorer:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Build
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          
+      - name: build-push-semantic-explorer
+        id: docker_build_api
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./crates/api/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/semantic-explorer:${{ github.ref_name }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/semantic-explorer:latest
+
+      - name: build-push-worker-collections
+        id: docker_build_worker_collections
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./crates/worker-collections/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/worker-collections:${{ github.ref_name }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/worker-collections:latest
+
+      - name: build-push-worker-datasets
+        id: docker_build_worker_datasets
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./crates/worker-datasets/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/worker-datasets:${{ github.ref_name }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/worker-datasets:latest

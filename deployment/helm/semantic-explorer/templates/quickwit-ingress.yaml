@@ -1,0 +1,45 @@
+{{- if and .Values.observability.quickwit.enabled .Values.observability.quickwit.ingress.enabled }}
+apiVersion: {{ include "semantic-explorer.ingress.apiVersion" . }}
+kind: Ingress
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-quickwit
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.quickwit.labels" . | nindent 4 }}
+  annotations:
+    {{- with .Values.observability.quickwit.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.commonAnnotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- if .Values.observability.quickwit.ingress.className }}
+  ingressClassName: {{ .Values.observability.quickwit.ingress.className }}
+  {{- end }}
+  {{- if .Values.observability.quickwit.ingress.tls }}
+  tls:
+    {{- range .Values.observability.quickwit.ingress.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range .Values.observability.quickwit.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ include "semantic-explorer.fullname" $ }}-quickwit
+                port:
+                  number: {{ $.Values.observability.quickwit.service.rest.port }}
+          {{- end }}
+    {{- end }}
+{{- end }}

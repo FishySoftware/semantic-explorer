@@ -1,0 +1,36 @@
+{{- if .Values.observability.quickwit.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-quickwit-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.quickwit.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  node.yaml: |
+    version: 0.8
+    node_id: {{ include "semantic-explorer.fullname" . }}
+    cluster_id: {{ include "semantic-explorer.fullname" . }}
+    
+    listen_address: 0.0.0.0
+    rest_listen_port: {{ .Values.observability.quickwit.service.rest.port }}
+    grpc_listen_port: {{ .Values.observability.quickwit.service.grpc.port }}
+    
+    data_dir: /quickwit/qwdata
+    
+    metastore_uri: file:///quickwit/qwdata/metastore
+    
+    default_index_root_uri: file:///quickwit/qwdata/indexes
+    
+    indexer:
+      enable_otlp_endpoint: {{ .Values.observability.quickwit.config.enableOtlpEndpoint }}
+      enable_jaeger_endpoint: {{ .Values.observability.quickwit.config.enableJaegerEndpoint }}
+    
+    searcher:
+      fast_field_cache_capacity: 1GB
+      split_footer_cache_capacity: 500MB
+{{- end }}

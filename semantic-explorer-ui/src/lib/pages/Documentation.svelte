@@ -1,0 +1,332 @@
+<script lang="ts">
+	import { BookOpenSolid, ArrowRightOutline } from 'flowbite-svelte-icons';
+</script>
+
+<div class="p-6 max-w-6xl mx-auto">
+	<div class="mb-8">
+		<div class="flex items-center gap-3 mb-4">
+			<BookOpenSolid class="w-8 h-8 text-blue-600 dark:text-blue-400" />
+			<h1 class="text-3xl font-bold text-gray-900 dark:text-white">User Documentation</h1>
+		</div>
+		<p class="text-lg text-gray-600 dark:text-gray-400">
+			Learn how to use Semantic Explorer to build, test, and compare embedding-based search systems.
+		</p>
+	</div>
+
+	<!-- Workflow Overview -->
+	<section class="mb-12">
+		<h2 class="text-2xl font-bold text-gray-900 dark:text-white mb-4">Workflow Overview</h2>
+		<p class="text-gray-700 dark:text-gray-300 mb-6">
+			Semantic Explorer provides a complete pipeline for evaluating embedding models and search
+			quality. Follow this typical workflow:
+		</p>
+
+		<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+			<!-- Step 1 -->
+			<div
+				class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800"
+			>
+				<div class="flex items-center gap-2 mb-3">
+					<span
+						class="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-sm font-bold text-blue-600 dark:bg-blue-900 dark:text-blue-300"
+						>1</span
+					>
+					<h3 class="text-lg font-semibold text-gray-900 dark:text-white">Collections</h3>
+				</div>
+				<p class="text-sm text-gray-600 dark:text-gray-400">
+					Start by creating a collection and uploading your documents. Organize your content for
+					processing.
+				</p>
+			</div>
+
+			<!-- Step 2 -->
+			<div
+				class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800"
+			>
+				<div class="flex items-center gap-2 mb-3">
+					<span
+						class="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-sm font-bold text-blue-600 dark:bg-blue-900 dark:text-blue-300"
+						>2</span
+					>
+					<h3 class="text-lg font-semibold text-gray-900 dark:text-white">Embedders</h3>
+				</div>
+				<p class="text-sm text-gray-600 dark:text-gray-400">
+					Configure your embedding providers (OpenAI, Cohere, etc.) that will be used to generate
+					vector embeddings.
+				</p>
+			</div>
+
+			<!-- Step 3 -->
+			<div
+				class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800"
+			>
+				<div class="flex items-center gap-2 mb-3">
+					<span
+						class="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-sm font-bold text-blue-600 dark:bg-blue-900 dark:text-blue-300"
+						>3</span
+					>
+					<h3 class="text-lg font-semibold text-gray-900 dark:text-white">
+						Transform (Collection)
+					</h3>
+				</div>
+				<p class="text-sm text-gray-600 dark:text-gray-400">
+					Create a collection transform to extract text and generate chunks, populating a dataset
+					for embedding.
+				</p>
+			</div>
+
+			<!-- Step 4 -->
+			<div
+				class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800"
+			>
+				<div class="flex items-center gap-2 mb-3">
+					<span
+						class="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-sm font-bold text-blue-600 dark:bg-blue-900 dark:text-blue-300"
+						>4</span
+					>
+					<h3 class="text-lg font-semibold text-gray-900 dark:text-white">Datasets</h3>
+				</div>
+				<p class="text-sm text-gray-600 dark:text-gray-400">
+					Review the generated dataset containing your processed text chunks ready for embedding.
+				</p>
+			</div>
+
+			<!-- Step 5 -->
+			<div
+				class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800"
+			>
+				<div class="flex items-center gap-2 mb-3">
+					<span
+						class="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-sm font-bold text-blue-600 dark:bg-blue-900 dark:text-blue-300"
+						>5</span
+					>
+					<h3 class="text-lg font-semibold text-gray-900 dark:text-white">Transform (Dataset)</h3>
+				</div>
+				<p class="text-sm text-gray-600 dark:text-gray-400">
+					Create dataset transforms to generate embeddings using your configured embedders.
+				</p>
+			</div>
+
+			<!-- Step 6 -->
+			<div
+				class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800"
+			>
+				<div class="flex items-center gap-2 mb-3">
+					<span
+						class="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-sm font-bold text-blue-600 dark:bg-blue-900 dark:text-blue-300"
+						>6</span
+					>
+					<h3 class="text-lg font-semibold text-gray-900 dark:text-white">Search</h3>
+				</div>
+				<p class="text-sm text-gray-600 dark:text-gray-400">
+					Execute searches across multiple embedded datasets to compare embedding model performance.
+				</p>
+			</div>
+		</div>
+	</section>
+
+	<!-- Detailed Component Descriptions -->
+	<section class="space-y-8">
+		<h2 class="text-2xl font-bold text-gray-900 dark:text-white mb-6">Component Details</h2>
+
+		<!-- Collections -->
+		<div
+			class="rounded-lg border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-800"
+		>
+			<h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
+				<span
+					class="rounded bg-blue-100 px-2 py-1 text-sm font-medium text-blue-800 dark:bg-blue-900 dark:text-blue-300"
+					>Collections</span
+				>
+			</h3>
+			<p class="text-gray-700 dark:text-gray-300 mb-4">
+				Organize collections of documents of interest. You can add as many files as you want, up to
+				1GB per file. Most common content types are supported including Office documents (Word,
+				Excel, PowerPoint), HTML, XML, and raw text files.
+			</p>
+			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
+				<h4 class="font-semibold text-gray-900 dark:text-white mb-2">Key Features:</h4>
+				<ul class="list-inside list-disc space-y-1 text-sm text-gray-600 dark:text-gray-400">
+					<li>Create and manage document collections</li>
+					<li>Upload files via web interface or S3 integration</li>
+					<li>Support for multiple document formats</li>
+					<li>Individual file size limit: 1GB</li>
+					<li>Organize related documents together for processing</li>
+				</ul>
+			</div>
+		</div>
+
+		<!-- Datasets -->
+		<div
+			class="rounded-lg border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-800"
+		>
+			<h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
+				<span
+					class="rounded bg-green-100 px-2 py-1 text-sm font-medium text-green-800 dark:bg-green-900 dark:text-green-300"
+					>Datasets</span
+				>
+			</h3>
+			<p class="text-gray-700 dark:text-gray-300 mb-4">
+				Contains processed texts as JSON with name and chunks, to be used for embedding transforms.
+				Datasets can be generated from collections using transforms, or exported to the dataset
+				endpoints directly via API.
+			</p>
+			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
+				<h4 class="font-semibold text-gray-900 dark:text-white mb-2">Key Features:</h4>
+				<ul class="list-inside list-disc space-y-1 text-sm text-gray-600 dark:text-gray-400">
+					<li>View processed text chunks with metadata</li>
+					<li>JSON format with structured data</li>
+					<li>Generated from collection transforms or API imports</li>
+					<li>Can be embedded using multiple embedders for comparison</li>
+					<li>Browse and search dataset items</li>
+				</ul>
+			</div>
+		</div>
+
+		<!-- Embedders -->
+		<div
+			class="rounded-lg border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-800"
+		>
+			<h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
+				<span
+					class="rounded bg-purple-100 px-2 py-1 text-sm font-medium text-purple-800 dark:bg-purple-900 dark:text-purple-300"
+					>Embedders</span
+				>
+			</h3>
+			<p class="text-gray-700 dark:text-gray-300 mb-4">
+				Provides embedding provider instances that are user-managed. Define OpenAI or Cohere
+				compatible embedders that can be used on dataset transforms to produce vector embeddings for
+				semantic search.
+			</p>
+			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
+				<h4 class="font-semibold text-gray-900 dark:text-white mb-2">Key Features:</h4>
+				<ul class="list-inside list-disc space-y-1 text-sm text-gray-600 dark:text-gray-400">
+					<li>Configure OpenAI-compatible embedding APIs</li>
+					<li>Configure Cohere embedding APIs</li>
+					<li>Test connection and validate credentials</li>
+					<li>Store API keys securely</li>
+					<li>Reuse embedder configurations across multiple datasets</li>
+				</ul>
+			</div>
+		</div>
+
+		<!-- Transforms -->
+		<div
+			class="rounded-lg border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-800"
+		>
+			<h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
+				<span
+					class="rounded bg-orange-100 px-2 py-1 text-sm font-medium text-orange-800 dark:bg-orange-900 dark:text-orange-300"
+					>Transforms</span
+				>
+			</h3>
+			<p class="text-gray-700 dark:text-gray-300 mb-4">
+				Provides configurable pipelines to accomplish various operations. Collection transforms
+				extract text from documents and generate chunks to populate a dataset. Dataset transforms
+				populate embedded datasets—one dataset can have multiple embedders configured to populate
+				multiple vector stores for comparison purposes.
+			</p>
+			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
+				<h4 class="font-semibold text-gray-900 dark:text-white mb-2">Transform Types:</h4>
+				<div class="space-y-3 text-sm">
+					<div>
+						<div class="font-semibold text-gray-900 dark:text-white">Collection Transforms</div>
+						<p class="text-gray-600 dark:text-gray-400">
+							Extract text from documents and generate chunks to create datasets
+						</p>
+					</div>
+					<div>
+						<div class="font-semibold text-gray-900 dark:text-white">Dataset Transforms</div>
+						<p class="text-gray-600 dark:text-gray-400">
+							Generate embeddings for dataset chunks using configured embedders
+						</p>
+					</div>
+				</div>
+				<h4 class="font-semibold text-gray-900 dark:text-white mt-4 mb-2">Key Features:</h4>
+				<ul class="list-inside list-disc space-y-1 text-sm text-gray-600 dark:text-gray-400">
+					<li>Monitor transform job status and progress</li>
+					<li>View processing history and statistics</li>
+					<li>Trigger transforms manually or via API</li>
+					<li>Configure chunking strategies and parameters</li>
+					<li>Support for multiple embedders per dataset</li>
+				</ul>
+			</div>
+		</div>
+
+		<!-- Search -->
+		<div
+			class="rounded-lg border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-800"
+		>
+			<h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
+				<span
+					class="rounded bg-red-100 px-2 py-1 text-sm font-medium text-red-800 dark:bg-red-900 dark:text-red-300"
+					>Search</span
+				>
+			</h3>
+			<p class="text-gray-700 dark:text-gray-300 mb-4">
+				Provides the ability to execute semantic searches against multiple embedded datasets for
+				comparison purposes. Test and evaluate different embedding models side-by-side to determine
+				which performs best for your use case.
+			</p>
+			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
+				<h4 class="font-semibold text-gray-900 dark:text-white mb-2">Key Features:</h4>
+				<ul class="list-inside list-disc space-y-1 text-sm text-gray-600 dark:text-gray-400">
+					<li>Search across multiple embedded datasets simultaneously</li>
+					<li>Compare results from different embedding models</li>
+					<li>Configure search parameters (top K, filters)</li>
+					<li>Apply metadata filters to refine results</li>
+					<li>View similarity scores and ranking differences</li>
+				</ul>
+			</div>
+		</div>
+
+		<!-- Visualizations (Coming Soon) -->
+		<div
+			class="rounded-lg border border-gray-200 bg-white p-6 opacity-60 dark:border-gray-700 dark:bg-gray-800"
+		>
+			<h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
+				<span
+					class="rounded bg-indigo-100 px-2 py-1 text-sm font-medium text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300"
+					>Visualizations</span
+				>
+				<span
+					class="rounded bg-yellow-100 px-2 py-1 text-xs font-medium text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300"
+					>Coming Soon</span
+				>
+			</h3>
+			<p class="text-gray-700 dark:text-gray-300">
+				Advanced visualization capabilities for embedding spaces, search results, and quality
+				metrics are currently under development.
+			</p>
+		</div>
+	</section>
+
+	<!-- Tips Section -->
+	<section class="mt-12 rounded-lg border-l-4 border-blue-500 bg-blue-50 p-6 dark:bg-gray-800">
+		<h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-3">Tips for Best Results</h3>
+		<ul class="space-y-2 text-sm text-gray-700 dark:text-gray-300">
+			<li class="flex items-start gap-2">
+				<ArrowRightOutline class="w-4 h-4 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
+				<span>Start with a small collection to test your pipeline before scaling up</span>
+			</li>
+			<li class="flex items-start gap-2">
+				<ArrowRightOutline class="w-4 h-4 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
+				<span>Configure multiple embedders to compare performance across different models</span>
+			</li>
+			<li class="flex items-start gap-2">
+				<ArrowRightOutline class="w-4 h-4 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
+				<span
+					>Use meaningful names for collections, datasets, and embedders to track experiments</span
+				>
+			</li>
+			<li class="flex items-start gap-2">
+				<ArrowRightOutline class="w-4 h-4 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
+				<span>Monitor transform job status to track processing progress</span>
+			</li>
+			<li class="flex items-start gap-2">
+				<ArrowRightOutline class="w-4 h-4 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
+				<span>Experiment with different chunking strategies to optimize search quality</span>
+			</li>
+		</ul>
+	</section>
+</div>

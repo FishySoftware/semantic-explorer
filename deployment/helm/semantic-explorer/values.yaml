@@ -1,0 +1,855 @@
+# Default values for semantic-explorer
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# Global configuration for all components
+global:
+  imageRegistry: "docker.io"
+  imagePullSecrets: []
+  storageClass: ""
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    fsGroupChangePolicy: "OnRootMismatch"
+    seccompProfile:
+      type: RuntimeDefault
+  podSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+  environment: production
+  networkPolicy:
+    enabled: true
+  serviceMesh:
+    enabled: false
+    istio:
+      enabled: false
+
+networkPolicy:
+  enabled: true
+  ingress:
+    # Allow ingress from ingress controller
+    fromIngress: true
+    # Allow ingress from specific namespaces
+    fromNamespaces: []
+    #  - name: ingress-nginx
+    # Allow ingress from specific pods
+    fromPods: []
+  egress:
+    # Allow egress to DNS
+    toDns: true
+    # Allow egress to internet
+    toInternet: true
+    # Allow egress to specific namespaces
+    toNamespaces: []
+    # Allow egress to specific CIDR blocks
+    toCidr: []
+    #  - 10.0.0.0/8
+commonLabels: {}
+commonAnnotations: {}
+
+
+# API Service Configuration
+api:
+  enabled: true
+  replicaCount: 3
+  image:
+    repository: jofish89/semantic-explorer
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  statefulset:
+    podManagementPolicy: Parallel
+    updateStrategy:
+      type: RollingUpdate
+      rollingUpdate:
+        partition: 0
+  service:
+    type: ClusterIP
+    port: 8080
+    targetPort: 8080
+    annotations: {}
+  ingress:
+    enabled: false
+    className: "nginx"
+    annotations: {}
+    hosts:
+      - host: api.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+    #  - secretName: api-tls
+    #    hosts:
+    #      - api.example.com
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 1Gi
+    limits:
+      cpu: 4000m
+      memory: 8Gi
+  autoscaling:
+    enabled: false
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8080
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8080
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+    successThreshold: 1
+  startupProbe:
+    httpGet:
+      path: /health
+      port: 8080
+    initialDelaySeconds: 0
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 30
+    successThreshold: 1
+  env:
+    RUST_LOG: "warn,actix_web_prom=error,semantic_explorer=info"
+    HOSTNAME: "0.0.0.0"
+  envFrom: []
+  nodeSelector: {}
+  tolerations: []
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values:
+                    - api
+            topologyKey: kubernetes.io/hostname
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  priorityClassName: ""
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: "sa-semantic-explorer-api"
+  podAnnotations: {}
+  podLabels: {}
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 15s
+      scrapeTimeout: 5s
+
+# Worker Collections Configuration
+workerCollections:
+  enabled: true
+  replicaCount: 3
+  image:
+    repository: jofish89/worker-collections
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  statefulset:
+    podManagementPolicy: Parallel
+    updateStrategy:
+      type: RollingUpdate
+      rollingUpdate:
+        partition: 0
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 1Gi
+    limits:
+      cpu: 4000m
+      memory: 2Gi
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  livenessProbe: {}
+  readinessProbe: {}
+  env:
+    RUST_LOG: "warn,actix_web_prom=error,worker_collections=info"
+  envFrom: []
+  nodeSelector: {}
+  tolerations: []
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values:
+                    - worker-collections
+            topologyKey: kubernetes.io/hostname
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  priorityClassName: ""
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: "sa-semantic-explorer-worker-collections"
+  podAnnotations: {}
+  podLabels: {}
+  metrics:
+    enabled: false
+
+# Worker Datasets Configuration
+workerDatasets:
+  enabled: true
+  replicaCount: 3
+  image:
+    repository: jofish89/worker-datasets
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  statefulset:
+    podManagementPolicy: Parallel
+    updateStrategy:
+      type: RollingUpdate
+      rollingUpdate:
+        partition: 0
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 2Gi
+    limits:
+      cpu: 4000m
+      memory: 8Gi
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  livenessProbe: {}
+  readinessProbe: {}
+  env:
+    RUST_LOG: "warn,actix_web_prom=error,worker_datasets=info"
+  envFrom: []
+  nodeSelector: {}
+  tolerations: []
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values:
+                    - worker-datasets
+            topologyKey: kubernetes.io/hostname
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  priorityClassName: ""
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: "sa-semantic-explorer-worker-datasets"
+  podAnnotations: {}
+  podLabels: {}
+  metrics:
+    enabled: false
+
+# PostgreSQL Configuration (Optional Infrastructure)
+# Disabled by default - configure external.* for production use
+# When enabled: true, deploys PostgreSQL subchart (CloudNativePG)
+postgresql:
+  enabled: false
+  # Use external PostgreSQL instance
+  external:
+    enabled: false
+    host: ""
+    port: 5432
+    database: explorer
+    username: user
+    password: ""
+    existingSecret: ""
+    passwordKey: "password"
+    # SSL mode: disable, require, verify-ca, verify-full
+    sslMode: require
+  # Internal PostgreSQL deployment
+  image:
+    registry: ""  # Defaults to global.imageRegistry
+    repository: postgres
+    tag: "16.3-alpine"
+    pullPolicy: IfNotPresent
+  # Internal PostgreSQL configuration
+  auth:
+    database: explorer
+    username: user
+    password: ""  # Generate random if empty
+    existingSecret: ""
+    secretKeys:
+      userPasswordKey: "password"
+  primary:
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+      limits:
+        cpu: 2000m
+        memory: 2Gi
+    persistence:
+      enabled: true
+      storageClass: ""  # Defaults to global.storageClass
+      accessMode: ReadWriteOnce
+      size: 20Gi
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 999
+      fsGroup: 999
+      fsGroupChangePolicy: "OnRootMismatch"
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      readOnlyRootFilesystem: false  # PostgreSQL needs writable filesystem
+  backup:
+    enabled: false
+    schedule: "0 2 * * *"
+    retention: 7
+    storageClass: ""  # Defaults to global.storageClass
+  metrics:
+    enabled: false
+    image:
+      registry: ""  # Defaults to global.imageRegistry
+      repository: prometheuscommunity/postgres-exporter
+      tag: latest
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+
+# NATS Configuration (Optional Infrastructure)
+# Disabled by default - configure external.* for production use
+# When enabled: true, deploys NATS subchart
+nats:
+  enabled: false
+  # Use external NATS instance
+  external:
+    enabled: false
+    url: ""  # e.g., "nats://nats.example.com:4222"
+    credentials:
+      existingSecret: ""
+      userKey: "username"
+      passwordKey: "password"
+  # Internal NATS deployment
+  image:
+    registry: ""  # Defaults to global.imageRegistry
+    repository: nats
+    tag: "2.10-alpine"
+    pullPolicy: IfNotPresent
+  # Internal NATS configuration
+  config:
+    jetstream:
+      enabled: true
+      fileStore:
+        maxSize: 10Gi
+    cluster:
+      enabled: true
+      replicas: 3
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 512Mi
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+  persistence:
+    enabled: true
+    storageClass: ""  # Defaults to global.storageClass
+    accessMode: ReadWriteOnce
+    size: 10Gi
+  service:
+    type: ClusterIP
+    client:
+      port: 4222
+    monitoring:
+      port: 8222
+    cluster:
+      port: 6222
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+    fsGroupChangePolicy: "OnRootMismatch"
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: false  # NATS needs writable filesystem for JetStream
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+
+# Qdrant Configuration (Optional Infrastructure)
+# Disabled by default - configure external.* for production use
+# When enabled: true, deploys Qdrant subchart
+qdrant:
+  enabled: false
+  # Use external Qdrant instance
+  external:
+    enabled: false
+    url: ""  # e.g., "http://qdrant.example.com:6334"
+    apiKey: ""
+    existingSecret: ""
+    apiKeyKey: "api-key"
+  # Internal Qdrant deployment
+  image:
+    registry: ""  # Defaults to global.imageRegistry
+    repository: qdrant/qdrant
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  replicaCount: 3
+  cluster:
+    enabled: true
+  # GPU support
+  gpu:
+    enabled: false
+    nvidia:
+      enabled: false
+      count: 1
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 2Gi
+    limits:
+      cpu: 4000m
+      memory: 8Gi
+  persistence:
+    enabled: true
+    storageClass: ""  # Defaults to global.storageClass
+    accessMode: ReadWriteOnce
+    size: 50Gi
+  service:
+    type: ClusterIP
+    http:
+      port: 6333
+    grpc:
+      port: 6334
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+    fsGroupChangePolicy: "OnRootMismatch"
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: false  # Qdrant needs writable filesystem
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+  nodeSelector: {}
+  tolerations: []
+
+# Dex (OIDC Provider) Configuration (Optional Infrastructure)
+dex:
+  enabled: true
+  # Use external OIDC provider
+  external:
+    enabled: false
+    issuerUrl: ""  # e.g., "https://accounts.google.com"
+    clientId: ""
+    clientSecret: ""
+    existingSecret: ""
+    clientIdKey: "client-id"
+    clientSecretKey: "client-secret"
+  # Internal Dex deployment
+  image:
+    registry: ""  # Defaults to global.imageRegistry
+    repository: dexidp/dex
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  config:
+    issuer: ""  # e.g., "https://dex.example.com"
+    storage:
+      type: kubernetes
+      config:
+        inCluster: true
+    web:
+      http: 0.0.0.0:5556
+    oauth2:
+      skipApprovalScreen: true
+    staticClients:
+      - id: semantic-explorer
+        redirectURIs:
+          - "http://localhost:8080/auth/callback"
+        name: "Semantic Explorer"
+        secret: ""  # Generate random if empty
+    connectors: []
+    # Example GitHub connector
+    #  - type: github
+    #    id: github
+    #    name: GitHub
+    #    config:
+    #      clientID: $GITHUB_CLIENT_ID
+    #      clientSecret: $GITHUB_CLIENT_SECRET
+    #      redirectURI: https://dex.example.com/callback
+  resources:
+    requests:
+      cpu: 500m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 512Mi
+  service:
+    type: ClusterIP
+    port: 5556
+  ingress:
+    enabled: false
+    className: "nginx"
+    annotations: {}
+    hosts:
+      - host: dex.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1001
+    fsGroup: 1001
+    fsGroupChangePolicy: "OnRootMismatch"
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+
+# MinIO (S3-compatible storage) Configuration (Optional Infrastructure)
+# Disabled by default - use S3-compatible storage or enable for development
+# When enabled: true, deploys MinIO subchart
+minio:
+  enabled: false
+  # Use external S3-compatible storage
+  external:
+    enabled: false
+    endpoint: ""  # e.g., "https://s3.amazonaws.com" or "http://minio.example.com:9000"
+    region: "us-east-1"
+    bucket: ""  # Default bucket name
+    accessKeyId: ""
+    secretAccessKey: ""
+    existingSecret: ""
+    accessKeyIdKey: "access-key-id"
+    secretAccessKeyKey: "secret-access-key"
+  # MinIO deployment
+  image:
+    registry: ""  # Defaults to global.imageRegistry
+    repository: minio/minio
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  # MinIO mode: standalone or distributed
+  mode: distributed
+  replicas: 4
+  rootUser: admin
+  rootPassword: ""  # Generate random if empty
+  existingSecret: ""
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 4Gi
+    limits:
+      cpu: 8000m
+      memory: 8Gi
+  persistence:
+    enabled: true
+    storageClass: ""  # Defaults to global.storageClass
+    accessMode: ReadWriteOnce
+    size: 100Gi
+  service:
+    type: ClusterIP
+    port: 9000
+    consolePort: 9001
+  ingress:
+    enabled: false
+    className: "nginx"
+    annotations: {}
+    hosts:
+      - host: minio.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+    fsGroupChangePolicy: "OnRootMismatch"
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: false
+
+# Storage Configuration (S3-compatible)
+# Configure external S3-compatible storage or use MinIO
+storage:
+  s3:
+    # Use external S3 or S3-compatible storage (RustFS, MinIO, AWS S3, etc.)
+    endpoint: ""  # e.g., "http://rustfs:9000", "https://s3.amazonaws.com"
+    region: "us-east-1"
+    accessKeyId: ""
+    secretAccessKey: ""
+    existingSecret: ""
+    accessKeyIdKey: "aws-access-key-id"
+    secretAccessKeyKey: "aws-secret-access-key"
+
+# Observability Configuration (Optional Infrastructure)
+observability:
+  # OpenTelemetry Collector
+  otelCollector:
+    enabled: true
+    image:
+      registry: ""  # Defaults to global.imageRegistry
+      repository: otel/opentelemetry-collector-contrib
+      tag: "latest"
+      pullPolicy: IfNotPresent
+    resources:
+      requests:
+        cpu: 200m
+        memory: 256Mi
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+    config:
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:4317
+            http:
+              endpoint: 0.0.0.0:4318
+      processors:
+        batch:
+          timeout: 10s
+          send_batch_size: 1024
+      exporters:
+        prometheus:
+          endpoint: "0.0.0.0:8889"
+        logging:
+          loglevel: info
+        # Quickwit exporter for traces and logs (when enabled)
+        otlp/quickwit:
+          endpoint: "{{ include \"semantic-explorer.quickwit.url\" . }}:7281"
+          tls:
+            insecure: true
+      service:
+        pipelines:
+          traces:
+            receivers: [otlp]
+            processors: [batch]
+            exporters: [logging, otlp/quickwit]
+          metrics:
+            receivers: [otlp]
+            processors: [batch]
+            exporters: [prometheus, logging]
+          logs:
+            receivers: [otlp]
+            processors: [batch]
+            exporters: [logging, otlp/quickwit]
+    service:
+      type: ClusterIP
+      ports:
+        otlpGrpc: 4317
+        otlpHttp: 4318
+        metrics: 8889
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 10001
+      fsGroup: 10001
+      fsGroupChangePolicy: "OnRootMismatch"
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      readOnlyRootFilesystem: true
+  
+  # Prometheus
+  prometheus:
+    enabled: false  # Use Prometheus Operator instead
+    # Use existing Prometheus instance
+    external:
+      enabled: false
+      url: ""  # e.g., "http://prometheus.monitoring:9090"
+  
+  # Grafana
+  grafana:
+    enabled: true  # Deploy Grafana for metrics visualization
+    # Use existing Grafana instance
+    external:
+      enabled: false
+      url: ""  # e.g., "http://grafana.monitoring:3000"
+    image:
+      registry: ""  # Defaults to global.imageRegistry
+      repository: grafana/grafana
+      tag: "latest"
+      pullPolicy: IfNotPresent
+    admin:
+      existingSecret: ""
+      userKey: "admin-user"
+      passwordKey: "admin-password"
+      user: "admin"
+      password: ""  # Generate random if empty
+    config:
+      securityAdminUser: "admin"
+      securityAdminPassword: ""  # Use admin.password if empty
+      usersAllowSignUp: false
+      installPlugins: "grafana-clock-panel"
+    datasources:
+      prometheus:
+        enabled: true
+        url: "http://prometheus:9090"
+        isDefault: true
+      quickwitTraces:
+        enabled: true
+      quickwitLogs:
+        enabled: true
+    dashboards:
+      enabled: true
+      # Dashboard files will be mounted from configmaps
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+    persistence:
+      enabled: true
+      storageClass: ""  # Defaults to global.storageClass
+      accessMode: ReadWriteOnce
+      size: 5Gi
+    service:
+      type: ClusterIP
+      port: 3000
+    ingress:
+      enabled: false
+      className: "nginx"
+      annotations: {}
+      hosts:
+        - host: grafana.example.com
+          paths:
+            - path: /
+              pathType: Prefix
+      tls: []
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 472
+      fsGroup: 472
+      fsGroupChangePolicy: "OnRootMismatch"
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      readOnlyRootFilesystem: false
+  
+  # Quickwit (Log aggregation and tracing)
+  quickwit:
+    enabled: true  # Enable Quickwit for logs and traces
+    # Use external Quickwit instance
+    external:
+      enabled: false
+      url: ""  # e.g., "http://quickwit.example.com:7280"
+    # Internal Quickwit deployment
+    image:
+      registry: ""  # Defaults to global.imageRegistry
+      repository: quickwit/quickwit
+      tag: "latest"
+      pullPolicy: IfNotPresent
+    replicaCount: 1
+    config:
+      enableOtlpEndpoint: true
+      enableJaegerEndpoint: true
+      logLevel: "info"
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 2000m
+        memory: 4Gi
+    persistence:
+      enabled: true
+      storageClass: ""  # Defaults to global.storageClass
+      accessMode: ReadWriteOnce
+      size: 50Gi
+    service:
+      type: ClusterIP
+      rest:
+        port: 7280
+      grpc:
+        port: 7281
+    ingress:
+      enabled: false
+      className: "nginx"
+      annotations: {}
+      hosts:
+        - host: quickwit.example.com
+          paths:
+            - path: /
+              pathType: Prefix
+      tls: []
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      fsGroup: 1000
+      fsGroupChangePolicy: "OnRootMismatch"
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      readOnlyRootFilesystem: false
+    metrics:
+      enabled: true
+      serviceMonitor:
+        enabled: true
+        interval: 30s
+    nodeSelector: {}
+    tolerations: []

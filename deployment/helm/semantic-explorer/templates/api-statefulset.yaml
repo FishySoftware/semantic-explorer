@@ -1,0 +1,134 @@
+{{- if .Values.api.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.api.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  serviceName: {{ include "semantic-explorer.fullname" . }}-api
+  {{- if not .Values.api.autoscaling.enabled }}
+  replicas: {{ .Values.api.replicaCount }}
+  {{- end }}
+  podManagementPolicy: {{ .Values.api.statefulset.podManagementPolicy }}
+  updateStrategy:
+    {{- toYaml .Values.api.statefulset.updateStrategy | nindent 4 }}
+  selector:
+    matchLabels:
+      {{- include "semantic-explorer.api.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- with .Values.api.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "semantic-explorer.api.selectorLabels" . | nindent 8 }}
+        {{- with .Values.api.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "semantic-explorer.api.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.global.securityContext | nindent 8 }}
+      {{- with .Values.api.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      containers:
+      - name: api
+        image: {{ include "semantic-explorer.api.image" . }}
+        imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+        securityContext:
+          {{- toYaml .Values.global.podSecurityContext | nindent 10 }}
+        ports:
+        - name: http
+          containerPort: {{ .Values.api.service.targetPort }}
+          protocol: TCP
+        env:
+        {{- range $key, $value := .Values.api.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "semantic-explorer.fullname" . }}-secrets
+              key: database-url
+        - name: NATS_URL
+          value: {{ include "semantic-explorer.nats.url" . }}
+        - name: QDRANT_URL
+          value: {{ include "semantic-explorer.qdrant.url" . }}
+        - name: OIDC_ISSUER_URL
+          value: {{ include "semantic-explorer.oidc.issuerUrl" . }}
+        - name: OIDC_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "semantic-explorer.fullname" . }}-secrets
+              key: oidc-client-id
+        - name: OIDC_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "semantic-explorer.fullname" . }}-secrets
+              key: oidc-client-secret
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "semantic-explorer.fullname" . }}-secrets
+              key: aws-access-key-id
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "semantic-explorer.fullname" . }}-secrets
+              key: aws-secret-access-key
+        - name: AWS_REGION
+          value: {{ include "semantic-explorer.storage.s3.region" . }}
+        - name: AWS_ENDPOINT_URL
+          value: {{ include "semantic-explorer.storage.s3.endpoint" . }}
+        {{- if .Values.observability.otelCollector.enabled }}
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: {{ include "semantic-explorer.otel.endpoint" . }}
+        - name: SERVICE_NAME
+          value: "api"
+        {{- end }}
+        {{- with .Values.api.envFrom }}
+        envFrom:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with .Values.api.livenessProbe }}
+        livenessProbe:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with .Values.api.readinessProbe }}
+        readinessProbe:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with .Values.api.startupProbe }}
+        startupProbe:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.api.resources | nindent 10 }}
+        volumeMounts: {}
+      {{- with .Values.api.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes: {}
+{{- end }}

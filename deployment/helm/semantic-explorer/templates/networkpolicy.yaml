@@ -1,0 +1,210 @@
+{{- if .Values.networkPolicy.enabled }}
+# API Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.api.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "semantic-explorer.api.selectorLabels" . | nindent 6 }}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow ingress from ingress controller
+  {{- if .Values.networkPolicy.ingress.fromIngress }}
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: {{ .Values.api.service.targetPort }}
+  {{- end }}
+  # Allow ingress from same namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ .Release.Namespace }}
+    ports:
+    - protocol: TCP
+      port: {{ .Values.api.service.targetPort }}
+  egress:
+  # Allow DNS
+  {{- if .Values.networkPolicy.egress.toDns }}
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+  {{- end }}
+  # Allow PostgreSQL
+  - to:
+    - podSelector:
+        matchLabels:
+          {{- include "semantic-explorer.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: postgresql
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow NATS
+  - to:
+    - podSelector:
+        matchLabels:
+          {{- include "semantic-explorer.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: nats
+    ports:
+    - protocol: TCP
+      port: 4222
+  # Allow Qdrant
+  - to:
+    - podSelector:
+        matchLabels:
+          {{- include "semantic-explorer.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: qdrant
+    ports:
+    - protocol: TCP
+      port: 6334
+  # Allow OpenTelemetry Collector
+  {{- if .Values.observability.otelCollector.enabled }}
+  - to:
+    - podSelector:
+        matchLabels:
+          {{- include "semantic-explorer.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: otel-collector
+    ports:
+    - protocol: TCP
+      port: 4317
+  {{- end }}
+  {{- if .Values.networkPolicy.egress.toInternet }}
+  # Allow internet access
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 169.254.169.254/32  # Block metadata service
+  {{- end }}
+---
+# Worker Collections Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-worker-collections
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.workerCollections.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "semantic-explorer.workerCollections.selectorLabels" . | nindent 6 }}
+  policyTypes:
+  - Egress
+  egress:
+  # Allow DNS
+  {{- if .Values.networkPolicy.egress.toDns }}
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+  {{- end }}
+  # Allow NATS
+  - to:
+    - podSelector:
+        matchLabels:
+          {{- include "semantic-explorer.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: nats
+    ports:
+    - protocol: TCP
+      port: 4222
+  # Allow OpenTelemetry Collector
+  {{- if .Values.observability.otelCollector.enabled }}
+  - to:
+    - podSelector:
+        matchLabels:
+          {{- include "semantic-explorer.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: otel-collector
+    ports:
+    - protocol: TCP
+      port: 4317
+  {{- end }}
+  {{- if .Values.networkPolicy.egress.toInternet }}
+  # Allow internet access
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 169.254.169.254/32
+  {{- end }}
+---
+# Worker Datasets Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-worker-datasets
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.workerDatasets.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "semantic-explorer.workerDatasets.selectorLabels" . | nindent 6 }}
+  policyTypes:
+  - Egress
+  egress:
+  # Allow DNS
+  {{- if .Values.networkPolicy.egress.toDns }}
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+  {{- end }}
+  # Allow NATS
+  - to:
+    - podSelector:
+        matchLabels:
+          {{- include "semantic-explorer.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: nats
+    ports:
+    - protocol: TCP
+      port: 4222
+  # Allow Qdrant
+  - to:
+    - podSelector:
+        matchLabels:
+          {{- include "semantic-explorer.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: qdrant
+    ports:
+    - protocol: TCP
+      port: 6334
+  # Allow OpenTelemetry Collector
+  {{- if .Values.observability.otelCollector.enabled }}
+  - to:
+    - podSelector:
+        matchLabels:
+          {{- include "semantic-explorer.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: otel-collector
+    ports:
+    - protocol: TCP
+      port: 4317
+  {{- end }}
+  {{- if .Values.networkPolicy.egress.toInternet }}
+  # Allow internet access
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 169.254.169.254/32
+  {{- end }}
+{{- end }}

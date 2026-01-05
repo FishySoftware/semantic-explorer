@@ -1,0 +1,65 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Run API",
+            "type": "shell",
+            "command": "set -a && source .env && set +a && cargo run",
+            "options": {
+                "cwd": "${workspaceFolder}/crates/api"
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "echo": true,
+                "focus": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Run Worker Collections",
+            "type": "shell",
+            "command": "set -a && source .env && set +a && cargo run",
+            "options": {
+                "cwd": "${workspaceFolder}/crates/worker-collections"
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "echo": true,
+                "focus": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Run Worker Datasets",
+            "type": "shell",
+            "command": "set -a && source .env && set +a && cargo run",
+            "options": {
+                "cwd": "${workspaceFolder}/crates/worker-datasets"
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "echo": true,
+                "focus": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Run UI Watch",
+            "type": "shell",
+            "command": "npm run build-watch",
+            "options": {
+                "cwd": "${workspaceFolder}/semantic-explorer-ui"
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "echo": true,
+                "focus": false
+            },
+            "problemMatcher": []
+        }
+    ]
+}

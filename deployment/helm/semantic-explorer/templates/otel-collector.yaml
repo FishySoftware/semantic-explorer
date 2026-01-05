@@ -1,0 +1,115 @@
+{{- if .Values.observability.otelCollector.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-otel-collector-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+data:
+  otel-collector-config.yaml: |
+    {{- toYaml .Values.observability.otelCollector.config | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-otel-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "semantic-explorer.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: otel-collector
+  template:
+    metadata:
+      labels:
+        {{- include "semantic-explorer.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: otel-collector
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.observability.otelCollector.podSecurityContext | nindent 8 }}
+      containers:
+      - name: otel-collector
+        image: {{ include "semantic-explorer.imageRegistry" (dict "registry" .Values.observability.otelCollector.image.registry "global" .Values.global) }}{{ if include "semantic-explorer.imageRegistry" (dict "registry" .Values.observability.otelCollector.image.registry "global" .Values.global) }}/{{ end }}{{ .Values.observability.otelCollector.image.repository }}:{{ .Values.observability.otelCollector.image.tag }}
+        imagePullPolicy: {{ .Values.observability.otelCollector.image.pullPolicy }}
+        securityContext:
+          {{- toYaml .Values.observability.otelCollector.containerSecurityContext | nindent 10 }}
+        args:
+        - "--config=/etc/otel-collector-config.yaml"
+        ports:
+        - name: otlp-grpc
+          containerPort: 4317
+          protocol: TCP
+        - name: otlp-http
+          containerPort: 4318
+          protocol: TCP
+        - name: metrics
+          containerPort: 8889
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 13133
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 13133
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        resources:
+          {{- toYaml .Values.observability.otelCollector.resources | nindent 10 }}
+        volumeMounts:
+        - name: config
+          mountPath: /etc/otel-collector-config.yaml
+          subPath: otel-collector-config.yaml
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: config
+        configMap:
+          name: {{ include "semantic-explorer.fullname" . }}-otel-collector-config
+      - name: tmp
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-otel-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+spec:
+  type: {{ .Values.observability.otelCollector.service.type }}
+  ports:
+  - name: otlp-grpc
+    port: {{ .Values.observability.otelCollector.service.ports.otlpGrpc }}
+    targetPort: otlp-grpc
+    protocol: TCP
+  - name: otlp-http
+    port: {{ .Values.observability.otelCollector.service.ports.otlpHttp }}
+    targetPort: otlp-http
+    protocol: TCP
+  - name: metrics
+    port: {{ .Values.observability.otelCollector.service.ports.metrics }}
+    targetPort: metrics
+    protocol: TCP
+  selector:
+    {{- include "semantic-explorer.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+{{- end }}

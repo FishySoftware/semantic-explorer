@@ -1,0 +1,100 @@
+{{- if .Values.observability.quickwit.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-quickwit
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.quickwit.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.observability.quickwit.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "semantic-explorer.quickwit.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/quickwit-configmap.yaml") . | sha256sum }}
+        {{- with .Values.commonAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "semantic-explorer.quickwit.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.observability.quickwit.podSecurityContext | nindent 8 }}
+      containers:
+      - name: quickwit
+        image: {{ include "semantic-explorer.quickwit.image" . }}
+        imagePullPolicy: {{ .Values.observability.quickwit.image.pullPolicy }}
+        securityContext:
+          {{- toYaml .Values.observability.quickwit.containerSecurityContext | nindent 10 }}
+        command: ["run"]
+        ports:
+        - name: rest
+          containerPort: {{ .Values.observability.quickwit.service.rest.port }}
+          protocol: TCP
+        - name: grpc
+          containerPort: {{ .Values.observability.quickwit.service.grpc.port }}
+          protocol: TCP
+        env:
+        - name: QW_ENABLE_OTLP_ENDPOINT
+          value: {{ .Values.observability.quickwit.config.enableOtlpEndpoint | quote }}
+        - name: QW_ENABLE_JAEGER_ENDPOINT
+          value: {{ .Values.observability.quickwit.config.enableJaegerEndpoint | quote }}
+        - name: RUST_LOG
+          value: {{ .Values.observability.quickwit.config.logLevel }}
+        - name: QW_DATA_DIR
+          value: /quickwit/qwdata
+        livenessProbe:
+          httpGet:
+            path: /health/livez
+            port: rest
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health/readyz
+            port: rest
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        resources:
+          {{- toYaml .Values.observability.quickwit.resources | nindent 10 }}
+        volumeMounts:
+        - name: data
+          mountPath: /quickwit/qwdata
+        - name: config
+          mountPath: /quickwit/node.yaml
+          subPath: node.yaml
+      {{- with .Values.observability.quickwit.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.observability.quickwit.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+      - name: data
+        {{- if .Values.observability.quickwit.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: {{ include "semantic-explorer.fullname" . }}-quickwit
+        {{- else }}
+        emptyDir: {}
+        {{- end }}
+      - name: config
+        configMap:
+          name: {{ include "semantic-explorer.fullname" . }}-quickwit-config
+{{- end }}

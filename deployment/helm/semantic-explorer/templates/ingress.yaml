@@ -1,0 +1,49 @@
+{{- if .Values.api.ingress.enabled }}
+apiVersion: {{ include "semantic-explorer.ingress.apiVersion" . }}
+kind: Ingress
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.api.labels" . | nindent 4 }}
+  {{- with .Values.api.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.api.ingress.className }}
+  ingressClassName: {{ .Values.api.ingress.className }}
+  {{- end }}
+  {{- if .Values.api.ingress.tls }}
+  tls:
+    {{- range .Values.api.ingress.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range .Values.api.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            {{- if semverCompare ">=1.19-0" $.Capabilities.KubeVersion.GitVersion }}
+            pathType: {{ .pathType }}
+            {{- end }}
+            backend:
+              {{- if semverCompare ">=1.19-0" $.Capabilities.KubeVersion.GitVersion }}
+              service:
+                name: {{ include "semantic-explorer.fullname" $ }}-api
+                port:
+                  number: {{ $.Values.api.service.port }}
+              {{- else }}
+              serviceName: {{ include "semantic-explorer.fullname" $ }}-api
+              servicePort: {{ $.Values.api.service.port }}
+              {{- end }}
+          {{- end }}
+    {{- end }}
+{{- end }}

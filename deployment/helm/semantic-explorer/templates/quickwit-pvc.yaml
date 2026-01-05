@@ -1,0 +1,28 @@
+{{- if and .Values.observability.quickwit.enabled .Values.observability.quickwit.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-quickwit
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.quickwit.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    - {{ .Values.observability.quickwit.persistence.accessMode }}
+  {{- if .Values.observability.quickwit.persistence.storageClass }}
+  {{- if (eq "-" .Values.observability.quickwit.persistence.storageClass) }}
+  storageClassName: ""
+  {{- else }}
+  storageClassName: {{ .Values.observability.quickwit.persistence.storageClass }}
+  {{- end }}
+  {{- else if .Values.global.storageClass }}
+  storageClassName: {{ .Values.global.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.observability.quickwit.persistence.size }}
+{{- end }}

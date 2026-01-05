@@ -1,0 +1,107 @@
+{{- if .Values.workerCollections.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-worker-collections
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.workerCollections.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  serviceName: {{ include "semantic-explorer.fullname" . }}-worker-collections
+  {{- if not .Values.workerCollections.autoscaling.enabled }}
+  replicas: {{ .Values.workerCollections.replicaCount }}
+  {{- end }}
+  podManagementPolicy: {{ .Values.workerCollections.statefulset.podManagementPolicy }}
+  updateStrategy:
+    {{- toYaml .Values.workerCollections.statefulset.updateStrategy | nindent 4 }}
+  selector:
+    matchLabels:
+      {{- include "semantic-explorer.workerCollections.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- with .Values.workerCollections.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "semantic-explorer.workerCollections.selectorLabels" . | nindent 8 }}
+        {{- with .Values.workerCollections.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "semantic-explorer.workerCollections.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.global.securityContext | nindent 8 }}
+      {{- with .Values.workerCollections.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      containers:
+      - name: worker-collections
+        image: {{ include "semantic-explorer.workerCollections.image" . }}
+        imagePullPolicy: {{ .Values.workerCollections.image.pullPolicy }}
+        securityContext:
+          {{- toYaml .Values.global.podSecurityContext | nindent 10 }}
+        env:
+        {{- range $key, $value := .Values.workerCollections.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        - name: NATS_URL
+          value: {{ include "semantic-explorer.nats.url" . }}
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "semantic-explorer.fullname" . }}-secrets
+              key: aws-access-key-id
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "semantic-explorer.fullname" . }}-secrets
+              key: aws-secret-access-key
+        - name: AWS_REGION
+          value: {{ include "semantic-explorer.storage.s3.region" . }}
+        - name: AWS_ENDPOINT_URL
+          value: {{ include "semantic-explorer.storage.s3.endpoint" . }}
+        {{- if .Values.observability.otelCollector.enabled }}
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: {{ include "semantic-explorer.otel.endpoint" . }}
+        - name: SERVICE_NAME
+          value: "worker-collections"
+        {{- end }}
+        {{- with .Values.workerCollections.envFrom }}
+        envFrom:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with .Values.workerCollections.livenessProbe }}
+        livenessProbe:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with .Values.workerCollections.readinessProbe }}
+        readinessProbe:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.workerCollections.resources | nindent 10 }}
+        volumeMounts: {}
+      {{- with .Values.workerCollections.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.workerCollections.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.workerCollections.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes: {}
+{{- end }}

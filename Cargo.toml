@@ -1,0 +1,51 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/api",
+    "crates/core",
+    "crates/worker-collections",
+    "crates/worker-datasets",
+]
+
+[workspace.dependencies]
+actix-web = { version = "4.12.1", features = ["actix-tls", "rustls-0_23"]}
+actix-cors = { version = "0.7.1" }
+actix-multipart = { version = "0.7.2" }
+actix-files = {version = "0.6.9", features = ["actix-server"]}
+actix_web_openidconnect = { version = "0.3.2"}
+actix-web-prom = {version = "0.10.0", features = ["process"]}
+apalis = { version = "0.7.4", features = ["timeout", "limit", "retry", "prometheus", "uuid", "layers"]}
+async-nats = { version = "0.45.0" }
+futures-util = { version = "0.3.31" }
+aws-sdk-s3 = {version = "1.119.0", features = ["behavior-version-latest"] }
+aws-config = { version = "1.8.12", features = ["rustls", "behavior-version-latest"] }
+qdrant-client = { version = "1.16.0"}
+sqlx = { version = "0.8.6", features = ["runtime-tokio-rustls", "postgres", "chrono", "time", "migrate", "macros"], default-features = false }
+utoipa = { version = "5.4.0", features = ["actix_extras", "auto_into_responses"] }
+utoipa-swagger-ui = { version = "9.0.2", features = ["actix-web", "reqwest", "vendored"]}
+utoipa-actix-web = { version = "0.1.2"}
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.148" }
+anyhow = { version = "1.0.100" }
+dotenvy = { version = "0.15.7"}
+tracing = { version = "0.1.43"}
+tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"]}
+opentelemetry = { version = "0.31.0"}
+opentelemetry_sdk = { version = "0.31.0", features = ["rt-tokio", "opentelemetry-http"]}
+opentelemetry-otlp = { version = "0.31.0", features = ["grpc-tonic"] }
+opentelemetry-prometheus = { version = "0.31.0" }
+opentelemetry-appender-tracing = { version = "0.31.1" }
+tracing-opentelemetry = { version = "0.32.0" }
+prometheus = { version = "0.14.0" }
+mime_guess = { version = "2.0.5" }
+quick-xml = {version = "0.38.4", features = ["escape-html"]}
+mime = { version = "0.3.17" }
+pdf-extract = { version = "0.10.0" }
+unicode-normalization = { version = "0.1.25" }
+unicode-segmentation = { version = "1.12.0" }
+scraper = { version = "0.25.0" }
+zip = {version = "7.0.0", features = ["deflate", "deflate64", "time", "ppmd", "bzip2"], default-features = false}
+uuid = { version = "1.19.0", features = ["v4", "serde"] }
+tokio = { version = "1.49.0", features = ["full"] }
+reqwest = { version = "0.13.1", features = ["json"]}
+semantic-explorer-core = { path = "crates/core" }

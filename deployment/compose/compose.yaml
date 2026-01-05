@@ -1,0 +1,253 @@
+
+services:
+
+  semantic-explorer:
+    build:
+      context: ../../
+      dockerfile: crates/api/Dockerfile
+    depends_on:      
+      - rustfs
+      - qdrant
+      - dex
+      - postgres
+      - nats
+      - otel-collector
+    restart: unless-stopped
+    environment:
+      - HOSTNAME=localhost
+      - RUST_LOG=warn,actix_web_prom=error,semantic_explorer=debug
+      - AWS_ACCESS_KEY_ID=test_access_key
+      - AWS_SECRET_ACCESS_KEY=test_secret_key
+      - AWS_REGION=us-east-1
+      - AWS_ENDPOINT_URL=http://127.0.0.1:9000
+      - QDRANT_URL=http://localhost:6334
+      - DATABASE_URL=postgresql://user:password@localhost:5432/explorer
+      - OIDC_ISSUER_URL=http://localhost:5556/dex
+      - OIDC_CLIENT_ID=semantic-explorer
+      - OIDC_CLIENT_SECRET=ZXhhbXBsZS1hcHAtc2VjcmV0
+      - NATS_URL=nats://localhost:4222
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+      - SERVICE_NAME=semantic-explorer
+    ports:
+      - "8080:8080"
+    network_mode: host
+
+  worker-collections:
+    build:
+      context: ../../
+      dockerfile: crates/worker-collections/Dockerfile
+    depends_on:
+      - nats
+      - rustfs
+      - otel-collector
+    restart: unless-stopped
+    environment:
+      - RUST_LOG=warn,actix_web_prom=error,worker_collections=debug
+      - NATS_URL=nats://localhost:4222
+      - AWS_ACCESS_KEY_ID=test_access_key
+      - AWS_SECRET_ACCESS_KEY=test_secret_key
+      - AWS_REGION=us-east-1
+      - AWS_ENDPOINT_URL=http://127.0.0.1:9000
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+      - SERVICE_NAME=worker-collections
+    network_mode: host
+
+  worker-datasets:
+    build:
+      context: ../../
+      dockerfile: crates/worker-datasets/Dockerfile
+    depends_on:
+      - nats
+      - rustfs
+      - qdrant
+      - otel-collector
+    restart: unless-stopped
+    environment:
+      - RUST_LOG=warn,actix_web_prom=error,worker_datasets=debug
+      - NATS_URL=nats://localhost:4222
+      - AWS_ACCESS_KEY_ID=test_access_key
+      - AWS_SECRET_ACCESS_KEY=test_secret_key
+      - AWS_REGION=us-east-1
+      - AWS_ENDPOINT_URL=http://127.0.0.1:9000
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+      - SERVICE_NAME=worker-datasets
+    network_mode: host
+
+  rustfs:
+    image: rustfs/rustfs:latest
+    volumes:
+      - rustfs_data:/data:rw
+      - rustfs_logs:/logs:rw
+    environment:
+      - RUSTFS_ACCESS_KEY=test_access_key
+      - RUSTFS_SECRET_KEY=test_secret_key
+      - AWS_REGION=us-east-1
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    network_mode: host
+
+  qdrant:  
+    image: qdrant/qdrant:gpu-nvidia-latest
+    hostname: qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage:rw
+    environment:
+      - QDRANT__GPU__INDEXING=1
+      - NVIDIA_VISIBLE_DEVICES=all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    network_mode: host
+    
+  postgres:
+    image: postgres:16.3-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: explorer
+    volumes:
+      - postgres_data:/var/lib/postgresql/data:rw
+    ports:
+      - "5432:5432"
+    network_mode: host
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: postgresql://user:password@localhost:5432/explorer?sslmode=disable
+    ports:
+      - "9187:9187"
+    depends_on:
+      - postgres
+    network_mode: host
+
+  dex:
+    image: dexidp/dex:latest
+    command: dex serve /etc/dex/config.yaml
+    environment:
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
+    restart: unless-stopped
+    volumes:
+      - ./dex.yaml:/etc/dex/config.yaml:ro
+      - dex_data:/var/dex:rw
+    ports:
+      - "5556:5556"
+      - "5557:5557"
+      - "5558:5558"
+    network_mode: host
+
+  nats:
+    image: nats:2.10-alpine
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+      - "6222:6222"
+    command: 
+      - "-js"
+      - "-sd"
+      - "/data"
+      - "-m"
+      - "8222"
+    volumes:
+      - nats_data:/data:rw
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    network_mode: host
+
+
+  quickwit:
+    image: quickwit/quickwit:latest
+    ports:
+      - "7280:7280"
+      - "7281:7281"
+    volumes:
+      - quickwit_data:/quickwit/qwdata:rw
+      - ./quickwit-config.yaml:/quickwit/node.yaml:ro
+    environment:
+      - QW_ENABLE_OTLP_ENDPOINT=true
+      - QW_ENABLE_JAEGER_ENDPOINT=true
+      - RUST_LOG=info
+    command: ["run"]
+    restart: unless-stopped
+    network_mode: host
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "8888:8888"
+      - "8889:8889"
+      - "13133:13133"
+    depends_on:
+      - quickwit
+      - prometheus
+    restart: unless-stopped
+    network_mode: host
+
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus:rw
+    restart: unless-stopped
+    network_mode: host
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-clock-panel
+    volumes:
+      - grafana_data:/var/lib/grafana:rw
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+      - quickwit
+    restart: unless-stopped
+    network_mode: host
+      
+volumes:
+  qdrant_storage:
+  rustfs_data:
+  rustfs_logs:
+  postgres_data:
+  dex_data:
+  nats_data:
+  quickwit_data:
+  prometheus_data:
+  grafana_data:

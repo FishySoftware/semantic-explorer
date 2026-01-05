@@ -1,0 +1,116 @@
+{{- if and .Values.postgresql.enabled (not .Values.postgresql.external.enabled) }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-postgresql
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+spec:
+  serviceName: {{ include "semantic-explorer.fullname" . }}-postgresql
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "semantic-explorer.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: postgresql
+  template:
+    metadata:
+      labels:
+        {{- include "semantic-explorer.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: postgresql
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.postgresql.primary.podSecurityContext | nindent 8 }}
+      containers:
+      - name: postgresql
+        image: {{ include "semantic-explorer.imageRegistry" (dict "registry" .Values.postgresql.image.registry "global" .Values.global) }}{{ if include "semantic-explorer.imageRegistry" (dict "registry" .Values.postgresql.image.registry "global" .Values.global) }}/{{ end }}{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}
+        imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
+        securityContext:
+          {{- toYaml .Values.postgresql.primary.containerSecurityContext | nindent 10 }}
+        env:
+        - name: POSTGRES_USER
+          value: {{ .Values.postgresql.auth.username | quote }}
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.postgresql.auth.existingSecret | default (printf "%s-secrets" (include "semantic-explorer.fullname" .)) }}
+              key: {{ .Values.postgresql.auth.secretKeys.userPasswordKey | default "database-password" }}
+        - name: POSTGRES_DB
+          value: {{ .Values.postgresql.auth.database | quote }}
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        ports:
+        - name: postgresql
+          containerPort: 5432
+          protocol: TCP
+        livenessProbe:
+          exec:
+            command:
+              - /bin/sh
+              - -c
+              - exec pg_isready -U {{ .Values.postgresql.auth.username | quote }} -d {{ .Values.postgresql.auth.database | quote }} -h 127.0.0.1
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
+        readinessProbe:
+          exec:
+            command:
+              - /bin/sh
+              - -c
+              - exec pg_isready -U {{ .Values.postgresql.auth.username | quote }} -d {{ .Values.postgresql.auth.database | quote }} -h 127.0.0.1
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
+        resources:
+          {{- toYaml .Values.postgresql.primary.resources | nindent 10 }}
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: tmp
+        emptyDir: {}
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+      labels:
+        {{- include "semantic-explorer.labels" . | nindent 8 }}
+        app.kubernetes.io/component: postgresql
+    spec:
+      accessModes:
+        - {{ .Values.postgresql.primary.persistence.accessMode }}
+      {{- $storageClass := include "semantic-explorer.storageClass" (dict "storageClass" .Values.postgresql.primary.persistence.storageClass "global" .Values.global) }}
+      {{- if $storageClass }}
+      storageClassName: {{ $storageClass }}
+      {{- end }}
+      resources:
+        requests:
+          storage: {{ .Values.postgresql.primary.persistence.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-postgresql
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+spec:
+  type: ClusterIP
+  ports:
+  - name: postgresql
+    port: 5432
+    targetPort: postgresql
+    protocol: TCP
+  selector:
+    {{- include "semantic-explorer.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+{{- end }}

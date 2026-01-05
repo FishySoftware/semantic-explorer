@@ -1,0 +1,59 @@
+{{- if .Values.api.podDisruptionBudget.enabled }}
+apiVersion: {{ include "semantic-explorer.pdb.apiVersion" . }}
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.api.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.api.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.api.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  {{- if .Values.api.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.api.podDisruptionBudget.maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "semantic-explorer.api.selectorLabels" . | nindent 6 }}
+{{- end }}
+---
+{{- if .Values.workerCollections.podDisruptionBudget.enabled }}
+apiVersion: {{ include "semantic-explorer.pdb.apiVersion" . }}
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-worker-collections
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.workerCollections.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.workerCollections.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.workerCollections.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  {{- if .Values.workerCollections.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.workerCollections.podDisruptionBudget.maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "semantic-explorer.workerCollections.selectorLabels" . | nindent 6 }}
+{{- end }}
+---
+{{- if .Values.workerDatasets.podDisruptionBudget.enabled }}
+apiVersion: {{ include "semantic-explorer.pdb.apiVersion" . }}
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-worker-datasets
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.workerDatasets.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.workerDatasets.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.workerDatasets.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  {{- if .Values.workerDatasets.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.workerDatasets.podDisruptionBudget.maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "semantic-explorer.workerDatasets.selectorLabels" . | nindent 6 }}
+{{- end }}

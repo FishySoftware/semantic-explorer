@@ -1,0 +1,260 @@
+use anyhow::Result;
+use qdrant_client::Qdrant;
+use qdrant_client::qdrant::{CreateCollectionBuilder, Distance, VectorParams};
+use qdrant_client::qdrant::{PointStruct, UpsertPointsBuilder};
+use semantic_explorer_core::jobs::{VectorBatchResult, VectorEmbedJob};
+use semantic_explorer_core::observability::record_worker_job;
+use semantic_explorer_core::storage::get_file;
+use std::time::Instant;
+use tracing::{error, info, instrument};
+
+use crate::embedder;
+
+#[derive(Clone)]
+pub(crate) struct WorkerContext {
+    pub(crate) s3_client: aws_sdk_s3::Client,
+    pub(crate) nats_client: async_nats::Client,
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct BatchItem {
+    pub(crate) id: String,
+    pub(crate) text: String,
+    pub(crate) payload: serde_json::Map<String, serde_json::Value>,
+}
+
+#[instrument(skip(ctx), fields(job_id = %job.job_id, transform_id = %job.transform_id, collection = %job.collection_name))]
+pub(crate) async fn process_vector_job(job: VectorEmbedJob, ctx: WorkerContext) -> Result<()> {
+    let start_time = Instant::now();
+    info!("Processing vector job");
+
+    info!(batch_file = %job.batch_file_key, bucket = %job.bucket, "Downloading batch file");
+    let batch_content = match get_file(&ctx.s3_client, &job.bucket, &job.batch_file_key).await {
+        Ok(content) => content,
+        Err(e) => {
+            let duration = start_time.elapsed().as_secs_f64();
+            record_worker_job("vector-embed", duration, "failed_download");
+            error!(error = %e, "Failed to download batch");
+            send_result(
+                &ctx.nats_client,
+                &job,
+                Err((0, format!("Download failed: {e}"))),
+                Some((duration * 1000.0) as i64),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
+    info!(
+        batch_size_bytes = batch_content.len(),
+        "Batch file downloaded"
+    );
+    let items: Vec<BatchItem> = match serde_json::from_slice(&batch_content) {
+        Ok(items) => items,
+        Err(e) => {
+            let duration = start_time.elapsed().as_secs_f64();
+            record_worker_job("vector-embed", duration, "failed_parse");
+            error!(error = %e, "Failed to parse batch");
+            send_result(
+                &ctx.nats_client,
+                &job,
+                Err((0, format!("Parse failed: {e:?}"))),
+                Some((duration * 1000.0) as i64),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
+    let chunk_count = items.len();
+    info!(chunk_count, "Batch items parsed");
+
+    if items.is_empty() {
+        let duration = start_time.elapsed().as_secs_f64();
+        record_worker_job("vector-embed", duration, "success_empty");
+        info!("Empty batch, skipping");
+        send_result(
+            &ctx.nats_client,
+            &job,
+            Ok(0),
+            Some((duration * 1000.0) as i64),
+        )
+        .await?;
+        return Ok(());
+    }
+
+    let texts: Vec<&str> = items.iter().map(|i| i.text.as_str()).collect();
+    info!(
+        chunk_count,
+        batch_size = job.batch_size,
+        embedder_provider = ?job.embedder_config.provider,
+        embedder_model = ?job.embedder_config.model,
+        "Generating embeddings"
+    );
+    let embed_start = Instant::now();
+    let embeddings = match embedder::generate_batch_embeddings(
+        &job.embedder_config,
+        texts,
+        job.batch_size,
+    )
+    .await
+    {
+        Ok(e) => e,
+        Err(e) => {
+            let duration = start_time.elapsed().as_secs_f64();
+            record_worker_job("vector-embed", duration, "failed_embedding");
+            error!(error = %e, "Embedding failed");
+            send_result(
+                &ctx.nats_client,
+                &job,
+                Err((chunk_count, format!("Embedding failed: {e}"))),
+                Some((duration * 1000.0) as i64),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+    let embed_duration = embed_start.elapsed().as_secs_f64();
+    info!(
+        embedding_count = embeddings.len(),
+        embed_duration_secs = embed_duration,
+        "Embeddings generated successfully"
+    );
+
+    if embeddings.len() != items.len() {
+        let duration = start_time.elapsed().as_secs_f64();
+        record_worker_job("vector-embed", duration, "failed_mismatch");
+        error!(
+            expected = items.len(),
+            actual = embeddings.len(),
+            "Embedding count mismatch"
+        );
+        send_result(
+            &ctx.nats_client,
+            &job,
+            Err((chunk_count, "Embedding count mismatch".to_string())),
+            Some((duration * 1000.0) as i64),
+        )
+        .await?;
+        return Ok(());
+    }
+
+    info!(qdrant_url = %job.vector_database_config.connection_url, "Connecting to Qdrant");
+    let qdrant_client = Qdrant::from_url(&job.vector_database_config.connection_url)
+        .api_key(job.vector_database_config.api_key.clone())
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to build Qdrant client: {e}"))?;
+
+    let embedding_size = embeddings
+        .first()
+        .map(|e| e.len() as u64)
+        .ok_or_else(|| anyhow::anyhow!("No embeddings to determine vector size"))?;
+
+    info!(vector_size = embedding_size, "Checking collection");
+    let collection_exists = qdrant_client
+        .collection_info(&job.collection_name)
+        .await
+        .is_ok();
+
+    if job.wipe_collection && collection_exists {
+        info!("Deleting collection for fresh start");
+        qdrant_client
+            .delete_collection(&job.collection_name)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to delete collection: {e}"))?;
+    }
+
+    if !collection_exists || job.wipe_collection {
+        info!(
+            vector_size = embedding_size,
+            distance = "Cosine",
+            "Creating collection"
+        );
+        let create_collection = CreateCollectionBuilder::new(&job.collection_name)
+            .vectors_config(VectorParams {
+                size: embedding_size,
+                distance: Distance::Cosine.into(),
+                ..Default::default()
+            })
+            .build();
+
+        qdrant_client
+            .create_collection(create_collection)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create collection: {}", e))?;
+
+        info!("Collection created successfully");
+    }
+
+    let points: Vec<PointStruct> = items
+        .iter()
+        .zip(embeddings.into_iter())
+        .map(|(item, embedding)| {
+            let mut payload = item.payload.clone();
+            payload.insert("text".to_string(), serde_json::json!(item.text));
+            PointStruct::new(
+                item.id.clone(),
+                embedding,
+                qdrant_client::Payload::from(payload),
+            )
+        })
+        .collect();
+
+    info!(point_count = points.len(), "Upserting points to Qdrant");
+    let upsert_start = Instant::now();
+    if let Err(e) = qdrant_client
+        .upsert_points(UpsertPointsBuilder::new(&job.collection_name, points))
+        .await
+    {
+        let duration = start_time.elapsed().as_secs_f64();
+        record_worker_job("vector-embed", duration, "failed_upsert");
+        error!(error = %e, "Qdrant upsert failed");
+        return Err(anyhow::anyhow!("Qdrant upsert failed: {}", e));
+    }
+    let upsert_duration = upsert_start.elapsed().as_secs_f64();
+
+    let duration = start_time.elapsed().as_secs_f64();
+    record_worker_job("vector-embed", duration, "success");
+    info!(
+        duration_secs = duration,
+        upsert_duration_secs = upsert_duration,
+        "Job completed successfully"
+    );
+    send_result(
+        &ctx.nats_client,
+        &job,
+        Ok(chunk_count),
+        Some((duration * 1000.0) as i64),
+    )
+    .await?;
+
+    Ok(())
+}
+
+async fn send_result(
+    nats: &async_nats::Client,
+    job: &VectorEmbedJob,
+    result: Result<usize, (usize, String)>,
+    processing_duration_ms: Option<i64>,
+) -> Result<()> {
+    let (chunk_count, status, error) = match result {
+        Ok(count) => (count, "success".to_string(), None),
+        Err((count, e)) => (count, "failed".to_string(), Some(e)),
+    };
+
+    let result_msg = VectorBatchResult {
+        job_id: job.job_id,
+        transform_id: job.transform_id,
+        batch_file_key: job.batch_file_key.clone(),
+        chunk_count,
+        status,
+        error,
+        processing_duration_ms,
+    };
+
+    let payload = serde_json::to_vec(&result_msg)?;
+    nats.publish("worker.result.vector".to_string(), payload.into())
+        .await?;
+    Ok(())
+}

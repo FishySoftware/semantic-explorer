@@ -1,0 +1,15 @@
+dependencies:
+- name: cloudnative-pg
+  repository: https://cloudnative-pg.github.io/charts
+  version: 0.21.6
+- name: nats
+  repository: https://nats-io.github.io/k8s/helm/charts/
+  version: 1.2.11
+- name: qdrant
+  repository: https://qdrant.github.io/qdrant-helm
+  version: 0.8.5
+- name: minio
+  repository: https://charts.min.io/
+  version: 5.2.0
+digest: sha256:22a0b74bca9520f9203f200b77f0015acef77fdf17de59043ef35574a890c974
+generated: "2026-01-04T18:11:51.775569369-05:00"

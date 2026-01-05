@@ -1,0 +1,25 @@
+[package]
+name = "worker-datasets"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+once_cell = "1.21.3"
+futures-util = { workspace = true }
+semantic-explorer-core = { path = "../core" }
+async-nats = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+opentelemetry-otlp = { workspace = true }
+opentelemetry-appender-tracing = { workspace = true }
+aws-sdk-s3 = { workspace = true }
+qdrant-client = { workspace = true }
+prometheus = { workspace = true }
+reqwest = { workspace = true }
