@@ -138,21 +138,71 @@ Alternatively, you can launch [Tasks](.vscode/tasks.json) in VSCode:
 
 ## Configuration
 
-Semantic Explorer is configured via environment variables. Key settings:
+Semantic Explorer is configured via environment variables. 
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `DATABASE_URL` | PostgreSQL connection string | Required |
-| `NATS_URL` | NATS server URL | `nats://localhost:4222` |
-| `QDRANT_URL` | Qdrant server URL | `http://localhost:6334` |
-| `AWS_ENDPOINT_URL` | S3 endpoint (MinIO/Rustfs/AWS) | Required |
-| `AWS_ACCESS_KEY_ID` | S3 access key | Required |
-| `AWS_SECRET_ACCESS_KEY` | S3 secret key | Required |
-| `OIDC_ISSUER_URL` | OpenID Connect issuer | Required |
-| `OIDC_CLIENT_ID` | OIDC client ID | Required |
-| `OIDC_CLIENT_SECRET` | OIDC client secret | Required |
-| `PORT` | API server port | `8080` |
-| `RUST_LOG` | Log level | `info` |
+Each service requires different configuration based on its responsibilities.
+
+### API Service
+
+The API service handles HTTP requests, authentication, and coordinates the system.
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `DATABASE_URL` | PostgreSQL connection string | Yes | - |
+| `NATS_URL` | NATS server URL for job queue | Yes | `nats://localhost:4222` |
+| `QDRANT_URL` | Qdrant vector database URL | Yes | `http://localhost:6334` |
+| `AWS_ENDPOINT_URL` | S3-compatible storage endpoint | Yes | - |
+| `AWS_ACCESS_KEY_ID` | S3 access key | Yes | - |
+| `AWS_SECRET_ACCESS_KEY` | S3 secret key | Yes | - |
+| `AWS_REGION` | AWS region | Yes | `us-east-1` |
+| `OIDC_ISSUER_URL` | OpenID Connect issuer URL | Yes | - |
+| `OIDC_CLIENT_ID` | OIDC client ID | Yes | - |
+| `OIDC_CLIENT_SECRET` | OIDC client secret | Yes | - |
+| `OIDC_USE_PKCE` | Enable PKCE for OIDC flow | No | `false` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OpenTelemetry collector endpoint | No | - |
+| `SERVICE_NAME` | Service name for telemetry | No | `semantic-explorer` |
+| `HOSTNAME` | Hostname for server binding | No | `localhost` |
+| `PORT` | API server port | No | `8080` |
+| `STATIC_FILES_DIR` | Path to UI static files | No | `./semantic-explorer-ui/` |
+| `RUST_LOG` | Logging configuration | No | `info` |
+
+### Worker Collections
+
+The collections worker handles document extraction and text processing jobs.
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `NATS_URL` | NATS server URL for job queue | Yes | `nats://localhost:4222` |
+| `AWS_ENDPOINT_URL` | S3-compatible storage endpoint | Yes | - |
+| `AWS_ACCESS_KEY_ID` | S3 access key | Yes | - |
+| `AWS_SECRET_ACCESS_KEY` | S3 secret key | Yes | - |
+| `AWS_REGION` | AWS region | Yes | `us-east-1` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OpenTelemetry collector endpoint | No | - |
+| `SERVICE_NAME` | Service name for telemetry | No | `worker-collections` |
+| `RUST_LOG` | Logging configuration | No | `info` |
+
+### Worker Datasets
+
+The datasets worker handles embedding generation and vector storage jobs.
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `NATS_URL` | NATS server URL for job queue | Yes | `nats://localhost:4222` |
+| `QDRANT_URL` | Qdrant vector database URL | Yes | `http://localhost:6334` |
+| `AWS_ENDPOINT_URL` | S3-compatible storage endpoint | Yes | - |
+| `AWS_ACCESS_KEY_ID` | S3 access key | Yes | - |
+| `AWS_SECRET_ACCESS_KEY` | S3 secret key | Yes | - |
+| `AWS_REGION` | AWS region | Yes | `us-east-1` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OpenTelemetry collector endpoint | No | - |
+| `SERVICE_NAME` | Service name for telemetry | No | `worker-datasets` |
+| `RUST_LOG` | Logging configuration | No | `info` |
+
+### Example Configurations
+
+See the `.env` files in each service directory for working examples:
+- [crates/api/.env](crates/api/.env) - API service configuration
+- [crates/worker-collections/.env](crates/worker-collections/.env) - Collections worker configuration
+- [crates/worker-datasets/.env](crates/worker-datasets/.env) - Datasets worker configuration
 
 
 
