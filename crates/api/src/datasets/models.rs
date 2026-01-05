@@ -15,6 +15,13 @@ where
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub(crate) struct ChunkWithMetadata {
+    pub(crate) content: String,
+    #[schema(value_type = Object)]
+    pub(crate) metadata: serde_json::Value,
+}
+
 #[derive(Serialize, Deserialize, ToSchema)]
 pub(crate) struct CreateDataset {
     pub(crate) title: String,
@@ -43,11 +50,11 @@ pub(crate) struct CreateDatasetItems {
     pub(crate) items: Vec<CreateDatasetItem>,
 }
 
-#[derive(Serialize, Deserialize, ToSchema, FromRow)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub(crate) struct CreateDatasetItem {
     pub(crate) title: String,
     #[serde(deserialize_with = "non_empty")]
-    pub(crate) chunks: Vec<String>,
+    pub(crate) chunks: Vec<ChunkWithMetadata>,
     #[schema(value_type = Object)]
     pub(crate) metadata: serde_json::Value,
 }
@@ -58,14 +65,35 @@ pub(crate) struct CreateDatasetItemsResponse {
     pub(crate) failed: Vec<String>,
 }
 
-#[derive(Serialize, ToSchema, FromRow)]
+#[derive(Serialize, ToSchema)]
 pub(crate) struct DatasetItem {
     pub(crate) item_id: i32,
     pub(crate) dataset_id: i32,
     pub(crate) title: String,
-    pub(crate) chunks: Vec<String>,
+    pub(crate) chunks: Vec<ChunkWithMetadata>,
     #[schema(value_type = Object)]
     pub(crate) metadata: serde_json::Value,
+}
+
+impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for DatasetItem {
+    fn from_row(row: &sqlx::postgres::PgRow) -> Result<Self, sqlx::Error> {
+        use sqlx::Row;
+
+        let chunks_json: serde_json::Value = row.try_get("chunks")?;
+        let chunks: Vec<ChunkWithMetadata> =
+            serde_json::from_value(chunks_json).map_err(|e| sqlx::Error::ColumnDecode {
+                index: "chunks".to_string(),
+                source: Box::new(e),
+            })?;
+
+        Ok(DatasetItem {
+            item_id: row.try_get("item_id")?,
+            dataset_id: row.try_get("dataset_id")?,
+            title: row.try_get("title")?,
+            chunks,
+            metadata: row.try_get("metadata")?,
+        })
+    }
 }
 
 #[derive(Serialize, ToSchema)]

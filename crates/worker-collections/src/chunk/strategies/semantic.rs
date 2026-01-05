@@ -15,7 +15,7 @@ pub async fn chunk_async(
         .as_ref()
         .ok_or_else(|| anyhow!("Semantic options not configured"))?;
 
-    let embedder =
+    let embedder_config =
         embedder_config.ok_or_else(|| anyhow!("Embedder config required for semantic chunking"))?;
 
     let sentences: Vec<&str> = text
@@ -32,7 +32,7 @@ pub async fn chunk_async(
         return Ok(vec![sentences[0].to_string()]);
     }
 
-    let embeddings = generate_batch_embeddings(embedder, &sentences).await?;
+    let embeddings = generate_batch_embeddings(embedder_config, &sentences).await?;
 
     merge_by_similarity(sentences, embeddings, semantic_opts, config.chunk_size)
 }
@@ -126,15 +126,13 @@ async fn generate_batch_embeddings(
     config: &EmbedderConfig,
     sentences: &[&str],
 ) -> Result<Vec<Vec<f32>>> {
-    const BATCH_SIZE: usize = 100; // TODO: use embedder config for batch size. every embedder has different limits, 96 for cohere for example
-
     if sentences.is_empty() {
         return Ok(Vec::new());
     }
 
     let mut all_embeddings = Vec::new();
 
-    for batch in sentences.chunks(BATCH_SIZE) {
+    for batch in sentences.chunks(config.max_batch_size as usize) {
         let embeddings = call_embedder_api(config, batch).await?;
         all_embeddings.extend(embeddings);
     }

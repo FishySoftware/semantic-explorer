@@ -16,7 +16,7 @@
 		item_id: number;
 		dataset_id: number;
 		title: string;
-		chunks: string[];
+		chunks: Array<{ content: string; metadata: Record<string, any> }>;
 		metadata: Record<string, any>;
 	}
 
@@ -192,7 +192,7 @@
 			const query = searchQuery.toLowerCase();
 			return (
 				item.title.toLowerCase().includes(query) ||
-				item.chunks.some((chunk) => chunk.toLowerCase().includes(query)) ||
+				item.chunks.some((chunk) => chunk.content.toLowerCase().includes(query)) ||
 				Object.values(item.metadata || {}).some((value) =>
 					String(value).toLowerCase().includes(query)
 				)
@@ -580,7 +580,7 @@
 																	<p
 																		class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap"
 																	>
-																		{chunk}
+																		{chunk.content}
 																	</p>
 																</div>
 															{/each}

@@ -8,6 +8,7 @@ use tracing::{error, info};
 use semantic_explorer_core::jobs::{FileTransformResult, VectorBatchResult};
 use semantic_explorer_core::storage::get_file;
 
+use crate::datasets::models::ChunkWithMetadata;
 use crate::storage::postgres::datasets;
 use crate::storage::postgres::transforms::{
     get_transform_by_id, mark_file_failed, mark_file_processed,
@@ -166,7 +167,7 @@ async fn handle_file_result(result: FileTransformResult, ctx: &TransformContext)
             }
         };
 
-    let chunks: Vec<String> = match serde_json::from_slice(&chunks_content) {
+    let chunks: Vec<ChunkWithMetadata> = match serde_json::from_slice(&chunks_content) {
         Ok(c) => c,
         Err(e) => {
             error!(
@@ -176,11 +177,6 @@ async fn handle_file_result(result: FileTransformResult, ctx: &TransformContext)
             return;
         }
     };
-    info!(
-        "Parsed {} chunks for: {}",
-        chunks.len(),
-        result.source_file_key
-    );
 
     let transform = match get_transform_by_id(&ctx.postgres_pool, result.transform_id).await {
         Ok(t) => t,

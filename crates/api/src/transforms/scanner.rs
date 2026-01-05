@@ -152,6 +152,7 @@ pub(crate) async fn process_collection_scan(
                                 .and_then(|m| m.as_str())
                                 .map(|s| s.to_string()),
                             config: embedder.config,
+                            max_batch_size: embedder.max_batch_size,
                         }),
                         Err(e) => {
                             error!("Failed to fetch embedder {}: {}", embedder_id, e);
@@ -250,11 +251,12 @@ pub(crate) async fn process_vector_scan(
                     .map(|(i, chunk)| {
                         serde_json::json!({
                             "id": Uuid::new_v4().to_string(),
-                            "text": chunk,
+                            "text": chunk.content,
                             "payload": {
                                 "item_id": item.item_id,
                                 "chunk_index": i,
-                                "metadata": item.metadata
+                                "chunk_metadata": chunk.metadata,
+                                "item_metadata": item.metadata
                             }
                         })
                     })
@@ -305,11 +307,7 @@ pub(crate) async fn process_vector_scan(
         let qdrant_url =
             std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string());
 
-        let batch_size = transform
-            .job_config
-            .get("embedding_batch_size")
-            .and_then(|v| v.as_i64())
-            .map(|v| v as usize);
+        let batch_size = (batch_items.len() as i32).min(embedder.max_batch_size) as usize;
 
         let wipe_collection = transform
             .job_config
@@ -332,6 +330,7 @@ pub(crate) async fn process_vector_scan(
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string()),
                 config: embedder.config,
+                max_batch_size: embedder.max_batch_size,
             },
             vector_database_config: VectorDatabaseConfig {
                 database_type: "qdrant".to_string(),
@@ -340,7 +339,7 @@ pub(crate) async fn process_vector_scan(
             },
             collection_name,
             wipe_collection,
-            batch_size,
+            batch_size: Some(batch_size),
         };
 
         let payload = serde_json::to_vec(&job)?;

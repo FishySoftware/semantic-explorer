@@ -13,12 +13,24 @@ pub(crate) struct CreateEmbedder {
     pub(crate) config: serde_json::Value,
     #[serde(default = "default_batch_size")]
     pub(crate) batch_size: i32,
+    #[serde(default = "default_max_batch_size")]
+    pub(crate) max_batch_size: i32,
+    #[serde(default = "default_dimensions")]
+    pub(crate) dimensions: i32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) collection_name: Option<String>,
 }
 
 fn default_batch_size() -> i32 {
     50
+}
+
+fn default_max_batch_size() -> i32 {
+    96 // OpenAI and Cohere default
+}
+
+fn default_dimensions() -> i32 {
+    1536 // OpenAI ada-002 default
 }
 
 #[derive(Serialize, ToSchema, FromRow, Clone)]
@@ -32,6 +44,8 @@ pub(crate) struct Embedder {
     #[schema(value_type = Object)]
     pub(crate) config: serde_json::Value,
     pub(crate) batch_size: i32,
+    pub(crate) max_batch_size: i32,
+    pub(crate) dimensions: i32,
     pub(crate) collection_name: Option<String>,
     #[schema(value_type = String, format = DateTime)]
     pub(crate) created_at: DateTime<Utc>,
@@ -47,5 +61,7 @@ pub(crate) struct UpdateEmbedder {
     #[schema(value_type = Object)]
     pub(crate) config: Option<serde_json::Value>,
     pub(crate) batch_size: Option<i32>,
+    pub(crate) max_batch_size: Option<i32>,
+    pub(crate) dimensions: Option<i32>,
     pub(crate) collection_name: Option<String>,
 }

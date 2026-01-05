@@ -4,6 +4,8 @@
 	import PageHeader from '../components/PageHeader.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
 
+	const { onViewTransform } = $props<{ onViewTransform?: (_id: number) => void }>();
+
 	type JobType = 'collection_to_dataset' | 'dataset_to_vector_storage';
 
 	interface Transform {
@@ -277,6 +279,10 @@
 				createError = 'Dataset is required';
 				return;
 			}
+			if (chunkingStrategy === 'semantic' && !semanticEmbedderId) {
+				createError = 'Embedder is required for semantic chunking';
+				return;
+			}
 			body.collection_id = newCollectionId;
 			body.dataset_id = newDatasetId;
 			body.chunk_size = newChunkSize;
@@ -310,6 +316,7 @@
 
 			// Add strategy-specific options
 			if (chunkingStrategy === 'semantic') {
+				chunkingConfig.embedder_id = semanticEmbedderId;
 				chunkingConfig.options.semantic = {
 					embedder_id: semanticEmbedderId,
 					similarity_threshold: semanticSimilarityThreshold,
@@ -373,6 +380,9 @@
 
 			resetCreateForm();
 			showCreateForm = false;
+			if (onViewTransform) {
+				onViewTransform(newTransform.transform_id);
+			}
 		} catch (e) {
 			const message = formatError(e, 'Failed to create transform');
 			createError = message;

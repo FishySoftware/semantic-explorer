@@ -33,6 +33,7 @@ pub struct EmbedderConfig {
     pub api_key: Option<String>,
     pub model: Option<String>,
     pub config: serde_json::Value,
+    pub max_batch_size: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -18,6 +18,7 @@
 	let activeUrl = $state('/dashboard');
 	let selectedCollectionId = $state<number | null>(null);
 	let selectedDatasetId = $state<number | null>(null);
+	let selectedTransformId = $state<number | null>(null);
 
 	function parseRoute(hash: string): { path: string; params: Record<string, string> } {
 		const parts = hash
@@ -32,6 +33,9 @@
 		}
 		if (parts.length === 3 && parts[0] === 'datasets' && parts[2] === 'details') {
 			return { path: '/datasets/detail', params: { id: parts[1] } };
+		}
+		if (parts.length === 3 && parts[0] === 'transforms' && parts[2] === 'details') {
+			return { path: '/transforms/detail', params: { id: parts[1] } };
 		}
 
 		return { path: '/' + parts.join('/'), params: {} };
@@ -51,6 +55,12 @@
 			selectedDatasetId = parseInt(params.id, 10);
 		} else if (path !== '/datasets/detail') {
 			selectedDatasetId = null;
+		}
+
+		if (path === '/transforms/detail' && params.id) {
+			selectedTransformId = parseInt(params.id, 10);
+		} else if (path !== '/transforms/detail') {
+			selectedTransformId = null;
 		}
 	}
 
@@ -85,6 +95,18 @@
 		activeUrl = '/datasets';
 		window.location.hash = '/datasets';
 	}
+
+	function viewTransform(transformId: number) {
+		selectedTransformId = transformId;
+		activeUrl = '/transforms/detail';
+		window.location.hash = `/transforms/${transformId}/details`;
+	}
+
+	function backToTransforms() {
+		selectedTransformId = null;
+		activeUrl = '/transforms';
+		window.location.hash = '/transforms';
+	}
 </script>
 
 <div class="h-screen flex flex-col bg-gray-50 dark:bg-gray-900">
@@ -113,7 +135,13 @@
 			{:else if activeUrl === '/embedders'}
 				<Embedders />
 			{:else if activeUrl === '/transforms'}
-				<Transforms />
+				<Transforms onViewTransform={viewTransform} />
+			{:else if activeUrl === '/transforms/detail'}
+				{#if selectedTransformId !== null}
+					{#await import('./lib/pages/TransformDetail.svelte') then mod}
+						<mod.default transformId={selectedTransformId} onBack={backToTransforms} />
+					{/await}
+				{/if}
 			{:else if activeUrl === '/visualizations'}
 				<Visualizations />
 			{:else if activeUrl === '/search'}
