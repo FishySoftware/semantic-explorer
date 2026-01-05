@@ -53,13 +53,27 @@ Execute searches across multiple embedded datasets to compare embedding model pe
 - Docker and Docker Compose
 - Node.js 18+ (for UI development)
 
+You will also need to generate OIDC credentials. 
+You can use the included Dex server with external authentication providers such as Github.
+
+In [dex.yaml](deployment/compose/dex.yaml), you can see both environment variables that are required (GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET) and example redirect URIs for local development.
+
+If you create a personal Github Organization, you can create an OAuth App in the organization settings to get client ID and secret.
+
 ### Run with Docker Compose
 
 The fastest way to get started is using the included Docker Compose stack:
 
 ```bash
-cd deployment/compose
+cd deployment/compose # uses prebuilt images for API and workers
 docker compose up -d
+```
+
+or
+
+```bash
+cd deployment/compose
+docker compose -f compose.dev.yaml  up -d   # builds local binaries for API and workers
 ```
 
 This starts:

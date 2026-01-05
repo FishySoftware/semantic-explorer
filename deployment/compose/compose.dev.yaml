@@ -2,7 +2,9 @@
 services:
 
   semantic-explorer:
-    image: jofish89/semantic-explorer:latest
+    build:
+      context: ../../
+      dockerfile: crates/api/Dockerfile
     depends_on:      
       - rustfs
       - qdrant
@@ -31,7 +33,9 @@ services:
     network_mode: host
 
   worker-collections:
-    image: jofish89/worker-collections:latest
+    build:
+      context: ../../
+      dockerfile: crates/worker-collections/Dockerfile
     depends_on:
       - nats
       - rustfs
@@ -49,7 +53,9 @@ services:
     network_mode: host
 
   worker-datasets:
-    image: jofish89/worker-datasets:latest
+    build:
+      context: ../../
+      dockerfile: crates/worker-datasets/Dockerfile
     depends_on:
       - nats
       - rustfs
