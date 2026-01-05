@@ -22,11 +22,28 @@ Semantic Explorer follows a 3-tier architecture:
 2. **Storage Layer** - PostgreSQL for metadata, S3 for files, Qdrant for vector embeddings
 3. **Worker Layer** - Async job processors for document extraction and embedding generation
 
-### Data Flow
+### Usage Flow
 
-```
-Upload Document → Collection → worker-collections → Extract & Chunk → Dataset → worker-datasets → Generate Embeddings → Qdrant
-```
+#### Collections
+Start by creating a collection and uploading your documents. Organize your content for processing.
+
+#### Embedders
+Configure your embedding providers (OpenAI, Cohere, etc.) that will be used to generate vector embeddings.
+
+#### Transform (Collection)
+Create a collection transform to extract text and generate chunks, populating a dataset for embedding.
+
+#### Datasets
+Review the generated dataset containing your processed text chunks ready for embedding.
+
+#### Transform (Dataset)
+Create dataset transforms to generate embeddings using your configured embedders.
+
+#### Search
+Execute searches across multiple embedded datasets to compare embedding model performance.
+
+#### Visualize
+*(Coming Soon)*
 
 ## Quick Start
 
