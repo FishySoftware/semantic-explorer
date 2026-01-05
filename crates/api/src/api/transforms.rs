@@ -114,6 +114,7 @@ pub(crate) async fn create_transform(
                 collection_id,
                 dataset_id,
                 chunk_size,
+                job_config,
             } => {
                 if collections::get_collection(&postgres_pool, &username, *collection_id)
                     .await
@@ -139,7 +140,7 @@ pub(crate) async fn create_transform(
                     None,
                     None,
                     None,
-                    serde_json::json!({}),
+                    job_config.clone(),
                     serde_json::json!({}),
                 )
             }

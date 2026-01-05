@@ -8,6 +8,7 @@ futures-util = { workspace = true }
 semantic-explorer-core = { path = "../core" }
 async-nats = { workspace = true }
 tokio = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
@@ -26,3 +27,4 @@ zip = { workspace = true }
 scraper = { workspace = true }
 mime = { workspace = true }
 unicode-normalization = { workspace = true }
+reqwest = { workspace = true }

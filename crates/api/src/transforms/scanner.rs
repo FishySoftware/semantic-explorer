@@ -114,12 +114,62 @@ pub(crate) async fn process_collection_scan(
             }
 
             if !processed_keys.contains(&file.key) {
+                let extraction_config = transform
+                    .job_config
+                    .get("extraction")
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        serde_json::json!({
+                            "strategy": "plain_text"
+                        })
+                    });
+
+                let chunking_config = transform
+                    .job_config
+                    .get("chunking")
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        serde_json::json!({
+                            "strategy": "sentence",
+                            "chunk_size": transform.chunk_size,
+                            "chunk_overlap": 0
+                        })
+                    });
+
+                let embedder_config = if let Some(embedder_id) =
+                    chunking_config.get("embedder_id").and_then(|v| v.as_i64())
+                {
+                    match embedder_storage::get_embedder(pool, &transform.owner, embedder_id as i32)
+                        .await
+                    {
+                        Ok(embedder) => Some(EmbedderConfig {
+                            provider: embedder.provider,
+                            base_url: embedder.base_url,
+                            api_key: embedder.api_key,
+                            model: embedder
+                                .config
+                                .get("model")
+                                .and_then(|m| m.as_str())
+                                .map(|s| s.to_string()),
+                            config: embedder.config,
+                        }),
+                        Err(e) => {
+                            error!("Failed to fetch embedder {}: {}", embedder_id, e);
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+
                 let job = TransformFileJob {
                     job_id: Uuid::new_v4(),
                     source_file_key: file.key.clone(),
                     bucket: collection.bucket.clone(),
                     transform_id: transform.transform_id,
-                    chunk_size: transform.chunk_size as usize,
+                    extraction_config,
+                    chunking_config,
+                    embedder_config,
                 };
 
                 let payload = serde_json::to_vec(&job)?;

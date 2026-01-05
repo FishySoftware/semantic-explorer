@@ -45,7 +45,6 @@ jobs:
 
       - name: Build
         run: cargo build
-        working-directory: ./semantic-explorer
 
   verify-semantic-explorer-ui:
     runs-on: ubuntu-latest
