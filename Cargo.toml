@@ -5,6 +5,7 @@ members = [
     "crates/core",
     "crates/worker-collections",
     "crates/worker-datasets",
+    "crates/worker-visualizations",
 ]
 
 [workspace.dependencies]
