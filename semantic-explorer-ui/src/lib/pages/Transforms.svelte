@@ -123,6 +123,7 @@
 	let transformPendingDelete = $state<Transform | null>(null);
 
 	let expandedTransformId = $state<number | null>(null);
+	let expandedConfigs = $state<Record<string, boolean>>({});
 	let transformStats = $state<Record<number, TransformStats>>({});
 	let processedFiles = $state<Record<number, ProcessedFile[]>>({});
 	let loadingStats = $state<Record<number, boolean>>({});
@@ -1526,7 +1527,7 @@
 											<p>
 												<span class="font-medium">Source:</span>
 												<a
-													href={`#/collections/${transform.collection_id}/details`}
+													href={`#/collections/${transform.collection_id}`}
 													class="text-blue-600 dark:text-blue-400 hover:underline"
 												>
 													{getCollectionTitle(transform.collection_id || 0)}
@@ -1535,7 +1536,7 @@
 											<p>
 												<span class="font-medium">Target:</span>
 												<a
-													href={`#/datasets/${transform.dataset_id}/details`}
+													href={`#/datasets/${transform.dataset_id}`}
 													class="text-blue-600 dark:text-blue-400 hover:underline"
 												>
 													{getDatasetTitle(transform.dataset_id)}
@@ -1549,7 +1550,7 @@
 											<p>
 												<span class="font-medium">Dataset:</span>
 												<a
-													href={`#/datasets/${transform.dataset_id}/details`}
+													href={`#/datasets/${transform.dataset_id}`}
 													class="text-blue-600 dark:text-blue-400 hover:underline"
 												>
 													{getDatasetTitle(transform.dataset_id)}
@@ -1572,20 +1573,99 @@
 													N/A
 												{/if}
 											</p>
-											<p>
-												<span class="font-medium">Collection:</span>
-												<code class="text-xs bg-gray-100 dark:bg-gray-700 px-1 rounded">
-													{transform.job_config?.collection_name || 'N/A'}
-												</code>
-											</p>
 										{/if}
 										<p>
 											<span class="font-medium">Created:</span>
 											{formatDate(transform.created_at)}
 										</p>
+
+										{#if Object.keys(transform.job_config).length > 0}
+											<div class="mb-4">
+												<button
+													onclick={() => {
+														const key = `job_config_${transform.transform_id}`;
+														expandedConfigs[key] = !expandedConfigs[key];
+													}}
+													class="flex items-center gap-2 font-semibold mb-1 text-gray-900 dark:text-white cursor-pointer hover:text-blue-600 dark:hover:text-blue-400"
+												>
+													<span
+														class="inline-block transform transition-transform duration-200"
+														style="transform: rotate({expandedConfigs[
+															`job_config_${transform.transform_id}`
+														]
+															? '90deg'
+															: '0deg'})">▶</span
+													>
+													Job Config
+												</button>
+												{#if expandedConfigs[`job_config_${transform.transform_id}`]}
+													<pre
+														class="bg-gray-100 dark:bg-gray-900 rounded p-2 overflow-x-auto text-xs mt-2">{JSON.stringify(
+															transform.job_config,
+															null,
+															2
+														)}</pre>
+												{/if}
+											</div>
+										{/if}
+
+										{#if transform.job_config?.chunking}
+											<div class="mb-4">
+												<button
+													onclick={() => {
+														const key = `chunking_${transform.transform_id}`;
+														expandedConfigs[key] = !expandedConfigs[key];
+													}}
+													class="flex items-center gap-2 font-semibold mb-1 text-gray-900 dark:text-white cursor-pointer hover:text-blue-600 dark:hover:text-blue-400"
+												>
+													<span
+														class="inline-block transform transition-transform duration-200"
+														style="transform: rotate({expandedConfigs[
+															`chunking_${transform.transform_id}`
+														]
+															? '90deg'
+															: '0deg'})">▶</span
+													>
+													Chunking Config
+												</button>
+												{#if expandedConfigs[`chunking_${transform.transform_id}`]}
+													<pre
+														class="bg-gray-100 dark:bg-gray-900 rounded p-2 overflow-x-auto text-xs mt-2">
+														{JSON.stringify(transform.job_config.chunking, null, 2)}
+													</pre>
+												{/if}
+											</div>
+										{/if}
+
+										{#if transform.job_config?.extraction}
+											<div class="mb-4">
+												<button
+													onclick={() => {
+														const key = `extraction_${transform.transform_id}`;
+														expandedConfigs[key] = !expandedConfigs[key];
+													}}
+													class="flex items-center gap-2 font-semibold mb-1 text-gray-900 dark:text-white cursor-pointer hover:text-blue-600 dark:hover:text-blue-400"
+												>
+													<span
+														class="inline-block transform transition-transform duration-200"
+														style="transform: rotate({expandedConfigs[
+															`extraction_${transform.transform_id}`
+														]
+															? '90deg'
+															: '0deg'})">▶</span
+													>
+													Extraction Config
+												</button>
+												{#if expandedConfigs[`extraction_${transform.transform_id}`]}
+													<pre
+														class="bg-gray-100 dark:bg-gray-900 rounded p-2 overflow-x-auto text-xs mt-2">
+														{JSON.stringify(transform.job_config.extraction, null, 2)}
+													</pre>
+												{/if}
+											</div>
+										{/if}
 									</div>
 								</div>
-
 								<div class="flex gap-2 shrink-0">
 									{#if transform.job_type === 'collection_to_dataset'}
 										<button

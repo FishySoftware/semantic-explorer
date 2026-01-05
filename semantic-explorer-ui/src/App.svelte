@@ -18,7 +18,6 @@
 	let activeUrl = $state('/dashboard');
 	let selectedCollectionId = $state<number | null>(null);
 	let selectedDatasetId = $state<number | null>(null);
-	let selectedTransformId = $state<number | null>(null);
 
 	function parseRoute(hash: string): { path: string; params: Record<string, string> } {
 		const parts = hash
@@ -49,18 +48,6 @@
 			selectedCollectionId = parseInt(params.id, 10);
 		} else if (path !== '/collections/detail') {
 			selectedCollectionId = null;
-		}
-
-		if (path === '/datasets/detail' && params.id) {
-			selectedDatasetId = parseInt(params.id, 10);
-		} else if (path !== '/datasets/detail') {
-			selectedDatasetId = null;
-		}
-
-		if (path === '/transforms/detail' && params.id) {
-			selectedTransformId = parseInt(params.id, 10);
-		} else if (path !== '/transforms/detail') {
-			selectedTransformId = null;
 		}
 	}
 
@@ -95,12 +82,6 @@
 		activeUrl = '/datasets';
 		window.location.hash = '/datasets';
 	}
-
-	function backToTransforms() {
-		selectedTransformId = null;
-		activeUrl = '/transforms';
-		window.location.hash = '/transforms';
-	}
 </script>
 
 <div class="h-screen flex flex-col bg-gray-50 dark:bg-gray-900">
@@ -130,12 +111,6 @@
 				<Embedders />
 			{:else if activeUrl === '/transforms'}
 				<Transforms />
-			{:else if activeUrl === '/transforms/detail'}
-				{#if selectedTransformId !== null}
-					{#await import('./lib/pages/TransformDetail.svelte') then mod}
-						<mod.default transformId={selectedTransformId} onBack={backToTransforms} />
-					{/await}
-				{/if}
 			{:else if activeUrl === '/visualizations'}
 				<Visualizations />
 			{:else if activeUrl === '/search'}
