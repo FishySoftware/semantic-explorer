@@ -4547,7 +4547,6 @@ dependencies = [
  "aws-config",
  "aws-sdk-s3",
  "opentelemetry",
- "opentelemetry_sdk",
  "serde",
  "serde_json",
  "tracing",

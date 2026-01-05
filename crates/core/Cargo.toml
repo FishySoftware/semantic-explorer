@@ -12,4 +12,3 @@ aws-config = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 opentelemetry = { workspace = true }
-opentelemetry_sdk = { workspace = true }
