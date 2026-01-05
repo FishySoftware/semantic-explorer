@@ -96,12 +96,6 @@
 		window.location.hash = '/datasets';
 	}
 
-	function viewTransform(transformId: number) {
-		selectedTransformId = transformId;
-		activeUrl = '/transforms/detail';
-		window.location.hash = `/transforms/${transformId}/details`;
-	}
-
 	function backToTransforms() {
 		selectedTransformId = null;
 		activeUrl = '/transforms';
@@ -135,7 +129,7 @@
 			{:else if activeUrl === '/embedders'}
 				<Embedders />
 			{:else if activeUrl === '/transforms'}
-				<Transforms onViewTransform={viewTransform} />
+				<Transforms />
 			{:else if activeUrl === '/transforms/detail'}
 				{#if selectedTransformId !== null}
 					{#await import('./lib/pages/TransformDetail.svelte') then mod}

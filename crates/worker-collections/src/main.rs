@@ -12,8 +12,10 @@ use opentelemetry_sdk::{
 };
 use semantic_explorer_core::observability;
 use semantic_explorer_core::{jobs::TransformFileJob, storage::initialize_client};
+use std::sync::Arc;
 use std::time::Duration;
-use tracing::{error, info};
+use tokio::sync::Semaphore;
+use tracing::{error, info, warn};
 use tracing_subscriber::{
     EnvFilter, Layer, Registry as TracingRegistry, layer::SubscriberExt, util::SubscriberInitExt,
 };
@@ -131,26 +133,128 @@ async fn main() -> Result<()> {
         nats_client: nats_client.clone(),
     };
 
-    let mut subscriber = nats_client
-        .subscribe("workers.transform-file-worker".to_string())
+    let use_jetstream = std::env::var("NATS_USE_JETSTREAM")
+        .unwrap_or_else(|_| "false".to_string())
+        .parse::<bool>()
+        .unwrap_or(false);
+
+    let semaphore = Arc::new(Semaphore::new(100));
+
+    if use_jetstream {
+        info!("Using JetStream mode for reliable message delivery");
+
+        semantic_explorer_core::nats::initialize_jetstream(&nats_client).await?;
+
+        let jetstream = async_nats::jetstream::new(nats_client.clone());
+        let consumer_config = semantic_explorer_core::nats::create_transform_file_consumer_config();
+
+        let consumer = semantic_explorer_core::nats::ensure_consumer(
+            &jetstream,
+            "TRANSFORM_FILES",
+            consumer_config,
+        )
         .await?;
-    info!("Worker started, listening on workers.transform-file-worker");
 
-    while let Some(msg) = subscriber.next().await {
-        let job: TransformFileJob = match serde_json::from_slice(&msg.payload) {
-            Ok(j) => j,
-            Err(e) => {
-                error!("Failed to deserialize job: {}", e);
-                continue;
-            }
-        };
+        info!("Worker started with JetStream, listening on TRANSFORM_FILES stream");
 
-        let ctx = context.clone();
-        tokio::spawn(async move {
-            if let Err(e) = job::process_file_job(job, ctx).await {
-                error!("Job failed: {}", e);
-            }
-        });
+        let mut messages = consumer.messages().await?;
+
+        while let Some(msg) = messages.next().await {
+            let msg = match msg {
+                Ok(m) => m,
+                Err(e) => {
+                    error!("Failed to receive message: {}", e);
+                    continue;
+                }
+            };
+
+            let job: TransformFileJob = match serde_json::from_slice(&msg.payload) {
+                Ok(j) => j,
+                Err(e) => {
+                    error!("Failed to deserialize job: {}", e);
+                    // Acknowledge the message to prevent reprocessing bad messages
+                    if let Err(ack_err) = msg.ack().await {
+                        error!("Failed to acknowledge bad message: {}", ack_err);
+                    }
+                    continue;
+                }
+            };
+
+            // Acquire semaphore permit for backpressure
+            let permit = match semaphore.clone().try_acquire_owned() {
+                Ok(p) => p,
+                Err(_) => {
+                    warn!(
+                        "Semaphore limit reached, workers are at capacity. Message will be redelivered."
+                    );
+                    // Don't acknowledge - let message be redelivered after ack_wait timeout
+                    continue;
+                }
+            };
+
+            let ctx = context.clone();
+            tokio::spawn(async move {
+                let _permit = permit; // Hold permit until task completes
+
+                match job::process_file_job(job, ctx).await {
+                    Ok(_) => {
+                        // Acknowledge success
+                        if let Err(e) = msg.ack().await {
+                            error!("Failed to acknowledge successful job: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        error!("Job failed: {}", e);
+                        // Negative acknowledgment for retry (30s delay)
+                        if let Err(ack_err) = msg
+                            .ack_with(async_nats::jetstream::AckKind::Nak(Some(
+                                Duration::from_secs(30),
+                            )))
+                            .await
+                        {
+                            error!("Failed to negatively acknowledge failed job: {}", ack_err);
+                        }
+                    }
+                }
+            });
+        }
+    } else {
+        info!("Using legacy pub/sub mode (consider migrating to JetStream)");
+
+        let mut subscriber = nats_client
+            .subscribe("workers.transform-file-worker".to_string())
+            .await?;
+        info!("Worker started, listening on workers.transform-file-worker");
+
+        while let Some(msg) = subscriber.next().await {
+            let job: TransformFileJob = match serde_json::from_slice(&msg.payload) {
+                Ok(j) => j,
+                Err(e) => {
+                    error!("Failed to deserialize job: {}", e);
+                    continue;
+                }
+            };
+
+            // Acquire semaphore permit for backpressure even in legacy mode
+            let permit = match semaphore.clone().try_acquire_owned() {
+                Ok(p) => p,
+                Err(_) => {
+                    warn!(
+                        "Semaphore limit reached, workers are at capacity. Dropping message (legacy mode)."
+                    );
+                    continue;
+                }
+            };
+
+            let ctx = context.clone();
+            tokio::spawn(async move {
+                let _permit = permit; // Hold permit until task completes
+
+                if let Err(e) = job::process_file_job(job, ctx).await {
+                    error!("Job failed: {}", e);
+                }
+            });
+        }
     }
 
     Ok(())

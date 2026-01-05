@@ -49,3 +49,25 @@ pub(crate) struct FileListQuery {
 fn default_page_size() -> i32 {
     10
 }
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct CollectionSearchQuery {
+    #[serde(default)]
+    pub(crate) q: Option<String>,
+    #[serde(default = "default_collection_limit")]
+    pub(crate) limit: i64,
+    #[serde(default)]
+    pub(crate) offset: i64,
+}
+
+fn default_collection_limit() -> i64 {
+    100
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct PaginatedCollections {
+    pub(crate) collections: Vec<Collection>,
+    pub(crate) total_count: i64,
+    pub(crate) limit: i64,
+    pub(crate) offset: i64,
+}

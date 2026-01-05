@@ -49,10 +49,6 @@ pub(crate) async fn search(
         search_request.embeddings.len(),
         search_request.query
     );
-    tracing::debug!(
-        "Embeddings keys: {:?}",
-        search_request.embeddings.keys().collect::<Vec<_>>()
-    );
 
     if search_request.embeddings.is_empty() {
         return HttpResponse::BadRequest().body("At least one embedder embedding must be provided");

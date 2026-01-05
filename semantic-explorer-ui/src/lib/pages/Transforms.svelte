@@ -4,8 +4,6 @@
 	import PageHeader from '../components/PageHeader.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
 
-	const { onViewTransform } = $props<{ onViewTransform?: (_id: number) => void }>();
-
 	type JobType = 'collection_to_dataset' | 'dataset_to_vector_storage';
 
 	interface Transform {
@@ -380,9 +378,8 @@
 
 			resetCreateForm();
 			showCreateForm = false;
-			if (onViewTransform) {
-				onViewTransform(newTransform.transform_id);
-			}
+			// Expand the newly created transform to show its details
+			await toggleExpand(newTransform.transform_id);
 		} catch (e) {
 			const message = formatError(e, 'Failed to create transform');
 			createError = message;
