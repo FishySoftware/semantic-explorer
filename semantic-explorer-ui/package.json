@@ -41,5 +41,12 @@
 	},
 	"overrides": {
 		"vite": "npm:rolldown-vite@7.2.5"
+	},
+	"dependencies": {
+		"@deck.gl/core": "^9.2.5",
+		"@deck.gl/layers": "^9.2.5",
+		"@loaders.gl/core": "^4.3.4",
+		"@loaders.gl/csv": "^4.3.4",
+		"deck.gl": "^9.2.5"
 	}
 }

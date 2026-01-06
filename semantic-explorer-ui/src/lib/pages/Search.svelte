@@ -532,12 +532,9 @@
 													{result.embedder_name}
 												</h3>
 												<p class="text-sm text-gray-600 dark:text-gray-400">
-													Collection: {result.collection_name}
+													Embedded Dataset: {result.collection_name}
 												</p>
 											</div>
-											<span class="text-sm font-medium text-blue-600 dark:text-blue-400">
-												{result.matches.length} result{result.matches.length !== 1 ? 's' : ''}
-											</span>
 										</div>
 
 										{#if result.error}

@@ -3,6 +3,7 @@ pub(crate) mod datasets;
 pub(crate) mod embedders;
 pub(crate) mod search;
 pub(crate) mod transforms;
+pub(crate) mod visualizations;
 
 use crate::auth::extract_user;
 use actix_files::NamedFile;

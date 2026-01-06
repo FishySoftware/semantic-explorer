@@ -6596,19 +6596,15 @@ dependencies = [
 name = "worker-visualizations"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-nats",
- "aws-sdk-s3",
  "cuml-wrapper-rs",
+ "futures-util",
  "opentelemetry",
- "opentelemetry-appender-tracing",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "qdrant-client",
- "reqwest 0.13.1",
  "rust-stemmers",
  "semantic-explorer-core",
- "serde",
  "serde_json",
  "stop-words",
  "tokio",

@@ -5,7 +5,7 @@ use futures_util::StreamExt;
 use sqlx::{Pool, Postgres};
 use tracing::{error, info};
 
-use semantic_explorer_core::jobs::{FileTransformResult, VectorBatchResult};
+use semantic_explorer_core::jobs::{FileTransformResult, VectorBatchResult, VisualizationResult};
 use semantic_explorer_core::storage::get_file;
 
 use crate::datasets::models::ChunkWithMetadata;
@@ -29,6 +29,7 @@ pub(crate) async fn start_result_listeners(
 
     start_file_result_listener(context.clone(), nats_client.clone());
     start_vector_result_listener(context.clone(), nats_client.clone());
+    start_visualization_result_listener(context.clone(), nats_client.clone());
     start_scan_job_listener(context.clone(), nats_client.clone());
 
     Ok(())
@@ -74,6 +75,30 @@ fn start_vector_result_listener(context: TransformContext, nats_client: NatsClie
         while let Some(msg) = subscriber.next().await {
             if let Ok(result) = serde_json::from_slice::<VectorBatchResult>(&msg.payload) {
                 handle_vector_result(result, &context).await;
+            }
+        }
+    });
+}
+
+fn start_visualization_result_listener(context: TransformContext, nats_client: NatsClient) {
+    actix_web::rt::spawn(async move {
+        let mut subscriber = match nats_client
+            .subscribe("worker.result.visualization".to_string())
+            .await
+        {
+            Ok(sub) => sub,
+            Err(e) => {
+                error!("failed to subscribe to visualization results: {}", e);
+                return;
+            }
+        };
+
+        info!("Visualization result listener started");
+        while let Some(msg) = subscriber.next().await {
+            if let Ok(result) = serde_json::from_slice::<VisualizationResult>(&msg.payload) {
+                handle_visualization_result(result, &context).await;
+            } else {
+                error!("Failed to deserialize visualization result");
             }
         }
     });
@@ -269,4 +294,35 @@ async fn handle_vector_result(result: VectorBatchResult, ctx: &TransformContext)
         "Successfully processed vector batch {} with {} chunks",
         result.batch_file_key, result.chunk_count
     );
+}
+
+#[tracing::instrument(name = "handle_visualization_result", skip(_ctx))]
+async fn handle_visualization_result(result: VisualizationResult, _ctx: &TransformContext) {
+    info!(
+        "Handling visualization result for transform {}",
+        result.transform_id
+    );
+
+    if result.status != "completed" {
+        error!(
+            "Visualization failed for transform {}: {:?}",
+            result.transform_id, result.error
+        );
+        // Could add a status field to transforms table to track this
+        return;
+    }
+
+    info!(
+        "Visualization completed for transform {} with {} points in {} clusters (processing time: {}ms)",
+        result.transform_id,
+        result.n_points,
+        result.n_clusters,
+        result.processing_duration_ms.unwrap_or(0)
+    );
+
+    // The visualization data is already stored in Qdrant by the worker
+    // This handler is primarily for logging and could be extended to:
+    // - Update a status field in the transforms table
+    // - Send notifications
+    // - Trigger dependent processes
 }

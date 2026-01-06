@@ -426,6 +426,103 @@ pub(crate) async fn delete_dataset_item(
 }
 
 #[derive(serde::Serialize, utoipa::ToSchema)]
+pub(crate) struct EmbeddedDataset {
+    pub(crate) embedder_id: i32,
+    pub(crate) embedder_name: String,
+    pub(crate) collection_name: String,
+    pub(crate) transform_id: i32,
+    pub(crate) transform_title: String,
+}
+
+#[utoipa::path(
+    responses(
+        (status = 200, description = "OK", body = Vec<EmbeddedDataset>),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Dataset not found"),
+        (status = 500, description = "Internal Server Error"),
+    ),
+    tag = "Datasets",
+)]
+#[get("/api/datasets/{dataset_id}/embedded-datasets")]
+#[tracing::instrument(name = "get_dataset_embedded_datasets", skip(auth, postgres_pool))]
+pub(crate) async fn get_dataset_embedded_datasets(
+    auth: Authenticated,
+    postgres_pool: Data<Pool<Postgres>>,
+    dataset_id: Path<i32>,
+) -> impl Responder {
+    let username = match extract_username(&auth) {
+        Ok(username) => username,
+        Err(e) => return e,
+    };
+
+    let dataset_id = dataset_id.into_inner();
+    let pool = postgres_pool.into_inner();
+
+    // Verify dataset exists and user has access
+    if datasets::get_dataset(&pool, &username, dataset_id)
+        .await
+        .is_err()
+    {
+        return HttpResponse::NotFound().json(serde_json::json!({
+            "error": "dataset not found or access denied"
+        }));
+    }
+
+    // Get all dataset_to_vector_storage transforms for this dataset
+    let vector_transforms =
+        match transforms::get_embedded_datasets_for_dataset(&pool, &username, dataset_id).await {
+            Ok(transforms) => transforms,
+            Err(e) => {
+                error!("error fetching transforms: {e:?}");
+                return HttpResponse::InternalServerError()
+                    .body(format!("error fetching transforms: {e:?}"));
+            }
+        };
+
+    // Get all embedders to look up names
+    let all_embedders = match embedders::get_embedders(&pool, &username).await {
+        Ok(embedders) => embedders,
+        Err(e) => {
+            error!("error fetching embedders: {e:?}");
+            return HttpResponse::InternalServerError()
+                .body(format!("error fetching embedders: {e:?}"));
+        }
+    };
+
+    let embedders_map: HashMap<i32, Embedder> = all_embedders
+        .into_iter()
+        .map(|e| (e.embedder_id, e))
+        .collect();
+
+    let mut embedded_datasets = Vec::new();
+
+    for transform in vector_transforms {
+        if let Some(embedder_ids) = transform.embedder_ids {
+            for embedder_id in embedder_ids {
+                if let Some(embedder) = embedders_map.get(&embedder_id) {
+                    // Get collection name from collection_mappings
+                    if let Some(collection_name) = transform
+                        .collection_mappings
+                        .get(embedder_id.to_string())
+                        .and_then(|v| v.as_str())
+                    {
+                        embedded_datasets.push(EmbeddedDataset {
+                            embedder_id,
+                            embedder_name: embedder.name.clone(),
+                            collection_name: collection_name.to_string(),
+                            transform_id: transform.transform_id,
+                            transform_title: transform.title.clone(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    HttpResponse::Ok().json(embedded_datasets)
+}
+
+#[derive(serde::Serialize, utoipa::ToSchema)]
 pub(crate) struct DatasetEmbedders {
     pub(crate) dataset_id: i32,
     pub(crate) embedders: Vec<Embedder>,

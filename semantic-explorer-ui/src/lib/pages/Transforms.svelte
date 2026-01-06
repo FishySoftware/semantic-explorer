@@ -4,7 +4,10 @@
 	import PageHeader from '../components/PageHeader.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
 
-	type JobType = 'collection_to_dataset' | 'dataset_to_vector_storage';
+	type JobType =
+		| 'collection_to_dataset'
+		| 'dataset_to_vector_storage'
+		| 'dataset_visualization_transform';
 
 	interface Transform {
 		transform_id: number;
@@ -80,6 +83,16 @@
 	let newEmbedderIds = $state<number[]>([]);
 	let creating = $state(false);
 	let createError = $state<string | null>(null);
+
+	// Visualization transform state
+	let newSourceTransformId = $state<number | null>(null);
+	let vizNNeighbors = $state(15);
+	let vizNComponents = $state(3);
+	let vizMinDist = $state(0.1);
+	let vizMetric = $state('cosine');
+	let vizMinClusterSize = $state(5);
+	let vizMinSamples = $state<number | null>(null);
+
 	let extractionStrategy = $state<'plain_text' | 'structure_preserving' | 'markdown'>('plain_text');
 	let preserveFormatting = $state(false);
 	let extractTables = $state(true);
@@ -355,6 +368,25 @@
 			}
 			body.dataset_id = newDatasetId;
 			body.embedder_ids = newEmbedderIds;
+		} else if (newJobType === 'dataset_visualization_transform') {
+			if (!newDatasetId) {
+				createError = 'Dataset is required';
+				return;
+			}
+			if (!newSourceTransformId) {
+				createError = 'Embedded dataset is required';
+				return;
+			}
+			body.dataset_id = newDatasetId;
+			body.source_transform_id = newSourceTransformId;
+			body.visualization_config = {
+				n_neighbors: vizNNeighbors,
+				n_components: vizNComponents,
+				min_dist: vizMinDist,
+				metric: vizMetric,
+				min_cluster_size: vizMinClusterSize,
+				min_samples: vizMinSamples,
+			};
 		}
 
 		try {
@@ -398,6 +430,15 @@
 		newChunkSize = 200;
 		newEmbedderIds = [];
 		createError = null;
+
+		// Reset visualization config
+		newSourceTransformId = null;
+		vizNNeighbors = 15;
+		vizNComponents = 3;
+		vizMinDist = 0.1;
+		vizMetric = 'cosine';
+		vizMinClusterSize = 5;
+		vizMinSamples = null;
 
 		// Reset extraction config
 		extractionStrategy = 'plain_text';
@@ -694,6 +735,13 @@
 		return embedders;
 	}
 
+	function getEmbeddedDatasetsForDataset(datasetId: number | null): Transform[] {
+		if (!datasetId) return [];
+		return transforms.filter(
+			(t) => t.job_type === 'dataset_to_vector_storage' && t.dataset_id === datasetId
+		);
+	}
+
 	function getEmbedderFromFileKey(fileKey: string, transform: Transform): Embedder | null {
 		if (transform.job_type === 'dataset_to_vector_storage' && transform.embedder_ids) {
 			const match = fileKey.match(/batches\/(\d+)_/);
@@ -708,7 +756,8 @@
 	function getJobTypeLabel(jobType: JobType): string {
 		const labels: Record<JobType, string> = {
 			collection_to_dataset: 'Collection → Dataset',
-			dataset_to_vector_storage: 'Dataset → Vector Storage',
+			dataset_to_vector_storage: 'Dataset → Embedded Dataset',
+			dataset_visualization_transform: 'Dataset → Visualization',
 		};
 		return labels[jobType] || jobType;
 	}
@@ -780,7 +829,10 @@
 							>Collection → Dataset (Extract & Chunk Files)</option
 						>
 						<option value="dataset_to_vector_storage"
-							>Dataset → Vector Storage (Generate Embeddings)</option
+							>Dataset → Embedded Dataset (Generate Embeddings)</option
+						>
+						<option value="dataset_visualization_transform"
+							>Dataset → Visualization (3D Embedding Visualization)</option
 						>
 					</select>
 					<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
@@ -789,6 +841,8 @@
 						{:else if newJobType === 'dataset_to_vector_storage'}
 							Generate embeddings from dataset items using multiple embedders and store in vector
 							database
+						{:else if newJobType === 'dataset_visualization_transform'}
+							Create an interactive 3D visualization of an embedded dataset using UMAP and HDBSCAN
 						{/if}
 					</p>
 				</div>
@@ -1353,6 +1407,178 @@
 							Selected: {newEmbedderIds.length} embedder{newEmbedderIds.length !== 1 ? 's' : ''}
 						</p>
 					</fieldset>
+				{:else if newJobType === 'dataset_visualization_transform'}
+					<div>
+						<label
+							for="viz-dataset"
+							class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+						>
+							Source Dataset
+						</label>
+						<select
+							id="viz-dataset"
+							bind:value={newDatasetId}
+							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md
+									  bg-white dark:bg-gray-700 text-gray-900 dark:text-white
+									  focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+						>
+							<option value={null}>Select a dataset...</option>
+							{#each datasets as dataset (dataset.dataset_id)}
+								<option value={dataset.dataset_id}>
+									{dataset.title}
+								</option>
+							{/each}
+						</select>
+					</div>
+
+					<div>
+						<label
+							for="viz-source-transform"
+							class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+						>
+							Embedded Dataset
+						</label>
+						<select
+							id="viz-source-transform"
+							bind:value={newSourceTransformId}
+							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md
+									  bg-white dark:bg-gray-700 text-gray-900 dark:text-white
+									  focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+						>
+							<option value={null}>Select an embedded dataset...</option>
+							{#if newDatasetId}
+								{#each getEmbeddedDatasetsForDataset(newDatasetId) as transform (transform.transform_id)}
+									<option value={transform.transform_id}>
+										{transform.title}
+									</option>
+								{/each}
+							{/if}
+						</select>
+						<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+							Select which embedded dataset to visualize
+						</p>
+					</div>
+
+					<div class="border border-gray-300 dark:border-gray-600 rounded-md p-4 space-y-4">
+						<h4 class="font-medium text-gray-900 dark:text-white">UMAP Parameters</h4>
+
+						<div class="grid grid-cols-2 gap-4">
+							<div>
+								<label
+									for="viz-n-neighbors"
+									class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+								>
+									N Neighbors
+								</label>
+								<input
+									id="viz-n-neighbors"
+									type="number"
+									bind:value={vizNNeighbors}
+									min="5"
+									max="100"
+									class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md
+											  bg-white dark:bg-gray-700 text-gray-900 dark:text-white
+											  focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+								/>
+								<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+									Default: 15. Controls local vs global structure balance.
+								</p>
+							</div>
+
+							<div>
+								<label
+									for="viz-min-dist"
+									class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+								>
+									Min Distance
+								</label>
+								<input
+									id="viz-min-dist"
+									type="number"
+									bind:value={vizMinDist}
+									min="0.0"
+									max="1.0"
+									step="0.01"
+									class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md
+											  bg-white dark:bg-gray-700 text-gray-900 dark:text-white
+											  focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+								/>
+								<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+									Default: 0.1. Minimum distance between points.
+								</p>
+							</div>
+						</div>
+
+						<div>
+							<label
+								for="viz-metric"
+								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+							>
+								Distance Metric
+							</label>
+							<select
+								id="viz-metric"
+								bind:value={vizMetric}
+								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md
+										  bg-white dark:bg-gray-700 text-gray-900 dark:text-white
+										  focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+							>
+								<option value="cosine">Cosine</option>
+								<option value="euclidean">Euclidean</option>
+								<option value="manhattan">Manhattan</option>
+							</select>
+						</div>
+					</div>
+
+					<div class="border border-gray-300 dark:border-gray-600 rounded-md p-4 space-y-4">
+						<h4 class="font-medium text-gray-900 dark:text-white">HDBSCAN Parameters</h4>
+
+						<div class="grid grid-cols-2 gap-4">
+							<div>
+								<label
+									for="viz-min-cluster-size"
+									class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+								>
+									Min Cluster Size
+								</label>
+								<input
+									id="viz-min-cluster-size"
+									type="number"
+									bind:value={vizMinClusterSize}
+									min="2"
+									max="100"
+									class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md
+											  bg-white dark:bg-gray-700 text-gray-900 dark:text-white
+											  focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+								/>
+								<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+									Default: 15. Minimum points per cluster.
+								</p>
+							</div>
+
+							<div>
+								<label
+									for="viz-min-samples"
+									class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+								>
+									Min Samples (optional)
+								</label>
+								<input
+									id="viz-min-samples"
+									type="number"
+									bind:value={vizMinSamples}
+									min="1"
+									max="100"
+									class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md
+											  bg-white dark:bg-gray-700 text-gray-900 dark:text-white
+											  focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+								/>
+								<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+									Default: 5. Core point threshold.
+								</p>
+							</div>
+						</div>
+					</div>
 				{/if}
 
 				<div class="flex gap-3">

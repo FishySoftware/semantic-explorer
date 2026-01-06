@@ -105,102 +105,172 @@ pub(crate) async fn create_transform(
         job_type,
         source_dataset_id,
         target_dataset_id,
+        source_transform_id,
         embedder_ids,
         job_config,
         collection_mappings,
-    ) =
-        match &body.config {
-            CreateTransformConfig::CollectionToDataset {
-                collection_id,
-                dataset_id,
-                chunk_size,
-                job_config,
-            } => {
-                if collections::get_collection(&postgres_pool, &username, *collection_id)
-                    .await
-                    .is_err()
-                {
-                    return HttpResponse::NotFound().json(serde_json::json!({
-                        "error": "collection not found or access denied"
-                    }));
-                }
-                if datasets::get_dataset(&postgres_pool, &username, *dataset_id)
-                    .await
-                    .is_err()
-                {
-                    return HttpResponse::NotFound().json(serde_json::json!({
-                        "error": "dataset not found or access denied"
-                    }));
-                }
-                (
-                    Some(*collection_id),
-                    *dataset_id,
-                    *chunk_size,
-                    "collection_to_dataset",
-                    None,
-                    None,
-                    None,
-                    job_config.clone(),
-                    serde_json::json!({}),
-                )
+    ) = match &body.config {
+        CreateTransformConfig::CollectionToDataset {
+            collection_id,
+            dataset_id,
+            chunk_size,
+            job_config,
+        } => {
+            if collections::get_collection(&postgres_pool, &username, *collection_id)
+                .await
+                .is_err()
+            {
+                return HttpResponse::NotFound().json(serde_json::json!({
+                    "error": "collection not found or access denied"
+                }));
             }
-            CreateTransformConfig::DatasetToVectorStorage {
-                dataset_id,
+            if datasets::get_dataset(&postgres_pool, &username, *dataset_id)
+                .await
+                .is_err()
+            {
+                return HttpResponse::NotFound().json(serde_json::json!({
+                    "error": "dataset not found or access denied"
+                }));
+            }
+            (
+                Some(*collection_id),
+                *dataset_id,
+                *chunk_size,
+                "collection_to_dataset",
+                None,
+                None,
+                None,
+                None,
+                job_config.clone(),
+                serde_json::json!({}),
+            )
+        }
+        CreateTransformConfig::DatasetToVectorStorage {
+            dataset_id,
+            embedder_ids,
+            embedding_batch_size,
+            wipe_collection,
+        } => {
+            if datasets::get_dataset(&postgres_pool, &username, *dataset_id)
+                .await
+                .is_err()
+            {
+                return HttpResponse::NotFound().json(serde_json::json!({
+                    "error": "dataset not found or access denied"
+                }));
+            }
+            let found_embedders = match embedders::get_embedders_by_ids(
+                &postgres_pool,
+                &username,
                 embedder_ids,
-                embedding_batch_size,
-                wipe_collection,
-            } => {
-                if datasets::get_dataset(&postgres_pool, &username, *dataset_id)
-                    .await
-                    .is_err()
-                {
-                    return HttpResponse::NotFound().json(serde_json::json!({
-                        "error": "dataset not found or access denied"
+            )
+            .await
+            {
+                Ok(e) => e,
+                Err(_) => {
+                    return HttpResponse::InternalServerError().json(serde_json::json!({
+                        "error": "failed to validate embedders"
                     }));
                 }
-                let found_embedders =
-                    match embedders::get_embedders_by_ids(&postgres_pool, &username, embedder_ids)
-                        .await
-                    {
-                        Ok(e) => e,
-                        Err(_) => {
-                            return HttpResponse::InternalServerError().json(serde_json::json!({
-                                "error": "failed to validate embedders"
-                            }));
-                        }
-                    };
+            };
 
-                let found_ids: std::collections::HashSet<i32> =
-                    found_embedders.iter().map(|e| e.embedder_id).collect();
-                for embedder_id in embedder_ids {
-                    if !found_ids.contains(embedder_id) {
+            let found_ids: std::collections::HashSet<i32> =
+                found_embedders.iter().map(|e| e.embedder_id).collect();
+            for embedder_id in embedder_ids {
+                if !found_ids.contains(embedder_id) {
+                    return HttpResponse::NotFound().json(serde_json::json!({
+                        "error": format!("embedder {} not found or access denied", embedder_id)
+                    }));
+                }
+            }
+
+            let mut config = serde_json::json!({});
+            if let Some(size) = embedding_batch_size {
+                config["embedding_batch_size"] = serde_json::json!(size);
+            }
+            if *wipe_collection {
+                config["wipe_collection"] = serde_json::json!(true);
+            }
+
+            (
+                None,
+                *dataset_id,
+                0,
+                "dataset_to_vector_storage",
+                Some(*dataset_id),
+                None,
+                None,
+                Some(embedder_ids.clone()),
+                config,
+                serde_json::json!({}),
+            )
+        }
+        CreateTransformConfig::DatasetVisualizationTransform {
+            source_transform_id,
+            source_embedder_id,
+            dataset_id,
+            visualization_config,
+        } => {
+            // Validate dataset exists
+            if datasets::get_dataset(&postgres_pool, &username, *dataset_id)
+                .await
+                .is_err()
+            {
+                return HttpResponse::NotFound().json(serde_json::json!({
+                    "error": "dataset not found or access denied"
+                }));
+            }
+
+            // Validate source transform exists and is a dataset_to_vector_storage type
+            let source_transform =
+                match transforms::get_transform(&postgres_pool, &username, *source_transform_id)
+                    .await
+                {
+                    Ok(t) => t,
+                    Err(_) => {
                         return HttpResponse::NotFound().json(serde_json::json!({
-                            "error": format!("embedder {} not found or access denied", embedder_id)
+                            "error": "source transform not found or access denied"
                         }));
                     }
-                }
+                };
 
-                let mut config = serde_json::json!({});
-                if let Some(size) = embedding_batch_size {
-                    config["embedding_batch_size"] = serde_json::json!(size);
-                }
-                if *wipe_collection {
-                    config["wipe_collection"] = serde_json::json!(true);
-                }
-
-                (
-                    None,
-                    *dataset_id,
-                    0,
-                    "dataset_to_vector_storage",
-                    Some(*dataset_id),
-                    None,
-                    Some(embedder_ids.clone()),
-                    config,
-                    serde_json::json!({}),
-                )
+            if source_transform.job_type != "dataset_to_vector_storage" {
+                return HttpResponse::BadRequest().json(serde_json::json!({
+                    "error": "source transform must be of type dataset_to_vector_storage"
+                }));
             }
-        };
+
+            // Validate embedder is configured in source transform
+            if let Some(ref embedder_ids) = source_transform.embedder_ids {
+                if !embedder_ids.contains(source_embedder_id) {
+                    return HttpResponse::BadRequest().json(serde_json::json!({
+                        "error": "embedder not configured in source transform"
+                    }));
+                }
+            } else {
+                return HttpResponse::BadRequest().json(serde_json::json!({
+                    "error": "source transform has no embedders configured"
+                }));
+            }
+
+            // Store visualization config in job_config
+            let config =
+                serde_json::to_value(visualization_config).unwrap_or(serde_json::json!({}));
+
+            (
+                None,
+                *dataset_id,
+                0,
+                "dataset_visualization_transform",
+                None,
+                None,
+                Some(*source_transform_id),
+                Some(vec![*source_embedder_id]),
+                config,
+                serde_json::json!({}),
+            )
+        }
+    };
 
     let mut transform = match transforms::create_transform(
         &postgres_pool,
@@ -213,6 +283,7 @@ pub(crate) async fn create_transform(
             job_type,
             source_dataset_id,
             target_dataset_id,
+            source_transform_id,
             embedder_ids,
             job_config: &job_config,
             collection_mappings: &collection_mappings,
@@ -241,6 +312,50 @@ pub(crate) async fn create_transform(
             );
             collection_mappings.insert(embedder_id.to_string(), serde_json::json!(collection_name));
         }
+
+        transform = match transforms::update_collection_mappings(
+            &postgres_pool,
+            transform.transform_id,
+            &username,
+            &serde_json::Value::Object(collection_mappings),
+        )
+        .await
+        {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::error!("failed to update collection mappings: {}", e);
+                transform
+            }
+        };
+    }
+
+    if job_type == "dataset_visualization_transform"
+        && let Some(ref embedder_ids) = transform.embedder_ids
+        && !embedder_ids.is_empty()
+    {
+        let embedder_id = embedder_ids[0]; // We store the embedder_id in the first position
+        let mut collection_mappings = serde_json::Map::new();
+
+        // Generate names for reduced vectors and topics collections
+        let reduced_collection =
+            crate::transforms::models::Transform::generate_collection_name_with_suffix(
+                transform.dataset_id,
+                embedder_id,
+                transform.transform_id,
+                &username,
+                Some("reduced"),
+            );
+        let topics_collection =
+            crate::transforms::models::Transform::generate_collection_name_with_suffix(
+                transform.dataset_id,
+                embedder_id,
+                transform.transform_id,
+                &username,
+                Some("reduced-topics"),
+            );
+
+        collection_mappings.insert("reduced".to_string(), serde_json::json!(reduced_collection));
+        collection_mappings.insert("topics".to_string(), serde_json::json!(topics_collection));
 
         transform = match transforms::update_collection_mappings(
             &postgres_pool,

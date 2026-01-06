@@ -13,11 +13,13 @@
 	import Embedders from './lib/pages/Embedders.svelte';
 	import Search from './lib/pages/Search.svelte';
 	import Transforms from './lib/pages/Transforms.svelte';
+	import VisualizationDetail from './lib/pages/VisualizationDetail.svelte';
 	import Visualizations from './lib/pages/Visualizations.svelte';
 
 	let activeUrl = $state('/dashboard');
 	let selectedCollectionId = $state<number | null>(null);
 	let selectedDatasetId = $state<number | null>(null);
+	let selectedVisualizationId = $state<number | null>(null);
 
 	function parseRoute(hash: string): { path: string; params: Record<string, string> } {
 		const parts = hash
@@ -36,6 +38,9 @@
 		if (parts.length === 3 && parts[0] === 'transforms' && parts[2] === 'details') {
 			return { path: '/transforms/detail', params: { id: parts[1] } };
 		}
+		if (parts.length === 3 && parts[0] === 'visualizations' && parts[2] === 'details') {
+			return { path: '/visualizations/detail', params: { id: parts[1] } };
+		}
 
 		return { path: '/' + parts.join('/'), params: {} };
 	}
@@ -48,6 +53,18 @@
 			selectedCollectionId = parseInt(params.id, 10);
 		} else if (path !== '/collections/detail') {
 			selectedCollectionId = null;
+		}
+
+		if (path === '/datasets/detail' && params.id) {
+			selectedDatasetId = parseInt(params.id, 10);
+		} else if (path !== '/datasets/detail') {
+			selectedDatasetId = null;
+		}
+
+		if (path === '/visualizations/detail' && params.id) {
+			selectedVisualizationId = parseInt(params.id, 10);
+		} else if (path !== '/visualizations/detail') {
+			selectedVisualizationId = null;
 		}
 	}
 
@@ -82,6 +99,18 @@
 		activeUrl = '/datasets';
 		window.location.hash = '/datasets';
 	}
+
+	function viewVisualization(transformId: number) {
+		selectedVisualizationId = transformId;
+		activeUrl = '/visualizations/detail';
+		window.location.hash = `/visualizations/${transformId}/details`;
+	}
+
+	function backToVisualizations() {
+		selectedVisualizationId = null;
+		activeUrl = '/visualizations';
+		window.location.hash = '/visualizations';
+	}
 </script>
 
 <div class="h-screen flex flex-col bg-gray-50 dark:bg-gray-900">
@@ -112,7 +141,14 @@
 			{:else if activeUrl === '/transforms'}
 				<Transforms />
 			{:else if activeUrl === '/visualizations'}
-				<Visualizations />
+				<Visualizations onViewVisualization={viewVisualization} />
+			{:else if activeUrl === '/visualizations/detail'}
+				{#if selectedVisualizationId !== null}
+					<VisualizationDetail
+						transformId={selectedVisualizationId}
+						onBack={backToVisualizations}
+					/>
+				{/if}
 			{:else if activeUrl === '/search'}
 				<Search />
 			{/if}

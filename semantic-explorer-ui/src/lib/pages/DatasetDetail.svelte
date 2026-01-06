@@ -137,7 +137,7 @@
 			case 'collection_to_dataset':
 				return 'Collection → Dataset';
 			case 'dataset_to_vector_storage':
-				return 'Dataset → Vector Storage';
+				return 'Dataset → Embedded Dataset';
 			default:
 				return transform.job_type;
 		}
@@ -225,7 +225,7 @@
 			// Refresh the items list
 			await fetchItems();
 			toastStore.success(
-				'Dataset item deleted and all associated chunks removed from vector storage'
+				'Dataset item deleted and all associated chunks removed from embedded dataset'
 			);
 		} catch (e) {
 			toastStore.error(formatError(e, 'Failed to delete dataset item'));
@@ -385,7 +385,7 @@
 											{transform.embedder_ids?.length ?? 0} embedders configured
 										</span>
 										<p class="leading-tight">
-											Embeddings are synchronized with vector storage from this dataset.
+											Embeddings are synchronized with embedded dataset from this dataset.
 										</p>
 									</div>
 								{/if}
@@ -688,7 +688,7 @@
 	open={itemPendingDelete !== null}
 	title="Delete dataset item"
 	message={itemPendingDelete
-		? `Are you sure you want to delete "${itemPendingDelete.title}"? This will also remove all associated chunks from vector storage. This action cannot be undone.`
+		? `Are you sure you want to delete "${itemPendingDelete.title}"? This will also remove all associated chunks from embedded dataset. This action cannot be undone.`
 		: ''}
 	confirmLabel="Delete"
 	variant="danger"

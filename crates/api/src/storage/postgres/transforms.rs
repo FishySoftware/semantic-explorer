@@ -12,6 +12,7 @@ pub(crate) struct CreateTransformParams<'a> {
     pub(crate) job_type: &'a str,
     pub(crate) source_dataset_id: Option<i32>,
     pub(crate) target_dataset_id: Option<i32>,
+    pub(crate) source_transform_id: Option<i32>,
     pub(crate) embedder_ids: Option<Vec<i32>>,
     pub(crate) job_config: &'a serde_json::Value,
     pub(crate) collection_mappings: &'a serde_json::Value,
@@ -19,21 +20,21 @@ pub(crate) struct CreateTransformParams<'a> {
 
 const GET_TRANSFORM_QUERY: &str = r#"
     SELECT transform_id, title, collection_id, dataset_id, owner, is_enabled, chunk_size, 
-           job_type, source_dataset_id, target_dataset_id, embedder_ids, job_config, collection_mappings, created_at, updated_at
+           job_type, source_dataset_id, target_dataset_id, source_transform_id, embedder_ids, job_config, collection_mappings, created_at, updated_at
     FROM transforms
     WHERE owner = $1 AND transform_id = $2
 "#;
 
 const GET_TRANSFORM_BY_ID_QUERY: &str = r#"
     SELECT transform_id, title, collection_id, dataset_id, owner, is_enabled, chunk_size, 
-           job_type, source_dataset_id, target_dataset_id, embedder_ids, job_config, collection_mappings, created_at, updated_at
+           job_type, source_dataset_id, target_dataset_id, source_transform_id, embedder_ids, job_config, collection_mappings, created_at, updated_at
     FROM transforms
     WHERE transform_id = $1
 "#;
 
 const GET_TRANSFORMS_QUERY: &str = r#"
     SELECT transform_id, title, collection_id, dataset_id, owner, is_enabled, chunk_size, 
-           job_type, source_dataset_id, target_dataset_id, embedder_ids, job_config, collection_mappings, created_at, updated_at
+           job_type, source_dataset_id, target_dataset_id, source_transform_id, embedder_ids, job_config, collection_mappings, created_at, updated_at
     FROM transforms
     WHERE owner = $1
     ORDER BY created_at DESC
@@ -41,18 +42,26 @@ const GET_TRANSFORMS_QUERY: &str = r#"
 
 const GET_ACTIVE_TRANSFORMS_QUERY: &str = r#"
     SELECT transform_id, title, collection_id, dataset_id, owner, is_enabled, chunk_size, 
-           job_type, source_dataset_id, target_dataset_id, embedder_ids, job_config, collection_mappings, created_at, updated_at
+           job_type, source_dataset_id, target_dataset_id, source_transform_id, embedder_ids, job_config, collection_mappings, created_at, updated_at
     FROM transforms
     WHERE is_enabled = TRUE
     ORDER BY created_at DESC
 "#;
 
+const GET_EMBEDDED_DATASETS_FOR_DATASET_QUERY: &str = r#"
+    SELECT transform_id, title, collection_id, dataset_id, owner, is_enabled, chunk_size, 
+           job_type, source_dataset_id, target_dataset_id, source_transform_id, embedder_ids, job_config, collection_mappings, created_at, updated_at
+    FROM transforms
+    WHERE owner = $1 AND dataset_id = $2 AND job_type = 'dataset_to_vector_storage'
+    ORDER BY created_at DESC
+"#;
+
 const CREATE_TRANSFORM_QUERY: &str = r#"
     INSERT INTO transforms (title, collection_id, dataset_id, owner, is_enabled, chunk_size,
-                            job_type, source_dataset_id, target_dataset_id, embedder_ids, job_config, collection_mappings)
-    VALUES ($1, $2, $3, $4, TRUE, $5, $6, $7, $8, $9, $10, $11)
+                            job_type, source_dataset_id, target_dataset_id, source_transform_id, embedder_ids, job_config, collection_mappings)
+    VALUES ($1, $2, $3, $4, TRUE, $5, $6, $7, $8, $9, $10, $11, $12)
     RETURNING transform_id, title, collection_id, dataset_id, owner, is_enabled, chunk_size, 
-              job_type, source_dataset_id, target_dataset_id, embedder_ids, job_config, collection_mappings, created_at, updated_at
+              job_type, source_dataset_id, target_dataset_id, source_transform_id, embedder_ids, job_config, collection_mappings, created_at, updated_at
 "#;
 
 const UPDATE_TRANSFORM_QUERY: &str = r#"
@@ -64,7 +73,7 @@ const UPDATE_TRANSFORM_QUERY: &str = r#"
         updated_at = NOW()
     WHERE owner = $1 AND transform_id = $2
     RETURNING transform_id, title, collection_id, dataset_id, owner, is_enabled, chunk_size, 
-              job_type, source_dataset_id, target_dataset_id, embedder_ids, job_config, collection_mappings, created_at, updated_at
+              job_type, source_dataset_id, target_dataset_id, source_transform_id, embedder_ids, job_config, collection_mappings, created_at, updated_at
 "#;
 
 const DELETE_TRANSFORM_QUERY: &str = r#"
@@ -174,6 +183,20 @@ pub(crate) async fn get_active_transforms(pool: &Pool<Postgres>) -> Result<Vec<T
     Ok(transforms)
 }
 
+pub(crate) async fn get_embedded_datasets_for_dataset(
+    pool: &Pool<Postgres>,
+    owner: &str,
+    dataset_id: i32,
+) -> Result<Vec<Transform>> {
+    let transforms: Vec<Transform> =
+        sqlx::query_as::<_, Transform>(GET_EMBEDDED_DATASETS_FOR_DATASET_QUERY)
+            .bind(owner)
+            .bind(dataset_id)
+            .fetch_all(pool)
+            .await?;
+    Ok(transforms)
+}
+
 pub(crate) async fn create_transform(
     pool: &Pool<Postgres>,
     params: CreateTransformParams<'_>,
@@ -187,6 +210,7 @@ pub(crate) async fn create_transform(
         .bind(params.job_type)
         .bind(params.source_dataset_id)
         .bind(params.target_dataset_id)
+        .bind(params.source_transform_id)
         .bind(params.embedder_ids.as_deref())
         .bind(params.job_config)
         .bind(params.collection_mappings)

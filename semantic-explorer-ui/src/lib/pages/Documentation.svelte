@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { BookOpenSolid, ArrowRightOutline } from 'flowbite-svelte-icons';
+	import { ArrowRightOutline, BookOpenSolid } from 'flowbite-svelte-icons';
 </script>
 
 <div class="p-6 max-w-6xl mx-auto">
@@ -224,7 +224,7 @@
 				Provides configurable pipelines to accomplish various operations. Collection transforms
 				extract text from documents and generate chunks to populate a dataset. Dataset transforms
 				populate embedded datasets—one dataset can have multiple embedders configured to populate
-				multiple vector stores for comparison purposes.
+				multiple embedded datasets for comparison purposes.
 			</p>
 			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
 				<h4 class="font-semibold text-gray-900 dark:text-white mb-2">Transform Types:</h4>

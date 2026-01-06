@@ -109,7 +109,7 @@
 	function getJobTypeLabel(jobType: string): string {
 		const labels: Record<string, string> = {
 			collection_to_dataset: 'Collection → Dataset',
-			dataset_to_vector_storage: 'Dataset → Vector Storage',
+			dataset_to_vector_storage: 'Dataset → Embedded Dataset',
 		};
 		return labels[jobType] || jobType;
 	}

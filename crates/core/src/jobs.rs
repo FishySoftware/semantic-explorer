@@ -68,3 +68,37 @@ pub struct VectorBatchResult {
     pub error: Option<String>,
     pub processing_duration_ms: Option<i64>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VisualizationTransformJob {
+    pub job_id: Uuid,
+    pub transform_id: i32,
+    pub source_collection: String,
+    pub output_collection_reduced: String,
+    pub output_collection_topics: String,
+    pub visualization_config: VisualizationConfig,
+    pub vector_database_config: VectorDatabaseConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VisualizationConfig {
+    // UMAP parameters
+    pub n_neighbors: i32,
+    pub n_components: i32,
+    pub min_dist: f32,
+    pub metric: String,
+    // HDBSCAN parameters
+    pub min_cluster_size: i32,
+    pub min_samples: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VisualizationResult {
+    pub job_id: Uuid,
+    pub transform_id: i32,
+    pub status: String,
+    pub error: Option<String>,
+    pub processing_duration_ms: Option<i64>,
+    pub n_points: usize,
+    pub n_clusters: i32,
+}

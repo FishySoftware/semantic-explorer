@@ -104,6 +104,7 @@ async fn main() -> Result<()> {
             .service(api::datasets::upload_to_dataset)
             .service(api::datasets::delete_dataset_item)
             .service(api::datasets::get_datasets_embedders)
+            .service(api::datasets::get_dataset_embedded_datasets)
             .service(api::embedders::get_embedders)
             .service(api::embedders::get_embedder)
             .service(api::embedders::create_embedder)
@@ -119,6 +120,8 @@ async fn main() -> Result<()> {
             .service(api::transforms::get_transform_stats)
             .service(api::transforms::get_processed_files)
             .service(api::transforms::trigger_transform)
+            .service(api::visualizations::get_visualization_points)
+            .service(api::visualizations::get_visualization_topics)
             .openapi_service(|api| {
                 SwaggerUi::new("/swagger-ui/{_:.*}").url("/api/openapi.json", api)
             })

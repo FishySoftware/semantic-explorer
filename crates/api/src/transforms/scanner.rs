@@ -9,7 +9,8 @@ use tracing::{error, info};
 use uuid::Uuid;
 
 use semantic_explorer_core::jobs::{
-    EmbedderConfig, TransformFileJob, VectorDatabaseConfig, VectorEmbedJob,
+    EmbedderConfig, TransformFileJob, VectorDatabaseConfig, VectorEmbedJob, VisualizationConfig,
+    VisualizationTransformJob,
 };
 use semantic_explorer_core::storage::{DocumentUpload, ensure_bucket_exists, upload_document};
 
@@ -63,6 +64,14 @@ async fn scan_active_transforms(
                 if let Err(e) = process_vector_scan(pool, nats, s3, &transform).await {
                     error!(
                         "Failed to process vector scan for transform {}: {}",
+                        transform.transform_id, e
+                    );
+                }
+            }
+            "dataset_visualization_transform" => {
+                if let Err(e) = process_visualization_scan(pool, nats, &transform).await {
+                    error!(
+                        "Failed to process visualization scan for transform {}: {}",
                         transform.transform_id, e
                     );
                 }
@@ -351,6 +360,124 @@ pub(crate) async fn process_vector_scan(
             embedder_id, transform.transform_id
         );
     }
+
+    Ok(())
+}
+
+#[tracing::instrument(name = "process_visualization_scan", skip(pool, nats, transform), fields(transform_id = %transform.transform_id))]
+pub(crate) async fn process_visualization_scan(
+    pool: &Pool<Postgres>,
+    nats: &NatsClient,
+    transform: &Transform,
+) -> Result<()> {
+    info!(
+        "Starting visualization scan for transform {}",
+        transform.transform_id
+    );
+
+    let owner = &transform.owner;
+
+    // Get source_transform_id from transform
+    let source_transform_id = match transform.source_transform_id {
+        Some(id) => id,
+        None => {
+            error!(
+                "No source_transform_id found for visualization transform {}",
+                transform.transform_id
+            );
+            return Ok(());
+        }
+    };
+
+    // Get source transform to find embedder and collection
+    let source_transform =
+        crate::storage::postgres::transforms::get_transform(pool, owner, source_transform_id)
+            .await?;
+
+    let embedder_ids = source_transform.embedder_ids.clone().unwrap_or_default();
+    if embedder_ids.is_empty() {
+        error!(
+            "No embedders found in source transform {} for visualization transform {}",
+            source_transform_id, transform.transform_id
+        );
+        return Ok(());
+    }
+
+    // Use first embedder (visualizations work with one embedder at a time)
+    let embedder_id = embedder_ids[0];
+
+    let source_collection = match source_transform.get_collection_name(embedder_id) {
+        Some(name) => name,
+        None => {
+            error!(
+                "No collection mapping found for embedder {} in source transform {}",
+                embedder_id, source_transform_id
+            );
+            return Ok(());
+        }
+    };
+
+    // Generate reduced collection names using the visualization transform ID
+    let output_collection_reduced =
+        transform.collection_name_with_suffix(embedder_id, Some("reduced"));
+    let output_collection_topics =
+        transform.collection_name_with_suffix(embedder_id, Some("reduced-topics"));
+
+    // Check if visualization already exists by checking if reduced collection exists
+    let qdrant_url =
+        std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string());
+    let qdrant_client = if let Ok(api_key) = std::env::var("QDRANT_API_KEY") {
+        qdrant_client::Qdrant::from_url(&qdrant_url)
+            .api_key(api_key)
+            .build()?
+    } else {
+        qdrant_client::Qdrant::from_url(&qdrant_url).build()?
+    };
+
+    let collection_exists = qdrant_client
+        .collection_exists(&output_collection_reduced)
+        .await?;
+
+    if collection_exists {
+        info!(
+            "Visualization already exists for transform {} (collection: {})",
+            transform.transform_id, output_collection_reduced
+        );
+        return Ok(());
+    }
+
+    info!(
+        "Creating visualization for transform {} from source collection '{}'",
+        transform.transform_id, source_collection
+    );
+
+    // Parse visualization config from job_config
+    let visualization_config: VisualizationConfig =
+        serde_json::from_value(transform.job_config.clone())?;
+
+    // Create visualization job
+    let job = VisualizationTransformJob {
+        job_id: Uuid::new_v4(),
+        transform_id: transform.transform_id,
+        source_collection,
+        output_collection_reduced,
+        output_collection_topics,
+        visualization_config,
+        vector_database_config: VectorDatabaseConfig {
+            database_type: "qdrant".to_string(),
+            connection_url: qdrant_url,
+            api_key: std::env::var("QDRANT_API_KEY").ok(),
+        },
+    };
+
+    let payload = serde_json::to_vec(&job)?;
+    nats.publish("workers.visualization".to_string(), payload.into())
+        .await?;
+
+    info!(
+        "Sent visualization job {} for transform {}",
+        job.job_id, transform.transform_id
+    );
 
     Ok(())
 }
