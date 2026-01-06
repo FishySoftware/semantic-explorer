@@ -16,7 +16,7 @@ use sqlx::{Pool, Postgres};
 
 use crate::{
     auth::extract_username,
-    storage::postgres::{embedders, transforms},
+    storage::postgres::{embedded_datasets, embedders},
 };
 
 #[utoipa::path(
@@ -58,21 +58,24 @@ pub(crate) async fn search(
         return HttpResponse::BadRequest().body("Query cannot be empty");
     }
 
-    let user_transforms = match transforms::get_transforms(&postgres_pool, &username).await {
-        Ok(t) => t,
+    let embedded_datasets_list = match embedded_datasets::get_embedded_datasets_for_dataset(
+        &postgres_pool,
+        &username,
+        search_request.dataset_id,
+    )
+    .await
+    {
+        Ok(eds) => eds,
         Err(e) => {
-            tracing::error!("Failed to fetch transforms: {}", e);
-            return HttpResponse::InternalServerError().body("Failed to fetch transforms");
+            tracing::error!("Failed to fetch embedded datasets: {}", e);
+            return HttpResponse::InternalServerError().body("Failed to fetch embedded datasets");
         }
     };
 
-    let dataset_transforms: Vec<_> = user_transforms
+    // Build a map from embedder_id to collection_name
+    let embedder_collection_map: std::collections::HashMap<i32, String> = embedded_datasets_list
         .into_iter()
-        .filter(|t| {
-            (t.dataset_id == search_request.dataset_id
-                || t.source_dataset_id == Some(search_request.dataset_id))
-                && t.job_type == "dataset_to_vector_storage"
-        })
+        .map(|ed| (ed.embedder_id, ed.collection_name))
         .collect();
 
     let mut results = Vec::new();
@@ -94,17 +97,8 @@ pub(crate) async fn search(
             }
         };
 
-        let collection_name = dataset_transforms.iter().find_map(|t| {
-            if let Some(embedder_ids) = &t.embedder_ids
-                && embedder_ids.contains(embedder_id)
-            {
-                return t.get_collection_name(*embedder_id);
-            }
-            None
-        });
-
-        let collection_name = match collection_name {
-            Some(name) => name,
+        let collection_name = match embedder_collection_map.get(embedder_id) {
+            Some(name) => name.clone(),
             None => {
                 results.push(EmbedderSearchResults {
                     embedder_id: *embedder_id,
@@ -112,7 +106,7 @@ pub(crate) async fn search(
                     collection_name: String::new(),
                     matches: Vec::new(),
                     error: Some(format!(
-                        "No transform found mapping dataset {} to embedder {}",
+                        "No embedded dataset found for dataset {} with embedder {}",
                         search_request.dataset_id, embedder_id
                     )),
                 });

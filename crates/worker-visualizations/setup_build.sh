@@ -1,7 +1,17 @@
 #!/bin/bash
-# Unified setup script for cuml-wrapper-rs
-# Checks for and installs missing dependencies, then activates the build environment
+# Setup script for worker-visualizations build environment
+# Installs and activates CUDA 12.4 + cuML dependencies for building cuml-wrapper-rs
+# 
 # Usage: source setup_build.sh
+#
+# This script:
+# 1. Checks if dependencies are already installed and skips reinstalls
+# 2. Installs system packages, CUDA 12.4, Rust, and micromamba if missing
+# 3. Creates/reuses a persistent conda environment at $HOME/micromamba/envs/cuml
+# 4. Activates the environment and sets required build variables
+#
+# Note: This is for LOCAL DEVELOPMENT ONLY. The Docker build handles all
+# dependencies via RapidsAI base images and does not use this script.
 
 BLUE='\033[0;34m'
 GREEN='\033[0;32m'
@@ -69,11 +79,16 @@ ensure_system_deps() {
 
 # Ensure CUDA Toolkit is installed
 ensure_cuda() {
+    # Early exit: CUDA 12.4 already in PATH
     if command -v nvcc &> /dev/null; then
-        return 0
+        local cuda_version=$(nvcc --version | grep -oP 'release \K[0-9.]+')
+        if [[ "$cuda_version" == 12.4* ]]; then
+            log_success "CUDA 12.4 already installed and in PATH"
+            return 0
+        fi
     fi
     
-    log_warning "CUDA Toolkit not found. Installing CUDA 12.x..."
+    log_warning "CUDA Toolkit 12.4 not found. Installing..."
     
     # Download and install CUDA keyring
     wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
@@ -92,7 +107,7 @@ ensure_cuda() {
     export PATH=/usr/local/cuda/bin:$PATH
     export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
     
-    log_success "CUDA Toolkit installed"
+    log_success "CUDA Toolkit 12.4 installed"
 }
 
 # Ensure Rust is installed
@@ -143,8 +158,9 @@ ensure_cuml_env() {
     # Initialize micromamba for this session
     eval "$("$HOME/.local/bin/micromamba" shell hook -s bash)"
     
-    # Check if environment exists
-    if micromamba env list | grep -q "^cuml "; then
+    # Early exit: environment already exists
+    if [ -d "$HOME/micromamba/envs/cuml" ]; then
+        log_success "cuML environment already exists at $HOME/micromamba/envs/cuml"
         return 0
     fi
     
@@ -169,6 +185,8 @@ ensure_cuml_env() {
 }
 
 # Activate the build environment
+# Sets all necessary environment variables for compiling worker-visualizations
+# These point to the conda environment where CUDA and cuML libraries are installed
 activate_build_env() {
     export MAMBA_ROOT_PREFIX="$HOME/micromamba"
     
@@ -212,8 +230,11 @@ activate_build_env() {
 }
 
 # Main flow
+# Orchestrates all dependency checks and installations
+# This is LOCAL DEVELOPMENT ONLY - Docker builds use RapidsAI base images instead
 main() {
-    log_info "Setting up build environment..."
+    log_info "Setting up build environment for worker-visualizations..."
+    log_info "This enables compilation of cuml-wrapper-rs dependency"
     echo ""
     
     # Run checks and installations

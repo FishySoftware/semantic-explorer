@@ -3,11 +3,6 @@ use sqlx::FromRow;
 use sqlx::types::chrono::{DateTime, Utc};
 use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ScanCollectionJob {
-    pub(crate) transform_id: i32,
-}
-
 #[derive(Serialize, Deserialize, ToSchema, Debug, Clone)]
 #[serde(tag = "job_type", rename_all = "snake_case")]
 pub(crate) enum CreateTransformConfig {

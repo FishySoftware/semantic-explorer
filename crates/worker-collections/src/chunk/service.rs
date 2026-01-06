@@ -323,15 +323,15 @@ mod tests {
 
         // Verify that heading hierarchy is correctly tracked
         for chunk in &chunks {
-            if let Some(ref structure) = chunk.metadata.structure_info {
-                if let Some(ref hierarchy) = structure.heading_hierarchy {
-                    // Check that hierarchy is in the correct format
-                    assert!(!hierarchy.is_empty());
+            if let Some(ref structure) = chunk.metadata.structure_info
+                && let Some(ref hierarchy) = structure.heading_hierarchy
+            {
+                // Check that hierarchy is in the correct format
+                assert!(!hierarchy.is_empty());
 
-                    // If section title exists, it should be the last item in hierarchy
-                    if let Some(ref title) = structure.section_title {
-                        assert_eq!(hierarchy.last().unwrap(), title);
-                    }
+                // If section title exists, it should be the last item in hierarchy
+                if let Some(ref title) = structure.section_title {
+                    assert_eq!(hierarchy.last().unwrap(), title);
                 }
             }
         }

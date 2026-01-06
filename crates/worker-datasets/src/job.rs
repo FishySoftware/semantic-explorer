@@ -2,7 +2,7 @@ use anyhow::Result;
 use qdrant_client::Qdrant;
 use qdrant_client::qdrant::{CreateCollectionBuilder, Distance, VectorParams};
 use qdrant_client::qdrant::{PointStruct, UpsertPointsBuilder};
-use semantic_explorer_core::jobs::{VectorBatchResult, VectorEmbedJob};
+use semantic_explorer_core::jobs::{DatasetTransformJob, DatasetTransformResult};
 use semantic_explorer_core::observability::record_worker_job;
 use semantic_explorer_core::storage::get_file;
 use std::time::Instant;
@@ -23,8 +23,8 @@ pub(crate) struct BatchItem {
     pub(crate) payload: serde_json::Map<String, serde_json::Value>,
 }
 
-#[instrument(skip(ctx), fields(job_id = %job.job_id, transform_id = %job.transform_id, collection = %job.collection_name))]
-pub(crate) async fn process_vector_job(job: VectorEmbedJob, ctx: WorkerContext) -> Result<()> {
+#[instrument(skip(ctx), fields(job_id = %job.job_id, dataset_transform_id = %job.dataset_transform_id, embedded_dataset_id = %job.embedded_dataset_id, collection = %job.collection_name))]
+pub(crate) async fn process_vector_job(job: DatasetTransformJob, ctx: WorkerContext) -> Result<()> {
     let start_time = Instant::now();
     info!("Processing vector job");
 
@@ -234,7 +234,7 @@ pub(crate) async fn process_vector_job(job: VectorEmbedJob, ctx: WorkerContext) 
 
 async fn send_result(
     nats: &async_nats::Client,
-    job: &VectorEmbedJob,
+    job: &DatasetTransformJob,
     result: Result<usize, (usize, String)>,
     processing_duration_ms: Option<i64>,
 ) -> Result<()> {
@@ -243,9 +243,10 @@ async fn send_result(
         Err((count, e)) => (count, "failed".to_string(), Some(e)),
     };
 
-    let result_msg = VectorBatchResult {
+    let result_msg = DatasetTransformResult {
         job_id: job.job_id,
-        transform_id: job.transform_id,
+        dataset_transform_id: job.dataset_transform_id,
+        embedded_dataset_id: job.embedded_dataset_id,
         batch_file_key: job.batch_file_key.clone(),
         chunk_count,
         status,

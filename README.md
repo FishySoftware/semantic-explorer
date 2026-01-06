@@ -5,14 +5,15 @@ Semantic Explorer enables you to upload documents, extract and process their con
 ## Features
 
 - 📄 **Multi-format Document Processing** - Extract text from PDF, Microsoft Office, OpenDocument, HTML, XML, and plain text files
-- 🔍 **Semantic Search** - Vector similarity search powered by Qdrant with metadata filtering
+- 🔍 **Semantic Search** - Vector similarity search powered by Qdrant with metadata filtering and side-by-side model comparison
 - 📊 **Dataset Management** - Build structured datasets from processed documents with automatic chunking
-- 🚀 **Async Job Processing** - Background workers handle document extraction and embedding generation via NATS
+- 🚀 **Async Job Processing** - Background workers handle document extraction, embedding generation, and visualization via NATS
 - 🔐 **OpenID Connect Authentication** - Secure user authentication with OIDC integration
-- 🎯 **Transform Pipelines** - Automated workflows to process collections into searchable datasets
+- 🎯 **Specialized Transform Pipelines** - Collection, Dataset, and Visualization transforms for each stage of processing
+- 🎨 **3D Visualizations** - GPU-accelerated UMAP + HDBSCAN for exploring embedding spaces (requires NVIDIA GPU)
 - 📈 **Full Observability** - OpenTelemetry tracing, Prometheus metrics, and Grafana dashboards
 - 🗄️ **S3-compatible Storage** - Store documents in any S3-compatible object storage
-- 🎨 **Modern UI** - Clean Svelte-based interface for managing collections and datasets
+- 🎨 **Modern UI** - Clean Svelte-based interface for managing collections, datasets, embeddings, and visualizations
 
 ## Architecture
 
@@ -20,7 +21,55 @@ Semantic Explorer follows a 3-tier architecture:
 
 1. **API Layer** - REST API built with Actix-web, handles HTTP requests and authentication
 2. **Storage Layer** - PostgreSQL for metadata, S3 for files, Qdrant for vector embeddings
-3. **Worker Layer** - Async job processors for document extraction and embedding generation
+3. **Worker Layer** - Async job processors for document extraction, embedding generation, and visualization
+
+### Data Flow
+
+The system implements a four-stage data processing pipeline with specialized workers:
+
+```mermaid
+graph LR
+    subgraph Input["1. Input Stage"]
+        A["Collection<br/>+ Documents"]
+    end
+    
+    subgraph Extract["2. Text Extraction<br/>worker-collections"]
+        B["Collection Transform<br/>worker-collections"]
+    end
+    
+    subgraph Embed["3. Embedding Generation<br/>worker-datasets"]
+        C["Dataset Transform<br/>worker-datasets"]
+    end
+    
+    subgraph Visualize["4. Visualization<br/>worker-visualizations"]
+        D["Visualization Transform<br/>worker-visualizations<br/>GPU-accelerated"]
+    end
+    
+    subgraph Storage["Storage Layer"]
+        S1["PostgreSQL<br/>Metadata"]
+        S2["S3<br/>Documents"]
+        S3["Qdrant<br/>Vectors"]
+    end
+    
+    A -->|Upload| B
+    B -->|Creates| E["Dataset<br/>with chunks"]
+    E -->|Creates 1-to-N| F["Embedded Dataset<br/>per embedder"]
+    F -->|Embedding jobs| C
+    C -->|Store vectors| S3
+    F -->|Visualization jobs| D
+    D -->|UMAP + HDBSCAN| G["3D Reduced Vectors<br/>+ Topics"]
+    G -->|Store| S3
+    
+    B -.->|Updates| S1
+    C -.->|Updates| S1
+    D -.->|Updates| S1
+    E -.->|Metadata| S1
+    A -.->|Store| S2
+    
+    style D fill:#ff9999
+```
+
+**Note on Embedded Datasets**: When you create a Dataset Transform with multiple embedders, the system automatically creates one `Embedded Dataset` per embedder. Each embedded dataset tracks the embedding progress separately and can trigger its own visualization job.
 
 ### Usage Flow
 
@@ -30,20 +79,23 @@ Start by creating a collection and uploading your documents. Organize your conte
 #### Embedders
 Configure your embedding providers (OpenAI, Cohere, etc.) that will be used to generate vector embeddings.
 
-#### Transform (Collection)
-Create a collection transform to extract text and generate chunks, populating a dataset for embedding.
+#### Collection Transform
+Create a collection transform to extract text from your documents and generate chunks. This automatically populates a new Dataset with the processed content.
 
 #### Datasets
 Review the generated dataset containing your processed text chunks ready for embedding.
 
-#### Transform (Dataset)
-Create dataset transforms to generate embeddings using your configured embedders.
+#### Dataset Transform
+Create a dataset transform to generate embeddings using your configured embedders. The system creates one Embedded Dataset per embedder, enabling you to compare multiple embedding models.
+
+#### Embedded Datasets
+View the embedding progress for each model. As embeddings complete, you can search across them or trigger visualizations.
 
 #### Search
-Execute searches across multiple embedded datasets to compare embedding model performance.
+Execute searches across multiple embedded datasets to compare embedding model performance side-by-side.
 
-#### Visualize
-*(Coming Soon)*
+#### Visualization Transform
+Create a visualization transform to reduce your embeddings to 3D using UMAP and identify topic clusters with HDBSCAN. Requires GPU support (CUDA 12.4).
 
 ## Quick Start
 
@@ -118,6 +170,7 @@ Access the application at [http://localhost:8080](http://localhost:8080)
    # In separate terminals
    cargo run --bin worker-collections
    cargo run --bin worker-datasets
+   cargo run --bin worker-visualizations  # Optional: requires NVIDIA GPU with CUDA 12.4
    ```
 
 6. **Start the UI (optional)**
@@ -134,6 +187,7 @@ Alternatively, you can launch [Tasks](.vscode/tasks.json) in VSCode:
 - Run API
 - Run worker-collections
 - Run worker-datasets
+- Run worker-visualizations (optional, requires GPU)
 - Run UI 
 
 ## Configuration
@@ -197,14 +251,27 @@ The datasets worker handles embedding generation and vector storage jobs.
 | `SERVICE_NAME` | Service name for telemetry | No | `worker-datasets` |
 | `RUST_LOG` | Logging configuration | No | `info` |
 
+### Worker Visualizations
+
+The visualizations worker handles GPU-accelerated dimensionality reduction and clustering for 3D visualizations.
+
+**Requirements**: NVIDIA GPU with CUDA 12.4 support. See [crates/worker-visualizations/README.md](crates/worker-visualizations/README.md) for detailed setup instructions.
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `NATS_URL` | NATS server URL for job queue | Yes | `nats://localhost:4222` |
+| `QDRANT_URL` | Qdrant vector database URL | Yes | `http://localhost:6334` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OpenTelemetry collector endpoint | No | - |
+| `SERVICE_NAME` | Service name for telemetry | No | `worker-visualizations` |
+| `RUST_LOG` | Logging configuration | No | `info` |
+
 ### Example Configurations
 
 See the `.env` files in each service directory for working examples:
 - [crates/api/.env](crates/api/.env) - API service configuration
 - [crates/worker-collections/.env](crates/worker-collections/.env) - Collections worker configuration
 - [crates/worker-datasets/.env](crates/worker-datasets/.env) - Datasets worker configuration
-
-
+- [crates/worker-visualizations/.env](crates/worker-visualizations/.env) - Visualizations worker configuration
 
 
 ## API Documentation
@@ -222,16 +289,45 @@ http://localhost:8080/swagger-ui/
 ```
 semantic-explorer/
 ├── crates/
-│   ├── api/                    # Main REST API server
-│   ├── core/                   # Shared libraries
-│   ├── worker-collections/     # Document extraction worker
-│   └── worker-datasets/        # Embedding generation worker
-├── semantic-explorer-ui/       # Svelte frontend
+│   ├── api/                      # Main REST API server
+│   ├── core/                     # Shared libraries (jobs, NATS, storage)
+│   ├── worker-collections/       # Document extraction worker
+│   ├── worker-datasets/          # Embedding generation worker
+│   └── worker-visualizations/    # GPU-accelerated visualization worker
+├── semantic-explorer-ui/         # Svelte frontend
 ├── deployment/
 │   ├── compose/               # Docker Compose deployment
 │   └── helm/                  # Kubernetes Helm charts
 └── .github/workflows/         # CI/CD pipelines
 ```
+
+### Transform Architecture
+
+The system uses a specialized transform model for each processing stage:
+
+```mermaid
+graph TD
+    A["Collection"] --> B["Collection Transform<br/>Extracts text, creates chunks"]
+    B --> C["Dataset<br/>Contains text chunks"]
+    C --> D["Dataset Transform<br/>with N embedders"]
+    D --> E1["Embedded Dataset #1<br/>Model A"]
+    D --> E2["Embedded Dataset #2<br/>Model B"]
+    D --> E3["Embedded Dataset #N<br/>Model N"]
+    E1 --> F1["Visualization Transform<br/>UMAP + HDBSCAN"]
+    E2 --> F2["Visualization Transform<br/>UMAP + HDBSCAN"]
+    E3 --> F3["Visualization Transform<br/>UMAP + HDBSCAN"]
+    
+    style B fill:#e1f5ff
+    style F1 fill:#ffccbc
+    style F2 fill:#ffccbc
+    style F3 fill:#ffccbc
+```
+
+**Key Points**:
+- **1-to-1 Relationship**: Collection → Collection Transform → Dataset
+- **1-to-N Relationship**: Dataset Transform → Embedded Datasets (one per embedder)
+- **1-to-1 Relationship**: Embedded Dataset → Visualization Transform
+- **Automatic Creation**: Dataset Transforms automatically create Embedded Datasets for each configured embedder
 
 ### Running Tests
 

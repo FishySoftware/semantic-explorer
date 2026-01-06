@@ -272,7 +272,12 @@
 			},
 		} as any);
 
-		console.log('Deck.GL initialized successfully with size:', containerWidth, 'x', containerHeight);
+		console.log(
+			'Deck.GL initialized successfully with size:',
+			containerWidth,
+			'x',
+			containerHeight
+		);
 	}
 
 	// Update deck layers when points or selectedCluster changes
@@ -549,14 +554,8 @@
 					bind:clientHeight={containerHeight}
 				>
 					<div class="absolute inset-0 rounded-lg">
-						<div
-							id="deckgl-wrapper"
-							class="w-full h-full relative"
-						>
-							<canvas
-								bind:this={deckCanvas}
-								class="w-full h-full block"
-								style="touch-action: none;"
+						<div id="deckgl-wrapper" class="w-full h-full relative">
+							<canvas bind:this={deckCanvas} class="w-full h-full block" style="touch-action: none;"
 							></canvas>
 						</div>
 					</div>
@@ -587,10 +586,16 @@
 					{/if}
 
 					<!-- Controls Panel -->
-					<div class="absolute bottom-4 left-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-4 border border-gray-200 dark:border-gray-700 space-y-3" style="z-index: 10; pointer-events: auto;">
+					<div
+						class="absolute bottom-4 left-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-4 border border-gray-200 dark:border-gray-700 space-y-3"
+						style="z-index: 10; pointer-events: auto;"
+					>
 						<!-- Zoom Control -->
 						<div>
-							<label for="zoom-slider" class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">
+							<label
+								for="zoom-slider"
+								class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-2"
+							>
 								Zoom: {viewState.zoom.toFixed(1)}
 							</label>
 							<input

@@ -56,7 +56,6 @@ fn init_tracing() -> Result<Tracer, Box<dyn std::error::Error + Send + Sync>> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize observability
     if let Err(e) = init_tracing() {
         eprintln!("Failed to initialize tracing: {}", e);
     }
@@ -69,13 +68,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let nats_client = async_nats::connect(&nats_url).await?;
     info!("Connected to NATS");
 
-    // Initialize JetStream streams (creates VISUALIZATION_TRANSFORMS if it doesn't exist)
     semantic_explorer_core::nats::initialize_jetstream(&nats_client).await?;
 
-    // Create JetStream context
     let jetstream = jetstream::new(nats_client.clone());
 
-    // Subscribe to visualization jobs using the core helper
     let consumer_config = create_visualization_consumer_config();
     let consumer = ensure_consumer(&jetstream, "VISUALIZATION_TRANSFORMS", consumer_config).await?;
 
@@ -87,7 +83,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let msg = match msg {
             Ok(m) => m,
             Err(e) => {
-                // Check if it's a heartbeat timeout (normal during idle periods)
                 match e.kind() {
                     MessagesErrorKind::MissingHeartbeat => {
                         warn!("Missed heartbeat, reconnecting...");
@@ -104,7 +99,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(j) => j,
             Err(e) => {
                 error!("Failed to deserialize job: {}", e);
-                // Acknowledge the message to prevent reprocessing bad messages
                 if let Err(ack_err) = msg.ack().await {
                     error!("Failed to acknowledge bad message: {}", ack_err);
                 }
@@ -121,7 +115,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "Successfully processed job {} in {}ms ({} points, {} clusters)",
                     job.job_id, duration_ms, n_points, n_clusters
                 );
-                // Acknowledge success
                 if let Err(e) = msg.ack().await {
                     error!("Failed to acknowledge successful job: {}", e);
                 }
@@ -133,10 +126,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     job.job_id, duration_ms, e
                 );
 
-                // Send failure result to NATS
-                let result_msg = semantic_explorer_core::jobs::VisualizationResult {
+                let result_msg = semantic_explorer_core::jobs::VisualizationTransformResult {
                     job_id: job.job_id,
-                    transform_id: job.transform_id,
+                    visualization_transform_id: job.visualization_transform_id,
                     status: "failed".to_string(),
                     error: Some(e.to_string()),
                     processing_duration_ms: Some(duration_ms),
@@ -151,7 +143,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .await;
                 }
 
-                // Negative acknowledgment for retry (30s delay)
                 if let Err(ack_err) = msg
                     .ack_with(async_nats::jetstream::AckKind::Nak(Some(
                         Duration::from_secs(30),

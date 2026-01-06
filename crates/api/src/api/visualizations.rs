@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres};
 use tracing::error;
 
-use crate::{auth::extract_username, storage::postgres::transforms};
+use crate::{auth::extract_username, storage::postgres::visualization_transforms};
 
 #[derive(Deserialize, Debug)]
 pub(crate) struct VisualizationPointsQuery {
@@ -69,32 +69,24 @@ pub(crate) async fn get_visualization_points(
     let pool = postgres_pool.into_inner();
 
     // Get the transform and verify ownership
-    let transform = match transforms::get_transform(&pool, &username, transform_id).await {
-        Ok(t) => t,
-        Err(_) => {
-            return HttpResponse::NotFound().json(serde_json::json!({
-                "error": "transform not found or access denied"
-            }));
-        }
-    };
+    let transform =
+        match visualization_transforms::get_visualization_transform(&pool, &username, transform_id)
+            .await
+        {
+            Ok(t) => t,
+            Err(_) => {
+                return HttpResponse::NotFound().json(serde_json::json!({
+                    "error": "visualization transform not found or access denied"
+                }));
+            }
+        };
 
-    // Verify this is a visualization transform
-    if transform.job_type != "dataset_visualization_transform" {
-        return HttpResponse::BadRequest().json(serde_json::json!({
-            "error": "transform is not a visualization transform"
-        }));
-    }
-
-    // Get the reduced collection name from collection_mappings
-    let collection_name = match transform
-        .collection_mappings
-        .get("reduced")
-        .and_then(|v| v.as_str())
-    {
+    // Get the collection name from reduced_collection_name field
+    let collection_name = match &transform.reduced_collection_name {
         Some(name) => name,
         None => {
             return HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": "reduced collection not found in mappings"
+                "error": "reduced collection not yet created"
             }));
         }
     };
@@ -234,32 +226,24 @@ pub(crate) async fn get_visualization_topics(
     let pool = postgres_pool.into_inner();
 
     // Get the transform and verify ownership
-    let transform = match transforms::get_transform(&pool, &username, transform_id).await {
-        Ok(t) => t,
-        Err(_) => {
-            return HttpResponse::NotFound().json(serde_json::json!({
-                "error": "transform not found or access denied"
-            }));
-        }
-    };
+    let transform =
+        match visualization_transforms::get_visualization_transform(&pool, &username, transform_id)
+            .await
+        {
+            Ok(t) => t,
+            Err(_) => {
+                return HttpResponse::NotFound().json(serde_json::json!({
+                    "error": "visualization transform not found or access denied"
+                }));
+            }
+        };
 
-    // Verify this is a visualization transform
-    if transform.job_type != "dataset_visualization_transform" {
-        return HttpResponse::BadRequest().json(serde_json::json!({
-            "error": "transform is not a visualization transform"
-        }));
-    }
-
-    // Get the topics collection name from collection_mappings
-    let collection_name = match transform
-        .collection_mappings
-        .get("topics")
-        .and_then(|v| v.as_str())
-    {
+    // Get the topics collection name from topics_collection_name field
+    let collection_name = match &transform.topics_collection_name {
         Some(name) => name,
         None => {
             return HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": "topics collection not found in mappings"
+                "error": "topics collection not yet created"
             }));
         }
     };

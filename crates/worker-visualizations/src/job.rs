@@ -9,7 +9,7 @@ use semantic_explorer_core::jobs::VisualizationTransformJob;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::time::Instant;
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::topic_naming::TfidfTopicNamer;
 
@@ -26,13 +26,12 @@ pub async fn process_visualization_job(
 
     info!(
         "Processing visualization job {} for transform {}",
-        job.job_id, job.transform_id
+        job.job_id, job.visualization_transform_id
     );
-    info!("  Source collection: {}", job.source_collection);
-    info!("  Output (reduced): {}", job.output_collection_reduced);
-    info!("  Output (topics): {}", job.output_collection_topics);
+    debug!("  Source collection: {}", job.source_collection);
+    debug!("  Output (reduced): {}", job.output_collection_reduced);
+    debug!("  Output (topics): {}", job.output_collection_topics);
 
-    // Connect to Qdrant
     let client = if let Some(api_key) = &job.vector_database_config.api_key {
         Qdrant::from_url(&job.vector_database_config.connection_url)
             .api_key(api_key.clone())
@@ -41,7 +40,6 @@ pub async fn process_visualization_job(
         Qdrant::from_url(&job.vector_database_config.connection_url).build()?
     };
 
-    // Fetch all vectors and text from source collection
     let (document_vectors, documents) =
         fetch_documents_with_text(&client, &job.source_collection, 1000, None).await?;
 
@@ -53,8 +51,6 @@ pub async fn process_visualization_job(
         n_samples, n_features
     );
 
-    // Run UMAP dimensionality reduction
-    info!("Reducing dimensionality with UMAP...");
     let dim_start = Instant::now();
     let umap = reduce_dimensionality(
         &document_vectors,
@@ -68,8 +64,6 @@ pub async fn process_visualization_job(
         dim_start.elapsed().as_secs_f64()
     );
 
-    // Run HDBSCAN clustering
-    info!("Identifying clusters with HDBSCAN...");
     let cluster_start = Instant::now();
     let (hdbscan, topic_vectors) = identify_topic_clusters(
         &umap.embedding,
@@ -85,13 +79,7 @@ pub async fn process_visualization_job(
         n_clusters,
         cluster_start.elapsed().as_secs_f64()
     );
-    info!(
-        "  Noise points: {}",
-        hdbscan.labels.iter().filter(|&&l| l == -1).count()
-    );
 
-    // Generate topic labels
-    info!("Generating topic labels...");
     let label_start = Instant::now();
     let topic_labels = generate_topic_labels(&hdbscan.labels, &documents, n_clusters as usize);
     info!(
@@ -163,9 +151,9 @@ async fn send_result(
         Err(e) => (0, 0, "failed".to_string(), Some(e)),
     };
 
-    let result_msg = semantic_explorer_core::jobs::VisualizationResult {
+    let result_msg = semantic_explorer_core::jobs::VisualizationTransformResult {
         job_id: job.job_id,
-        transform_id: job.transform_id,
+        visualization_transform_id: job.visualization_transform_id,
         status,
         error,
         processing_duration_ms,

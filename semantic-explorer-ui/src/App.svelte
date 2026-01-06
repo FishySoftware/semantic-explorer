@@ -5,14 +5,17 @@
 	import TopBanner from './lib/TopBanner.svelte';
 	import ToastHost from './lib/components/ToastHost.svelte';
 	import CollectionDetail from './lib/pages/CollectionDetail.svelte';
+	import CollectionTransforms from './lib/pages/CollectionTransforms.svelte';
 	import Collections from './lib/pages/Collections.svelte';
 	import Dashboard from './lib/pages/Dashboard.svelte';
 	import DatasetDetail from './lib/pages/DatasetDetail.svelte';
+	import DatasetTransforms from './lib/pages/DatasetTransforms.svelte';
 	import Datasets from './lib/pages/Datasets.svelte';
 	import Documentation from './lib/pages/Documentation.svelte';
+	import EmbeddedDatasets from './lib/pages/EmbeddedDatasets.svelte';
 	import Embedders from './lib/pages/Embedders.svelte';
 	import Search from './lib/pages/Search.svelte';
-	import Transforms from './lib/pages/Transforms.svelte';
+	import VisualizationTransforms from './lib/pages/VisualizationTransforms.svelte';
 	import Visualizations from './lib/pages/Visualizations.svelte';
 
 	let activeUrl = $state('/dashboard');
@@ -21,7 +24,8 @@
 	let selectedVisualizationId = $state<number | null>(null);
 
 	function parseRoute(hash: string): { path: string; params: Record<string, string> } {
-		const parts = hash
+		const hashWithoutQuery = hash.split('?')[0];
+		const parts = hashWithoutQuery
 			.slice(1)
 			.split('/')
 			.filter((p) => p);
@@ -34,14 +38,12 @@
 		if (parts.length === 3 && parts[0] === 'datasets' && parts[2] === 'details') {
 			return { path: '/datasets/detail', params: { id: parts[1] } };
 		}
-		if (parts.length === 3 && parts[0] === 'transforms' && parts[2] === 'details') {
-			return { path: '/transforms/detail', params: { id: parts[1] } };
-		}
 		if (parts.length === 3 && parts[0] === 'visualizations' && parts[2] === 'details') {
 			return { path: '/visualizations/detail', params: { id: parts[1] } };
 		}
 
-		return { path: '/' + parts.join('/'), params: {} };
+		const result = { path: '/' + parts.join('/'), params: {} };
+		return result;
 	}
 
 	function handleHashChange() {
@@ -110,6 +112,10 @@
 		activeUrl = '/visualizations';
 		window.location.hash = '/visualizations';
 	}
+
+	function navigate(path: string) {
+		window.location.hash = path;
+	}
 </script>
 
 <div class="h-screen flex flex-col bg-gray-50 dark:bg-gray-900">
@@ -124,7 +130,7 @@
 			{:else if activeUrl === '/documentation'}
 				<Documentation />
 			{:else if activeUrl === '/collections'}
-				<Collections onViewCollection={viewCollection} />
+				<Collections onViewCollection={viewCollection} onNavigate={navigate} />
 			{:else if activeUrl === '/collections/detail'}
 				{#if selectedCollectionId !== null}
 					<CollectionDetail collectionId={selectedCollectionId} onBack={backToCollections} />
@@ -137,8 +143,14 @@
 				{/if}
 			{:else if activeUrl === '/embedders'}
 				<Embedders />
-			{:else if activeUrl === '/transforms'}
-				<Transforms />
+			{:else if activeUrl === '/collection-transforms'}
+				<CollectionTransforms />
+			{:else if activeUrl === '/dataset-transforms'}
+				<DatasetTransforms />
+			{:else if activeUrl === '/embedded-datasets'}
+				<EmbeddedDatasets />
+			{:else if activeUrl === '/visualization-transforms'}
+				<VisualizationTransforms />
 			{:else if activeUrl === '/visualizations'}
 				<Visualizations onViewVisualization={viewVisualization} />
 			{:else if activeUrl === '/visualizations/detail'}

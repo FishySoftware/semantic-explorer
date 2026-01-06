@@ -13,14 +13,20 @@
 		tags: string[];
 		created_at?: string;
 		updated_at?: string;
+		file_count?: number;
 	}
 
-	let { onViewCollection: handleViewCollection } = $props<{
+	let { onViewCollection: handleViewCollection, onNavigate } = $props<{
 		onViewCollection: (_: number) => void;
+		onNavigate: (_: string) => void;
 	}>();
 
 	const onViewCollection = (id: number) => {
 		handleViewCollection(id);
+	};
+
+	const onCreateTransform = (collectionId: number) => {
+		onNavigate(`/collection-transforms?action=create&collection_id=${collectionId}`);
 	};
 
 	let collections = $state<Collection[]>([]);
@@ -104,6 +110,8 @@
 			newTags = '';
 			showCreateForm = false;
 			toastStore.success('Collection created successfully');
+			handleViewCollection(newCollection.collection_id);
+
 		} catch (e) {
 			const message = formatError(e, 'Failed to create collection');
 			createError = message;
@@ -365,6 +373,22 @@
 									</svg>
 									{collection.owner}
 								</span>
+								{#if collection.file_count !== undefined && collection.file_count !== null}
+									<span
+										class="inline-flex items-center gap-1.5 px-3 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-full text-sm font-medium"
+									>
+										<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+											<path
+												stroke-linecap="round"
+												stroke-linejoin="round"
+												stroke-width="2"
+												d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"
+											></path>
+										</svg>
+										{collection.file_count}
+										{collection.file_count === 1 ? 'file' : 'files'}
+									</span>
+								{/if}
 								{#if collection.tags && collection.tags.length > 0}
 									{#each collection.tags as tag (tag)}
 										<span
@@ -376,7 +400,7 @@
 								{/if}
 							</div>
 						</div>
-						<div class="ml-4 flex gap-2">
+						<div class="ml-4 flex flex-col gap-2">
 							<button
 								onclick={() => onViewCollection(collection.collection_id)}
 								class="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
@@ -392,6 +416,23 @@
 								</svg>
 								Manage Files
 							</button>
+							{#if collection.file_count && collection.file_count > 0}
+								<button
+									onclick={() => onCreateTransform(collection.collection_id)}
+									class="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2"
+									title="Process files from this collection into a dataset"
+								>
+									<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width="2"
+											d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
+										></path>
+									</svg>
+									Create Transform
+								</button>
+							{/if}
 							<button
 								onclick={() => requestDeleteCollection(collection)}
 								disabled={deleting === collection.collection_id}

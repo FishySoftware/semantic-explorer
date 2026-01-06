@@ -18,11 +18,11 @@ const GET_EMBEDDERS_QUERY: &str = r#"
     ORDER BY created_at DESC
 "#;
 
-const GET_EMBEDDERS_BY_IDS_QUERY: &str = r#"
-    SELECT embedder_id, name, owner, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, collection_name, created_at, updated_at
-    FROM embedders
-    WHERE owner = $1 AND embedder_id = ANY($2)
-"#;
+// const GET_EMBEDDERS_BY_IDS_QUERY: &str = r#"
+//     SELECT embedder_id, name, owner, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, collection_name, created_at, updated_at
+//     FROM embedders
+//     WHERE owner = $1 AND embedder_id = ANY($2)
+// "#;
 
 const CREATE_EMBEDDER_QUERY: &str = r#"
     INSERT INTO embedders (name, owner, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, collection_name, created_at, updated_at)
@@ -84,25 +84,25 @@ pub(crate) async fn get_embedders(pool: &Pool<Postgres>, owner: &str) -> Result<
     Ok(result?)
 }
 
-#[tracing::instrument(name = "database.get_embedders_by_ids", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner = %owner, count = embedder_ids.len()))]
-pub(crate) async fn get_embedders_by_ids(
-    pool: &Pool<Postgres>,
-    owner: &str,
-    embedder_ids: &[i32],
-) -> Result<Vec<Embedder>> {
-    let start = Instant::now();
-    let result = sqlx::query_as::<_, Embedder>(GET_EMBEDDERS_BY_IDS_QUERY)
-        .bind(owner)
-        .bind(embedder_ids)
-        .fetch_all(pool)
-        .await;
+// #[tracing::instrument(name = "database.get_embedders_by_ids", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner = %owner, count = embedder_ids.len()))]
+// pub(crate) async fn get_embedders_by_ids(
+//     pool: &Pool<Postgres>,
+//     owner: &str,
+//     embedder_ids: &[i32],
+// ) -> Result<Vec<Embedder>> {
+//     let start = Instant::now();
+//     let result = sqlx::query_as::<_, Embedder>(GET_EMBEDDERS_BY_IDS_QUERY)
+//         .bind(owner)
+//         .bind(embedder_ids)
+//         .fetch_all(pool)
+//         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "embedders", duration, success);
+//     let duration = start.elapsed().as_secs_f64();
+//     let success = result.is_ok();
+//     record_database_query("SELECT", "embedders", duration, success);
 
-    Ok(result?)
-}
+//     Ok(result?)
+// }
 
 #[tracing::instrument(name = "database.create_embedder", skip(pool, create_embedder), fields(database.system = "postgresql", database.operation = "INSERT", owner = %owner))]
 pub(crate) async fn create_embedder(

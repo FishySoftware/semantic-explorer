@@ -11,7 +11,7 @@ use opentelemetry_sdk::{
     propagation::TraceContextPropagator,
     trace::{RandomIdGenerator, Sampler, SdkTracerProvider},
 };
-use semantic_explorer_core::jobs::VectorEmbedJob;
+use semantic_explorer_core::jobs::DatasetTransformJob;
 use semantic_explorer_core::observability;
 use semantic_explorer_core::storage::initialize_client;
 use std::sync::Arc;
@@ -166,7 +166,7 @@ async fn main() -> Result<()> {
                 }
             };
 
-            let job: VectorEmbedJob = match serde_json::from_slice(&msg.payload) {
+            let job: DatasetTransformJob = match serde_json::from_slice(&msg.payload) {
                 Ok(j) => j,
                 Err(e) => {
                     error!("Failed to deserialize job: {}", e);
@@ -220,13 +220,13 @@ async fn main() -> Result<()> {
         info!("Using legacy pub/sub mode (consider migrating to JetStream)");
 
         let mut subscriber = nats_client
-            .subscribe("workers.vector-embed-worker".to_string())
+            .subscribe("workers.dataset-transform".to_string())
             .await?;
 
-        info!("Worker started, listening on workers.vector-embed-worker");
+        info!("Worker started, listening on workers.dataset-transform");
 
         while let Some(msg) = subscriber.next().await {
-            let job: VectorEmbedJob = match serde_json::from_slice(&msg.payload) {
+            let job: DatasetTransformJob = match serde_json::from_slice(&msg.payload) {
                 Ok(j) => j,
                 Err(e) => {
                     error!("Failed to deserialize job: {}", e);

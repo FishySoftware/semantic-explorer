@@ -38,7 +38,7 @@
 	});
 </script>
 
-<Navbar class="shrink-0 border-b border-gray-200 dark:border-gray-700">
+<Navbar fluid class="shrink-0 border-b border-gray-200 dark:border-gray-700">
 	<NavBrand href="/">
 		<img src={svelteLogo} class="mr-3 h-6 sm:h-9" alt="App Logo" />
 		<span class="self-center whitespace-nowrap text-xl font-semibold dark:text-white">

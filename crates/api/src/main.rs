@@ -2,6 +2,7 @@ mod api;
 mod auth;
 mod collections;
 mod datasets;
+mod embedded_datasets; // New resource entity
 mod embedders;
 mod observability;
 mod storage;
@@ -55,11 +56,21 @@ async fn main() -> Result<()> {
     )
     .await?;
 
-    let collection_scanner_handle = transforms::scanner::initialize_collection_scanner(
+    // Start scanners for each transform type
+    let collection_scanner_handle = transforms::collection::initialize_scanner(
         postgres_pool.clone(),
         nats_client.clone(),
         s3_client.clone(),
     );
+
+    let dataset_scanner_handle = transforms::dataset::initialize_scanner(
+        postgres_pool.clone(),
+        nats_client.clone(),
+        s3_client.clone(),
+    );
+
+    let visualization_scanner_handle =
+        transforms::visualization::initialize_scanner(postgres_pool.clone(), nats_client.clone());
 
     info!("server running at {address}");
 
@@ -104,7 +115,6 @@ async fn main() -> Result<()> {
             .service(api::datasets::upload_to_dataset)
             .service(api::datasets::delete_dataset_item)
             .service(api::datasets::get_datasets_embedders)
-            .service(api::datasets::get_dataset_embedded_datasets)
             .service(api::embedders::get_embedders)
             .service(api::embedders::get_embedder)
             .service(api::embedders::create_embedder)
@@ -112,14 +122,39 @@ async fn main() -> Result<()> {
             .service(api::embedders::delete_embedder)
             .service(api::embedders::test_embedder)
             .service(api::search::search)
-            .service(api::transforms::get_transforms)
-            .service(api::transforms::get_transform)
-            .service(api::transforms::create_transform)
-            .service(api::transforms::update_transform)
-            .service(api::transforms::delete_transform)
-            .service(api::transforms::get_transform_stats)
-            .service(api::transforms::get_processed_files)
-            .service(api::transforms::trigger_transform)
+            .service(api::collection_transforms::get_collection_transforms)
+            .service(api::collection_transforms::get_collection_transform)
+            .service(api::collection_transforms::create_collection_transform)
+            .service(api::collection_transforms::update_collection_transform)
+            .service(api::collection_transforms::delete_collection_transform)
+            .service(api::collection_transforms::trigger_collection_transform)
+            .service(api::collection_transforms::get_collection_transform_stats)
+            .service(api::collection_transforms::get_processed_files)
+            .service(api::collection_transforms::get_collection_transforms_for_collection)
+            .service(api::dataset_transforms::get_dataset_transforms)
+            .service(api::dataset_transforms::get_dataset_transform)
+            .service(api::dataset_transforms::create_dataset_transform)
+            .service(api::dataset_transforms::update_dataset_transform)
+            .service(api::dataset_transforms::delete_dataset_transform)
+            .service(api::dataset_transforms::trigger_dataset_transform)
+            .service(api::dataset_transforms::get_dataset_transform_stats)
+            .service(api::dataset_transforms::get_dataset_transforms_for_dataset)
+            .service(api::embedded_datasets::get_embedded_datasets)
+            .service(api::embedded_datasets::get_embedded_dataset)
+            .service(api::embedded_datasets::delete_embedded_dataset)
+            .service(api::embedded_datasets::get_embedded_dataset_stats)
+            .service(api::embedded_datasets::get_processed_batches)
+            .service(api::embedded_datasets::get_embedded_datasets_for_dataset)
+            .service(api::visualization_transforms::get_visualization_transforms)
+            .service(api::visualization_transforms::get_visualization_transform)
+            .service(api::visualization_transforms::create_visualization_transform)
+            .service(api::visualization_transforms::update_visualization_transform)
+            .service(api::visualization_transforms::delete_visualization_transform)
+            .service(api::visualization_transforms::trigger_visualization_transform)
+            .service(api::visualization_transforms::get_visualization_transform_stats)
+            .service(api::visualization_transforms::get_visualization_points)
+            .service(api::visualization_transforms::get_visualization_topics)
+            .service(api::visualization_transforms::get_visualizations_for_embedded_dataset)
             .service(api::visualizations::get_visualization_points)
             .service(api::visualizations::get_visualization_topics)
             .openapi_service(|api| {
@@ -136,7 +171,10 @@ async fn main() -> Result<()> {
     .run()
     .await?;
 
-    collection_scanner_handle.await.abort();
+    // Abort all scanner tasks on shutdown
+    collection_scanner_handle.abort();
+    dataset_scanner_handle.abort();
+    visualization_scanner_handle.abort();
 
     info!("Server shutdown");
 

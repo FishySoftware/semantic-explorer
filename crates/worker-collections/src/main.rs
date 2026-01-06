@@ -11,7 +11,7 @@ use opentelemetry_sdk::{
     trace::{RandomIdGenerator, Sampler, SdkTracerProvider},
 };
 use semantic_explorer_core::observability;
-use semantic_explorer_core::{jobs::TransformFileJob, storage::initialize_client};
+use semantic_explorer_core::{jobs::CollectionTransformJob, storage::initialize_client};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
@@ -168,7 +168,7 @@ async fn main() -> Result<()> {
                 }
             };
 
-            let job: TransformFileJob = match serde_json::from_slice(&msg.payload) {
+            let job: CollectionTransformJob = match serde_json::from_slice(&msg.payload) {
                 Ok(j) => j,
                 Err(e) => {
                     error!("Failed to deserialize job: {}", e);
@@ -222,12 +222,12 @@ async fn main() -> Result<()> {
         info!("Using legacy pub/sub mode (consider migrating to JetStream)");
 
         let mut subscriber = nats_client
-            .subscribe("workers.transform-file-worker".to_string())
+            .subscribe("workers.collection-transform".to_string())
             .await?;
-        info!("Worker started, listening on workers.transform-file-worker");
+        info!("Worker started, listening on workers.collection-transform");
 
         while let Some(msg) = subscriber.next().await {
-            let job: TransformFileJob = match serde_json::from_slice(&msg.payload) {
+            let job: CollectionTransformJob = match serde_json::from_slice(&msg.payload) {
                 Ok(j) => j,
                 Err(e) => {
                     error!("Failed to deserialize job: {}", e);

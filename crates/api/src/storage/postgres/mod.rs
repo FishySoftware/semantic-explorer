@@ -1,7 +1,11 @@
 pub(crate) mod collections;
 pub(crate) mod datasets;
 pub(crate) mod embedders;
-pub(crate) mod transforms;
+
+pub(crate) mod collection_transforms;
+pub(crate) mod dataset_transforms;
+pub(crate) mod embedded_datasets;
+pub(crate) mod visualization_transforms;
 
 use std::time::Duration;
 

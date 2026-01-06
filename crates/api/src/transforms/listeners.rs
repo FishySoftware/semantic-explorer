@@ -5,17 +5,21 @@ use futures_util::StreamExt;
 use sqlx::{Pool, Postgres};
 use tracing::{error, info};
 
-use semantic_explorer_core::jobs::{FileTransformResult, VectorBatchResult, VisualizationResult};
+use semantic_explorer_core::jobs::{
+    CollectionTransformResult, DatasetTransformResult, VisualizationTransformResult,
+};
 use semantic_explorer_core::storage::get_file;
 
 use crate::datasets::models::ChunkWithMetadata;
+use crate::storage::postgres::collection_transforms;
 use crate::storage::postgres::datasets;
-use crate::storage::postgres::transforms::{
-    get_transform_by_id, mark_file_failed, mark_file_processed,
-};
-use crate::transforms::ScanCollectionJob;
+use crate::storage::postgres::embedded_datasets;
 
-use super::scanner::{TransformContext, process_collection_scan, process_vector_scan};
+#[derive(Clone)]
+struct TransformContext {
+    postgres_pool: Pool<Postgres>,
+    s3_client: S3Client,
+}
 
 pub(crate) async fn start_result_listeners(
     postgres_pool: Pool<Postgres>,
@@ -30,7 +34,6 @@ pub(crate) async fn start_result_listeners(
     start_file_result_listener(context.clone(), nats_client.clone());
     start_vector_result_listener(context.clone(), nats_client.clone());
     start_visualization_result_listener(context.clone(), nats_client.clone());
-    start_scan_job_listener(context.clone(), nats_client.clone());
 
     Ok(())
 }
@@ -50,7 +53,7 @@ fn start_file_result_listener(context: TransformContext, nats_client: NatsClient
 
         while let Some(msg) = subscriber.next().await {
             info!("Received file result message");
-            if let Ok(result) = serde_json::from_slice::<FileTransformResult>(&msg.payload) {
+            if let Ok(result) = serde_json::from_slice::<CollectionTransformResult>(&msg.payload) {
                 handle_file_result(result, &context).await;
             } else {
                 error!("Failed to deserialize file result");
@@ -73,7 +76,7 @@ fn start_vector_result_listener(context: TransformContext, nats_client: NatsClie
         };
 
         while let Some(msg) = subscriber.next().await {
-            if let Ok(result) = serde_json::from_slice::<VectorBatchResult>(&msg.payload) {
+            if let Ok(result) = serde_json::from_slice::<DatasetTransformResult>(&msg.payload) {
                 handle_vector_result(result, &context).await;
             }
         }
@@ -95,7 +98,8 @@ fn start_visualization_result_listener(context: TransformContext, nats_client: N
 
         info!("Visualization result listener started");
         while let Some(msg) = subscriber.next().await {
-            if let Ok(result) = serde_json::from_slice::<VisualizationResult>(&msg.payload) {
+            if let Ok(result) = serde_json::from_slice::<VisualizationTransformResult>(&msg.payload)
+            {
                 handle_visualization_result(result, &context).await;
             } else {
                 error!("Failed to deserialize visualization result");
@@ -104,78 +108,27 @@ fn start_visualization_result_listener(context: TransformContext, nats_client: N
     });
 }
 
-fn start_scan_job_listener(context: TransformContext, nats_client: NatsClient) {
-    actix_web::rt::spawn(async move {
-        let mut subscriber = match nats_client.subscribe("worker.scan".to_string()).await {
-            Ok(sub) => sub,
-            Err(e) => {
-                error!("failed to subscribe to scan jobs: {}", e);
-                return;
-            }
-        };
-
-        while let Some(msg) = subscriber.next().await {
-            if let Ok(job) = serde_json::from_slice::<ScanCollectionJob>(&msg.payload) {
-                info!("Received scan job for transform {}", job.transform_id);
-                match get_transform_by_id(&context.postgres_pool, job.transform_id).await {
-                    Ok(transform) => {
-                        // Route to appropriate handler based on job type
-                        let result = match transform.job_type.as_str() {
-                            "collection_to_dataset" => {
-                                process_collection_scan(
-                                    &context.postgres_pool,
-                                    &nats_client,
-                                    &context.s3_client,
-                                    &transform,
-                                )
-                                .await
-                            }
-                            "dataset_to_vector_storage" => {
-                                process_vector_scan(
-                                    &context.postgres_pool,
-                                    &nats_client,
-                                    &context.s3_client,
-                                    &transform,
-                                )
-                                .await
-                            }
-                            _ => {
-                                error!("Unknown job type: {}", transform.job_type);
-                                continue;
-                            }
-                        };
-
-                        if let Err(e) = result {
-                            error!(
-                                "Failed to process scan for transform {}: {}",
-                                job.transform_id, e
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        error!("Failed to get transform {}: {}", job.transform_id, e);
-                    }
-                }
-            }
-        }
-    });
-}
-
 #[tracing::instrument(name = "handle_file_result", skip(ctx))]
-async fn handle_file_result(result: FileTransformResult, ctx: &TransformContext) {
+async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformContext) {
     info!("Handling file result for: {}", result.source_file_key);
     if result.status != "success" {
         error!(
             "File transform failed for {}: {:?}",
             result.source_file_key, result.error
         );
-        let _ = mark_file_failed(
+        if let Err(e) = collection_transforms::record_processed_file(
             &ctx.postgres_pool,
-            result.transform_id,
+            result.collection_transform_id,
             &result.source_file_key,
-            &result.error.unwrap_or_default(),
+            0,
+            "failed",
+            Some(&result.error.unwrap_or_default()),
+            result.processing_duration_ms,
         )
-        .await;
+        .await
+        {
+            error!("Failed to record file processing failure: {}", e);
+        }
         return;
     }
 
@@ -203,10 +156,18 @@ async fn handle_file_result(result: FileTransformResult, ctx: &TransformContext)
         }
     };
 
-    let transform = match get_transform_by_id(&ctx.postgres_pool, result.transform_id).await {
+    let transform = match collection_transforms::get_collection_transform_by_id(
+        &ctx.postgres_pool,
+        result.collection_transform_id,
+    )
+    .await
+    {
         Ok(t) => t,
         Err(e) => {
-            error!("Failed to get transform {}: {}", result.transform_id, e);
+            error!(
+                "Failed to get collection transform {}: {}",
+                result.collection_transform_id, e
+            );
             return;
         }
     };
@@ -214,7 +175,7 @@ async fn handle_file_result(result: FileTransformResult, ctx: &TransformContext)
     let chunk_count = chunks.len() as i32;
     let metadata = serde_json::json!({
         "source_file": result.source_file_key,
-        "transform_id": result.transform_id,
+        "collection_transform_id": result.collection_transform_id,
         "chunk_count": chunk_count,
     });
 
@@ -229,6 +190,19 @@ async fn handle_file_result(result: FileTransformResult, ctx: &TransformContext)
     .await
     {
         error!("Failed to create dataset item: {}", e);
+        if let Err(e) = collection_transforms::record_processed_file(
+            &ctx.postgres_pool,
+            result.collection_transform_id,
+            &result.source_file_key,
+            0,
+            "failed",
+            Some(&format!("Failed to create dataset item: {}", e)),
+            result.processing_duration_ms,
+        )
+        .await
+        {
+            error!("Failed to record file processing failure: {}", e);
+        }
         return;
     }
 
@@ -236,14 +210,19 @@ async fn handle_file_result(result: FileTransformResult, ctx: &TransformContext)
         "Marking file as processed: {} with {} chunks",
         result.source_file_key, chunk_count
     );
-    let _ = mark_file_processed(
+    if let Err(e) = collection_transforms::record_processed_file(
         &ctx.postgres_pool,
-        result.transform_id,
+        result.collection_transform_id,
         &result.source_file_key,
         chunk_count,
+        "completed",
+        None,
         result.processing_duration_ms,
     )
-    .await;
+    .await
+    {
+        error!("Failed to record file processing: {}", e);
+    }
 
     info!(
         "Successfully processed file {} with {} chunks",
@@ -252,7 +231,7 @@ async fn handle_file_result(result: FileTransformResult, ctx: &TransformContext)
 }
 
 #[tracing::instrument(name = "handle_vector_result", skip(ctx))]
-async fn handle_vector_result(result: VectorBatchResult, ctx: &TransformContext) {
+async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformContext) {
     info!(
         "Handling vector batch result for: {}",
         result.batch_file_key
@@ -263,13 +242,19 @@ async fn handle_vector_result(result: VectorBatchResult, ctx: &TransformContext)
             "Vector batch failed for {}: {:?}",
             result.batch_file_key, result.error
         );
-        let _ = mark_file_failed(
+        if let Err(e) = embedded_datasets::record_processed_batch(
             &ctx.postgres_pool,
-            result.transform_id,
+            result.embedded_dataset_id,
             &result.batch_file_key,
-            &result.error.unwrap_or_default(),
+            0,
+            "failed",
+            Some(&result.error.unwrap_or_default()),
+            result.processing_duration_ms,
         )
-        .await;
+        .await
+        {
+            error!("Failed to record batch processing failure: {}", e);
+        }
         return;
     }
 
@@ -277,16 +262,18 @@ async fn handle_vector_result(result: VectorBatchResult, ctx: &TransformContext)
         "Marking batch as processed: {} with {} chunks",
         result.batch_file_key, result.chunk_count
     );
-    if let Err(e) = mark_file_processed(
+    if let Err(e) = embedded_datasets::record_processed_batch(
         &ctx.postgres_pool,
-        result.transform_id,
+        result.embedded_dataset_id,
         &result.batch_file_key,
         result.chunk_count as i32,
+        "completed",
+        None,
         result.processing_duration_ms,
     )
     .await
     {
-        error!("Failed to mark batch as processed: {}", e);
+        error!("Failed to record batch processing: {}", e);
         return;
     }
 
@@ -296,88 +283,39 @@ async fn handle_vector_result(result: VectorBatchResult, ctx: &TransformContext)
     );
 }
 
-#[tracing::instrument(name = "handle_visualization_result", skip(ctx))]
-async fn handle_visualization_result(result: VisualizationResult, ctx: &TransformContext) {
+#[tracing::instrument(name = "handle_visualization_result", skip(_ctx))]
+async fn handle_visualization_result(
+    result: VisualizationTransformResult,
+    _ctx: &TransformContext,
+) {
     info!(
         "Handling visualization result for transform {}",
-        result.transform_id
+        result.visualization_transform_id
     );
 
     if result.status != "completed" {
         error!(
             "Visualization failed for transform {}: {:?}",
-            result.transform_id, result.error
+            result.visualization_transform_id, result.error
         );
-        let _ = mark_file_failed(
-            &ctx.postgres_pool,
-            result.transform_id,
-            "visualization",
-            &result.error.unwrap_or_default(),
-        )
-        .await;
+        // Note: Visualization transforms don't track processed files like collection/dataset transforms
+        // The error is logged but not persisted in the database
         return;
     }
 
     info!(
         "Visualization completed for transform {} with {} points in {} clusters (processing time: {}ms)",
-        result.transform_id,
+        result.visualization_transform_id,
         result.n_points,
         result.n_clusters,
         result.processing_duration_ms.unwrap_or(0)
     );
 
-    // Get the transform to get the owner
-    let transform = match get_transform_by_id(&ctx.postgres_pool, result.transform_id).await {
-        Ok(t) => t,
-        Err(e) => {
-            error!("Failed to get transform {}: {}", result.transform_id, e);
-            return;
-        }
-    };
-
-    // Update collection_mappings with the Qdrant collection names
-    let collection_mappings = serde_json::json!({
-        "reduced": result.output_collection_reduced,
-        "topics": result.output_collection_topics,
-    });
-
+    // Visualization transforms don't need post-processing updates
+    // The collection names were set when the transform was created
+    // The worker created the Qdrant collections with those names
     info!(
-        "Updating collection_mappings for transform {} with reduced={}, topics={}",
-        result.transform_id, result.output_collection_reduced, result.output_collection_topics
-    );
-
-    if let Err(e) = crate::storage::postgres::transforms::update_collection_mappings(
-        &ctx.postgres_pool,
-        result.transform_id,
-        &transform.owner,
-        &collection_mappings,
-    )
-    .await
-    {
-        error!("Failed to update collection_mappings: {}", e);
-        return;
-    }
-
-    // Mark the visualization as processed with the cluster count as item_count
-    info!(
-        "Marking visualization as processed for transform {} with {} clusters",
-        result.transform_id, result.n_clusters
-    );
-    if let Err(e) = mark_file_processed(
-        &ctx.postgres_pool,
-        result.transform_id,
-        "visualization",
-        result.n_clusters,
-        result.processing_duration_ms,
-    )
-    .await
-    {
-        error!("Failed to mark visualization as processed: {}", e);
-        return;
-    }
-
-    info!(
-        "Successfully processed visualization for transform {} with {} points in {} clusters",
-        result.transform_id, result.n_points, result.n_clusters
+        "Successfully completed visualization transform {}",
+        result.visualization_transform_id
     );
 }

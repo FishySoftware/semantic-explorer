@@ -67,6 +67,28 @@ services:
       - SERVICE_NAME=worker-datasets
     network_mode: host
 
+  worker-visualizations:
+    image: jofish89/worker-visualizations:latest
+    depends_on:
+      - nats
+      - qdrant
+      - otel-collector
+    restart: unless-stopped
+    environment:
+      - RUST_LOG=warn,actix_web_prom=error,worker_visualizations=debug
+      - NATS_URL=nats://localhost:4222
+      - QDRANT_URL=http://localhost:6334
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+      - SERVICE_NAME=worker-visualizations
+    network_mode: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
   rustfs:
     image: rustfs/rustfs:latest
     volumes:

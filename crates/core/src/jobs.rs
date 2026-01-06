@@ -1,22 +1,24 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+// ============================================================================
+// Collection Transform Jobs (Collection → Dataset: file extraction & chunking)
+// ============================================================================
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransformFileJob {
+pub struct CollectionTransformJob {
     pub job_id: Uuid,
     pub source_file_key: String,
     pub bucket: String,
-    pub transform_id: i32,
+    pub collection_transform_id: i32,
     pub extraction_config: serde_json::Value,
     pub chunking_config: serde_json::Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub embedder_config: Option<EmbedderConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileTransformResult {
+pub struct CollectionTransformResult {
     pub job_id: Uuid,
-    pub transform_id: i32,
+    pub collection_transform_id: i32,
     pub source_file_key: String,
     pub bucket: String,
     pub chunks_file_key: String,
@@ -25,6 +27,42 @@ pub struct FileTransformResult {
     pub error: Option<String>,
     pub processing_duration_ms: Option<i64>,
 }
+
+// ============================================================================
+// Dataset Transform Jobs (Dataset → Embedded Dataset: embedding with specific embedder)
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DatasetTransformJob {
+    pub job_id: Uuid,
+    pub batch_file_key: String,
+    pub bucket: String,
+    pub dataset_transform_id: i32,
+    pub embedded_dataset_id: i32, // NEW: Identifies which embedded dataset this job is for
+    pub embedder_config: EmbedderConfig,
+    pub vector_database_config: VectorDatabaseConfig,
+    pub collection_name: String,
+    #[serde(default)]
+    pub wipe_collection: bool,
+    #[serde(default)]
+    pub batch_size: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DatasetTransformResult {
+    pub job_id: Uuid,
+    pub dataset_transform_id: i32,
+    pub embedded_dataset_id: i32, // NEW: Identifies which embedded dataset this result is for
+    pub batch_file_key: String,
+    pub chunk_count: usize,
+    pub status: String,
+    pub error: Option<String>,
+    pub processing_duration_ms: Option<i64>,
+}
+
+// ============================================================================
+// Shared Configuration Types
+// ============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbedderConfig {
@@ -43,36 +81,14 @@ pub struct VectorDatabaseConfig {
     pub api_key: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VectorEmbedJob {
-    pub job_id: Uuid,
-    pub batch_file_key: String,
-    pub bucket: String,
-    pub transform_id: i32,
-    pub embedder_config: EmbedderConfig,
-    pub vector_database_config: VectorDatabaseConfig,
-    pub collection_name: String,
-    #[serde(default)]
-    pub wipe_collection: bool,
-    #[serde(default)]
-    pub batch_size: Option<usize>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VectorBatchResult {
-    pub job_id: Uuid,
-    pub transform_id: i32,
-    pub batch_file_key: String,
-    pub chunk_count: usize,
-    pub status: String,
-    pub error: Option<String>,
-    pub processing_duration_ms: Option<i64>,
-}
+// ============================================================================
+// Visualization Transform Jobs (Embedded Dataset → 3D visualization)
+// ============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VisualizationTransformJob {
     pub job_id: Uuid,
-    pub transform_id: i32,
+    pub visualization_transform_id: i32,
     pub source_collection: String,
     pub output_collection_reduced: String,
     pub output_collection_topics: String,
@@ -93,9 +109,9 @@ pub struct VisualizationConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VisualizationResult {
+pub struct VisualizationTransformResult {
     pub job_id: Uuid,
-    pub transform_id: i32,
+    pub visualization_transform_id: i32,
     pub status: String,
     pub error: Option<String>,
     pub processing_duration_ms: Option<i64>,
@@ -104,3 +120,45 @@ pub struct VisualizationResult {
     pub output_collection_reduced: String,
     pub output_collection_topics: String,
 }
+
+// ============================================================================
+// Legacy job types (kept for backwards compatibility during migration)
+// ============================================================================
+
+// Old unified transform jobs - to be removed after workers are updated
+#[deprecated(note = "Use CollectionTransformJob instead")]
+pub type TransformFileJob = CollectionTransformJob;
+
+#[deprecated(note = "Use CollectionTransformResult instead")]
+pub type FileTransformResult = CollectionTransformResult;
+
+#[deprecated(note = "Use DatasetTransformJob instead")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VectorEmbedJob {
+    pub job_id: Uuid,
+    pub batch_file_key: String,
+    pub bucket: String,
+    pub transform_id: i32,
+    pub embedder_config: EmbedderConfig,
+    pub vector_database_config: VectorDatabaseConfig,
+    pub collection_name: String,
+    #[serde(default)]
+    pub wipe_collection: bool,
+    #[serde(default)]
+    pub batch_size: Option<usize>,
+}
+
+#[deprecated(note = "Use DatasetTransformResult instead")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VectorBatchResult {
+    pub job_id: Uuid,
+    pub transform_id: i32,
+    pub batch_file_key: String,
+    pub chunk_count: usize,
+    pub status: String,
+    pub error: Option<String>,
+    pub processing_duration_ms: Option<i64>,
+}
+
+#[deprecated(note = "Use VisualizationTransformResult instead")]
+pub type VisualizationResult = VisualizationTransformResult;

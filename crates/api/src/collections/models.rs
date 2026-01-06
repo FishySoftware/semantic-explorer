@@ -30,6 +30,9 @@ pub(crate) struct Collection {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<String>, format = DateTime)]
     pub(crate) updated_at: Option<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>>,
+    #[sqlx(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) file_count: Option<i64>,
 }
 
 #[derive(MultipartForm, ToSchema)]

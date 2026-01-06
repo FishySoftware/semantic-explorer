@@ -47,10 +47,9 @@
 	let deletingFile = $state<string | null>(null);
 	let filePendingDelete = $state<CollectionFile | null>(null);
 
-	// Track pagination history for cursor-based pagination
-	let paginationHistory = $state<(string | null)[]>([null]); // Start with null token for first page
+	let paginationHistory = $state<(string | null)[]>([null]);
 	let currentPageIndex = $state(0);
-	let totalCount = $state<number | null>(null); // Preserve total count across pagination
+	let totalCount = $state<number | null>(null);
 
 	let searchQuery = $state('');
 
@@ -103,7 +102,6 @@
 			}
 			paginatedFiles = await response.json();
 
-			// Preserve total count from first page load
 			if (
 				paginatedFiles &&
 				paginatedFiles.total_count !== null &&
@@ -111,7 +109,6 @@
 			) {
 				totalCount = paginatedFiles.total_count;
 			}
-			// Restore total count on subsequent pages
 			if (paginatedFiles && paginatedFiles.total_count === null && totalCount !== null) {
 				paginatedFiles.total_count = totalCount;
 			}
@@ -167,7 +164,6 @@
 				throw new Error(`Failed to delete file: ${response.statusText}`);
 			}
 
-			// Decrement total count if we have it
 			if (totalCount !== null) {
 				totalCount = totalCount - 1;
 			}
@@ -202,11 +198,8 @@
 	function goToNextPage() {
 		if (!paginatedFiles?.has_more) return;
 
-		// If we have a continuation token, add it to history if not already there
 		if (paginatedFiles.continuation_token) {
-			// Move to next page
 			currentPageIndex++;
-			// Add the token to history if we're moving to a new page
 			if (currentPageIndex >= paginationHistory.length) {
 				paginationHistory = [...paginationHistory, paginatedFiles.continuation_token];
 			}
@@ -237,8 +230,8 @@
 		pageSize = newSize;
 		currentPage = 0;
 		currentPageIndex = 0;
-		paginationHistory = [null]; // Reset pagination history
-		totalCount = null; // Reset total count to refetch
+		paginationHistory = [null];
+		totalCount = null;
 		fetchFiles();
 	}
 
@@ -288,11 +281,10 @@
 			}
 
 			if (allCompleted.length > 0) {
-				// Reset to first page to see newly uploaded files
 				currentPage = 0;
 				currentPageIndex = 0;
 				paginationHistory = [null];
-				totalCount = null; // Reset total count to refetch
+				totalCount = null;
 				await fetchFiles();
 				toastStore.success(
 					`Successfully uploaded ${allCompleted.length} file${allCompleted.length === 1 ? '' : 's'}`
@@ -351,41 +343,64 @@
 			</div>
 		{:else if collection}
 			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
-				<div class="flex items-baseline gap-3 mb-2">
-					<h1 class="text-3xl font-bold text-gray-900 dark:text-white">
-						{collection.title}
-					</h1>
-					<span class="text-sm text-gray-500 dark:text-gray-400">
-						#{collection.collection_id}
-					</span>
-				</div>
-				{#if collection.details}
-					<p class="text-gray-600 dark:text-gray-400 mb-3">
-						{collection.details}
-					</p>
-				{/if}
-				<div class="flex items-center gap-2 flex-wrap">
-					<span
-						class="inline-flex items-center gap-1.5 px-3 py-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full text-sm"
-					>
-						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width="2"
-								d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-							></path>
-						</svg>
-						{collection.owner}
-					</span>
-					{#if collection.tags && collection.tags.length > 0}
-						{#each collection.tags as tag (tag)}
-							<span
-								class="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs font-medium"
-							>
-								#{tag}
+				<div class="flex justify-between items-start mb-2">
+					<div class="flex-1">
+						<div class="flex items-baseline gap-3 mb-2">
+							<h1 class="text-3xl font-bold text-gray-900 dark:text-white">
+								{collection.title}
+							</h1>
+							<span class="text-sm text-gray-500 dark:text-gray-400">
+								#{collection.collection_id}
 							</span>
-						{/each}
+						</div>
+						{#if collection.details}
+							<p class="text-gray-600 dark:text-gray-400 mb-3">
+								{collection.details}
+							</p>
+						{/if}
+						<div class="flex items-center gap-2 flex-wrap">
+							<span
+								class="inline-flex items-center gap-1.5 px-3 py-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full text-sm"
+							>
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+									></path>
+								</svg>
+								{collection.owner}
+							</span>
+							{#if collection.tags && collection.tags.length > 0}
+								{#each collection.tags as tag (tag)}
+									<span
+										class="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs font-medium"
+									>
+										#{tag}
+									</span>
+								{/each}
+							{/if}
+						</div>
+					</div>
+					{#if paginatedFiles?.total_count && paginatedFiles.total_count > 0}
+						<div class="ml-4">
+							<a
+								href={`#/collection-transforms?action=create&collection_id=${collection.collection_id}`}
+								class="inline-flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
+								title="Process files from this collection into a dataset"
+							>
+								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
+									></path>
+								</svg>
+								Create Transform
+							</a>
+						</div>
 					{/if}
 				</div>
 			</div>
@@ -472,7 +487,7 @@
 		</div>
 
 		{#if paginatedFiles && paginatedFiles.files.length > 0}
-			<div class="mb-4 px-6">
+			<div class="mb-4 mt-4 px-6">
 				<div class="relative">
 					<input
 						type="text"

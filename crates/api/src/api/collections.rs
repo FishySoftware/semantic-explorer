@@ -30,9 +30,10 @@ use crate::{
     tag = "Collections",
 )]
 #[get("/api/collections")]
-#[tracing::instrument(name = "get_collections", skip(auth, postgres_pool))]
+#[tracing::instrument(name = "get_collections", skip(auth, s3_client, postgres_pool))]
 pub(crate) async fn get_collections(
     auth: Authenticated,
+    s3_client: Data<Client>,
     postgres_pool: Data<Pool<Postgres>>,
 ) -> impl Responder {
     let username = match extract_username(&auth) {
@@ -40,7 +41,16 @@ pub(crate) async fn get_collections(
         Err(e) => return e,
     };
     match collections::get_collections(&postgres_pool.into_inner(), &username).await {
-        Ok(collections) => HttpResponse::Ok().json(collections),
+        Ok(mut collection_list) => {
+            // Enrich with file counts
+            let s3_client = s3_client.as_ref();
+            for collection in &mut collection_list {
+                collection.file_count = storage::rustfs::count_files(s3_client, &collection.bucket)
+                    .await
+                    .ok();
+            }
+            HttpResponse::Ok().json(collection_list)
+        }
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch collections");
             HttpResponse::InternalServerError().body(format!("error fetching collections: {e:?}"))

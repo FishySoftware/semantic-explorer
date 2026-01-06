@@ -21,7 +21,7 @@
 			quality. Follow this typical workflow:
 		</p>
 
-		<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+		<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
 			<!-- Step 1 -->
 			<div
 				class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800"
@@ -66,12 +66,11 @@
 						>3</span
 					>
 					<h3 class="text-lg font-semibold text-gray-900 dark:text-white">
-						Transform (Collection)
+						Collection Transform
 					</h3>
 				</div>
 				<p class="text-sm text-gray-600 dark:text-gray-400">
-					Create a collection transform to extract text and generate chunks, populating a dataset
-					for embedding.
+					Extract text from documents and generate chunks to populate a dataset.
 				</p>
 			</div>
 
@@ -100,10 +99,10 @@
 						class="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-sm font-bold text-blue-600 dark:bg-blue-900 dark:text-blue-300"
 						>5</span
 					>
-					<h3 class="text-lg font-semibold text-gray-900 dark:text-white">Transform (Dataset)</h3>
+					<h3 class="text-lg font-semibold text-gray-900 dark:text-white">Dataset Transform</h3>
 				</div>
 				<p class="text-sm text-gray-600 dark:text-gray-400">
-					Create dataset transforms to generate embeddings using your configured embedders.
+					Generate embeddings using configured embedders (creates one Embedded Dataset per embedder).
 				</p>
 			</div>
 
@@ -116,10 +115,42 @@
 						class="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-sm font-bold text-blue-600 dark:bg-blue-900 dark:text-blue-300"
 						>6</span
 					>
+					<h3 class="text-lg font-semibold text-gray-900 dark:text-white">Embedded Datasets</h3>
+				</div>
+				<p class="text-sm text-gray-600 dark:text-gray-400">
+					Track embedding progress and view vector statistics of the generated embedded datasets.
+				</p>
+			</div>
+
+			<!-- Step 7 -->
+			<div
+				class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800"
+			>
+				<div class="flex items-center gap-2 mb-3">
+					<span
+						class="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-sm font-bold text-blue-600 dark:bg-blue-900 dark:text-blue-300"
+						>7</span
+					>
+					<h3 class="text-lg font-semibold text-gray-900 dark:text-white">Visualization</h3>
+				</div>
+				<p class="text-sm text-gray-600 dark:text-gray-400">
+					Create 2D/3D visualizations with UMAP dimensionality reduction and HDBSCAN clustering.
+				</p>
+			</div>
+
+			<!-- Step 8 -->
+			<div
+				class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800"
+			>
+				<div class="flex items-center gap-2 mb-3">
+					<span
+						class="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-sm font-bold text-blue-600 dark:bg-blue-900 dark:text-blue-300"
+						>8</span
+					>
 					<h3 class="text-lg font-semibold text-gray-900 dark:text-white">Search</h3>
 				</div>
 				<p class="text-sm text-gray-600 dark:text-gray-400">
-					Execute searches across multiple embedded datasets to compare embedding model performance.
+					Execute semantic searches and compare results across embedded datasets.
 				</p>
 			</div>
 		</div>
@@ -142,13 +173,15 @@
 			<p class="text-gray-700 dark:text-gray-300 mb-4">
 				Organize collections of documents of interest. You can add as many files as you want, up to
 				1GB per file. Most common content types are supported including Office documents (Word,
-				Excel, PowerPoint), HTML, XML, and raw text files.
+				Excel, PowerPoint), HTML, XML, and raw text files. Push collections to the system via the web UI or directly via API.
 			</p>
 			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
 				<h4 class="font-semibold text-gray-900 dark:text-white mb-2">Key Features:</h4>
 				<ul class="list-inside list-disc space-y-1 text-sm text-gray-600 dark:text-gray-400">
 					<li>Create and manage document collections</li>
-					<li>Upload files via web interface or S3 integration</li>
+					<li>Upload files via web interface</li>
+					<li>Push collections programmatically via REST API</li>
+					<li>S3 integration for bulk imports</li>
 					<li>Support for multiple document formats</li>
 					<li>Individual file size limit: 1GB</li>
 					<li>Organize related documents together for processing</li>
@@ -168,15 +201,16 @@
 			</h3>
 			<p class="text-gray-700 dark:text-gray-300 mb-4">
 				Contains processed texts as JSON with name and chunks, to be used for embedding transforms.
-				Datasets can be generated from collections using transforms, or exported to the dataset
-				endpoints directly via API.
+				Datasets can be generated automatically from collections using Collection Transforms, or you can push pre-processed chunks directly via the API. This flexibility allows you to bring your own chunking strategies or integrate with external processing pipelines.
 			</p>
 			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
 				<h4 class="font-semibold text-gray-900 dark:text-white mb-2">Key Features:</h4>
 				<ul class="list-inside list-disc space-y-1 text-sm text-gray-600 dark:text-gray-400">
 					<li>View processed text chunks with metadata</li>
 					<li>JSON format with structured data</li>
-					<li>Generated from collection transforms or API imports</li>
+					<li>Generated from Collection Transforms automatically</li>
+					<li>Push pre-processed chunks via REST API</li>
+					<li>Flexible chunking: use transforms or bring your own strategy</li>
 					<li>Can be embedded using multiple embedders for comparison</li>
 					<li>Browse and search dataset items</li>
 				</ul>
@@ -221,10 +255,7 @@
 				>
 			</h3>
 			<p class="text-gray-700 dark:text-gray-300 mb-4">
-				Provides configurable pipelines to accomplish various operations. Collection transforms
-				extract text from documents and generate chunks to populate a dataset. Dataset transforms
-				populate embedded datasets—one dataset can have multiple embedders configured to populate
-				multiple embedded datasets for comparison purposes.
+				Provides configurable pipelines for each stage of data processing. Collection transforms extract text from documents and generate chunks. Dataset transforms generate embeddings using configured embedders, creating one Embedded Dataset per embedder for comparison. Visualization transforms reduce embeddings to 2D/3D with UMAP and identify topics with HDBSCAN.
 			</p>
 			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
 				<h4 class="font-semibold text-gray-900 dark:text-white mb-2">Transform Types:</h4>
@@ -238,7 +269,13 @@
 					<div>
 						<div class="font-semibold text-gray-900 dark:text-white">Dataset Transforms</div>
 						<p class="text-gray-600 dark:text-gray-400">
-							Generate embeddings for dataset chunks using configured embedders
+							Generate embeddings for dataset chunks using configured embedders (creates one Embedded Dataset per embedder)
+						</p>
+					</div>
+					<div>
+						<div class="font-semibold text-gray-900 dark:text-white">Visualization Transforms</div>
+						<p class="text-gray-600 dark:text-gray-400">
+							Reduce embeddings to 2D/3D using UMAP and identify topic clusters with HDBSCAN (requires GPU)
 						</p>
 					</div>
 				</div>
@@ -249,6 +286,34 @@
 					<li>Trigger transforms manually or via API</li>
 					<li>Configure chunking strategies and parameters</li>
 					<li>Support for multiple embedders per dataset</li>
+					<li>GPU-accelerated visualization generation (CUDA 12.4)</li>
+				</ul>
+			</div>
+		</div>
+
+		<!-- Embedded Datasets -->
+		<div
+			class="rounded-lg border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-800"
+		>
+			<h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
+				<span
+					class="rounded bg-amber-100 px-2 py-1 text-sm font-medium text-amber-800 dark:bg-amber-900 dark:text-amber-300"
+					>Embedded Datasets</span
+				>
+			</h3>
+			<p class="text-gray-700 dark:text-gray-300 mb-4">
+				Result entities created automatically when you create a Dataset Transform with multiple embedders. Each Embedded Dataset represents embeddings from one embedder model, allowing you to compare results side-by-side. Track embedding progress, view vector statistics, and trigger visualizations for each model independently.
+			</p>
+			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
+				<h4 class="font-semibold text-gray-900 dark:text-white mb-2">Key Features:</h4>
+				<ul class="list-inside list-disc space-y-1 text-sm text-gray-600 dark:text-gray-400">
+					<li>Automatically created when Dataset Transform runs</li>
+					<li>One per configured embedder model</li>
+					<li>Track embedding generation progress per model</li>
+					<li>View vector statistics and embedding metadata</li>
+					<li>Search across each embedded dataset independently</li>
+					<li>Trigger visualization transforms for 2D/3D visualization</li>
+					<li>Compare embedding quality across models</li>
 				</ul>
 			</div>
 		</div>
@@ -280,24 +345,27 @@
 			</div>
 		</div>
 
-		<!-- Visualizations (Coming Soon) -->
+		<!-- Visualizations -->
 		<div
-			class="rounded-lg border border-gray-200 bg-white p-6 opacity-60 dark:border-gray-700 dark:bg-gray-800"
+			class="rounded-lg border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-800"
 		>
 			<h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
 				<span
 					class="rounded bg-indigo-100 px-2 py-1 text-sm font-medium text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300"
-					>Visualizations</span
-				>
-				<span
-					class="rounded bg-yellow-100 px-2 py-1 text-xs font-medium text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300"
-					>Coming Soon</span
+					>Visualization Transforms</span
 				>
 			</h3>
-			<p class="text-gray-700 dark:text-gray-300">
-				Advanced visualization capabilities for embedding spaces, search results, and quality
-				metrics are currently under development.
+			<p class="text-gray-700 dark:text-gray-300 mb-4">
+				Create interactive 2D/3D visualizations of your embedding spaces. Automatically reduces high-dimensional embeddings to 2D/3D using UMAP and identifies topic clusters with HDBSCAN. Compare how different embedding models organize your data in visual form.
 			</p>
+			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
+				<h4 class="font-semibold text-gray-900 dark:text-white mb-2">Key Features:</h4>
+				<ul class="list-inside list-disc space-y-1 text-sm text-gray-600 dark:text-gray-400">
+					<li>GPU-accelerated dimensionality reduction (UMAP) and topic clustering (HDBSCAN)</li>
+					<li>Interactive 2D/3D visualization viewer</li>
+					<li>Compare visualizations across embedding models</li>
+				</ul>
+			</div>
 		</div>
 	</section>
 
@@ -311,7 +379,7 @@
 			</li>
 			<li class="flex items-start gap-2">
 				<ArrowRightOutline class="w-4 h-4 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
-				<span>Configure multiple embedders to compare performance across different models</span>
+				<span>Configure multiple embedders to compare performance across different models using Embedded Datasets</span>
 			</li>
 			<li class="flex items-start gap-2">
 				<ArrowRightOutline class="w-4 h-4 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
@@ -321,11 +389,15 @@
 			</li>
 			<li class="flex items-start gap-2">
 				<ArrowRightOutline class="w-4 h-4 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
-				<span>Monitor transform job status to track processing progress</span>
+				<span>Monitor Dataset Transform job status to track embedding progress per model</span>
 			</li>
 			<li class="flex items-start gap-2">
 				<ArrowRightOutline class="w-4 h-4 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
 				<span>Experiment with different chunking strategies to optimize search quality</span>
+			</li>
+			<li class="flex items-start gap-2">
+				<ArrowRightOutline class="w-4 h-4 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
+				<span>Generate 2D/3D visualizations of your Embedded Datasets to visually compare embedding model performance</span>
 			</li>
 		</ul>
 	</section>

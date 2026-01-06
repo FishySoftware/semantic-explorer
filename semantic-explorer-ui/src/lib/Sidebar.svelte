@@ -1,12 +1,14 @@
 <script lang="ts">
 	import {
+		ArrowsRepeatOutline,
 		BookOpenSolid,
 		BrainSolid,
 		ChartPieSolid,
-		CogSolid,
+		CubeSolid,
 		DatabaseSolid,
 		FolderSolid,
 		GridSolid,
+		LayersSolid,
 		SearchOutline,
 	} from 'flowbite-svelte-icons';
 	import type { Props } from 'flowbite-svelte-icons/types';
@@ -20,7 +22,10 @@
 		{ name: 'Collections', icon: FolderSolid, url: '/collections' },
 		{ name: 'Datasets', icon: DatabaseSolid, url: '/datasets' },
 		{ name: 'Embedders', icon: BrainSolid, url: '/embedders' },
-		{ name: 'Transforms', icon: CogSolid, url: '/transforms' },
+		{ name: 'Collection Transforms', icon: ArrowsRepeatOutline, url: '/collection-transforms' },
+		{ name: 'Dataset Transforms', icon: LayersSolid, url: '/dataset-transforms' },
+		{ name: 'Embedded Datasets', icon: CubeSolid, url: '/embedded-datasets' },
+		{ name: 'Visualization Transforms', icon: ChartPieSolid, url: '/visualization-transforms' },
 		{ name: 'Search', icon: SearchOutline, url: '/search' },
 		{ name: 'Visualizations', icon: ChartPieSolid, url: '/visualizations' },
 	];

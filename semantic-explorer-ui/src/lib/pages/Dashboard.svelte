@@ -18,17 +18,8 @@
 		tags: string[];
 	}
 
-	interface Transform {
-		transform_id: number;
-		title: string;
-		job_type: string;
-		is_enabled: boolean;
-		updated_at: string;
-	}
-
 	let collections = $state<Collection[]>([]);
 	let datasets = $state<Dataset[]>([]);
-	let transforms = $state<Transform[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
@@ -41,19 +32,17 @@
 			loading = true;
 			error = null;
 
-			const [collectionsRes, datasetsRes, transformsRes] = await Promise.all([
+			const [collectionsRes, datasetsRes] = await Promise.all([
 				fetch('/api/collections'),
 				fetch('/api/datasets'),
-				fetch('/api/transforms'),
 			]);
 
-			if (!collectionsRes.ok || !datasetsRes.ok || !transformsRes.ok) {
+			if (!collectionsRes.ok || !datasetsRes.ok) {
 				throw new Error('Failed to fetch data');
 			}
 
 			const allCollections = await collectionsRes.json();
 			const allDatasets = await datasetsRes.json();
-			const allTransforms = await transformsRes.json();
 
 			collections = allCollections
 				.sort(
@@ -65,13 +54,6 @@
 			datasets = allDatasets
 				.sort(
 					(a: Dataset, b: Dataset) =>
-						new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-				)
-				.slice(0, 5);
-
-			transforms = allTransforms
-				.sort(
-					(a: Transform, b: Transform) =>
 						new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
 				)
 				.slice(0, 5);
@@ -106,13 +88,6 @@
 		}
 	}
 
-	function getJobTypeLabel(jobType: string): string {
-		const labels: Record<string, string> = {
-			collection_to_dataset: 'Collection → Dataset',
-			dataset_to_vector_storage: 'Dataset → Embedded Dataset',
-		};
-		return labels[jobType] || jobType;
-	}
 </script>
 
 <div class="max-w-7xl mx-auto">
@@ -228,54 +203,7 @@
 			</div>
 		</div>
 
-		<div class="mt-6 bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
-			<div class="flex justify-between items-center mb-4">
-				<h2 class="text-xl font-semibold text-gray-900 dark:text-white">Recent Transforms</h2>
-				<a href="#/transforms" class="text-blue-600 dark:text-blue-400 hover:underline text-sm">
-					View all
-				</a>
-			</div>
-			{#if transforms.length === 0}
-				<p class="text-gray-500 dark:text-gray-400 text-sm py-4">No transforms yet</p>
-			{:else}
-				<div class="space-y-3">
-					{#each transforms as transform (transform.transform_id)}
-						<div
-							class="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-750 transition-colors"
-						>
-							<div class="flex justify-between items-start">
-								<div class="flex-1">
-									<div class="flex items-center gap-2">
-										<h3 class="font-medium text-gray-900 dark:text-white">
-											{transform.title}
-										</h3>
-										<span
-											class="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400"
-										>
-											{getJobTypeLabel(transform.job_type)}
-										</span>
-										<span
-											class={`text-xs px-2 py-0.5 rounded-full ${
-												transform.is_enabled
-													? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
-													: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-400'
-											}`}
-										>
-											{transform.is_enabled ? 'Enabled' : 'Disabled'}
-										</span>
-									</div>
-								</div>
-								<span class="text-xs text-gray-500 dark:text-gray-400 ml-2">
-									{formatDate(transform.updated_at)}
-								</span>
-							</div>
-						</div>
-					{/each}
-				</div>
-			{/if}
-		</div>
-
-		<div class="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+		<div class="mt-6 grid grid-cols-1 md:grid-cols-4 gap-4">
 			<a
 				href="#/collections"
 				class="p-6 bg-linear-to-br from-blue-500 to-blue-600 text-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
@@ -309,7 +237,7 @@
 			</a>
 
 			<a
-				href="#/transforms"
+				href="#/collection-transforms"
 				class="p-6 bg-linear-to-br from-purple-500 to-purple-600 text-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
 			>
 				<svg class="w-8 h-8 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -326,8 +254,24 @@
 						d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
 					></path>
 				</svg>
-				<h3 class="text-lg font-semibold">Transforms</h3>
-				<p class="text-sm text-purple-100 mt-1">Configure data processing pipelines</p>
+				<h3 class="text-lg font-semibold">Collection Transforms</h3>
+				<p class="text-sm text-purple-100 mt-1">Extract data from collections</p>
+			</a>
+
+			<a
+				href="#/visualization-transforms"
+				class="p-6 bg-linear-to-br from-orange-500 to-orange-600 text-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
+			>
+				<svg class="w-8 h-8 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width="2"
+						d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4a1 1 0 011-1h16a1 1 0 011 1v2.757a1 1 0 01-.293.707L12 16.414l-7.414-7.414A1 1 0 013 8.343V4z"
+					></path>
+				</svg>
+				<h3 class="text-lg font-semibold">Visualizations</h3>
+				<p class="text-sm text-orange-100 mt-1">Create 3D visualizations</p>
 			</a>
 		</div>
 	{/if}
