@@ -13,7 +13,6 @@
 	import Embedders from './lib/pages/Embedders.svelte';
 	import Search from './lib/pages/Search.svelte';
 	import Transforms from './lib/pages/Transforms.svelte';
-	import VisualizationDetail from './lib/pages/VisualizationDetail.svelte';
 	import Visualizations from './lib/pages/Visualizations.svelte';
 
 	let activeUrl = $state('/dashboard');
@@ -144,10 +143,12 @@
 				<Visualizations onViewVisualization={viewVisualization} />
 			{:else if activeUrl === '/visualizations/detail'}
 				{#if selectedVisualizationId !== null}
-					<VisualizationDetail
-						transformId={selectedVisualizationId}
-						onBack={backToVisualizations}
-					/>
+					{#await import('./lib/pages/VisualizationDetail.svelte') then { default: VisualizationDetail }}
+						<VisualizationDetail
+							transformId={selectedVisualizationId}
+							onBack={backToVisualizations}
+						/>
+					{/await}
 				{/if}
 			{:else if activeUrl === '/search'}
 				<Search />

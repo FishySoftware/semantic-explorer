@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { Deck, OrbitView } from '@deck.gl/core';
-	import { ScatterplotLayer } from '@deck.gl/layers';
+	import { Deck, OrbitView, type Layer } from '@deck.gl/core';
+	import { LineLayer, ScatterplotLayer } from '@deck.gl/layers';
 	import { onDestroy, onMount } from 'svelte';
 	import { formatError, toastStore } from '../utils/notifications';
 
@@ -14,16 +14,6 @@
 		topic_label: string | null;
 		text: string | null;
 	}
-
-	// interface ApiTopic {
-	// 	id: string;
-	// 	x: number;
-	// 	y: number;
-	// 	z: number;
-	// 	cluster_id: number;
-	// 	label: string;
-	// 	size: number | null;
-	// }
 
 	interface ApiPointsResponse {
 		points: ApiVisualizationPoint[];
@@ -70,11 +60,24 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
-	let deckContainer = $state<HTMLDivElement | undefined>(undefined);
+	let deckCanvas = $state<HTMLCanvasElement | undefined>(undefined);
 	let deck = $state<any>(null);
 
 	let selectedCluster = $state<number | null>(null);
 	let hoveredPoint = $state<VisualizationPoint | null>(null);
+
+	// Container dimensions
+	let containerWidth = $state<number>(0);
+	let containerHeight = $state<number>(0);
+
+	// View controls
+	let viewState = $state({
+		target: [0, 0, 0] as [number, number, number],
+		rotationX: 30,
+		rotationOrbit: 45,
+		zoom: 1,
+	});
+	let showGrid = $state(true);
 
 	// Color palette for clusters (up to 20 distinct colors)
 	const CLUSTER_COLORS: [number, number, number][] = [
@@ -106,7 +109,6 @@
 	};
 
 	onMount(async () => {
-		initializeDeck();
 		await loadTransform();
 		await loadVisualizationData();
 	});
@@ -114,6 +116,25 @@
 	onDestroy(() => {
 		if (deck) {
 			deck.finalize();
+		}
+	});
+
+	// Initialize deck when container dimensions are available
+	$effect(() => {
+		if (!deck && deckCanvas && containerWidth > 0 && containerHeight > 0) {
+			console.log('Initializing Deck.GL with dimensions:', containerWidth, containerHeight);
+			initializeDeck();
+		}
+	});
+
+	// Resize deck when container dimensions change
+	$effect(() => {
+		if (deck && containerWidth > 0 && containerHeight > 0) {
+			console.log('Resizing deck to:', containerWidth, containerHeight);
+			deck.setProps({
+				width: containerWidth,
+				height: containerHeight,
+			});
 		}
 	});
 
@@ -207,12 +228,8 @@
 	}
 
 	function initializeDeck() {
-		console.log('initializeDeck called, deckContainer:', deckContainer);
-
-		if (!deckContainer) {
-			console.warn('Deck container not ready, will retry');
-			// Retry after a short delay
-			setTimeout(initializeDeck, 100);
+		if (!deckCanvas) {
+			console.warn('Deck canvas not ready');
 			return;
 		}
 
@@ -221,30 +238,41 @@
 			return;
 		}
 
-		console.log('Initializing Deck.GL with container:', deckContainer);
+		if (containerWidth === 0 || containerHeight === 0) {
+			console.warn('Container dimensions not available yet');
+			return;
+		}
+
+		// Set canvas dimensions before initializing Deck
+		deckCanvas.width = containerWidth;
+		deckCanvas.height = containerHeight;
+
+		console.log('Initializing Deck.GL with canvas:', deckCanvas, containerWidth, containerHeight);
 
 		deck = new Deck({
-			container: deckContainer,
+			canvas: deckCanvas,
 			views: new OrbitView({ orbitAxis: 'Y' }),
 			initialViewState: {
-				target: [0, 0, 0],
-				rotationX: 30,
-				rotationOrbit: 45,
-				zoom: 1,
+				...viewState,
 				minZoom: -10,
 				maxZoom: 10,
 			},
+			width: containerWidth,
+			height: containerHeight,
 			controller: true,
 			layers: [],
 			useDevicePixels: false,
-			style: {
-				position: 'relative',
-				width: '100%',
-				height: '100%',
+			onViewStateChange: ({ viewState: newViewState }: { viewState: any }) => {
+				viewState = {
+					target: newViewState.target as [number, number, number],
+					rotationX: newViewState.rotationX,
+					rotationOrbit: newViewState.rotationOrbit,
+					zoom: newViewState.zoom,
+				};
 			},
 		} as any);
 
-		console.log('Deck.GL initialized successfully');
+		console.log('Deck.GL initialized successfully with size:', containerWidth, 'x', containerHeight);
 	}
 
 	// Update deck layers when points or selectedCluster changes
@@ -252,6 +280,7 @@
 		// Track dependencies
 		const currentPoints = points;
 		const currentCluster = selectedCluster;
+		const gridVisible = showGrid;
 
 		if (!deck) {
 			console.log('Deck not initialized yet');
@@ -262,37 +291,143 @@
 			`Updating deck with ${currentPoints.length} points, selectedCluster: ${currentCluster}`
 		);
 
-		deck.setProps({
-			layers: [
-				new ScatterplotLayer({
-					id: 'points-layer',
-					data: currentPoints,
-					getPosition: (d: VisualizationPoint) => d.position,
-					getFillColor: (d: VisualizationPoint) => {
-						if (currentCluster !== null && d.cluster_id !== currentCluster) {
-							const color = getClusterColor(d.cluster_id);
-							return [...color, 50];
-						}
-						return getClusterColor(d.cluster_id);
-					},
-					getRadius: 0.5,
-					radiusMinPixels: 4,
-					radiusMaxPixels: 20,
-					pickable: true,
-					onHover: (info) => {
-						if (info.object) {
-							hoveredPoint = info.object;
-						} else {
-							hoveredPoint = null;
-						}
-					},
-				}),
-			],
-		});
+		const layers: Layer[] = [
+			new ScatterplotLayer({
+				id: 'points-layer',
+				data: currentPoints,
+				getPosition: (d: VisualizationPoint) => d.position,
+				getFillColor: (d: VisualizationPoint) => {
+					if (currentCluster !== null && d.cluster_id !== currentCluster) {
+						const color = getClusterColor(d.cluster_id);
+						return [...color, 50];
+					}
+					return getClusterColor(d.cluster_id);
+				},
+				getRadius: 0.5,
+				radiusMinPixels: 4,
+				radiusMaxPixels: 20,
+				pickable: true,
+				onHover: (info) => {
+					if (info.object) {
+						hoveredPoint = info.object;
+					} else {
+						hoveredPoint = null;
+					}
+				},
+			}),
+		];
+
+		if (gridVisible) {
+			// Add axis lines
+			layers.push(
+				new LineLayer({
+					id: 'axis-layer',
+					data: createAxisLines(100),
+					getSourcePosition: (d) => d.sourcePosition,
+					getTargetPosition: (d) => d.targetPosition,
+					getColor: (d) => d.color,
+					getWidth: 3,
+					widthMinPixels: 2,
+				})
+			);
+
+			// Add grid lines
+			layers.push(
+				new LineLayer({
+					id: 'grid-layer',
+					data: createGridLines(100),
+					getSourcePosition: (d) => d.sourcePosition,
+					getTargetPosition: (d) => d.targetPosition,
+					getColor: (d) => d.color,
+					getWidth: 1,
+					widthMinPixels: 1,
+				})
+			);
+		}
+
+		deck.setProps({ layers });
 	});
 
 	function selectCluster(clusterId: number | null) {
 		selectedCluster = clusterId;
+	}
+
+	function createGridLines(size: number = 100): any[] {
+		const lines = [];
+		const step = size / 10;
+		const color = [128, 128, 128, 100]; // Semi-transparent gray
+
+		// Grid lines on XY plane (Z=0)
+		for (let i = -5; i <= 5; i++) {
+			// Lines parallel to X axis
+			lines.push({
+				sourcePosition: [-size / 2, i * step, 0],
+				targetPosition: [size / 2, i * step, 0],
+				color,
+			});
+			// Lines parallel to Y axis
+			lines.push({
+				sourcePosition: [i * step, -size / 2, 0],
+				targetPosition: [i * step, size / 2, 0],
+				color,
+			});
+		}
+
+		return lines;
+	}
+
+	function createAxisLines(size: number = 100): any[] {
+		return [
+			// X axis - red
+			{
+				sourcePosition: [0, 0, 0],
+				targetPosition: [size / 2, 0, 0],
+				color: [255, 0, 0, 200],
+			},
+			// Y axis - green
+			{
+				sourcePosition: [0, 0, 0],
+				targetPosition: [0, size / 2, 0],
+				color: [0, 255, 0, 200],
+			},
+			// Z axis - blue
+			{
+				sourcePosition: [0, 0, 0],
+				targetPosition: [0, 0, size / 2],
+				color: [0, 0, 255, 200],
+			},
+		];
+	}
+
+	function resetView() {
+		viewState = {
+			target: [0, 0, 0],
+			rotationX: 30,
+			rotationOrbit: 45,
+			zoom: 1,
+		};
+		if (deck) {
+			deck.setProps({
+				initialViewState: {
+					...viewState,
+					minZoom: -10,
+					maxZoom: 10,
+				},
+			});
+		}
+	}
+
+	function updateZoom(newZoom: number) {
+		viewState = { ...viewState, zoom: newZoom };
+		if (deck) {
+			deck.setProps({
+				initialViewState: {
+					...viewState,
+					minZoom: -10,
+					maxZoom: 10,
+				},
+			});
+		}
 	}
 </script>
 
@@ -310,7 +445,6 @@
 			<h1 class="text-3xl font-bold text-gray-900 dark:text-white mb-2">
 				{transform.title}
 			</h1>
-			<p class="text-gray-600 dark:text-gray-400">3D Embedding Space Visualization</p>
 		{/if}
 	</div>
 
@@ -340,7 +474,7 @@
 		</div>
 	{:else}
 		<!-- Statistics Bar -->
-		<div class="mb-4 grid grid-cols-3 gap-4">
+		<div class="mb-2 grid grid-cols-3 gap-4">
 			<div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
 				<div class="text-sm text-gray-600 dark:text-gray-400">Total Points</div>
 				<div class="text-2xl font-bold text-gray-900 dark:text-white">
@@ -409,17 +543,29 @@
 
 			<!-- Main content: 3D visualization -->
 			<div class="lg:col-span-3 relative">
-				<div class="bg-white dark:bg-gray-800 rounded-lg shadow h-full relative overflow-hidden" style="z-index: 0; isolation: isolate;">
-					<div
-						id="deckgl-wrapper"
-						bind:this={deckContainer}
-						class="w-full h-full rounded-lg absolute inset-0"
-					></div>
+				<div
+					class="bg-white dark:bg-gray-800 rounded-lg shadow h-full relative overflow-hidden"
+					bind:clientWidth={containerWidth}
+					bind:clientHeight={containerHeight}
+				>
+					<div class="absolute inset-0 rounded-lg">
+						<div
+							id="deckgl-wrapper"
+							class="w-full h-full relative"
+						>
+							<canvas
+								bind:this={deckCanvas}
+								class="w-full h-full block"
+								style="touch-action: none;"
+							></canvas>
+						</div>
+					</div>
 
 					{#if hoveredPoint}
 						{@const color = getClusterColor(hoveredPoint.cluster_id)}
 						<div
 							class="absolute top-4 right-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-4 max-w-md border border-gray-200 dark:border-gray-700 pointer-events-none"
+							style="z-index: 10;"
 						>
 							<div class="flex items-start gap-2">
 								<div
@@ -439,6 +585,56 @@
 							</div>
 						</div>
 					{/if}
+
+					<!-- Controls Panel -->
+					<div class="absolute bottom-4 left-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-4 border border-gray-200 dark:border-gray-700 space-y-3" style="z-index: 10; pointer-events: auto;">
+						<!-- Zoom Control -->
+						<div>
+							<label for="zoom-slider" class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">
+								Zoom: {viewState.zoom.toFixed(1)}
+							</label>
+							<input
+								id="zoom-slider"
+								type="range"
+								min="-10"
+								max="10"
+								step="0.1"
+								value={viewState.zoom}
+								oninput={(e) => updateZoom(parseFloat(e.currentTarget.value))}
+								class="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
+							/>
+						</div>
+
+						<!-- Control Buttons -->
+						<div class="flex gap-2">
+							<button
+								onclick={resetView}
+								class="flex-1 px-3 py-2 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 rounded transition-colors"
+								title="Reset View"
+							>
+								Reset
+							</button>
+							<button
+								onclick={() => (showGrid = !showGrid)}
+								class="flex-1 px-3 py-2 text-xs font-medium {showGrid
+									? 'text-white bg-blue-600 dark:bg-blue-500'
+									: 'text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700'} hover:bg-blue-700 dark:hover:bg-blue-600 rounded transition-colors"
+								title="Toggle Grid"
+							>
+								Grid
+							</button>
+						</div>
+
+						<!-- View Info -->
+						<div class="text-xs text-gray-500 dark:text-gray-400 space-y-1">
+							<div>Rotation: {viewState.rotationOrbit.toFixed(0)}°</div>
+							<div class="text-[10px] text-gray-400 dark:text-gray-500">
+								<span class="text-red-500">Red</span>=X
+								<span class="text-green-500">Green</span>=Y
+								<span class="text-blue-500">Blue</span>=Z
+							</div>
+						</div>
+					</div>
 				</div>
 			</div>
 		</div>
@@ -446,23 +642,13 @@
 </div>
 
 <style>
-	/* Constrain Deck.GL canvas and wrapper within container */
+	/* Constrain Deck.GL canvas within container */
 	#deckgl-wrapper {
 		overflow: hidden;
-		z-index: 0;
-		transform: translateZ(0);
-		isolation: isolate;
 	}
 
-	:global(#deckgl-overlay) {
-		position: absolute !important;
-		top: 0 !important;
-		left: 0 !important;
-		width: 100% !important;
-		height: 100% !important;
-		max-width: 100% !important;
-		max-height: 100% !important;
-		object-fit: contain !important;
-		z-index: 1 !important;
+	#deckgl-wrapper canvas {
+		display: block;
+		outline: none;
 	}
 </style>
