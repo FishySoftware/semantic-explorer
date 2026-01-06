@@ -471,7 +471,7 @@ pub(crate) async fn process_visualization_scan(
     };
 
     let payload = serde_json::to_vec(&job)?;
-    nats.publish("workers.visualization".to_string(), payload.into())
+    nats.publish("workers.visualization-worker".to_string(), payload.into())
         .await?;
 
     info!(

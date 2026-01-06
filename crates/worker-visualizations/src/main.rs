@@ -69,6 +69,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let nats_client = async_nats::connect(&nats_url).await?;
     info!("Connected to NATS");
 
+    // Initialize JetStream streams (creates VISUALIZATION_TRANSFORMS if it doesn't exist)
+    semantic_explorer_core::nats::initialize_jetstream(&nats_client).await?;
+
     // Create JetStream context
     let jetstream = jetstream::new(nats_client.clone());
 
@@ -112,7 +115,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("Received visualization job: {}", job.job_id);
 
         let start = Instant::now();
-        match job::process_visualization_job(job.clone()).await {
+        match job::process_visualization_job(job.clone(), &nats_client).await {
             Ok((n_points, n_clusters, duration_ms)) => {
                 info!(
                     "Successfully processed job {} in {}ms ({} points, {} clusters)",
@@ -124,12 +127,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             Err(e) => {
+                let duration_ms = start.elapsed().as_millis() as i64;
                 error!(
                     "Failed to process job {} after {}ms: {}",
-                    job.job_id,
-                    start.elapsed().as_millis(),
-                    e
+                    job.job_id, duration_ms, e
                 );
+
+                // Send failure result to NATS
+                let result_msg = semantic_explorer_core::jobs::VisualizationResult {
+                    job_id: job.job_id,
+                    transform_id: job.transform_id,
+                    status: "failed".to_string(),
+                    error: Some(e.to_string()),
+                    processing_duration_ms: Some(duration_ms),
+                    n_points: 0,
+                    n_clusters: 0,
+                    output_collection_reduced: job.output_collection_reduced.clone(),
+                    output_collection_topics: job.output_collection_topics.clone(),
+                };
+                if let Ok(payload) = serde_json::to_vec(&result_msg) {
+                    let _ = nats_client
+                        .publish("worker.result.visualization".to_string(), payload.into())
+                        .await;
+                }
+
                 // Negative acknowledgment for retry (30s delay)
                 if let Err(ack_err) = msg
                     .ack_with(async_nats::jetstream::AckKind::Nak(Some(

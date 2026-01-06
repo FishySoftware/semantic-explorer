@@ -20,6 +20,7 @@ struct DocumentData {
 
 pub async fn process_visualization_job(
     job: VisualizationTransformJob,
+    nats_client: &async_nats::Client,
 ) -> Result<(usize, i32, i64), Box<dyn std::error::Error>> {
     let start = Instant::now();
 
@@ -139,7 +140,45 @@ pub async fn process_visualization_job(
         duration_ms as f64 / 1000.0
     );
 
+    // Send result message to NATS
+    send_result(
+        nats_client,
+        &job,
+        Ok((n_samples, n_clusters)),
+        Some(duration_ms),
+    )
+    .await?;
+
     Ok((n_samples, n_clusters, duration_ms))
+}
+
+async fn send_result(
+    nats: &async_nats::Client,
+    job: &VisualizationTransformJob,
+    result: Result<(usize, i32), String>,
+    processing_duration_ms: Option<i64>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (n_points, n_clusters, status, error) = match result {
+        Ok((points, clusters)) => (points, clusters, "completed".to_string(), None),
+        Err(e) => (0, 0, "failed".to_string(), Some(e)),
+    };
+
+    let result_msg = semantic_explorer_core::jobs::VisualizationResult {
+        job_id: job.job_id,
+        transform_id: job.transform_id,
+        status,
+        error,
+        processing_duration_ms,
+        n_points,
+        n_clusters,
+        output_collection_reduced: job.output_collection_reduced.clone(),
+        output_collection_topics: job.output_collection_topics.clone(),
+    };
+
+    let payload = serde_json::to_vec(&result_msg)?;
+    nats.publish("worker.result.visualization".to_string(), payload.into())
+        .await?;
+    Ok(())
 }
 
 async fn fetch_documents_with_text(

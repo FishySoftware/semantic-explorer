@@ -86,6 +86,7 @@
 
 	// Visualization transform state
 	let newSourceTransformId = $state<number | null>(null);
+	let newSourceEmbedderId = $state<number | null>(null);
 	let vizNNeighbors = $state(15);
 	let vizNComponents = $state(3);
 	let vizMinDist = $state(0.1);
@@ -123,6 +124,19 @@
 		if (showCreateForm && !newTitle) {
 			const timestamp = new Date().toISOString().replace(/[-:.]/g, '').slice(0, 15);
 			newTitle = `transform-${timestamp}`;
+		}
+	});
+
+	$effect(() => {
+		// Reset embedder selection when source transform changes
+		if (newSourceTransformId) {
+			const embedderIds = getEmbeddersForSourceTransform(newSourceTransformId);
+			// Auto-select first embedder if available and current selection is invalid
+			if (embedderIds.length > 0 && !embedderIds.includes(newSourceEmbedderId ?? -1)) {
+				newSourceEmbedderId = embedderIds[0];
+			}
+		} else {
+			newSourceEmbedderId = null;
 		}
 	});
 
@@ -377,8 +391,13 @@
 				createError = 'Embedded dataset is required';
 				return;
 			}
+			if (!newSourceEmbedderId) {
+				createError = 'Embedder is required';
+				return;
+			}
 			body.dataset_id = newDatasetId;
 			body.source_transform_id = newSourceTransformId;
+			body.source_embedder_id = newSourceEmbedderId;
 			body.visualization_config = {
 				n_neighbors: vizNNeighbors,
 				n_components: vizNComponents,
@@ -740,6 +759,12 @@
 		return transforms.filter(
 			(t) => t.job_type === 'dataset_to_vector_storage' && t.dataset_id === datasetId
 		);
+	}
+
+	function getEmbeddersForSourceTransform(sourceTransformId: number | null): number[] {
+		if (!sourceTransformId) return [];
+		const transform = transforms.find((t) => t.transform_id === sourceTransformId);
+		return transform?.embedder_ids || [];
 	}
 
 	function getEmbedderFromFileKey(fileKey: string, transform: Transform): Embedder | null {
@@ -1456,6 +1481,34 @@
 						</select>
 						<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
 							Select which embedded dataset to visualize
+						</p>
+					</div>
+
+					<div>
+						<label
+							for="viz-source-embedder"
+							class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+						>
+							Embedder
+						</label>
+						<select
+							id="viz-source-embedder"
+							bind:value={newSourceEmbedderId}
+							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md
+									  bg-white dark:bg-gray-700 text-gray-900 dark:text-white
+									  focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+						>
+							<option value={null}>Select an embedder...</option>
+							{#if newSourceTransformId}
+								{#each getEmbeddersForSourceTransform(newSourceTransformId) as embedderId (embedderId)}
+									<option value={embedderId}>
+										{getEmbedderName(embedderId)}
+									</option>
+								{/each}
+							{/if}
+						</select>
+						<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+							Select which embedder's vectors to visualize
 						</p>
 					</div>
 

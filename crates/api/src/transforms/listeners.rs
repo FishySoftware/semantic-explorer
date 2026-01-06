@@ -296,8 +296,8 @@ async fn handle_vector_result(result: VectorBatchResult, ctx: &TransformContext)
     );
 }
 
-#[tracing::instrument(name = "handle_visualization_result", skip(_ctx))]
-async fn handle_visualization_result(result: VisualizationResult, _ctx: &TransformContext) {
+#[tracing::instrument(name = "handle_visualization_result", skip(ctx))]
+async fn handle_visualization_result(result: VisualizationResult, ctx: &TransformContext) {
     info!(
         "Handling visualization result for transform {}",
         result.transform_id
@@ -308,7 +308,13 @@ async fn handle_visualization_result(result: VisualizationResult, _ctx: &Transfo
             "Visualization failed for transform {}: {:?}",
             result.transform_id, result.error
         );
-        // Could add a status field to transforms table to track this
+        let _ = mark_file_failed(
+            &ctx.postgres_pool,
+            result.transform_id,
+            "visualization",
+            &result.error.unwrap_or_default(),
+        )
+        .await;
         return;
     }
 
@@ -320,9 +326,58 @@ async fn handle_visualization_result(result: VisualizationResult, _ctx: &Transfo
         result.processing_duration_ms.unwrap_or(0)
     );
 
-    // The visualization data is already stored in Qdrant by the worker
-    // This handler is primarily for logging and could be extended to:
-    // - Update a status field in the transforms table
-    // - Send notifications
-    // - Trigger dependent processes
+    // Get the transform to get the owner
+    let transform = match get_transform_by_id(&ctx.postgres_pool, result.transform_id).await {
+        Ok(t) => t,
+        Err(e) => {
+            error!("Failed to get transform {}: {}", result.transform_id, e);
+            return;
+        }
+    };
+
+    // Update collection_mappings with the Qdrant collection names
+    let collection_mappings = serde_json::json!({
+        "reduced": result.output_collection_reduced,
+        "topics": result.output_collection_topics,
+    });
+
+    info!(
+        "Updating collection_mappings for transform {} with reduced={}, topics={}",
+        result.transform_id, result.output_collection_reduced, result.output_collection_topics
+    );
+
+    if let Err(e) = crate::storage::postgres::transforms::update_collection_mappings(
+        &ctx.postgres_pool,
+        result.transform_id,
+        &transform.owner,
+        &collection_mappings,
+    )
+    .await
+    {
+        error!("Failed to update collection_mappings: {}", e);
+        return;
+    }
+
+    // Mark the visualization as processed with the cluster count as item_count
+    info!(
+        "Marking visualization as processed for transform {} with {} clusters",
+        result.transform_id, result.n_clusters
+    );
+    if let Err(e) = mark_file_processed(
+        &ctx.postgres_pool,
+        result.transform_id,
+        "visualization",
+        result.n_clusters,
+        result.processing_duration_ms,
+    )
+    .await
+    {
+        error!("Failed to mark visualization as processed: {}", e);
+        return;
+    }
+
+    info!(
+        "Successfully processed visualization for transform {} with {} points in {} clusters",
+        result.transform_id, result.n_points, result.n_clusters
+    );
 }

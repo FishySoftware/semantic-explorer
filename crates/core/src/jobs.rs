@@ -101,4 +101,6 @@ pub struct VisualizationResult {
     pub processing_duration_ms: Option<i64>,
     pub n_points: usize,
     pub n_clusters: i32,
+    pub output_collection_reduced: String,
+    pub output_collection_topics: String,
 }

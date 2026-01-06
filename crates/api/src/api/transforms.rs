@@ -1,6 +1,7 @@
 use crate::auth::extract_username;
 use crate::storage;
 use crate::transforms::enqueue_scan_job;
+use crate::transforms::scanner::process_visualization_scan;
 use crate::transforms::models::{
     CreateTransform, CreateTransformConfig, ProcessedFile, ScanCollectionJob, Transform,
     TransformStats, TransformStatsWithTotal, TriggerTransformRequest, UpdateTransform,
@@ -390,6 +391,11 @@ pub(crate) async fn create_transform(
                 tracing::warn!("failed to enqueue initial scan job: {}", e);
             }
         }
+        "dataset_visualization_transform" => {
+            if let Err(e) = process_visualization_scan(&postgres_pool, &nats_client, &transform).await {
+                tracing::warn!("failed to enqueue initial visualization job: {}", e);
+            }
+        }
         _ => {}
     }
 
@@ -777,6 +783,9 @@ pub(crate) async fn trigger_transform(
                 transform_id: transform.transform_id,
             };
             enqueue_scan_job(&nats_client, scan_job).await
+        }
+        "dataset_visualization_transform" => {
+            process_visualization_scan(&postgres_pool, &nats_client, &transform).await
         }
         _ => {
             return HttpResponse::BadRequest().json(serde_json::json!({

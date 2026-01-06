@@ -86,8 +86,8 @@ const UPDATE_COLLECTION_MAPPINGS_QUERY: &str = r#"
     SET collection_mappings = $3,
         updated_at = NOW()
     WHERE owner = $1 AND transform_id = $2
-    RETURNING transform_id, title, collection_id, dataset_id, owner, is_enabled, chunk_size, 
-              job_type, source_dataset_id, target_dataset_id, embedder_ids, job_config, collection_mappings, created_at, updated_at
+    RETURNING transform_id, title, collection_id, dataset_id, owner, is_enabled, chunk_size,
+              job_type, source_dataset_id, target_dataset_id, source_transform_id, embedder_ids, job_config, collection_mappings, created_at, updated_at
 "#;
 
 const MARK_FILE_PROCESSED_QUERY: &str = r#"
