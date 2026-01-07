@@ -111,7 +111,6 @@
 			showCreateForm = false;
 			toastStore.success('Collection created successfully');
 			handleViewCollection(newCollection.collection_id);
-
 		} catch (e) {
 			const message = formatError(e, 'Failed to create collection');
 			createError = message;

@@ -15,7 +15,7 @@ use tracing::error;
 use crate::{
     auth::extract_username,
     datasets::models::{
-        CreateDataset, CreateDatasetItems, CreateDatasetItemsResponse, Dataset,
+        CreateDataset, CreateDatasetItems, CreateDatasetItemsResponse, DatasetWithStats,
         PaginatedDatasetItems, PaginationParams,
     },
     embedders::models::Embedder,
@@ -24,7 +24,7 @@ use crate::{
 
 #[utoipa::path(
     responses(
-        (status = 200, description = "OK", body = Vec<Dataset>),
+        (status = 200, description = "OK", body = Vec<DatasetWithStats>),
         (status = 401, description = "Unauthorized"),
         (status = 500, description = "Internal Server Error"),
     ),
@@ -40,10 +40,88 @@ pub(crate) async fn get_datasets(
         Ok(username) => username,
         Err(e) => return e,
     };
-    match datasets::get_datasets(&postgres_pool.into_inner(), &username).await {
-        Ok(datasets) => HttpResponse::Ok().json(datasets),
+    let pool = postgres_pool.into_inner();
+
+    // Get datasets
+    let all_datasets = match datasets::get_datasets(&pool, &username).await {
+        Ok(datasets) => datasets,
         Err(e) => {
-            HttpResponse::InternalServerError().body(format!("error fetching collections: {e:?}"))
+            return HttpResponse::InternalServerError()
+                .body(format!("error fetching datasets: {e:?}"));
+        }
+    };
+
+    // Get stats
+    let stats = match datasets::get_dataset_stats(&pool, &username).await {
+        Ok(stats) => stats,
+        Err(e) => {
+            error!("error fetching dataset stats: {e:?}");
+            // Continue without stats
+            Vec::new()
+        }
+    };
+
+    // Create a map of dataset_id -> stats
+    let stats_map: HashMap<i32, (i64, i64)> = stats
+        .into_iter()
+        .map(|s| (s.dataset_id, (s.item_count, s.total_chunks)))
+        .collect();
+
+    // Merge datasets with stats
+    let datasets_with_stats: Vec<DatasetWithStats> = all_datasets
+        .into_iter()
+        .map(|d| {
+            let (item_count, total_chunks) = stats_map.get(&d.dataset_id).unwrap_or(&(0, 0));
+            DatasetWithStats {
+                dataset_id: d.dataset_id,
+                title: d.title,
+                details: d.details,
+                owner: d.owner,
+                tags: d.tags,
+                created_at: d.created_at,
+                updated_at: d.updated_at,
+                item_count: *item_count,
+                total_chunks: *total_chunks,
+            }
+        })
+        .collect();
+
+    HttpResponse::Ok().json(datasets_with_stats)
+}
+
+#[utoipa::path(
+    params(
+        ("dataset_id" = i32, Path, description = "The dataset ID"),
+    ),
+    responses(
+        (status = 200, description = "OK", body = crate::datasets::models::Dataset),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Not Found"),
+        (status = 500, description = "Internal Server Error"),
+    ),
+    tag = "Datasets",
+)]
+#[get("/api/datasets/{dataset_id}")]
+#[tracing::instrument(name = "get_dataset", skip(auth, postgres_pool))]
+pub(crate) async fn get_dataset(
+    auth: Authenticated,
+    postgres_pool: Data<Pool<Postgres>>,
+    path: Path<i32>,
+) -> impl Responder {
+    let username = match extract_username(&auth) {
+        Ok(username) => username,
+        Err(e) => return e,
+    };
+    let dataset_id = path.into_inner();
+    let pool = postgres_pool.into_inner();
+
+    match datasets::get_dataset(&pool, &username, dataset_id).await {
+        Ok(dataset) => HttpResponse::Ok().json(dataset),
+        Err(e) => {
+            error!("Failed to fetch dataset {}: {}", dataset_id, e);
+            HttpResponse::NotFound().json(serde_json::json!({
+                "error": format!("Dataset not found: {}", e)
+            }))
         }
     }
 }

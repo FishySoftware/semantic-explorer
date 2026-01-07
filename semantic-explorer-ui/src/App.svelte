@@ -136,7 +136,7 @@
 					<CollectionDetail collectionId={selectedCollectionId} onBack={backToCollections} />
 				{/if}
 			{:else if activeUrl === '/datasets'}
-				<Datasets onViewDataset={viewDataset} />
+				<Datasets onViewDataset={viewDataset} onNavigate={navigate} />
 			{:else if activeUrl === '/datasets/detail'}
 				{#if selectedDatasetId !== null}
 					<DatasetDetail datasetId={selectedDatasetId} onBack={backToDatasets} />
@@ -148,7 +148,7 @@
 			{:else if activeUrl === '/dataset-transforms'}
 				<DatasetTransforms />
 			{:else if activeUrl === '/embedded-datasets'}
-				<EmbeddedDatasets />
+				<EmbeddedDatasets onViewDataset={viewDataset} onNavigate={navigate} />
 			{:else if activeUrl === '/visualization-transforms'}
 				<VisualizationTransforms />
 			{:else if activeUrl === '/visualizations'}

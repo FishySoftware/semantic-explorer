@@ -3,15 +3,46 @@
 	import PageHeader from '../components/PageHeader.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
 
+	let { onNavigate, onViewDataset } = $props<{
+		onNavigate: (path: string) => void;
+		onViewDataset: (datasetId: number) => void;
+	}>();
+
 	interface EmbeddedDataset {
 		embedded_dataset_id: number;
 		title: string;
 		dataset_transform_id: number;
 		source_dataset_id: number;
-		source_dataset_title: string;
 		embedder_id: number;
-		embedder_name: string;
 		owner: string;
+		collection_name: string;
+		created_at: string;
+		updated_at: string;
+		// These will be populated after fetching
+		source_dataset_title?: string;
+		embedder_name?: string;
+	}
+
+	interface Dataset {
+		dataset_id: number;
+		title: string;
+		details: string | null;
+		owner: string;
+		tags: string[];
+		item_count?: number;
+		total_chunks?: number;
+	}
+
+	interface Embedder {
+		embedder_id: number;
+		name: string;
+		owner: string;
+		provider: string;
+		base_url: string;
+		api_key: string | null;
+		config: Record<string, any>;
+		max_batch_size?: number;
+		dimensions?: number;
 		collection_name: string;
 		created_at: string;
 		updated_at: string;
@@ -28,10 +59,48 @@
 
 	let embeddedDatasets = $state<EmbeddedDataset[]>([]);
 	let statsMap = $state<Map<number, Stats>>(new Map());
+	let datasetsCache = $state<Map<number, Dataset>>(new Map());
+	let embeddersCache = $state<Map<number, Embedder>>(new Map());
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
 	let searchQuery = $state('');
+
+	async function fetchDataset(datasetId: number): Promise<Dataset | null> {
+		if (datasetsCache.has(datasetId)) {
+			return datasetsCache.get(datasetId) || null;
+		}
+		try {
+			const response = await fetch(`/api/datasets/${datasetId}`);
+			if (response.ok) {
+				const dataset = await response.json();
+				datasetsCache.set(datasetId, dataset);
+				datasetsCache = datasetsCache; // Trigger reactivity
+				return dataset;
+			}
+		} catch (e) {
+			console.error(`Failed to fetch dataset ${datasetId}:`, e);
+		}
+		return null;
+	}
+
+	async function fetchEmbedder(embedderId: number): Promise<Embedder | null> {
+		if (embeddersCache.has(embedderId)) {
+			return embeddersCache.get(embedderId) || null;
+		}
+		try {
+			const response = await fetch(`/api/embedders/${embedderId}`);
+			if (response.ok) {
+				const embedder = await response.json();
+				embeddersCache.set(embedderId, embedder);
+				embeddersCache = embeddersCache; // Trigger reactivity
+				return embedder;
+			}
+		} catch (e) {
+			console.error(`Failed to fetch embedder ${embedderId}:`, e);
+		}
+		return null;
+	}
 
 	async function fetchEmbeddedDatasets() {
 		try {
@@ -43,10 +112,24 @@
 			}
 			embeddedDatasets = await response.json();
 
-			// Fetch stats for each embedded dataset
+			// Fetch related datasets and embedders
 			for (const dataset of embeddedDatasets) {
+				const sourceDataset = await fetchDataset(dataset.source_dataset_id);
+				if (sourceDataset) {
+					dataset.source_dataset_title = sourceDataset.title;
+				}
+
+				const embedder = await fetchEmbedder(dataset.embedder_id);
+				if (embedder) {
+					dataset.embedder_name = embedder.name;
+				}
+
+				// Fetch stats for each embedded dataset
 				fetchStatsForEmbeddedDataset(dataset.embedded_dataset_id);
 			}
+
+			// Trigger reactivity
+			embeddedDatasets = embeddedDatasets;
 		} catch (e) {
 			const message = formatError(e, 'Failed to fetch embedded datasets');
 			error = message;
@@ -69,6 +152,38 @@
 		}
 	}
 
+	async function deleteEmbeddedDataset(dataset: EmbeddedDataset) {
+		if (
+			!confirm(
+				`Are you sure you want to delete "${dataset.title}"?\n\nThis will permanently delete:\n- The database record\n- The Qdrant collection: ${dataset.collection_name}\n\nThis action cannot be undone.`
+			)
+		) {
+			return;
+		}
+
+		try {
+			const response = await fetch(`/api/embedded-datasets/${dataset.embedded_dataset_id}`, {
+				method: 'DELETE',
+			});
+
+			if (!response.ok) {
+				const errorData = await response.json();
+				throw new Error(errorData.error || `Failed to delete: ${response.statusText}`);
+			}
+
+			toastStore.success(`Successfully deleted embedded dataset "${dataset.title}"`);
+			// Remove from local list
+			embeddedDatasets = embeddedDatasets.filter(
+				(d) => d.embedded_dataset_id !== dataset.embedded_dataset_id
+			);
+			statsMap.delete(dataset.embedded_dataset_id);
+			statsMap = statsMap; // Trigger reactivity
+		} catch (e) {
+			const message = formatError(e, 'Failed to delete embedded dataset');
+			toastStore.error(message);
+		}
+	}
+
 	onMount(() => {
 		fetchEmbeddedDatasets();
 	});
@@ -79,8 +194,8 @@
 			const query = searchQuery.toLowerCase();
 			return (
 				d.title.toLowerCase().includes(query) ||
-				d.source_dataset_title.toLowerCase().includes(query) ||
-				d.embedder_name.toLowerCase().includes(query) ||
+				(d.source_dataset_title?.toLowerCase().includes(query) ?? false) ||
+				(d.embedder_name?.toLowerCase().includes(query) ?? false) ||
 				d.owner.toLowerCase().includes(query) ||
 				d.collection_name.toLowerCase().includes(query)
 			);
@@ -93,15 +208,6 @@
 		title="Embedded Datasets"
 		description="Embedded Datasets contain vector embeddings stored in Qdrant collections. They are automatically created when Dataset Transforms are executed. Each Embedded Dataset represents one embedder applied to a source dataset, ready for semantic search and visualization."
 	/>
-
-	<div class="flex justify-between items-center mb-6">
-		<h1 class="text-3xl font-bold text-gray-900 dark:text-white">Embedded Datasets</h1>
-		<div class="text-sm text-gray-600 dark:text-gray-400">
-			<p>
-				<strong>Note:</strong> Embedded Datasets are created automatically by Dataset Transforms
-			</p>
-		</div>
-	</div>
 
 	<div class="mb-4">
 		<input
@@ -143,14 +249,32 @@
 							<div class="text-sm text-gray-600 dark:text-gray-400 space-y-1">
 								<p>
 									<strong>Source Dataset:</strong>
-									{dataset.source_dataset_title}
+									{#if dataset.source_dataset_title}
+										<button
+											onclick={() => onViewDataset(dataset.source_dataset_id)}
+											class="text-blue-600 dark:text-blue-400 hover:underline font-semibold"
+										>
+											{dataset.source_dataset_title}
+										</button>
+									{:else}
+										<span class="text-gray-500 dark:text-gray-400">Loading...</span>
+									{/if}
 								</p>
-								<p><strong>Embedder:</strong> {dataset.embedder_name}</p>
 								<p>
-									<strong>Qdrant Collection:</strong>
-									<code class="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded text-xs font-mono">
-										{dataset.collection_name}
-									</code>
+									<strong>Embedder:</strong>
+									{#if dataset.embedder_name}
+										<button
+											onclick={() =>
+												onNavigate(
+													`/embedders?search=${encodeURIComponent(dataset.embedder_name ?? '')}`
+												)}
+											class="text-blue-600 dark:text-blue-400 hover:underline font-semibold"
+										>
+											{dataset.embedder_name}
+										</button>
+									{:else}
+										<span class="text-gray-500 dark:text-gray-400">Loading...</span>
+									{/if}
 								</p>
 								<p><strong>Owner:</strong> {dataset.owner}</p>
 								<p>
@@ -164,11 +288,13 @@
 							</div>
 						</div>
 						<div class="flex flex-col gap-2">
-							<span
-								class="px-3 py-1 text-sm bg-green-100 text-green-700 rounded-lg dark:bg-green-900/20 dark:text-green-400 text-center"
+							<button
+								onclick={() => deleteEmbeddedDataset(dataset)}
+								class="px-3 py-1 text-sm bg-red-100 text-red-700 rounded-lg dark:bg-red-900/20 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/40 transition-colors"
+								title="Delete embedded dataset and Qdrant collection"
 							>
-								Active
-							</span>
+								Delete
+							</button>
 						</div>
 					</div>
 
@@ -216,21 +342,6 @@
 							</div>
 						</div>
 					{/if}
-
-					<div
-						class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 bg-blue-50 dark:bg-blue-900/10 rounded-lg p-4"
-					>
-						<p class="text-sm text-blue-700 dark:text-blue-400">
-							<strong>💡 Tip:</strong> This Embedded Dataset can be used for:
-						</p>
-						<ul
-							class="text-sm text-blue-600 dark:text-blue-300 mt-2 space-y-1 list-disc list-inside"
-						>
-							<li>Semantic search via the Query API</li>
-							<li>Creating visualizations with Visualization Transforms</li>
-							<li>Direct Qdrant queries using the collection name above</li>
-						</ul>
-					</div>
 				</div>
 			{/each}
 		</div>

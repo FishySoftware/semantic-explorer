@@ -56,6 +56,17 @@ const DELETE_DATASET_ITEM_QUERY: &str = r#"
     RETURNING item_id, dataset_id, title, chunks, metadata
 "#;
 
+const GET_DATASET_STATS_QUERY: &str = r#"
+    SELECT
+        d.dataset_id,
+        COUNT(di.item_id) as item_count,
+        COALESCE(SUM(jsonb_array_length(di.chunks)), 0) as total_chunks
+    FROM datasets d
+    LEFT JOIN dataset_items di ON d.dataset_id = di.dataset_id
+    WHERE d.owner = $1
+    GROUP BY d.dataset_id
+"#;
+
 #[tracing::instrument(name = "database.get_dataset", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner = %owner, dataset_id = %dataset_id))]
 pub(crate) async fn get_dataset(
     pool: &Pool<Postgres>,
@@ -223,6 +234,42 @@ pub(crate) async fn delete_dataset_item(
     let duration = start.elapsed().as_secs_f64();
     let success = result.is_ok();
     record_database_query("DELETE", "dataset_items", duration, success);
+
+    Ok(result?)
+}
+
+#[derive(Debug)]
+pub(crate) struct DatasetStats {
+    pub(crate) dataset_id: i32,
+    pub(crate) item_count: i64,
+    pub(crate) total_chunks: i64,
+}
+
+impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for DatasetStats {
+    fn from_row(row: &sqlx::postgres::PgRow) -> Result<Self, sqlx::Error> {
+        use sqlx::Row;
+        Ok(DatasetStats {
+            dataset_id: row.try_get("dataset_id")?,
+            item_count: row.try_get("item_count")?,
+            total_chunks: row.try_get("total_chunks")?,
+        })
+    }
+}
+
+#[tracing::instrument(name = "database.get_dataset_stats", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner = %owner))]
+pub(crate) async fn get_dataset_stats(
+    pool: &Pool<Postgres>,
+    owner: &str,
+) -> Result<Vec<DatasetStats>> {
+    let start = Instant::now();
+    let result = sqlx::query_as::<_, DatasetStats>(GET_DATASET_STATS_QUERY)
+        .bind(owner)
+        .fetch_all(pool)
+        .await;
+
+    let duration = start.elapsed().as_secs_f64();
+    let success = result.is_ok();
+    record_database_query("SELECT", "datasets_stats", duration, success);
 
     Ok(result?)
 }

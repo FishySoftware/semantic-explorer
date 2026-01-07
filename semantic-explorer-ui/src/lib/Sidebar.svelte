@@ -4,6 +4,8 @@
 		BookOpenSolid,
 		BrainSolid,
 		ChartPieSolid,
+		ChevronDownOutline,
+		ChevronRightOutline,
 		CubeSolid,
 		DatabaseSolid,
 		FolderSolid,
@@ -16,19 +18,52 @@
 
 	let { activeUrl = $bindable('/dashboard') } = $props();
 
-	const menuItems: Array<{ name: string; icon: Component<Props, {}, ''>; url: string }> = [
+	type MenuItem = {
+		name: string;
+		icon: Component<Props, {}, ''>;
+		url?: string;
+		children?: MenuItem[];
+	};
+
+	const menuItems: MenuItem[] = [
 		{ name: 'Dashboard', icon: GridSolid, url: '/dashboard' },
 		{ name: 'Documentation', icon: BookOpenSolid, url: '/documentation' },
 		{ name: 'Collections', icon: FolderSolid, url: '/collections' },
 		{ name: 'Datasets', icon: DatabaseSolid, url: '/datasets' },
 		{ name: 'Embedders', icon: BrainSolid, url: '/embedders' },
-		{ name: 'Collection Transforms', icon: ArrowsRepeatOutline, url: '/collection-transforms' },
-		{ name: 'Dataset Transforms', icon: LayersSolid, url: '/dataset-transforms' },
 		{ name: 'Embedded Datasets', icon: CubeSolid, url: '/embedded-datasets' },
-		{ name: 'Visualization Transforms', icon: ChartPieSolid, url: '/visualization-transforms' },
+		{
+			name: 'Transforms',
+			icon: ArrowsRepeatOutline,
+			children: [
+				{
+					name: 'Collection Transforms',
+					icon: ArrowsRepeatOutline,
+					url: '/collection-transforms',
+				},
+				{ name: 'Dataset Transforms', icon: LayersSolid, url: '/dataset-transforms' },
+				{
+					name: 'Visualization Transforms',
+					icon: ChartPieSolid,
+					url: '/visualization-transforms',
+				},
+			],
+		},
 		{ name: 'Search', icon: SearchOutline, url: '/search' },
 		{ name: 'Visualizations', icon: ChartPieSolid, url: '/visualizations' },
 	];
+
+	let expandedFolders = $state<Set<string>>(new Set(['Transforms']));
+
+	function toggleFolder(folderName: string) {
+		const newExpanded = new Set(expandedFolders);
+		if (newExpanded.has(folderName)) {
+			newExpanded.delete(folderName);
+		} else {
+			newExpanded.add(folderName);
+		}
+		expandedFolders = newExpanded;
+	}
 </script>
 
 <aside
@@ -36,24 +71,66 @@
 >
 	<div class="h-full px-3 py-4 overflow-y-auto">
 		<ul class="space-y-2 font-medium">
-			{#each menuItems as item (item.url)}
+			{#each menuItems as item (item.url || item.name)}
 				{@const Icon = item.icon}
 				<li>
-					<a
-						href={`#${item.url}`}
-						class="flex items-center p-2 rounded-lg transition-colors duration-200
-							{activeUrl === item.url
-							? 'bg-gray-100 text-gray-900 dark:bg-gray-700 dark:text-white'
-							: 'text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-700'}"
-						onclick={(e) => {
-							e.preventDefault();
-							window.location.hash = item.url;
-							activeUrl = item.url;
-						}}
-					>
-						<Icon class="w-5 h-5" />
-						<span class="ml-3">{item.name}</span>
-					</a>
+					{#if item.children}
+						<!-- Folder item with children -->
+						<button
+							class="flex items-center w-full p-2 rounded-lg transition-colors duration-200 text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-700"
+							onclick={() => toggleFolder(item.name)}
+						>
+							<Icon class="w-5 h-5" />
+							<span class="ml-3 flex-1 text-left">{item.name}</span>
+							{#if expandedFolders.has(item.name)}
+								<ChevronDownOutline class="w-4 h-4" />
+							{:else}
+								<ChevronRightOutline class="w-4 h-4" />
+							{/if}
+						</button>
+
+						{#if expandedFolders.has(item.name)}
+							<ul class="ml-6 mt-2 space-y-2">
+								{#each item.children as child (child.url)}
+									{@const ChildIcon = child.icon}
+									<li>
+										<a
+											href={`#${child.url}`}
+											class="flex items-center p-2 rounded-lg transition-colors duration-200
+												{activeUrl === child.url
+												? 'bg-gray-100 text-gray-900 dark:bg-gray-700 dark:text-white'
+												: 'text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-700'}"
+											onclick={(e) => {
+												e.preventDefault();
+												window.location.hash = child.url || '';
+												activeUrl = child.url || '';
+											}}
+										>
+											<ChildIcon class="w-4 h-4" />
+											<span class="ml-3 text-sm">{child.name}</span>
+										</a>
+									</li>
+								{/each}
+							</ul>
+						{/if}
+					{:else}
+						<!-- Regular menu item -->
+						<a
+							href={`#${item.url}`}
+							class="flex items-center p-2 rounded-lg transition-colors duration-200
+								{activeUrl === item.url
+								? 'bg-gray-100 text-gray-900 dark:bg-gray-700 dark:text-white'
+								: 'text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-700'}"
+							onclick={(e) => {
+								e.preventDefault();
+								window.location.hash = item.url || '';
+								activeUrl = item.url || '';
+							}}
+						>
+							<Icon class="w-5 h-5" />
+							<span class="ml-3">{item.name}</span>
+						</a>
+					{/if}
 				</li>
 			{/each}
 		</ul>

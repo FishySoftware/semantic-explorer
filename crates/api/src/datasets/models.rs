@@ -44,6 +44,23 @@ pub(crate) struct Dataset {
     pub(crate) updated_at: Option<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>>,
 }
 
+#[derive(Serialize, ToSchema)]
+pub(crate) struct DatasetWithStats {
+    pub(crate) dataset_id: i32,
+    pub(crate) title: String,
+    pub(crate) details: Option<String>,
+    pub(crate) owner: String,
+    pub(crate) tags: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub(crate) created_at: Option<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub(crate) updated_at: Option<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>>,
+    pub(crate) item_count: i64,
+    pub(crate) total_chunks: i64,
+}
+
 #[derive(Serialize, Deserialize, ToSchema, FromRow)]
 pub(crate) struct CreateDatasetItems {
     #[serde(deserialize_with = "non_empty")]

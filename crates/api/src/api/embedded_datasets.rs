@@ -8,8 +8,9 @@ use crate::storage::postgres::embedded_datasets;
 use actix_web::web::{Data, Path};
 use actix_web::{HttpResponse, Responder, delete, get};
 use actix_web_openidconnect::openid_middleware::Authenticated;
+use qdrant_client::Qdrant;
 use sqlx::{Pool, Postgres};
-use tracing::error;
+use tracing::{error, info};
 
 #[utoipa::path(
     get,
@@ -96,10 +97,11 @@ pub async fn get_embedded_dataset(
     ),
 )]
 #[delete("/api/embedded-datasets/{id}")]
-#[tracing::instrument(name = "delete_embedded_dataset", skip(auth, postgres_pool), fields(embedded_dataset_id = %path.as_ref()))]
+#[tracing::instrument(name = "delete_embedded_dataset", skip(auth, postgres_pool, qdrant_client), fields(embedded_dataset_id = %path.as_ref()))]
 pub async fn delete_embedded_dataset(
     auth: Authenticated,
     postgres_pool: Data<Pool<Postgres>>,
+    qdrant_client: Data<Qdrant>,
     path: Path<i32>,
 ) -> impl Responder {
     let username = match extract_username(&auth) {
@@ -107,13 +109,56 @@ pub async fn delete_embedded_dataset(
         Err(e) => return e,
     };
 
-    match embedded_datasets::delete_embedded_dataset(&postgres_pool, &username, path.into_inner())
+    let embedded_dataset_id = path.into_inner();
+
+    // First get the embedded dataset to retrieve the collection name
+    let embedded_dataset = match embedded_datasets::get_embedded_dataset(
+        &postgres_pool,
+        &username,
+        embedded_dataset_id,
+    )
+    .await
+    {
+        Ok(dataset) => dataset,
+        Err(e) => {
+            error!("Failed to find embedded dataset: {}", e);
+            return HttpResponse::NotFound().json(serde_json::json!({
+                "error": format!("Embedded dataset not found: {}", e)
+            }));
+        }
+    };
+
+    // Delete the Qdrant collection
+    info!(
+        "Deleting Qdrant collection: {}",
+        embedded_dataset.collection_name
+    );
+    if let Err(e) = qdrant_client
+        .delete_collection(&embedded_dataset.collection_name)
         .await
     {
-        Ok(_) => HttpResponse::NoContent().finish(),
+        error!(
+            "Failed to delete Qdrant collection {}: {}",
+            embedded_dataset.collection_name, e
+        );
+        // Continue with database deletion even if Qdrant deletion fails
+        // This prevents orphaned database records
+    }
+
+    // Delete the database entry
+    match embedded_datasets::delete_embedded_dataset(&postgres_pool, &username, embedded_dataset_id)
+        .await
+    {
+        Ok(_) => {
+            info!(
+                "Successfully deleted embedded dataset {} and Qdrant collection {}",
+                embedded_dataset_id, embedded_dataset.collection_name
+            );
+            HttpResponse::NoContent().finish()
+        }
         Err(e) => {
-            error!("Failed to delete embedded dataset: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
+            error!("Failed to delete embedded dataset from database: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": format!("Failed to delete embedded dataset: {}", e)
             }))
         }

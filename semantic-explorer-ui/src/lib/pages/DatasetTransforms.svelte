@@ -51,7 +51,6 @@
 	let newTitle = $state('');
 	let newDatasetId = $state<number | null>(null);
 	let selectedEmbedderIds = $state<number[]>([]);
-	let newBatchSize = $state<number | null>(null);
 	let newWipeCollection = $state(false);
 	let creating = $state(false);
 	let createError = $state<string | null>(null);
@@ -158,7 +157,6 @@
 						title: newTitle,
 						embedder_ids: selectedEmbedderIds,
 						job_config: {
-							embedding_batch_size: newBatchSize,
 							wipe_collection: newWipeCollection,
 						},
 					}
@@ -166,7 +164,6 @@
 						title: newTitle,
 						source_dataset_id: newDatasetId,
 						embedder_ids: selectedEmbedderIds,
-						embedding_batch_size: newBatchSize,
 						wipe_collection: newWipeCollection,
 					};
 
@@ -184,7 +181,8 @@
 				);
 			}
 
-			const savedTransform = await response.json();
+			const responseData = await response.json();
+			const savedTransform = responseData.transform || responseData;
 
 			if (editingTransform) {
 				transforms = transforms.map((t) =>
@@ -227,7 +225,8 @@
 				throw new Error(`Failed to toggle transform: ${response.statusText}`);
 			}
 
-			const updated = await response.json();
+			const responseData = await response.json();
+			const updated = responseData.transform || responseData;
 			transforms = transforms.map((t) =>
 				t.dataset_transform_id === updated.dataset_transform_id ? updated : t
 			);
@@ -265,7 +264,6 @@
 		newTitle = transform.title;
 		newDatasetId = transform.source_dataset_id;
 		selectedEmbedderIds = [...transform.embedder_ids];
-		newBatchSize = transform.job_config?.embedding_batch_size || null;
 		newWipeCollection = transform.job_config?.wipe_collection || false;
 		showCreateForm = true;
 	}
@@ -274,7 +272,6 @@
 		newTitle = '';
 		newDatasetId = null;
 		selectedEmbedderIds = [];
-		newBatchSize = null;
 		newWipeCollection = false;
 		showCreateForm = false;
 		editingTransform = null;
@@ -320,10 +317,35 @@
 		}
 	}
 
-	onMount(() => {
-		fetchTransforms();
-		fetchDatasets();
-		fetchEmbedders();
+	onMount(async () => {
+		await Promise.all([fetchTransforms(), fetchDatasets(), fetchEmbedders()]);
+		const hashParts = window.location.hash.split('?');
+		if (hashParts.length > 1) {
+			const urlParams = new URLSearchParams(hashParts[1]);
+
+			const action = urlParams.get('action');
+			const datasetIdParam = urlParams.get('dataset_id');
+
+			let shouldOpenForm = false;
+
+			if (action === 'create' && datasetIdParam) {
+				const datasetId = parseInt(datasetIdParam, 10);
+				if (!isNaN(datasetId)) {
+					newDatasetId = datasetId;
+					shouldOpenForm = true;
+				}
+			}
+
+			if (shouldOpenForm) {
+				showCreateForm = true;
+				const basePath = hashParts[0];
+				window.history.replaceState(
+					null,
+					'',
+					window.location.pathname + window.location.search + basePath
+				);
+			}
+		}
 	});
 
 	let filteredTransforms = $derived(
@@ -334,17 +356,18 @@
 		})
 	);
 
-	function getDatasetTitle(datasetId: number): string {
-		const dataset = datasets.find((d) => d.dataset_id === datasetId);
-		return dataset ? dataset.title : `Dataset ${datasetId}`;
+	function getDataset(datasetId: number) {
+		return datasets.find((d) => d.dataset_id === datasetId);
 	}
 
-	function getEmbedderNames(embedderIds: number[]): string {
-		const names = embedderIds.map((id) => {
+	function getEmbeddersList(embedderIds: number[] | undefined) {
+		if (!embedderIds || embedderIds.length === 0) {
+			return [];
+		}
+		return embedderIds.map((id) => {
 			const embedder = embedders.find((e) => e.embedder_id === id);
-			return embedder ? embedder.name : `Embedder ${id}`;
+			return embedder || { embedder_id: id, name: `Embedder ${id}`, provider: 'Unknown' };
 		});
-		return names.join(', ');
 	}
 </script>
 
@@ -456,27 +479,6 @@
 				</div>
 
 				<div class="mb-4">
-					<label
-						for="batch-size"
-						class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-					>
-						Batch Size (Optional)
-					</label>
-					<input
-						id="batch-size"
-						type="number"
-						bind:value={newBatchSize}
-						min="1"
-						max="500"
-						placeholder="Default batch size"
-						class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-					/>
-					<p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-						Number of chunks to process per batch (leave empty for default)
-					</p>
-				</div>
-
-				<div class="mb-4">
 					<label class="flex items-center cursor-pointer">
 						<input
 							type="checkbox"
@@ -557,6 +559,8 @@
 		<div class="grid gap-4">
 			{#each filteredTransforms as transform (transform.dataset_transform_id)}
 				{@const stats = statsMap.get(transform.dataset_transform_id)}
+				{@const dataset = getDataset(transform.source_dataset_id)}
+				{@const embeddersList = getEmbeddersList(transform.embedder_ids)}
 				<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
 					<div class="flex justify-between items-start mb-4">
 						<div class="flex-1">
@@ -566,12 +570,39 @@
 							<div class="text-sm text-gray-600 dark:text-gray-400 space-y-1">
 								<p>
 									<strong>Source Dataset:</strong>
-									{getDatasetTitle(transform.source_dataset_id)}
+									{#if dataset}
+										<a
+											href="#/datasets/{transform.source_dataset_id}/details"
+											class="text-blue-600 dark:text-blue-400 hover:underline"
+										>
+											{dataset.title}
+										</a>
+									{:else}
+										Dataset {transform.source_dataset_id}
+									{/if}
 								</p>
-								<p>
-									<strong>Embedders ({transform.embedder_ids.length}):</strong>
-									{getEmbedderNames(transform.embedder_ids)}
-								</p>
+								<div>
+									<strong>Embedders ({transform.embedder_ids?.length ?? 0}):</strong>
+									{#if embeddersList.length === 0}
+										<p class="ml-4">None</p>
+									{:else}
+										<ul class="ml-4 list-disc list-inside">
+											{#each embeddersList as embedder}
+												<li>
+													<a
+														href="#/embedders?name={encodeURIComponent(embedder.name)}"
+														class="text-blue-600 dark:text-blue-400 hover:underline"
+													>
+														{embedder.name}
+													</a>
+													<span class="text-gray-500 dark:text-gray-400">
+														({embedder.provider})
+													</span>
+												</li>
+											{/each}
+										</ul>
+									{/if}
+								</div>
 								<p><strong>Owner:</strong> {transform.owner}</p>
 								<p>
 									<strong>Status:</strong>

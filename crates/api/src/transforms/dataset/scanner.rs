@@ -13,6 +13,7 @@ use crate::storage::postgres::dataset_transforms::get_active_dataset_transforms;
 use crate::storage::postgres::embedded_datasets;
 use crate::storage::postgres::embedders;
 use crate::storage::rustfs;
+use semantic_explorer_core::storage::ensure_bucket_exists;
 
 /// Initialize the background scanner for dataset transforms
 pub(crate) fn initialize_scanner(
@@ -130,12 +131,32 @@ async fn process_dataset_transform_scan(
         // The bucket name is derived from the Qdrant collection name (lowercase)
         let bucket = embedded_dataset.collection_name.to_lowercase();
 
+        // Ensure the S3 bucket exists before trying to list files
+        if let Err(e) = ensure_bucket_exists(s3, &bucket).await {
+            error!(
+                "Failed to ensure bucket exists for embedded dataset {}: {}. Skipping.",
+                embedded_dataset.embedded_dataset_id, e
+            );
+            continue;
+        }
+
         // List all batch files in this embedded dataset's bucket
         let mut continuation_token: Option<String> = None;
         let mut batch_files = Vec::new();
 
         loop {
-            let files = rustfs::list_files(s3, &bucket, 100, continuation_token.as_deref()).await?;
+            let files = match rustfs::list_files(s3, &bucket, 100, continuation_token.as_deref())
+                .await
+            {
+                Ok(files) => files,
+                Err(e) => {
+                    error!(
+                        "Failed to list files in bucket '{}' for embedded dataset {}: {}. Skipping.",
+                        bucket, embedded_dataset.embedded_dataset_id, e
+                    );
+                    break;
+                }
+            };
             if files.files.is_empty() {
                 break;
             }

@@ -87,7 +87,6 @@
 			return 'Invalid date';
 		}
 	}
-
 </script>
 
 <div class="max-w-7xl mx-auto">

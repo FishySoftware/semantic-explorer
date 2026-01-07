@@ -33,6 +33,8 @@
 	let showCreateForm = $state(false);
 	let editingEmbedder = $state<Embedder | null>(null);
 
+	let searchQuery = $state('');
+
 	let formName = $state('');
 	let formProvider = $state('openai');
 	let formBaseUrl = $state('https://api.openai.com/v1');
@@ -199,6 +201,24 @@
 
 	onMount(() => {
 		fetchEmbedders();
+
+		// Check for name parameter in URL to pre-filter search
+		const hashParts = window.location.hash.split('?');
+		if (hashParts.length > 1) {
+			const urlParams = new URLSearchParams(hashParts[1]);
+			const nameParam = urlParams.get('name');
+
+			if (nameParam) {
+				searchQuery = nameParam;
+				// Clean up URL after setting search
+				const basePath = hashParts[0];
+				window.history.replaceState(
+					null,
+					'',
+					window.location.pathname + window.location.search + basePath
+				);
+			}
+		}
 	});
 
 	async function fetchEmbedders() {
@@ -392,6 +412,19 @@
 			error = e.message || 'Failed to delete embedder';
 		}
 	}
+
+	let filteredEmbedders = $derived(
+		embedders.filter((e) => {
+			if (!searchQuery.trim()) return true;
+			const query = searchQuery.toLowerCase();
+			return (
+				e.name.toLowerCase().includes(query) ||
+				e.provider.toLowerCase().includes(query) ||
+				e.owner.toLowerCase().includes(query) ||
+				e.base_url.toLowerCase().includes(query)
+			);
+		})
+	);
 </script>
 
 <div class="max-w-7xl mx-auto">
@@ -400,13 +433,8 @@
 		description="Provides embedding provider instances that are user-managed. Define OpenAI or Cohere compatible embedders that can be used on dataset transforms to produce vector embeddings for semantic search."
 	/>
 
-	<div class="mb-8 flex justify-between items-center">
-		<div>
-			<h1 class="text-3xl font-bold text-gray-900 dark:text-white">Embedders</h1>
-			<p class="mt-2 text-gray-600 dark:text-gray-400">
-				Manage embedding providers (OpenAI, Cohere, etc.)
-			</p>
-		</div>
+	<div class="flex justify-between items-center mb-6">
+		<h1 class="text-3xl font-bold text-gray-900 dark:text-white">Embedders</h1>
 		<button
 			onclick={() => {
 				if (showCreateForm) {
@@ -423,12 +451,6 @@
 			{showCreateForm ? 'Cancel' : 'Create Embedder'}
 		</button>
 	</div>
-
-	{#if error}
-		<div class="mb-4 p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg">
-			{error}
-		</div>
-	{/if}
 
 	{#if showCreateForm}
 		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
@@ -833,52 +855,145 @@
 		</div>
 	{/if}
 
+	{#if !showCreateForm && embedders.length > 0}
+		<div class="mb-4">
+			<div class="relative">
+				<input
+					type="text"
+					bind:value={searchQuery}
+					placeholder="Search embedders by name, provider, owner, or URL..."
+					class="w-full px-4 py-2 pl-10 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+				/>
+				<svg
+					class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400"
+					fill="none"
+					stroke="currentColor"
+					viewBox="0 0 24 24"
+				>
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width="2"
+						d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+					/>
+				</svg>
+			</div>
+		</div>
+	{/if}
+
 	{#if loading}
-		<div class="text-center py-12">
-			<div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-			<p class="mt-2 text-gray-600 dark:text-gray-400">Loading embedders...</p>
+		<div class="flex items-center justify-center py-12">
+			<div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+		</div>
+	{:else if error}
+		<div
+			class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4"
+		>
+			<p class="text-red-700 dark:text-red-400">{error}</p>
+			<button
+				onclick={fetchEmbedders}
+				class="mt-2 text-sm text-red-600 dark:text-red-400 hover:underline"
+			>
+				Try again
+			</button>
 		</div>
 	{:else if embedders.length === 0}
-		<div
-			class="text-center py-12 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700"
-		>
-			<p class="text-gray-600 dark:text-gray-400">No embedders configured yet.</p>
-			<p class="text-sm text-gray-500 dark:text-gray-500 mt-1">
-				Create an embedder to start embedding datasets.
-			</p>
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-12 text-center">
+			<p class="text-gray-500 dark:text-gray-400 mb-4">No embedders yet</p>
+			<button
+				onclick={() => openCreateForm()}
+				class="text-blue-600 dark:text-blue-400 hover:underline"
+			>
+				Create your first embedder
+			</button>
+		</div>
+	{:else if filteredEmbedders.length === 0}
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-12 text-center">
+			<p class="text-gray-500 dark:text-gray-400 mb-4">No embedders match your search</p>
+			<button
+				onclick={() => (searchQuery = '')}
+				class="text-blue-600 dark:text-blue-400 hover:underline"
+			>
+				Clear search
+			</button>
 		</div>
 	{:else}
-		<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-			{#each embedders as embedder (embedder.embedder_id)}
+		<div class="grid gap-4">
+			{#each filteredEmbedders as embedder (embedder.embedder_id)}
 				<div
-					class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6"
+					class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 hover:shadow-lg transition-shadow"
 				>
-					<div class="flex justify-between items-start mb-4">
+					<div class="flex justify-between items-start">
 						<div class="flex-1">
-							<div class="flex items-center gap-2 mb-1">
-								<h3 class="text-lg font-semibold text-gray-900 dark:text-white">
+							<div class="flex items-baseline gap-3 mb-2">
+								<h3 class="text-xl font-semibold text-gray-900 dark:text-white">
 									{embedder.name}
 								</h3>
-								<span
-									class="px-2 py-0.5 text-xs font-mono bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300 rounded"
-									title="Embedder ID"
-								>
+								<span class="text-sm text-gray-500 dark:text-gray-400">
 									#{embedder.embedder_id}
 								</span>
 							</div>
-							<div class="flex gap-2">
+							<div class="flex items-center gap-2 flex-wrap mb-3">
 								<span
-									class="inline-block px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 rounded"
+									class="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full text-sm font-medium"
 								>
 									{embedder.provider}
 								</span>
+								<span
+									class="inline-flex items-center gap-1.5 px-3 py-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full text-sm"
+								>
+									<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width="2"
+											d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+										></path>
+									</svg>
+									{embedder.owner}
+								</span>
+							</div>
+							<div class="space-y-2 text-sm">
+								<div>
+									<span class="text-gray-500 dark:text-gray-400">URL:</span>
+									<span class="ml-2 text-gray-900 dark:text-gray-100 break-all"
+										>{embedder.base_url}</span
+									>
+								</div>
+								<div>
+									<span class="text-gray-500 dark:text-gray-400">API Key:</span>
+									<span class="ml-2 text-gray-900 dark:text-gray-100">
+										{embedder.api_key ? '••••••••' : 'Not set'}
+									</span>
+								</div>
+								<div>
+									<span class="text-gray-500 dark:text-gray-400">Max Batch Size:</span>
+									<span class="ml-2 text-gray-900 dark:text-gray-100"
+										>{embedder.max_batch_size ?? 96}</span
+									>
+								</div>
+								<div>
+									<span class="text-gray-500 dark:text-gray-400">Dimensions:</span>
+									<span class="ml-2 text-gray-900 dark:text-gray-100"
+										>{embedder.dimensions ?? 1536}</span
+									>
+								</div>
+								<div>
+									<span class="text-gray-500 dark:text-gray-400">Config:</span>
+									<pre
+										class="mt-1 p-2 bg-gray-100 dark:bg-gray-900 rounded text-xs overflow-auto">{JSON.stringify(
+											embedder.config,
+											null,
+											2
+										)}</pre>
+								</div>
 							</div>
 						</div>
-						<div class="flex gap-2">
+						<div class="ml-4 flex flex-col gap-2">
 							<button
 								onclick={() => openEditForm(embedder)}
-								class="p-2 text-gray-600 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400"
-								title="Edit"
+								class="px-3 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors flex items-center gap-2 dark:bg-gray-500 dark:hover:bg-gray-600"
+								title="Edit embedder"
 							>
 								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path
@@ -888,13 +1003,20 @@
 										d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
 									/>
 								</svg>
+								Edit
 							</button>
 							<button
 								onclick={() => requestDeleteEmbedder(embedder)}
-								class="p-2 text-gray-600 hover:text-red-600 dark:text-gray-400 dark:hover:text-red-400"
-								title="Delete"
+								class="px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2"
+								title="Delete embedder"
 							>
-								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<svg
+									class="w-4 h-4"
+									fill="none"
+									stroke="currentColor"
+									viewBox="0 0 24 24"
+									aria-hidden="true"
+								>
 									<path
 										stroke-linecap="round"
 										stroke-linejoin="round"
@@ -902,43 +1024,8 @@
 										d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
 									/>
 								</svg>
+								Delete
 							</button>
-						</div>
-					</div>
-
-					<div class="space-y-2 text-sm">
-						<div>
-							<span class="text-gray-500 dark:text-gray-400">URL:</span>
-							<span class="ml-2 text-gray-900 dark:text-gray-100 break-all"
-								>{embedder.base_url}</span
-							>
-						</div>
-						<div>
-							<span class="text-gray-500 dark:text-gray-400">API Key:</span>
-							<span class="ml-2 text-gray-900 dark:text-gray-100">
-								{embedder.api_key ? '••••••••' : 'Not set'}
-							</span>
-						</div>
-						<div>
-							<span class="text-gray-500 dark:text-gray-400">Max Batch Size:</span>
-							<span class="ml-2 text-gray-900 dark:text-gray-100"
-								>{embedder.max_batch_size ?? 96}</span
-							>
-						</div>
-						<div>
-							<span class="text-gray-500 dark:text-gray-400">Dimensions:</span>
-							<span class="ml-2 text-gray-900 dark:text-gray-100"
-								>{embedder.dimensions ?? 1536}</span
-							>
-						</div>
-						<div>
-							<span class="text-gray-500 dark:text-gray-400">Config:</span>
-							<pre
-								class="mt-1 p-2 bg-gray-100 dark:bg-gray-900 rounded text-xs overflow-auto">{JSON.stringify(
-									embedder.config,
-									null,
-									2
-								)}</pre>
 						</div>
 					</div>
 				</div>

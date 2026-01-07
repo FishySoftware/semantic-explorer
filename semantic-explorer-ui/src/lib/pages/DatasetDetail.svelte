@@ -20,14 +20,40 @@
 		metadata: Record<string, any>;
 	}
 
-	interface TransformSummary {
-		transform_id: number;
+	interface CollectionTransform {
+		collection_transform_id: number;
 		title: string;
-		job_type: string;
+		collection_id: number;
 		dataset_id: number;
-		source_dataset_id: number | null;
-		target_dataset_id: number | null;
-		embedder_ids?: number[] | null;
+		owner: string;
+		is_enabled: boolean;
+		chunk_size: number;
+		job_config: Record<string, any>;
+		created_at: string;
+		updated_at: string;
+	}
+
+	interface DatasetTransform {
+		dataset_transform_id: number;
+		title: string;
+		source_dataset_id: number;
+		embedder_ids: number[];
+		owner: string;
+		is_enabled: boolean;
+		job_config: Record<string, any>;
+		created_at: string;
+		updated_at: string;
+	}
+
+	interface EmbeddedDataset {
+		embedded_dataset_id: number;
+		title: string;
+		dataset_transform_id: number;
+		source_dataset_id: number;
+		embedder_id: number;
+		owner: string;
+		collection_name: string;
+		created_at: string;
 		updated_at: string;
 	}
 
@@ -50,7 +76,9 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
-	let datasetTransforms = $state<TransformSummary[]>([]);
+	let collectionTransforms = $state<CollectionTransform[]>([]);
+	let datasetTransforms = $state<DatasetTransform[]>([]);
+	let embeddedDatasets = $state<EmbeddedDataset[]>([]);
 	let transformsLoading = $state(false);
 
 	let paginatedItems = $state<PaginatedItems | null>(null);
@@ -112,34 +140,37 @@
 	async function fetchDatasetTransforms() {
 		try {
 			transformsLoading = true;
-			const response = await fetch('/api/transforms');
-			if (!response.ok) {
-				throw new Error(`Failed to fetch transforms: ${response.statusText}`);
+
+			// Fetch collection transforms (Collection → this Dataset)
+			const collectionResponse = await fetch('/api/collection-transforms');
+			if (collectionResponse.ok) {
+				const allCollectionTransforms: CollectionTransform[] = await collectionResponse.json();
+				collectionTransforms = allCollectionTransforms
+					.filter((t) => t.dataset_id === datasetId)
+					.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
 			}
-			const transforms: TransformSummary[] = await response.json();
-			datasetTransforms = transforms
-				.filter(
-					(t) =>
-						t.dataset_id === datasetId ||
-						t.source_dataset_id === datasetId ||
-						t.target_dataset_id === datasetId
-				)
-				.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+
+			// Fetch dataset transforms (this Dataset → Embedded Datasets)
+			const datasetResponse = await fetch('/api/dataset-transforms');
+			if (datasetResponse.ok) {
+				const allDatasetTransforms: DatasetTransform[] = await datasetResponse.json();
+				datasetTransforms = allDatasetTransforms
+					.filter((t) => t.source_dataset_id === datasetId)
+					.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+			}
+
+			// Fetch embedded datasets (created from this Dataset)
+			const embeddedResponse = await fetch('/api/embedded-datasets');
+			if (embeddedResponse.ok) {
+				const allEmbeddedDatasets: EmbeddedDataset[] = await embeddedResponse.json();
+				embeddedDatasets = allEmbeddedDatasets
+					.filter((ed) => ed.source_dataset_id === datasetId)
+					.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+			}
 		} catch (e) {
 			toastStore.error(formatError(e, 'Failed to load related transforms'));
 		} finally {
 			transformsLoading = false;
-		}
-	}
-
-	function describeJob(transform: TransformSummary) {
-		switch (transform.job_type) {
-			case 'collection_to_dataset':
-				return 'Collection → Dataset';
-			case 'dataset_to_vector_storage':
-				return 'Dataset → Embedded Dataset';
-			default:
-				return transform.job_type;
 		}
 	}
 
@@ -317,23 +348,17 @@
 			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
 				<div class="flex items-center justify-between mb-4">
 					<h2 class="text-2xl font-bold text-gray-900 dark:text-white">Related Transforms</h2>
-					<a
-						href="#/transforms"
-						class="text-sm font-medium text-blue-600 hover:text-blue-500 dark:text-blue-300 dark:hover:text-blue-200"
-					>
-						Manage in Transforms
-					</a>
 				</div>
 
 				<p class="text-gray-600 dark:text-gray-400 mb-6">
-					Embedding and processing workflows for this dataset are configured on the Transforms page.
+					Transforms and embeddings related to this dataset.
 				</p>
 
 				{#if transformsLoading}
 					<div class="flex items-center justify-center py-8">
 						<div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
 					</div>
-				{:else if datasetTransforms.length === 0}
+				{:else if collectionTransforms.length === 0 && datasetTransforms.length === 0 && embeddedDatasets.length === 0}
 					<div
 						class="text-center py-8 bg-gray-50 dark:bg-gray-900/30 rounded-lg border border-dashed border-gray-300 dark:border-gray-700"
 					>
@@ -341,56 +366,167 @@
 							No transforms reference this dataset yet.
 						</p>
 						<p class="text-sm text-gray-400 dark:text-gray-500">
-							Create a transform to generate items or embeddings from this dataset.
+							Create transforms to process collections into this dataset or embed items from this
+							dataset.
 						</p>
 					</div>
 				{:else}
-					<div class="space-y-3">
-						{#each datasetTransforms as transform (transform.transform_id)}
-							<div
-								class="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 p-4"
-							>
-								<div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-									<div>
-										<button
-											onclick={() => {
-												if (typeof window !== 'undefined') {
-													window.localStorage.setItem(
-														'openTransformId',
-														String(transform.transform_id)
-													);
-													window.location.hash = '/transforms';
-												}
-											}}
-											class="text-sm font-semibold text-blue-700 dark:text-blue-300 hover:underline text-left"
-											type="button"
-										>
-											{transform.title}
-										</button>
-										<p class="text-xs text-gray-500 dark:text-gray-400">
-											{describeJob(transform)}
-										</p>
-									</div>
-									<div class="text-xs text-gray-500 dark:text-gray-400">
-										Updated {formatTimestamp(transform.updated_at)}
-									</div>
-								</div>
-								{#if transform.job_type === 'dataset_to_vector_storage'}
-									<div
-										class="mt-3 flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400"
+					<div class="space-y-6">
+						<!-- Collection Transforms: Collection → This Dataset -->
+						{#if collectionTransforms.length > 0}
+							<div>
+								<h3
+									class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2"
+								>
+									<span
+										class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 text-xs font-bold"
 									>
-										<span
-											class="inline-flex items-center gap-1 rounded-full bg-purple-100 px-2 py-1 font-medium text-purple-700 dark:bg-purple-900/30 dark:text-purple-200"
+										{collectionTransforms.length}
+									</span>
+									Collection Transforms (Collection → Dataset)
+								</h3>
+								<div class="space-y-2">
+									{#each collectionTransforms as transform (transform.collection_transform_id)}
+										<div
+											class="rounded-lg border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 p-3"
 										>
-											{transform.embedder_ids?.length ?? 0} embedders configured
-										</span>
-										<p class="leading-tight">
-											Embeddings are synchronized with embedded dataset from this dataset.
-										</p>
-									</div>
-								{/if}
+											<div
+												class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"
+											>
+												<div>
+													<button
+														onclick={() => {
+															if (typeof window !== 'undefined') {
+																window.location.hash = '/collection-transforms';
+															}
+														}}
+														class="text-sm font-semibold text-green-700 dark:text-green-300 hover:underline text-left"
+														type="button"
+													>
+														{transform.title}
+													</button>
+													<p class="text-xs text-gray-600 dark:text-gray-400">
+														Chunk size: {transform.chunk_size}
+														{#if transform.is_enabled}
+															<span class="ml-2 text-green-600 dark:text-green-400">● Enabled</span>
+														{:else}
+															<span class="ml-2 text-gray-500 dark:text-gray-500">● Disabled</span>
+														{/if}
+													</p>
+												</div>
+												<div class="text-xs text-gray-500 dark:text-gray-400">
+													Updated {formatTimestamp(transform.updated_at)}
+												</div>
+											</div>
+										</div>
+									{/each}
+								</div>
 							</div>
-						{/each}
+						{/if}
+
+						<!-- Dataset Transforms: This Dataset → Embedded Datasets -->
+						{#if datasetTransforms.length > 0}
+							<div>
+								<h3
+									class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2"
+								>
+									<span
+										class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 text-xs font-bold"
+									>
+										{datasetTransforms.length}
+									</span>
+									Dataset Transforms (Dataset → Embedded Datasets)
+								</h3>
+								<div class="space-y-2">
+									{#each datasetTransforms as transform (transform.dataset_transform_id)}
+										<div
+											class="rounded-lg border border-purple-200 dark:border-purple-800 bg-purple-50 dark:bg-purple-900/20 p-3"
+										>
+											<div
+												class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"
+											>
+												<div>
+													<button
+														onclick={() => {
+															if (typeof window !== 'undefined') {
+																window.location.hash = '/dataset-transforms';
+															}
+														}}
+														class="text-sm font-semibold text-purple-700 dark:text-purple-300 hover:underline text-left"
+														type="button"
+													>
+														{transform.title}
+													</button>
+													<p class="text-xs text-gray-600 dark:text-gray-400">
+														{transform.embedder_ids.length} embedder{transform.embedder_ids
+															.length !== 1
+															? 's'
+															: ''} configured
+														{#if transform.is_enabled}
+															<span class="ml-2 text-purple-600 dark:text-purple-400"
+																>● Enabled</span
+															>
+														{:else}
+															<span class="ml-2 text-gray-500 dark:text-gray-500">● Disabled</span>
+														{/if}
+													</p>
+												</div>
+												<div class="text-xs text-gray-500 dark:text-gray-400">
+													Updated {formatTimestamp(transform.updated_at)}
+												</div>
+											</div>
+										</div>
+									{/each}
+								</div>
+							</div>
+						{/if}
+
+						<!-- Embedded Datasets: Results from Dataset Transforms -->
+						{#if embeddedDatasets.length > 0}
+							<div>
+								<h3
+									class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2"
+								>
+									<span
+										class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-xs font-bold"
+									>
+										{embeddedDatasets.length}
+									</span>
+									Embedded Datasets (Vector Embeddings)
+								</h3>
+								<div class="space-y-2">
+									{#each embeddedDatasets as embedded (embedded.embedded_dataset_id)}
+										<div
+											class="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-3"
+										>
+											<div
+												class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"
+											>
+												<div>
+													<button
+														onclick={() => {
+															if (typeof window !== 'undefined') {
+																window.location.hash = '/embedded-datasets';
+															}
+														}}
+														class="text-sm font-semibold text-blue-700 dark:text-blue-300 hover:underline text-left"
+														type="button"
+													>
+														{embedded.title}
+													</button>
+													<p class="text-xs text-gray-600 dark:text-gray-400">
+														Collection: {embedded.collection_name}
+													</p>
+												</div>
+												<div class="text-xs text-gray-500 dark:text-gray-400">
+													Updated {formatTimestamp(embedded.updated_at)}
+												</div>
+											</div>
+										</div>
+									{/each}
+								</div>
+							</div>
+						{/if}
 					</div>
 				{/if}
 			</div>

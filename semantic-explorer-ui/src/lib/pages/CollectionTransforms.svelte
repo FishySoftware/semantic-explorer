@@ -151,7 +151,6 @@
 			const body = editingTransform
 				? {
 						title: newTitle,
-						chunk_size: newChunkSize,
 					}
 				: {
 						title: newTitle,
@@ -325,7 +324,11 @@
 			if (shouldOpenForm) {
 				showCreateForm = true;
 				const basePath = hashParts[0];
-				window.history.replaceState(null, '', window.location.pathname + window.location.search + basePath);
+				window.history.replaceState(
+					null,
+					'',
+					window.location.pathname + window.location.search + basePath
+				);
 			}
 		}
 	});
@@ -451,10 +454,13 @@
 						bind:value={newChunkSize}
 						min="50"
 						max="1000"
-						class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+						disabled={editingTransform !== null}
+						class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed"
 					/>
 					<p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-						Number of characters per chunk (50-1000)
+						{editingTransform
+							? 'Chunk size cannot be changed after creation'
+							: 'Number of characters per chunk (50-1000)'}
 					</p>
 				</div>
 
@@ -532,9 +538,22 @@
 							<div class="text-sm text-gray-600 dark:text-gray-400 space-y-1">
 								<p>
 									<strong>Collection:</strong>
-									{getCollectionTitle(transform.collection_id)}
+									<a
+										href="#/collections/{transform.collection_id}/details"
+										class="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
+									>
+										{getCollectionTitle(transform.collection_id)}
+									</a>
 								</p>
-								<p><strong>Dataset:</strong> {getDatasetTitle(transform.dataset_id)}</p>
+								<p>
+									<strong>Dataset:</strong>
+									<a
+										href="#/datasets/{transform.dataset_id}/details"
+										class="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
+									>
+										{getDatasetTitle(transform.dataset_id)}
+									</a>
+								</p>
 								<p><strong>Chunk Size:</strong> {transform.chunk_size}</p>
 								<p><strong>Owner:</strong> {transform.owner}</p>
 								<p>
