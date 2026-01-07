@@ -18,6 +18,14 @@ pub(crate) struct CreateCollection {
     pub(crate) is_public: bool,
 }
 
+#[derive(Serialize, Deserialize, ToSchema)]
+pub(crate) struct UpdateCollection {
+    pub(crate) title: String,
+    pub(crate) details: Option<String>,
+    pub(crate) tags: Vec<String>,
+    pub(crate) is_public: bool,
+}
+
 #[derive(Serialize, ToSchema, FromRow)]
 pub(crate) struct Collection {
     pub(crate) collection_id: i32,

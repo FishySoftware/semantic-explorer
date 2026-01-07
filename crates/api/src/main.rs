@@ -106,6 +106,7 @@ async fn main() -> Result<()> {
             .service(api::collections::get_collections)
             .service(api::collections::search_collections)
             .service(api::collections::create_collections)
+            .service(api::collections::update_collections)
             .service(api::collections::delete_collections)
             .service(api::collections::upload_to_collection)
             .service(api::collections::list_collection_files)

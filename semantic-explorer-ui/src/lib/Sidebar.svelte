@@ -29,8 +29,8 @@
 
 	const menuItems: MenuItem[] = [
 		{ name: 'Dashboard', icon: GridSolid, url: '/dashboard' },
-		{ name: 'Chat', icon: PaperClipOutline, url: '/chat' },
 		{ name: 'Documentation', icon: BookOpenSolid, url: '/documentation' },
+		{ name: 'Marketplace', icon: CartSolid, url: '/marketplace' },
 		{ name: 'Collections', icon: FolderSolid, url: '/collections' },
 		{ name: 'Datasets', icon: DatabaseSolid, url: '/datasets' },
 		{ name: 'Embedders', icon: BrainSolid, url: '/embedders' },
@@ -54,7 +54,7 @@
 		},
 		{ name: 'Search', icon: SearchOutline, url: '/search' },
 		{ name: 'Visualizations', icon: ChartPieSolid, url: '/visualizations' },
-		{ name: 'Marketplace', icon: CartSolid, url: '/marketplace' },
+		{ name: 'Chat', icon: PaperClipOutline, url: '/chat' },
 	];
 	let expandedFolders = $state<string[]>(['Transforms']);
 

@@ -65,6 +65,13 @@ const GRAB_PUBLIC_COLLECTION_QUERY: &str = r#"
     RETURNING collection_id, title, details, owner, bucket, tags, is_public, created_at, updated_at
 "#;
 
+const UPDATE_COLLECTION_QUERY: &str = r#"
+    UPDATE collections
+    SET title = $1, details = $2, tags = $3, is_public = $4, updated_at = NOW()
+    WHERE collection_id = $5 AND owner = $6
+    RETURNING collection_id, title, details, owner, bucket, tags, is_public, created_at, updated_at
+"#;
+
 #[tracing::instrument(name = "database.get_collection", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner = %owner, collection_id = %collection_id))]
 pub(crate) async fn get_collection(
     pool: &Pool<Postgres>,
@@ -256,6 +263,34 @@ pub(crate) async fn grab_public_collection(
     let duration = start.elapsed().as_secs_f64();
     let success = result.is_ok();
     record_database_query("INSERT", "collections", duration, success);
+
+    Ok(result?)
+}
+
+#[tracing::instrument(name = "database.update_collection", skip(pool), fields(database.system = "postgresql", database.operation = "UPDATE", collection_id = %collection_id, owner = %owner))]
+pub(crate) async fn update_collection(
+    pool: &Pool<Postgres>,
+    collection_id: i32,
+    owner: &str,
+    title: &str,
+    details: Option<&str>,
+    tags: &[String],
+    is_public: bool,
+) -> Result<Collection> {
+    let start = Instant::now();
+    let result = sqlx::query_as::<_, Collection>(UPDATE_COLLECTION_QUERY)
+        .bind(title)
+        .bind(details)
+        .bind(tags)
+        .bind(is_public)
+        .bind(collection_id)
+        .bind(owner)
+        .fetch_one(pool)
+        .await;
+
+    let duration = start.elapsed().as_secs_f64();
+    let success = result.is_ok();
+    record_database_query("UPDATE", "collections", duration, success);
 
     Ok(result?)
 }
