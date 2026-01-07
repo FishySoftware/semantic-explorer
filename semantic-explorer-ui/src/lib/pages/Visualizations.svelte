@@ -2,14 +2,33 @@
 	import { onMount } from 'svelte';
 	import { formatError, toastStore } from '../utils/notifications';
 
-	interface Transform {
-		transform_id: number;
+	interface VisualizationConfig {
+		n_neighbors: number;
+		n_components: number;
+		min_dist: number;
+		metric: string;
+		min_cluster_size: number;
+		min_samples: number | null;
+	}
+
+	interface VisualizationTransform {
+		visualization_transform_id: number;
 		title: string;
-		job_type: string;
-		dataset_id: number;
-		source_transform_id: number | null;
-		embedder_ids?: number[] | null;
-		job_config: any;
+		embedded_dataset_id: number;
+		owner: string;
+		is_enabled: boolean;
+		reduced_collection_name: string | null;
+		topics_collection_name: string | null;
+		visualization_config: VisualizationConfig;
+		last_run_status: string | null;
+		last_run_at: string | null;
+		last_error: string | null;
+		last_run_stats: {
+			n_points?: number;
+			n_clusters?: number;
+			processing_duration_ms?: number;
+		} | null;
+		created_at: string;
 		updated_at: string;
 	}
 
@@ -19,7 +38,7 @@
 
 	let { onViewVisualization }: Props = $props();
 
-	let visualizations = $state<Transform[]>([]);
+	let visualizations = $state<VisualizationTransform[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
@@ -32,16 +51,11 @@
 		error = null;
 
 		try {
-			const response = await fetch('/api/transforms');
+			const response = await fetch('/api/visualization-transforms');
 			if (!response.ok) {
-				throw new Error(`Failed to fetch transforms: ${response.statusText}`);
+				throw new Error(`Failed to fetch visualization transforms: ${response.statusText}`);
 			}
-			const allTransforms: Transform[] = await response.json();
-
-			// Filter for visualization transforms only
-			visualizations = allTransforms.filter(
-				(t) => t.job_type === 'dataset_visualization_transform'
-			);
+			visualizations = await response.json();
 		} catch (err) {
 			error = formatError(err);
 			toastStore.error(error);
@@ -71,7 +85,7 @@
 	<div class="mb-8">
 		<h1 class="text-3xl font-bold text-gray-900 dark:text-white mb-2">Embedding Visualizations</h1>
 		<p class="text-gray-600 dark:text-gray-400">
-			3D visualizations of embedding spaces with UMAP dimensionality reduction and HDBSCAN
+			2D and 3D visualizations of embedding spaces with UMAP dimensionality reduction and HDBSCAN
 			clustering
 		</p>
 	</div>
@@ -122,7 +136,7 @@
 		</div>
 	{:else}
 		<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-			{#each visualizations as viz (viz.transform_id)}
+			{#each visualizations as viz (viz.visualization_transform_id)}
 				<div
 					class="bg-white dark:bg-gray-800 rounded-lg shadow hover:shadow-lg transition-shadow overflow-hidden"
 				>
@@ -133,37 +147,40 @@
 
 						<div class="space-y-2 mb-4">
 							<div class="text-sm text-gray-600 dark:text-gray-400">
-								<span class="font-medium">Dataset ID:</span>
-								{viz.dataset_id}
+								<span class="font-medium">Embedded Dataset ID:</span>
+								{viz.embedded_dataset_id}
 							</div>
-							{#if viz.embedder_ids && viz.embedder_ids.length > 0}
-								<div class="text-sm text-gray-600 dark:text-gray-400">
-									<span class="font-medium">Embedder ID:</span>
-									{viz.embedder_ids[0]}
-								</div>
-							{/if}
+							<div class="text-sm text-gray-600 dark:text-gray-400">
+								<span class="font-medium">Status:</span>
+								<span
+									class={viz.is_enabled
+										? 'text-green-600 dark:text-green-400'
+										: 'text-gray-500 dark:text-gray-400'}
+								>
+									{viz.is_enabled ? 'Enabled' : 'Disabled'}
+								</span>
+							</div>
 							<div class="text-sm text-gray-600 dark:text-gray-400">
 								<span class="font-medium">Updated:</span>
 								{formatDate(viz.updated_at)}
 							</div>
 						</div>
 
-						{#if viz.job_config}
-							<div class="mb-4">
-								<div class="text-xs font-medium text-gray-500 dark:text-gray-500 mb-1">
-									Configuration
-								</div>
-								<div class="text-xs text-gray-600 dark:text-gray-400 space-y-1">
-									<div>UMAP neighbors: {viz.job_config.n_neighbors || 15}</div>
-									<div>
-										HDBSCAN min cluster size: {viz.job_config.min_cluster_size || 5}
-									</div>
+						<div class="mb-4">
+							<div class="text-xs font-medium text-gray-500 dark:text-gray-500 mb-1">
+								Configuration
+							</div>
+							<div class="text-xs text-gray-600 dark:text-gray-400 space-y-1">
+								<div>Dimensions: {viz.visualization_config.n_components}D</div>
+								<div>UMAP neighbors: {viz.visualization_config.n_neighbors}</div>
+								<div>
+									HDBSCAN min cluster size: {viz.visualization_config.min_cluster_size}
 								</div>
 							</div>
-						{/if}
+						</div>
 
 						<button
-							onclick={() => handleView(viz.transform_id)}
+							onclick={() => handleView(viz.visualization_transform_id)}
 							class="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center justify-center gap-2"
 						>
 							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -180,7 +197,7 @@
 									d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
 								></path>
 							</svg>
-							View 3D Visualization
+							View {viz.visualization_config.n_components}D Visualization
 						</button>
 					</div>
 				</div>

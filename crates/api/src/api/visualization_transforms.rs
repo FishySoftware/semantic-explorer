@@ -1,13 +1,14 @@
 use crate::auth::extract_username;
 use crate::storage::postgres::visualization_transforms;
 use crate::transforms::visualization::{
-    CreateVisualizationTransform, UpdateVisualizationTransform, VisualizationTransform,
-    VisualizationTransformStats,
+    trigger_visualization_transform_job, CreateVisualizationTransform,
+    UpdateVisualizationTransform, VisualizationTransform, VisualizationTransformStats,
 };
 
 use actix_web::web::{Data, Json, Path};
 use actix_web::{HttpResponse, Responder, delete, get, patch, post};
 use actix_web_openidconnect::openid_middleware::Authenticated;
+use async_nats::Client as NatsClient;
 use sqlx::{Pool, Postgres};
 use tracing::error;
 
@@ -94,10 +95,11 @@ pub async fn get_visualization_transform(
     ),
 )]
 #[post("/api/visualization-transforms")]
-#[tracing::instrument(name = "create_visualization_transform", skip(auth, postgres_pool, body), fields(title = %body.title))]
+#[tracing::instrument(name = "create_visualization_transform", skip(auth, postgres_pool, nats_client, body), fields(title = %body.title))]
 pub async fn create_visualization_transform(
     auth: Authenticated,
     postgres_pool: Data<Pool<Postgres>>,
+    nats_client: Data<NatsClient>,
     body: Json<CreateVisualizationTransform>,
 ) -> impl Responder {
     let username = match extract_username(&auth) {
@@ -116,7 +118,25 @@ pub async fn create_visualization_transform(
     )
     .await
     {
-        Ok(transform) => HttpResponse::Created().json(transform),
+        Ok(transform) => {
+            // Trigger the job immediately upon creation
+            let visualization_transform_id = transform.visualization_transform_id;
+            if let Err(e) = trigger_visualization_transform_job(
+                &postgres_pool,
+                &nats_client,
+                visualization_transform_id,
+                &username,
+            )
+            .await
+            {
+                error!(
+                    "Failed to trigger visualization job for newly created transform {}: {}",
+                    visualization_transform_id, e
+                );
+                // Don't fail the creation, just log the error
+            }
+            HttpResponse::Created().json(transform)
+        }
         Err(e) => {
             error!("Failed to create visualization transform: {}", e);
             HttpResponse::BadRequest().json(serde_json::json!({
@@ -234,10 +254,11 @@ pub async fn delete_visualization_transform(
     ),
 )]
 #[post("/api/visualization-transforms/{id}/trigger")]
-#[tracing::instrument(name = "trigger_visualization_transform", skip(auth, postgres_pool), fields(visualization_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "trigger_visualization_transform", skip(auth, postgres_pool, nats_client), fields(visualization_transform_id = %path.as_ref()))]
 pub async fn trigger_visualization_transform(
     auth: Authenticated,
     postgres_pool: Data<Pool<Postgres>>,
+    nats_client: Data<NatsClient>,
     path: Path<i32>,
 ) -> impl Responder {
     let username = match extract_username(&auth) {
@@ -247,10 +268,11 @@ pub async fn trigger_visualization_transform(
 
     let visualization_transform_id = path.into_inner();
 
-    match visualization_transforms::get_visualization_transform(
+    match trigger_visualization_transform_job(
         &postgres_pool,
-        &username,
+        &nats_client,
         visualization_transform_id,
+        &username,
     )
     .await
     {
@@ -259,9 +281,9 @@ pub async fn trigger_visualization_transform(
             "visualization_transform_id": visualization_transform_id
         })),
         Err(e) => {
-            error!("Visualization transform not found: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Visualization transform not found: {}", e)
+            error!("Failed to trigger visualization transform: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to trigger visualization transform: {}", e)
             }))
         }
     }

@@ -14,6 +14,9 @@ use crate::datasets::models::ChunkWithMetadata;
 use crate::storage::postgres::collection_transforms;
 use crate::storage::postgres::datasets;
 use crate::storage::postgres::embedded_datasets;
+use crate::storage::postgres::visualization_transforms::{
+    update_visualization_transform_status_completed, update_visualization_transform_status_failed,
+};
 
 #[derive(Clone)]
 struct TransformContext {
@@ -283,11 +286,8 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
     );
 }
 
-#[tracing::instrument(name = "handle_visualization_result", skip(_ctx))]
-async fn handle_visualization_result(
-    result: VisualizationTransformResult,
-    _ctx: &TransformContext,
-) {
+#[tracing::instrument(name = "handle_visualization_result", skip(ctx))]
+async fn handle_visualization_result(result: VisualizationTransformResult, ctx: &TransformContext) {
     info!(
         "Handling visualization result for transform {}",
         result.visualization_transform_id
@@ -298,8 +298,21 @@ async fn handle_visualization_result(
             "Visualization failed for transform {}: {:?}",
             result.visualization_transform_id, result.error
         );
-        // Note: Visualization transforms don't track processed files like collection/dataset transforms
-        // The error is logged but not persisted in the database
+        
+        // Update database with failure status
+        let error_message = result.error.unwrap_or_else(|| "Unknown error".to_string());
+        if let Err(e) = update_visualization_transform_status_failed(
+            &ctx.postgres_pool,
+            result.visualization_transform_id,
+            &error_message,
+        )
+        .await
+        {
+            error!(
+                "Failed to update failure status for visualization transform {}: {}",
+                result.visualization_transform_id, e
+            );
+        }
         return;
     }
 
@@ -311,11 +324,32 @@ async fn handle_visualization_result(
         result.processing_duration_ms.unwrap_or(0)
     );
 
-    // Visualization transforms don't need post-processing updates
-    // The collection names were set when the transform was created
-    // The worker created the Qdrant collections with those names
+    // Build stats JSON
+    let stats = serde_json::json!({
+        "n_points": result.n_points,
+        "n_clusters": result.n_clusters,
+        "processing_duration_ms": result.processing_duration_ms
+    });
+
+    // Update the database with collection names and success status
+    if let Err(e) = update_visualization_transform_status_completed(
+        &ctx.postgres_pool,
+        result.visualization_transform_id,
+        &result.output_collection_reduced,
+        &result.output_collection_topics,
+        &stats,
+    )
+    .await
+    {
+        error!(
+            "Failed to update collection names and status for visualization transform {}: {}",
+            result.visualization_transform_id, e
+        );
+        return;
+    }
+
     info!(
-        "Successfully completed visualization transform {}",
+        "Successfully completed visualization transform {} and updated collection names",
         result.visualization_transform_id
     );
 }

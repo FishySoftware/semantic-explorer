@@ -25,7 +25,7 @@ utoipa = { version = "5.4.0", features = ["actix_extras", "auto_into_responses"]
 utoipa-swagger-ui = { version = "9.0.2", features = ["actix-web", "reqwest", "vendored"]}
 utoipa-actix-web = { version = "0.1.2"}
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = { version = "1.0.148" }
+serde_json = { version = "1.0.149" }
 anyhow = { version = "1.0.100" }
 dotenvy = { version = "0.15.7"}
 tracing = { version = "0.1.43"}

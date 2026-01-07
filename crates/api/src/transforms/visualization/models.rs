@@ -15,6 +15,12 @@ pub struct VisualizationTransform {
     pub topics_collection_name: Option<String>,  // Qdrant collection for topic centroids
     #[schema(value_type = Object)]
     pub visualization_config: serde_json::Value, // UMAP + HDBSCAN parameters
+    pub last_run_status: Option<String>,         // Status: pending, processing, completed, failed
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub last_run_at: Option<DateTime<Utc>>,
+    pub last_error: Option<String>,
+    #[schema(value_type = Object)]
+    pub last_run_stats: Option<serde_json::Value>, // Stats: n_points, n_clusters, processing_duration_ms
     #[schema(value_type = String, format = DateTime)]
     pub created_at: DateTime<Utc>,
     #[schema(value_type = String, format = DateTime)]

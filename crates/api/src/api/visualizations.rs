@@ -114,7 +114,7 @@ pub(crate) async fn get_visualization_points(
     let mut points = Vec::new();
 
     for point in scroll_result.result {
-        // Extract coordinates from vector (first 3 dimensions are x, y, z)
+        // Extract coordinates from vector (2D or 3D)
         if let Some(vectors_output) = point.vectors
             && let Some(vector_options) = vectors_output.vectors_options
         {
@@ -129,7 +129,8 @@ pub(crate) async fn get_visualization_points(
                 _ => continue,
             };
 
-            if coords.len() < 3 {
+            // Allow both 2D and 3D vectors
+            if coords.len() < 2 {
                 continue;
             }
 
@@ -164,7 +165,7 @@ pub(crate) async fn get_visualization_points(
                 id: id_str,
                 x: coords[0],
                 y: coords[1],
-                z: coords[2],
+                z: coords.get(2).copied().unwrap_or(0.0),
                 cluster_id,
                 topic_label,
                 text,
@@ -282,7 +283,7 @@ pub(crate) async fn get_visualization_topics(
                 _ => continue,
             };
 
-            if coords.len() < 3 {
+            if coords.len() < 2 {
                 continue;
             }
 
@@ -318,7 +319,7 @@ pub(crate) async fn get_visualization_topics(
                 id: id_str,
                 x: coords[0],
                 y: coords[1],
-                z: coords[2],
+                z: coords.get(2).copied().unwrap_or(0.0),
                 cluster_id,
                 label,
                 size,

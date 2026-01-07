@@ -6,14 +6,18 @@ use crate::transforms::visualization::{VisualizationTransform, VisualizationTran
 // Query constants
 const GET_VISUALIZATION_TRANSFORM_QUERY: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner, is_enabled,
-           reduced_collection_name, topics_collection_name, visualization_config, created_at, updated_at
+           reduced_collection_name, topics_collection_name, visualization_config,
+           last_run_status, last_run_at, last_error, last_run_stats,
+           created_at, updated_at
     FROM visualization_transforms
     WHERE owner = $1 AND visualization_transform_id = $2
 "#;
 
 const GET_VISUALIZATION_TRANSFORMS_QUERY: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner, is_enabled,
-           reduced_collection_name, topics_collection_name, visualization_config, created_at, updated_at
+           reduced_collection_name, topics_collection_name, visualization_config,
+           last_run_status, last_run_at, last_error, last_run_stats,
+           created_at, updated_at
     FROM visualization_transforms
     WHERE owner = $1
     ORDER BY created_at DESC
@@ -21,7 +25,9 @@ const GET_VISUALIZATION_TRANSFORMS_QUERY: &str = r#"
 
 const GET_VISUALIZATION_TRANSFORMS_FOR_EMBEDDED_DATASET_QUERY: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner, is_enabled,
-           reduced_collection_name, topics_collection_name, visualization_config, created_at, updated_at
+           reduced_collection_name, topics_collection_name, visualization_config,
+           last_run_status, last_run_at, last_error, last_run_stats,
+           created_at, updated_at
     FROM visualization_transforms
     WHERE owner = $1 AND embedded_dataset_id = $2
     ORDER BY created_at DESC
@@ -29,17 +35,20 @@ const GET_VISUALIZATION_TRANSFORMS_FOR_EMBEDDED_DATASET_QUERY: &str = r#"
 
 const GET_ACTIVE_VISUALIZATION_TRANSFORMS_QUERY: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner, is_enabled,
-           reduced_collection_name, topics_collection_name, visualization_config, created_at, updated_at
+           reduced_collection_name, topics_collection_name, visualization_config,
+           last_run_status, last_run_at, last_error, last_run_stats,
+           created_at, updated_at
     FROM visualization_transforms
     WHERE is_enabled = TRUE
-    ORDER BY created_at DESC
 "#;
 
 const CREATE_VISUALIZATION_TRANSFORM_QUERY: &str = r#"
     INSERT INTO visualization_transforms (title, embedded_dataset_id, owner, visualization_config)
     VALUES ($1, $2, $3, $4)
     RETURNING visualization_transform_id, title, embedded_dataset_id, owner, is_enabled,
-              reduced_collection_name, topics_collection_name, visualization_config, created_at, updated_at
+              reduced_collection_name, topics_collection_name, visualization_config,
+              last_run_status, last_run_at, last_error, last_run_stats,
+              created_at, updated_at
 "#;
 
 const UPDATE_VISUALIZATION_TRANSFORM_QUERY: &str = r#"
@@ -50,22 +59,43 @@ const UPDATE_VISUALIZATION_TRANSFORM_QUERY: &str = r#"
         updated_at = NOW()
     WHERE owner = $1 AND visualization_transform_id = $2
     RETURNING visualization_transform_id, title, embedded_dataset_id, owner, is_enabled,
-              reduced_collection_name, topics_collection_name, visualization_config, created_at, updated_at
-"#;
-
-const UPDATE_VISUALIZATION_TRANSFORM_COLLECTION_NAMES_QUERY: &str = r#"
-    UPDATE visualization_transforms
-    SET reduced_collection_name = $2,
-        topics_collection_name = $3,
-        updated_at = NOW()
-    WHERE visualization_transform_id = $1
-    RETURNING visualization_transform_id, title, embedded_dataset_id, owner, is_enabled,
-              reduced_collection_name, topics_collection_name, visualization_config, created_at, updated_at
+              reduced_collection_name, topics_collection_name, visualization_config,
+              last_run_status, last_run_at, last_error, last_run_stats,
+              created_at, updated_at
 "#;
 
 const DELETE_VISUALIZATION_TRANSFORM_QUERY: &str = r#"
     DELETE FROM visualization_transforms
     WHERE owner = $1 AND visualization_transform_id = $2
+"#;
+
+const UPDATE_VISUALIZATION_TRANSFORM_STATUS_PROCESSING: &str = r#"
+    UPDATE visualization_transforms 
+    SET last_run_status = 'processing', 
+        last_run_at = NOW(),
+        updated_at = NOW() 
+    WHERE visualization_transform_id = $1
+"#;
+
+const UPDATE_VISUALIZATION_TRANSFORM_STATUS_FAILED: &str = r#"
+    UPDATE visualization_transforms 
+    SET last_run_status = 'failed', 
+        last_run_at = NOW(), 
+        last_error = $2,
+        updated_at = NOW() 
+    WHERE visualization_transform_id = $1
+"#;
+
+const UPDATE_VISUALIZATION_TRANSFORM_STATUS_COMPLETED: &str = r#"
+    UPDATE visualization_transforms 
+    SET reduced_collection_name = $2, 
+        topics_collection_name = $3,
+        last_run_status = 'completed',
+        last_run_at = NOW(),
+        last_error = NULL,
+        last_run_stats = $4,
+        updated_at = NOW() 
+    WHERE visualization_transform_id = $1
 "#;
 
 // CRUD operations
@@ -127,7 +157,7 @@ pub async fn create_visualization_transform(
     owner: &str,
     visualization_config: &serde_json::Value,
 ) -> Result<VisualizationTransform> {
-    let mut transform =
+    let transform =
         sqlx::query_as::<_, VisualizationTransform>(CREATE_VISUALIZATION_TRANSFORM_QUERY)
             .bind(title)
             .bind(embedded_dataset_id)
@@ -135,22 +165,6 @@ pub async fn create_visualization_transform(
             .bind(visualization_config)
             .fetch_one(pool)
             .await?;
-
-    // Generate and update Qdrant collection names with actual ID
-    let (reduced_name, topics_name) = VisualizationTransform::generate_collection_names(
-        transform.visualization_transform_id,
-        owner,
-    );
-
-    transform = sqlx::query_as::<_, VisualizationTransform>(
-        UPDATE_VISUALIZATION_TRANSFORM_COLLECTION_NAMES_QUERY,
-    )
-    .bind(transform.visualization_transform_id)
-    .bind(&reduced_name)
-    .bind(&topics_name)
-    .fetch_one(pool)
-    .await?;
-
     Ok(transform)
 }
 
@@ -200,4 +214,47 @@ pub async fn get_visualization_transform_stats(
         total_clusters: 0,
         noise_points: 0,
     })
+}
+
+// Status update operations
+
+pub async fn update_visualization_transform_status_processing(
+    pool: &Pool<Postgres>,
+    visualization_transform_id: i32,
+) -> Result<()> {
+    sqlx::query(UPDATE_VISUALIZATION_TRANSFORM_STATUS_PROCESSING)
+        .bind(visualization_transform_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn update_visualization_transform_status_failed(
+    pool: &Pool<Postgres>,
+    visualization_transform_id: i32,
+    error_message: &str,
+) -> Result<()> {
+    sqlx::query(UPDATE_VISUALIZATION_TRANSFORM_STATUS_FAILED)
+        .bind(visualization_transform_id)
+        .bind(error_message)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn update_visualization_transform_status_completed(
+    pool: &Pool<Postgres>,
+    visualization_transform_id: i32,
+    reduced_collection_name: &str,
+    topics_collection_name: &str,
+    stats: &serde_json::Value,
+) -> Result<()> {
+    sqlx::query(UPDATE_VISUALIZATION_TRANSFORM_STATUS_COMPLETED)
+        .bind(visualization_transform_id)
+        .bind(reduced_collection_name)
+        .bind(topics_collection_name)
+        .bind(stats)
+        .execute(pool)
+        .await?;
+    Ok(())
 }

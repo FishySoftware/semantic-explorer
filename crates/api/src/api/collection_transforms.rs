@@ -1,13 +1,15 @@
 use crate::auth::extract_username;
 use crate::storage::postgres::collection_transforms;
 use crate::transforms::collection::{
-    CollectionTransform, CollectionTransformStats, CreateCollectionTransform, ProcessedFile,
-    UpdateCollectionTransform,
+    trigger_collection_transform_scan, CollectionTransform, CollectionTransformStats,
+    CreateCollectionTransform, ProcessedFile, UpdateCollectionTransform,
 };
 
 use actix_web::web::{Data, Json, Path};
 use actix_web::{HttpResponse, Responder, delete, get, patch, post};
 use actix_web_openidconnect::openid_middleware::Authenticated;
+use async_nats::Client as NatsClient;
+use aws_sdk_s3::Client as S3Client;
 use sqlx::{Pool, Postgres};
 use tracing::error;
 
@@ -94,10 +96,12 @@ pub async fn get_collection_transform(
     ),
 )]
 #[post("/api/collection-transforms")]
-#[tracing::instrument(name = "create_collection_transform", skip(auth, postgres_pool, body), fields(title = %body.title))]
+#[tracing::instrument(name = "create_collection_transform", skip(auth, postgres_pool, nats_client, s3_client, body), fields(title = %body.title))]
 pub async fn create_collection_transform(
     auth: Authenticated,
     postgres_pool: Data<Pool<Postgres>>,
+    nats_client: Data<NatsClient>,
+    s3_client: Data<S3Client>,
     body: Json<CreateCollectionTransform>,
 ) -> impl Responder {
     let username = match extract_username(&auth) {
@@ -116,7 +120,26 @@ pub async fn create_collection_transform(
     )
     .await
     {
-        Ok(transform) => HttpResponse::Created().json(transform),
+        Ok(transform) => {
+            // Trigger the scan immediately upon creation
+            let collection_transform_id = transform.collection_transform_id;
+            if let Err(e) = trigger_collection_transform_scan(
+                &postgres_pool,
+                &nats_client,
+                &s3_client,
+                collection_transform_id,
+                &username,
+            )
+            .await
+            {
+                error!(
+                    "Failed to trigger collection transform scan for newly created transform {}: {}",
+                    collection_transform_id, e
+                );
+                // Don't fail the creation, just log the error
+            }
+            HttpResponse::Created().json(transform)
+        }
         Err(e) => {
             error!("Failed to create collection transform: {}", e);
             HttpResponse::BadRequest().json(serde_json::json!({

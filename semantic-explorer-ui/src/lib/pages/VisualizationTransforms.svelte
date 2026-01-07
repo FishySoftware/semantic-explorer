@@ -1,8 +1,42 @@
+<!-- eslint-disable svelte/no-at-html-tags -->
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
+
+	// Helper function for tooltip display with hover persistence
+	function showTooltip(event: MouseEvent, text: string) {
+		const button = event.target as HTMLElement;
+		const tooltip = document.createElement('div');
+		tooltip.className =
+			'fixed bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 px-3 py-2 rounded text-sm z-50 max-w-md';
+		tooltip.textContent = text;
+		tooltip.style.pointerEvents = 'auto';
+		document.body.appendChild(tooltip);
+
+		const updatePosition = () => {
+			const rect = button.getBoundingClientRect();
+			tooltip.style.left = rect.left + rect.width / 2 - tooltip.offsetWidth / 2 + 'px';
+			tooltip.style.top = rect.top - tooltip.offsetHeight - 5 + 'px';
+		};
+
+		updatePosition();
+
+		const hideTooltip = () => {
+			tooltip.remove();
+			button.removeEventListener('mouseleave', hideTooltip);
+			tooltip.removeEventListener('mouseleave', hideTooltip);
+		};
+
+		button.addEventListener('mouseleave', hideTooltip);
+		tooltip.addEventListener('mouseleave', hideTooltip);
+	}
+
+	// Info icon SVG component
+	function InfoIcon() {
+		return `<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"></path></svg>`;
+	}
 
 	interface VisualizationTransform {
 		visualization_transform_id: number;
@@ -13,6 +47,14 @@
 		reduced_collection_name: string | null;
 		topics_collection_name: string | null;
 		visualization_config: VisualizationConfig;
+		last_run_status: string | null;
+		last_run_at: string | null;
+		last_error: string | null;
+		last_run_stats: {
+			n_points?: number;
+			n_clusters?: number;
+			processing_duration_ms?: number;
+		} | null;
 		created_at: string;
 		updated_at: string;
 	}
@@ -331,7 +373,7 @@
 <div class="max-w-7xl mx-auto">
 	<PageHeader
 		title="Visualization Transforms"
-		description="Create 3D visualizations of Embedded Datasets using UMAP dimensionality reduction and HDBSCAN clustering. Visualizations help explore semantic relationships and discover topics in your data."
+		description="Create 2D or 3D visualizations of Embedded Datasets using UMAP dimensionality reduction and HDBSCAN clustering. Visualizations help explore semantic relationships and discover topics in your data."
 	/>
 
 	<div class="flex justify-between items-center mb-6">
@@ -411,9 +453,20 @@
 						<div>
 							<label
 								for="n-neighbors"
-								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+								class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
 							>
 								N Neighbors
+								<button
+									type="button"
+									class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+									onmouseenter={(e) =>
+										showTooltip(
+											e,
+											'Controls local vs global structure. Low values (2-5) focus on fine detail, high values (50-200) capture broader structure. Default: 15'
+										)}
+								>
+									{@html InfoIcon()}
+								</button>
 							</label>
 							<input
 								id="n-neighbors"
@@ -423,17 +476,26 @@
 								max="200"
 								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 							/>
-							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-								Controls local vs global structure (2-200, default: 15)
-							</p>
+							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Range: 2-200</p>
 						</div>
 
 						<div>
 							<label
 								for="n-components"
-								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+								class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
 							>
 								N Components
+								<button
+									type="button"
+									class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+									onmouseenter={(e) =>
+										showTooltip(
+											e,
+											'Target dimensionality: 2 for flat visualizations, 3 for spatial visualizations. Higher dimensions work better for clustering but are harder to visualize.'
+										)}
+								>
+									{@html InfoIcon()}
+								</button>
 							</label>
 							<input
 								id="n-components"
@@ -443,17 +505,26 @@
 								max="3"
 								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 							/>
-							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-								Target dimensions (2 or 3, default: 3)
-							</p>
+							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">2D or 3D</p>
 						</div>
 
 						<div>
 							<label
 								for="min-dist"
-								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+								class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
 							>
 								Min Distance
+								<button
+									type="button"
+									class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+									onmouseenter={(e) =>
+										showTooltip(
+											e,
+											'Minimum distance between points in the low dimensional space. Low values (0.0-0.1) create clumpier embeddings good for clustering. Higher values (0.5-0.99) spread points out and preserve global structure. Default: 0.1'
+										)}
+								>
+									{@html InfoIcon()}
+								</button>
 							</label>
 							<input
 								id="min-dist"
@@ -464,17 +535,26 @@
 								step="0.01"
 								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 							/>
-							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-								Minimum distance between points (0.0-1.0, default: 0.1)
-							</p>
+							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Range: 0.0-1.0</p>
 						</div>
 
 						<div>
 							<label
 								for="metric"
-								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+								class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
 							>
 								Metric
+								<button
+									type="button"
+									class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+									onmouseenter={(e) =>
+										showTooltip(
+											e,
+											'Distance metric for measuring similarity. Cosine: best for text/embeddings (angle-based). Euclidean: standard distance. Manhattan: city-block distance. Default: cosine'
+										)}
+								>
+									{@html InfoIcon()}
+								</button>
 							</label>
 							<select
 								id="metric"
@@ -486,7 +566,7 @@
 								<option value="manhattan">Manhattan</option>
 							</select>
 							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-								Distance metric (default: cosine)
+								Cosine recommended for embeddings
 							</p>
 						</div>
 					</div>
@@ -503,9 +583,20 @@
 						<div>
 							<label
 								for="min-cluster-size"
-								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+								class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
 							>
 								Min Cluster Size
+								<button
+									type="button"
+									class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+									onmouseenter={(e) =>
+										showTooltip(
+											e,
+											'Minimum number of points required to form a cluster. Larger values create fewer, more significant clusters. Smaller values find more fine-grained clusters but may include noise. Default: 10'
+										)}
+								>
+									{@html InfoIcon()}
+								</button>
 							</label>
 							<input
 								id="min-cluster-size"
@@ -515,17 +606,26 @@
 								max="500"
 								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 							/>
-							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-								Minimum points to form a cluster (2-500, default: 10)
-							</p>
+							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Range: 2-500</p>
 						</div>
 
 						<div>
 							<label
 								for="min-samples"
-								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+								class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
 							>
 								Min Samples (Optional)
+								<button
+									type="button"
+									class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+									onmouseenter={(e) =>
+										showTooltip(
+											e,
+											'Controls how conservative the clustering is. Higher values make clusters more conservative (fewer outliers classified as cluster members). Leave empty to use min_cluster_size value. Default: auto (same as min_cluster_size)'
+										)}
+								>
+									{@html InfoIcon()}
+								</button>
 							</label>
 							<input
 								id="min-samples"
@@ -536,9 +636,7 @@
 								placeholder="Auto (same as min_cluster_size)"
 								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 							/>
-							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-								Conservative clustering (leave empty for auto)
-							</p>
+							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Leave empty for auto</p>
 						</div>
 					</div>
 				</div>

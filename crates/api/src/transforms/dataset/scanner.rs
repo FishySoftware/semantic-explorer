@@ -409,3 +409,40 @@ async fn create_batches_from_dataset_items(
 
     Ok(jobs_created)
 }
+
+/// Trigger a dataset transform scan immediately
+#[tracing::instrument(
+    name = "trigger_dataset_transform_scan",
+    skip(pool, nats, s3),
+    fields(dataset_transform_id = %dataset_transform_id)
+)]
+pub async fn trigger_dataset_transform_scan(
+    pool: &Pool<Postgres>,
+    nats: &NatsClient,
+    s3: &S3Client,
+    dataset_transform_id: i32,
+    owner: &str,
+) -> Result<()> {
+    info!(
+        "Triggering dataset transform scan for {}",
+        dataset_transform_id
+    );
+
+    // Get the dataset transform
+    let transform = crate::storage::postgres::dataset_transforms::get_dataset_transform(
+        pool,
+        owner,
+        dataset_transform_id,
+    )
+    .await?;
+
+    // Process the scan immediately
+    process_dataset_transform_scan(pool, nats, s3, &transform).await?;
+
+    info!(
+        "Triggered dataset transform scan for {}",
+        dataset_transform_id
+    );
+
+    Ok(())
+}

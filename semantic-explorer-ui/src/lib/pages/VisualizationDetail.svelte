@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Deck, OrbitView, type Layer } from '@deck.gl/core';
+	import { Deck, OrbitView, OrthographicView, type Layer } from '@deck.gl/core';
 	import { LineLayer, ScatterplotLayer } from '@deck.gl/layers';
 	import { onDestroy, onMount } from 'svelte';
 	import { formatError, toastStore } from '../utils/notifications';
@@ -20,10 +20,40 @@
 		next_offset: string | null;
 	}
 
+	interface VisualizationConfig {
+		n_neighbors: number;
+		n_components: number;
+		min_dist: number;
+		metric: string;
+		min_cluster_size: number;
+		min_samples: number | null;
+	}
+
+	interface VisualizationTransform {
+		visualization_transform_id: number;
+		title: string;
+		embedded_dataset_id: number;
+		owner: string;
+		is_enabled: boolean;
+		reduced_collection_name: string | null;
+		topics_collection_name: string | null;
+		visualization_config: VisualizationConfig;
+		last_run_status: string | null;
+		last_run_at: string | null;
+		last_error: string | null;
+		last_run_stats: {
+			n_points?: number;
+			n_clusters?: number;
+			processing_duration_ms?: number;
+		} | null;
+		created_at: string;
+		updated_at: string;
+	}
+
 	// Internal types
 	interface VisualizationPoint {
 		id: string;
-		position: [number, number, number];
+		position: [number, number] | [number, number, number];
 		cluster_id: number;
 		topic_label: string | null;
 		text: string;
@@ -32,19 +62,9 @@
 	interface Topic {
 		cluster_id: number;
 		label: string;
-		centroid: [number, number, number];
+		centroid: [number, number] | [number, number, number];
 		size: number;
-	}
-
-	interface Transform {
-		transform_id: number;
-		title: string;
-		job_type: string;
-		dataset_id: number;
-		source_transform_id: number | null;
-		embedder_ids?: number[] | null;
-		job_config: any;
-		updated_at: string;
+		visible: boolean;
 	}
 
 	interface Props {
@@ -54,7 +74,7 @@
 
 	let { transformId, onBack }: Props = $props();
 
-	let transform = $state<Transform | null>(null);
+	let transform = $state<VisualizationTransform | null>(null);
 	let points = $state<VisualizationPoint[]>([]);
 	let topics = $state<Topic[]>([]);
 	let loading = $state(true);
@@ -63,12 +83,34 @@
 	let deckCanvas = $state<HTMLCanvasElement | undefined>(undefined);
 	let deck = $state<any>(null);
 
-	let selectedCluster = $state<number | null>(null);
+	let selectedClusters = $state<Set<number>>(new Set());
 	let hoveredPoint = $state<VisualizationPoint | null>(null);
 
 	// Container dimensions
 	let containerWidth = $state<number>(0);
 	let containerHeight = $state<number>(0);
+
+	// Derived state
+	let is2D = $derived(transform?.visualization_config.n_components === 2);
+
+	// Bounding box state
+	interface BoundingBox {
+		minX: number;
+		maxX: number;
+		minY: number;
+		maxY: number;
+		minZ: number;
+		maxZ: number;
+		centerX: number;
+		centerY: number;
+		centerZ: number;
+		sizeX: number;
+		sizeY: number;
+		sizeZ: number;
+		maxSize: number;
+	}
+
+	let boundingBox = $state<BoundingBox | null>(null);
 
 	// View controls
 	let viewState = $state({
@@ -108,6 +150,112 @@
 		return CLUSTER_COLORS[clusterId % CLUSTER_COLORS.length];
 	};
 
+	function calculateBoundingBox(pts: VisualizationPoint[], mode2D: boolean): BoundingBox {
+		if (pts.length === 0) {
+			return {
+				minX: -1,
+				maxX: 1,
+				minY: -1,
+				maxY: 1,
+				minZ: -1,
+				maxZ: 1,
+				centerX: 0,
+				centerY: 0,
+				centerZ: 0,
+				sizeX: 2,
+				sizeY: 2,
+				sizeZ: 2,
+				maxSize: 2,
+			};
+		}
+
+		const xValues = pts.map((p) => p.position[0]);
+		const yValues = pts.map((p) => p.position[1]);
+		const zValues = mode2D ? [0] : pts.map((p) => (p.position as [number, number, number])[2]);
+
+		const minX = Math.min(...xValues);
+		const maxX = Math.max(...xValues);
+		const minY = Math.min(...yValues);
+		const maxY = Math.max(...yValues);
+		const minZ = Math.min(...zValues);
+		const maxZ = Math.max(...zValues);
+
+		const sizeX = maxX - minX;
+		const sizeY = maxY - minY;
+		const sizeZ = maxZ - minZ;
+
+		const centerX = (minX + maxX) / 2;
+		const centerY = (minY + maxY) / 2;
+		const centerZ = (minZ + maxZ) / 2;
+
+		// Add padding to the max size (10% on each side = 20% total)
+		const maxSize = Math.max(sizeX, sizeY, sizeZ) * 1.2;
+
+		console.log('Bounding box calculated:', {
+			minX,
+			maxX,
+			minY,
+			maxY,
+			minZ,
+			maxZ,
+			sizeX,
+			sizeY,
+			sizeZ,
+			maxSize,
+		});
+
+		return {
+			minX,
+			maxX,
+			minY,
+			maxY,
+			minZ,
+			maxZ,
+			centerX,
+			centerY,
+			centerZ,
+			sizeX,
+			sizeY,
+			sizeZ,
+			maxSize,
+		};
+	}
+
+	function calculateOptimalZoom(bbox: BoundingBox, mode2D: boolean, canvasWidth: number, canvasHeight: number): number {
+		// For 2D orthographic projection and 3D orbit view, calculate appropriate zoom
+		if (mode2D) {
+			// For orthographic view, zoom is a scale factor
+			// We want to fit the bounding box with padding
+			// Use aspect ratio to determine which dimension is constraining
+			const xRange = bbox.maxX - bbox.minX;
+			const yRange = bbox.maxY - bbox.minY;
+			const canvasAspect = canvasWidth / canvasHeight;
+			const dataAspect = xRange / yRange;
+
+			// Calculate how much we need to scale to fit with 10% padding
+			let zoomScale: number;
+			if (dataAspect > canvasAspect) {
+				// Width is constraining
+				zoomScale = (canvasWidth / xRange) * 0.9;
+			} else {
+				// Height is constraining
+				zoomScale = (canvasHeight / yRange) * 0.9;
+			}
+
+			// Normalize to Deck.gl's zoom scale (zoom ~1 is typical default)
+			// The empirical factor 100 comes from testing - adjust if needed
+			return zoomScale / 100;
+		} else {
+			// For 3D orbit view, calculate zoom to frame the bounding box
+			// The viewport distance needed is roughly maxSize / (2 * tan(FOV/2))
+			// Deck.gl's default FOV is about 50 degrees
+			// A zoom of 1 is approximately 1.5x the max dimension away
+			// Empirically, zoom of 0 to 3 works well, where 0 is far and 3 is close
+			const zoomLevel = Math.log2(50 / bbox.maxSize);
+			return Math.max(-10, Math.min(10, zoomLevel));
+		}
+	}
+
 	onMount(async () => {
 		await loadTransform();
 		await loadVisualizationData();
@@ -130,17 +278,19 @@
 	// Resize deck when container dimensions change
 	$effect(() => {
 		if (deck && containerWidth > 0 && containerHeight > 0) {
-			console.log('Resizing deck to:', containerWidth, containerHeight);
+			// Respect the grid height constraint of 600px
+			const constrainedHeight = Math.min(containerHeight, 600);
+			console.log('Resizing deck to:', containerWidth, constrainedHeight);
 			deck.setProps({
 				width: containerWidth,
-				height: containerHeight,
+				height: constrainedHeight,
 			});
 		}
 	});
 
 	async function loadTransform() {
 		try {
-			const response = await fetch(`/api/transforms/${transformId}`);
+			const response = await fetch(`/api/visualization-transforms/${transformId}`);
 			if (!response.ok) {
 				throw new Error(`Failed to fetch transform: ${response.statusText}`);
 			}
@@ -162,6 +312,13 @@
 				throw new Error(`Failed to fetch points: ${pointsResponse.statusText}`);
 			}
 			const pointsData: ApiPointsResponse = await pointsResponse.json();
+
+			// Check dimensionality
+			const nComponents = transform?.visualization_config.n_components || 3;
+			console.log('Transform config:', transform?.visualization_config);
+			console.log('nComponents detected:', nComponents);
+			console.log('First few points from API:', pointsData.points.slice(0, 3));
+
 			// Calculate center of the point cloud from raw data
 			const rawXValues = pointsData.points.map((p) => p.x);
 			const rawYValues = pointsData.points.map((p) => p.y);
@@ -171,53 +328,102 @@
 			const centerY = (Math.min(...rawYValues) + Math.max(...rawYValues)) / 2;
 			const centerZ = (Math.min(...rawZValues) + Math.max(...rawZValues)) / 2;
 
+			console.log('Raw Z values range:', [Math.min(...rawZValues), Math.max(...rawZValues)]);
 			console.log('Point cloud center:', [centerX, centerY, centerZ]);
 
 			// Scale factor: UMAP outputs are in [0,1] range but tightly clustered
 			// Scale up by 10000x to make the small variations visible
 			const SCALE = 10000;
 
-			points = pointsData.points.map((p) => ({
-				id: p.id,
-				// Center and scale coordinates to make tightly clustered UMAP output visible
-				position: [(p.x - centerX) * SCALE, (p.y - centerY) * SCALE, (p.z - centerZ) * SCALE] as [
-					number,
-					number,
-					number,
-				],
-				cluster_id: p.cluster_id ?? -1,
-				topic_label: p.topic_label,
-				text: p.text ?? '',
-			}));
+			// Build topic map from points
+			const clusterMap = new Map<
+				number,
+				{ label: string | null; count: number; sumX: number; sumY: number; sumZ: number }
+			>();
+
+			points = pointsData.points.map((p) => {
+				const clusterId = p.cluster_id ?? -1;
+
+				// Accumulate cluster info
+				if (!clusterMap.has(clusterId)) {
+					clusterMap.set(clusterId, { label: p.topic_label, count: 0, sumX: 0, sumY: 0, sumZ: 0 });
+				}
+				const cluster = clusterMap.get(clusterId)!;
+				cluster.count++;
+				cluster.sumX += p.x;
+				cluster.sumY += p.y;
+				cluster.sumZ += p.z; // Always accumulate Z regardless of nComponents
+
+				// Create point with appropriate dimensionality
+				if (nComponents === 2) {
+					return {
+						id: p.id,
+						position: [(p.x - centerX) * SCALE, (p.y - centerY) * SCALE] as [number, number],
+						cluster_id: clusterId,
+						topic_label: p.topic_label,
+						text: p.text ?? '',
+					};
+				} else {
+					return {
+						id: p.id,
+						position: [
+							(p.x - centerX) * SCALE,
+							(p.y - centerY) * SCALE,
+							(p.z - centerZ) * SCALE,
+						] as [number, number, number],
+						cluster_id: clusterId,
+						topic_label: p.topic_label,
+						text: p.text ?? '',
+					};
+				}
+			});
+
+			// Build topics from cluster map
+			topics = Array.from(clusterMap.entries())
+				.filter(([clusterId]) => clusterId !== -1) // Exclude noise
+				.map(([clusterId, data]) => ({
+					cluster_id: clusterId,
+					label: data.label || `Cluster ${clusterId}`,
+					centroid:
+						nComponents === 2
+							? ([
+									(data.sumX / data.count - centerX) * SCALE,
+									(data.sumY / data.count - centerY) * SCALE,
+								] as [number, number])
+							: ([
+									(data.sumX / data.count - centerX) * SCALE,
+									(data.sumY / data.count - centerY) * SCALE,
+									(data.sumZ / data.count - centerZ) * SCALE,
+								] as [number, number, number]),
+					size: data.count,
+					visible: true,
+				}))
+				.sort((a, b) => b.size - a.size); // Sort by size descending
 
 			console.log(`Loaded ${points.length} points`);
+			console.log(`Generated ${topics.length} topics from cluster data`);
+			console.log('nComponents:', nComponents, '- is 3D?', nComponents === 3);
 			if (points.length > 0) {
 				console.log('Sample point:', points[0]);
-				console.log('Sample position [x,y,z]:', points[0].position);
+				console.log('Sample position:', points[0].position);
+				console.log('Sample position length:', (points[0].position as any).length);
 
 				// Check coordinate ranges after scaling
 				const xValues = points.map((p) => p.position[0]);
 				const yValues = points.map((p) => p.position[1]);
-				const zValues = points.map((p) => p.position[2]);
 				console.log('Scaled X range:', [Math.min(...xValues), Math.max(...xValues)]);
 				console.log('Scaled Y range:', [Math.min(...yValues), Math.max(...yValues)]);
-				console.log('Scaled Z range:', [Math.min(...zValues), Math.max(...zValues)]);
+				if (nComponents === 3) {
+					const zValues = points.map((p) => (p.position as [number, number, number])[2]);
+					console.log('Scaled Z range:', [Math.min(...zValues), Math.max(...zValues)]);
+					console.log('Z values sample:', zValues.slice(0, 5));
+				} else {
+					console.log('Detected as 2D - Z values not extracted');
+				}
+
+				// Calculate bounding box
+				boundingBox = calculateBoundingBox(points, nComponents === 2);
 			}
-
-			// Load topics - temporarily disabled since topics collection isn't dimensionally reduced yet
-			// const topicsResponse = await fetch(`/api/visualizations/${transformId}/topics`);
-			// if (!topicsResponse.ok) {
-			// 	throw new Error(`Failed to fetch topics: ${topicsResponse.statusText}`);
-			// }
-			// const topicsData: ApiTopic[] = await topicsResponse.json();
-			// topics = topicsData.map((t) => ({
-			// 	cluster_id: t.cluster_id,
-			// 	label: t.label,
-			// 	centroid: [t.x, t.y, t.z] as [number, number, number],
-			// 	size: t.size ?? 0,
-			// }));
-
-			console.log(`Loaded ${topics.length} topics (topics disabled for now)`);
 		} catch (err) {
 			error = formatError(err);
 			toastStore.error(error);
@@ -243,32 +449,99 @@
 			return;
 		}
 
-		// Set canvas dimensions before initializing Deck
-		deckCanvas.width = containerWidth;
-		deckCanvas.height = containerHeight;
+		// Set canvas dimensions - but use the actual constrained dimensions from the container
+		// The container is constrained by the grid, so use those dimensions
+		const width = Math.min(containerWidth, window.innerWidth);
+		const height = Math.min(containerHeight, 600); // Grid height constraint
+		
+		deckCanvas.width = width;
+		deckCanvas.height = height;
 
-		console.log('Initializing Deck.GL with canvas:', deckCanvas, containerWidth, containerHeight);
+		console.log('Initializing Deck.GL with canvas:', { width, height, containerWidth, containerHeight });
+		console.log('Visualization mode:', is2D ? '2D' : '3D');
+
+		// Calculate initial view state based on bounding box
+		let initialViewState: any;
+
+		if (boundingBox) {
+			const constrainedHeight = Math.min(containerHeight, 600);
+			const optimalZoom = calculateOptimalZoom(boundingBox, is2D, containerWidth, constrainedHeight);
+
+			if (is2D) {
+				initialViewState = {
+					target: [boundingBox.centerX, boundingBox.centerY, 0],
+					zoom: optimalZoom,
+				};
+			} else {
+				// For 3D, center on the bounding box centroid with calculated zoom
+				initialViewState = {
+					target: [boundingBox.centerX, boundingBox.centerY, boundingBox.centerZ],
+					rotationX: 30,
+					rotationOrbit: 45,
+					zoom: optimalZoom,
+					minZoom: -10,
+					maxZoom: 10,
+				};
+			}
+
+			console.log('Initial view state from bounding box:', initialViewState);
+		} else {
+			// Fallback if bounding box not available
+			initialViewState = is2D
+				? {
+						target: [0, 0, 0],
+						zoom: 1,
+					}
+				: {
+						...viewState,
+						minZoom: -10,
+						maxZoom: 10,
+					};
+		}
+
+		// Choose view based on dimensionality
+		const view = is2D
+			? new OrthographicView({ controller: true })
+			: new OrbitView({ orbitAxis: 'Y' });
 
 		deck = new Deck({
 			canvas: deckCanvas,
-			views: new OrbitView({ orbitAxis: 'Y' }),
-			initialViewState: {
-				...viewState,
+			views: view,
+			initialViewState: initialViewState,
+			width: containerWidth,
+			height: containerHeight,
+			controller: {
+				// Enable both rotation and panning
+				dragRotate: true,
+				dragPan: true,
+				doubleClickZoom: true,
+				touchRotate: true,
+				touchZoom: true,
+				touchPan: true,
+				keyboard: true,
+				inertia: true,
+				scrollZoom: true,
 				minZoom: -10,
 				maxZoom: 10,
 			},
-			width: containerWidth,
-			height: containerHeight,
-			controller: true,
 			layers: [],
 			useDevicePixels: false,
 			onViewStateChange: ({ viewState: newViewState }: { viewState: any }) => {
-				viewState = {
-					target: newViewState.target as [number, number, number],
-					rotationX: newViewState.rotationX,
-					rotationOrbit: newViewState.rotationOrbit,
-					zoom: newViewState.zoom,
-				};
+				if (is2D) {
+					viewState = {
+						target: newViewState.target as [number, number, number],
+						rotationX: 0,
+						rotationOrbit: 0,
+						zoom: newViewState.zoom,
+					};
+				} else {
+					viewState = {
+						target: newViewState.target as [number, number, number],
+						rotationX: newViewState.rotationX,
+						rotationOrbit: newViewState.rotationOrbit,
+						zoom: newViewState.zoom,
+					};
+				}
 			},
 		} as any);
 
@@ -280,29 +553,44 @@
 		);
 	}
 
-	// Update deck layers when points or selectedCluster changes
+	// Update deck layers when points, topics, or selectedClusters changes
 	$effect(() => {
 		// Track dependencies
 		const currentPoints = points;
-		const currentCluster = selectedCluster;
+		const currentTopics = topics;
+		const currentSelectedClusters = selectedClusters;
 		const gridVisible = showGrid;
+		const mode2D = is2D;
 
 		if (!deck) {
 			console.log('Deck not initialized yet');
 			return;
 		}
 
+		// Build visibility map from topics
+		const visibleClusters = new Set(
+			currentTopics.filter((t) => t.visible).map((t) => t.cluster_id)
+		);
+
+		// Filter points based on topic visibility
+		const filteredPoints = currentPoints.filter((p) => {
+			// Always show noise points (-1)
+			if (p.cluster_id === -1) return true;
+			// Show if topic is visible
+			return visibleClusters.has(p.cluster_id);
+		});
+
 		console.log(
-			`Updating deck with ${currentPoints.length} points, selectedCluster: ${currentCluster}`
+			`Updating deck with ${filteredPoints.length}/${currentPoints.length} visible points, ${currentTopics.filter((t) => t.visible).length}/${currentTopics.length} visible topics`
 		);
 
 		const layers: Layer[] = [
 			new ScatterplotLayer({
 				id: 'points-layer',
-				data: currentPoints,
+				data: filteredPoints,
 				getPosition: (d: VisualizationPoint) => d.position,
 				getFillColor: (d: VisualizationPoint) => {
-					if (currentCluster !== null && d.cluster_id !== currentCluster) {
+					if (currentSelectedClusters.size > 0 && !currentSelectedClusters.has(d.cluster_id)) {
 						const color = getClusterColor(d.cluster_id);
 						return [...color, 50];
 					}
@@ -322,8 +610,8 @@
 			}),
 		];
 
-		if (gridVisible) {
-			// Add axis lines
+		if (gridVisible && !mode2D) {
+			// Add axis lines (3D only)
 			layers.push(
 				new LineLayer({
 					id: 'axis-layer',
@@ -336,7 +624,7 @@
 				})
 			);
 
-			// Add grid lines
+			// Add grid lines (3D only)
 			layers.push(
 				new LineLayer({
 					id: 'grid-layer',
@@ -353,8 +641,25 @@
 		deck.setProps({ layers });
 	});
 
+	function toggleTopic(clusterId: number) {
+		topics = topics.map((t) => (t.cluster_id === clusterId ? { ...t, visible: !t.visible } : t));
+	}
+
+	function toggleAllTopics(visible: boolean) {
+		topics = topics.map((t) => ({ ...t, visible }));
+	}
+
 	function selectCluster(clusterId: number | null) {
-		selectedCluster = clusterId;
+		if (clusterId === null) {
+			selectedClusters = new Set();
+		} else {
+			if (selectedClusters.has(clusterId)) {
+				selectedClusters.delete(clusterId);
+			} else {
+				selectedClusters.add(clusterId);
+			}
+			selectedClusters = new Set(selectedClusters); // Trigger reactivity
+		}
 	}
 
 	function createGridLines(size: number = 100): any[] {
@@ -405,12 +710,33 @@
 	}
 
 	function resetView() {
-		viewState = {
-			target: [0, 0, 0],
-			rotationX: 30,
-			rotationOrbit: 45,
-			zoom: 1,
-		};
+		if (boundingBox) {
+			const optimalZoom = calculateOptimalZoom(boundingBox, is2D, containerWidth, containerHeight);
+
+			if (is2D) {
+				viewState = {
+					target: [boundingBox.centerX, boundingBox.centerY, 0],
+					rotationX: 0,
+					rotationOrbit: 0,
+					zoom: optimalZoom,
+				};
+			} else {
+				viewState = {
+					target: [boundingBox.centerX, boundingBox.centerY, boundingBox.centerZ],
+					rotationX: 30,
+					rotationOrbit: 45,
+					zoom: optimalZoom,
+				};
+			}
+		} else {
+			viewState = {
+				target: [0, 0, 0],
+				rotationX: 30,
+				rotationOrbit: 45,
+				zoom: 1,
+			};
+		}
+
 		if (deck) {
 			deck.setProps({
 				initialViewState: {
@@ -449,7 +775,94 @@
 		{#if transform}
 			<h1 class="text-3xl font-bold text-gray-900 dark:text-white mb-2">
 				{transform.title}
+				<span class="text-lg text-gray-500 dark:text-gray-400">
+					({is2D ? '2D' : '3D'} Visualization)
+				</span>
 			</h1>
+
+			<!-- Status Banner -->
+			{#if transform.last_run_status}
+				<div class="mt-4">
+					{#if transform.last_run_status === 'completed'}
+						<div
+							class="bg-green-50 dark:bg-green-900/20 border-l-4 border-green-400 p-4 rounded-lg"
+						>
+							<div class="flex items-center justify-between">
+								<div>
+									<p class="font-semibold text-green-800 dark:text-green-400">
+										✓ Processing Complete
+									</p>
+									{#if transform.last_run_stats}
+										<p class="text-sm text-green-700 dark:text-green-300 mt-1">
+											Generated {transform.last_run_stats.n_points?.toLocaleString()} points in {transform
+												.last_run_stats.n_clusters} clusters
+											{#if transform.last_run_stats.processing_duration_ms}
+												in {(transform.last_run_stats.processing_duration_ms / 1000).toFixed(1)}s
+											{/if}
+										</p>
+									{/if}
+								</div>
+								{#if transform.last_run_at}
+									<p class="text-xs text-green-600 dark:text-green-400">
+										{new Date(transform.last_run_at).toLocaleString()}
+									</p>
+								{/if}
+							</div>
+						</div>
+					{:else if transform.last_run_status === 'failed'}
+						<div class="bg-red-50 dark:bg-red-900/20 border-l-4 border-red-400 p-4 rounded-lg">
+							<div class="flex items-center justify-between">
+								<div class="flex-1">
+									<p class="font-semibold text-red-800 dark:text-red-400">✗ Processing Failed</p>
+									{#if transform.last_error}
+										<p class="text-sm text-red-700 dark:text-red-300 mt-1">
+											{transform.last_error}
+										</p>
+									{/if}
+								</div>
+								{#if transform.last_run_at}
+									<p class="text-xs text-red-600 dark:text-red-400 ml-4">
+										{new Date(transform.last_run_at).toLocaleString()}
+									</p>
+								{/if}
+							</div>
+						</div>
+					{:else if transform.last_run_status === 'processing'}
+						<div class="bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-400 p-4 rounded-lg">
+							<div class="flex items-center justify-between">
+								<div class="flex items-center gap-3">
+									<svg
+										class="animate-spin h-5 w-5 text-blue-600 dark:text-blue-400"
+										xmlns="http://www.w3.org/2000/svg"
+										fill="none"
+										viewBox="0 0 24 24"
+									>
+										<circle
+											class="opacity-25"
+											cx="12"
+											cy="12"
+											r="10"
+											stroke="currentColor"
+											stroke-width="4"
+										></circle>
+										<path
+											class="opacity-75"
+											fill="currentColor"
+											d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+										></path>
+									</svg>
+									<p class="font-semibold text-blue-800 dark:text-blue-400">Processing...</p>
+								</div>
+								{#if transform.last_run_at}
+									<p class="text-xs text-blue-600 dark:text-blue-400">
+										Started {new Date(transform.last_run_at).toLocaleString()}
+									</p>
+								{/if}
+							</div>
+						</div>
+					{/if}
+				</div>
+			{/if}
 		{/if}
 	</div>
 
@@ -500,62 +913,79 @@
 
 		<div class="grid grid-cols-1 lg:grid-cols-4 gap-6 overflow-hidden" style="height: 600px;">
 			<!-- Left sidebar: Topics -->
-			<div class="lg:col-span-1">
-				<div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 h-full flex flex-col">
-					<h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-						Topics ({topics.length})
-					</h2>
+			<div class="lg:col-span-1 overflow-hidden">
+				<div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 h-full flex flex-col overflow-y-auto">
+					<div class="flex items-center justify-between mb-4">
+						<h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+							Topics ({topics.filter((t) => t.visible).length}/{topics.length})
+						</h2>
+						<div class="flex gap-1">
+							<button
+								onclick={() => toggleAllTopics(true)}
+								class="text-xs px-2 py-1 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded"
+								title="Show All"
+							>
+								All
+							</button>
+							<button
+								onclick={() => toggleAllTopics(false)}
+								class="text-xs px-2 py-1 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded"
+								title="Hide All"
+							>
+								None
+							</button>
+						</div>
+					</div>
 
 					<div class="space-y-2 overflow-y-auto flex-1">
-						<button
-							onclick={() => selectCluster(null)}
-							class="w-full text-left px-3 py-2 rounded transition-colors {selectedCluster === null
-								? 'bg-blue-100 dark:bg-blue-900 text-blue-900 dark:text-blue-100'
-								: 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'}"
-						>
-							<div class="font-medium">All Topics</div>
-							<div class="text-sm text-gray-500 dark:text-gray-400">
-								{points.length} points
-							</div>
-						</button>
-
 						{#each topics as topic (topic.cluster_id)}
 							{@const color = getClusterColor(topic.cluster_id)}
-							<button
-								onclick={() => selectCluster(topic.cluster_id)}
-								class="w-full text-left px-3 py-2 rounded transition-colors {selectedCluster ===
-								topic.cluster_id
-									? 'bg-blue-100 dark:bg-blue-900 text-blue-900 dark:text-blue-100'
-									: 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'}"
-							>
-								<div class="flex items-center gap-2">
-									<div
-										class="w-3 h-3 rounded-full shrink-0"
-										style="background-color: rgb({color[0]}, {color[1]}, {color[2]})"
-									></div>
-									<div class="flex-1 min-w-0">
-										<div class="font-medium text-sm truncate">{topic.label}</div>
-										<div class="text-xs text-gray-500 dark:text-gray-400">
-											{topic.size} points
+							{@const isHighlighted = selectedClusters.has(topic.cluster_id)}
+							<div class="flex items-center gap-2">
+								<input
+									type="checkbox"
+									checked={topic.visible}
+									onchange={() => toggleTopic(topic.cluster_id)}
+									class="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+								/>
+								<button
+									onclick={() => selectCluster(topic.cluster_id)}
+									class="flex-1 text-left px-3 py-2 rounded transition-colors {isHighlighted
+										? 'bg-blue-100 dark:bg-blue-900 text-blue-900 dark:text-blue-100'
+										: 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'}"
+								>
+									<div class="flex items-center gap-2">
+										<div
+											class="w-3 h-3 rounded-full shrink-0"
+											style="background-color: rgb({color[0]}, {color[1]}, {color[2]}); opacity: {topic.visible
+												? 1
+												: 0.3}"
+										></div>
+										<div class="flex-1 min-w-0">
+											<div class="font-medium text-sm truncate">{topic.label}</div>
+											<div class="text-xs text-gray-500 dark:text-gray-400">
+												{topic.size} points
+											</div>
 										</div>
 									</div>
-								</div>
-							</button>
+								</button>
+							</div>
 						{/each}
 					</div>
 				</div>
 			</div>
 
 			<!-- Main content: 3D visualization -->
-			<div class="lg:col-span-3 relative">
+			<div class="lg:col-span-3 overflow-hidden">
 				<div
-					class="bg-white dark:bg-gray-800 rounded-lg shadow h-full relative overflow-hidden"
+					class="bg-white dark:bg-gray-800 rounded-lg shadow relative overflow-hidden w-full h-full"
 					bind:clientWidth={containerWidth}
 					bind:clientHeight={containerHeight}
+					style="display: flex; flex-direction: column;"
 				>
-					<div class="absolute inset-0 rounded-lg">
-						<div id="deckgl-wrapper" class="w-full h-full relative">
-							<canvas bind:this={deckCanvas} class="w-full h-full block" style="touch-action: none;"
+					<div class="absolute inset-0 rounded-lg flex" style="pointer-events: auto;">
+						<div id="deckgl-wrapper" class="w-full h-full relative flex-1" style="flex-grow: 1;">
+							<canvas bind:this={deckCanvas} class="w-full h-full block" style="touch-action: none; display: block; width: 100%; height: 100%;"
 							></canvas>
 						</div>
 					</div>
@@ -619,25 +1049,30 @@
 							>
 								Reset
 							</button>
-							<button
-								onclick={() => (showGrid = !showGrid)}
-								class="flex-1 px-3 py-2 text-xs font-medium {showGrid
-									? 'text-white bg-blue-600 dark:bg-blue-500'
-									: 'text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700'} hover:bg-blue-700 dark:hover:bg-blue-600 rounded transition-colors"
-								title="Toggle Grid"
-							>
-								Grid
-							</button>
+							{#if !is2D}
+								<button
+									onclick={() => (showGrid = !showGrid)}
+									class="flex-1 px-3 py-2 text-xs font-medium {showGrid
+										? 'text-white bg-blue-600 dark:bg-blue-500'
+										: 'text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700'} hover:bg-blue-700 dark:hover:bg-blue-600 rounded transition-colors"
+									title="Toggle Grid"
+								>
+									Grid
+								</button>
+							{/if}
 						</div>
 
 						<!-- View Info -->
 						<div class="text-xs text-gray-500 dark:text-gray-400 space-y-1">
-							<div>Rotation: {viewState.rotationOrbit.toFixed(0)}°</div>
-							<div class="text-[10px] text-gray-400 dark:text-gray-500">
-								<span class="text-red-500">Red</span>=X
-								<span class="text-green-500">Green</span>=Y
-								<span class="text-blue-500">Blue</span>=Z
-							</div>
+							<div>Mode: {is2D ? '2D' : '3D'}</div>
+							{#if !is2D}
+								<div>Rotation: {viewState.rotationOrbit.toFixed(0)}°</div>
+								<div class="text-[10px] text-gray-400 dark:text-gray-500">
+									<span class="text-red-500">Red</span>=X
+									<span class="text-green-500">Green</span>=Y
+									<span class="text-blue-500">Blue</span>=Z
+								</div>
+							{/if}
 						</div>
 					</div>
 				</div>

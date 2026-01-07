@@ -142,8 +142,7 @@
 					dataset.embedder_name = embedder.name;
 				}
 
-				// Fetch stats for each embedded dataset
-				fetchStatsForEmbeddedDataset(dataset.embedded_dataset_id);
+				await fetchStatsForEmbeddedDataset(dataset.embedded_dataset_id);
 			}
 
 			// Trigger reactivity
@@ -178,14 +177,19 @@
 		failedBatches = [];
 
 		try {
-			const response = await fetch(`/api/embedded-datasets/${dataset.embedded_dataset_id}/processed-batches`);
+			const response = await fetch(
+				`/api/embedded-datasets/${dataset.embedded_dataset_id}/processed-batches`
+			);
 			if (response.ok) {
 				const allBatches: ProcessedBatch[] = await response.json();
 				// Filter to only failed batches
-				failedBatches = allBatches.filter(b => b.process_status === 'failed');
+				failedBatches = allBatches.filter((b) => b.process_status === 'failed');
 			}
 		} catch (e) {
-			console.error(`Failed to fetch processed batches for embedded dataset ${dataset.embedded_dataset_id}:`, e);
+			console.error(
+				`Failed to fetch processed batches for embedded dataset ${dataset.embedded_dataset_id}:`,
+				e
+			);
 			toastStore.error('Failed to fetch failed batches');
 		} finally {
 			loadingFailedBatches = false;
@@ -372,9 +376,7 @@
 										{stats.failed_batches}
 									</button>
 								{:else}
-									<p class="text-lg font-semibold text-green-600 dark:text-green-400">
-										0
-									</p>
+									<p class="text-lg font-semibold text-green-600 dark:text-green-400">0</p>
 								{/if}
 							</div>
 							<div>
@@ -408,8 +410,12 @@
 <!-- Failed Batches Modal -->
 {#if showFailedBatchesModal}
 	<div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[80vh] flex flex-col">
-			<div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+		<div
+			class="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[80vh] flex flex-col"
+		>
+			<div
+				class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center"
+			>
 				<h3 class="text-lg font-semibold text-gray-900 dark:text-white">
 					Failed Batches - {failedBatchesDatasetTitle}
 				</h3>
@@ -419,11 +425,16 @@
 					aria-label="Close modal"
 				>
 					<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width="2"
+							d="M6 18L18 6M6 6l12 12"
+						/>
 					</svg>
 				</button>
 			</div>
-			
+
 			<div class="p-6 overflow-y-auto flex-1">
 				{#if loadingFailedBatches}
 					<div class="flex justify-center py-8">
@@ -434,10 +445,15 @@
 				{:else}
 					<div class="space-y-4">
 						{#each failedBatches as batch}
-							<div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
+							<div
+								class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4"
+							>
 								<div class="flex items-start justify-between">
 									<div class="flex-1 min-w-0">
-										<p class="font-mono text-sm text-gray-900 dark:text-white truncate" title={batch.file_key}>
+										<p
+											class="font-mono text-sm text-gray-900 dark:text-white truncate"
+											title={batch.file_key}
+										>
 											{batch.file_key.split('/').pop() || batch.file_key}
 										</p>
 										<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
@@ -448,7 +464,8 @@
 								{#if batch.process_error}
 									<div class="mt-3 bg-red-100 dark:bg-red-900/40 rounded p-3">
 										<p class="text-xs font-semibold text-red-700 dark:text-red-300 mb-1">Error:</p>
-										<pre class="text-xs text-red-600 dark:text-red-400 whitespace-pre-wrap break-words font-mono">{batch.process_error}</pre>
+										<pre
+											class="text-xs text-red-600 dark:text-red-400 whitespace-pre-wrap wrap-break-word font-mono">{batch.process_error}</pre>
 									</div>
 								{/if}
 							</div>
@@ -456,7 +473,7 @@
 					</div>
 				{/if}
 			</div>
-			
+
 			<div class="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex justify-end">
 				<button
 					onclick={closeFailedBatchesModal}

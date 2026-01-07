@@ -1,12 +1,15 @@
 use crate::auth::extract_username;
 use crate::storage::postgres::dataset_transforms;
 use crate::transforms::dataset::{
-    CreateDatasetTransform, DatasetTransform, DatasetTransformStats, UpdateDatasetTransform,
+    trigger_dataset_transform_scan, CreateDatasetTransform, DatasetTransform,
+    DatasetTransformStats, UpdateDatasetTransform,
 };
 
 use actix_web::web::{Data, Json, Path};
 use actix_web::{HttpResponse, Responder, delete, get, patch, post};
 use actix_web_openidconnect::openid_middleware::Authenticated;
+use async_nats::Client as NatsClient;
+use aws_sdk_s3::Client as S3Client;
 use sqlx::{Pool, Postgres};
 use tracing::error;
 
@@ -89,10 +92,12 @@ pub async fn get_dataset_transform(
     ),
 )]
 #[post("/api/dataset-transforms")]
-#[tracing::instrument(name = "create_dataset_transform", skip(auth, postgres_pool, body), fields(title = %body.title, embedder_count = %body.embedder_ids.len()))]
+#[tracing::instrument(name = "create_dataset_transform", skip(auth, postgres_pool, nats_client, s3_client, body), fields(title = %body.title, embedder_count = %body.embedder_ids.len()))]
 pub async fn create_dataset_transform(
     auth: Authenticated,
     postgres_pool: Data<Pool<Postgres>>,
+    nats_client: Data<NatsClient>,
+    s3_client: Data<S3Client>,
     body: Json<CreateDatasetTransform>,
 ) -> impl Responder {
     let username = match extract_username(&auth) {
@@ -122,6 +127,23 @@ pub async fn create_dataset_transform(
     .await
     {
         Ok((transform, embedded_datasets)) => {
+            // Trigger the scan immediately upon creation
+            let dataset_transform_id = transform.dataset_transform_id;
+            if let Err(e) = trigger_dataset_transform_scan(
+                &postgres_pool,
+                &nats_client,
+                &s3_client,
+                dataset_transform_id,
+                &username,
+            )
+            .await
+            {
+                error!(
+                    "Failed to trigger dataset transform scan for newly created transform {}: {}",
+                    dataset_transform_id, e
+                );
+                // Don't fail the creation, just log the error
+            }
             HttpResponse::Created().json(serde_json::json!({
                 "transform": transform,
                 "embedded_datasets": embedded_datasets,

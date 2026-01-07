@@ -48,7 +48,7 @@ pub async fn initialize_jetstream(client: &Client) -> Result<()> {
         "VISUALIZATION_TRANSFORMS",
         StreamConfig {
             name: "VISUALIZATION_TRANSFORMS".to_string(),
-            subjects: vec!["workers.visualization-worker".to_string()],
+            subjects: vec!["workers.visualization-transform".to_string()],
             retention: RetentionPolicy::WorkQueue,
             max_age: Duration::from_secs(7 * 24 * 60 * 60), // 7 days
             duplicate_window: Duration::from_secs(5 * 60),  // 5 minutes for deduplication

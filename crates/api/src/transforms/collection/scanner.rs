@@ -221,3 +221,40 @@ async fn process_collection_transform_scan(
 
     Ok(())
 }
+
+/// Trigger a collection transform scan immediately
+#[tracing::instrument(
+    name = "trigger_collection_transform_scan",
+    skip(pool, nats, s3),
+    fields(collection_transform_id = %collection_transform_id)
+)]
+pub async fn trigger_collection_transform_scan(
+    pool: &Pool<Postgres>,
+    nats: &NatsClient,
+    s3: &S3Client,
+    collection_transform_id: i32,
+    owner: &str,
+) -> Result<()> {
+    info!(
+        "Triggering collection transform scan for {}",
+        collection_transform_id
+    );
+
+    // Get the collection transform
+    let transform = crate::storage::postgres::collection_transforms::get_collection_transform(
+        pool,
+        owner,
+        collection_transform_id,
+    )
+    .await?;
+
+    // Process the scan immediately
+    process_collection_transform_scan(pool, nats, s3, &transform).await?;
+
+    info!(
+        "Triggered collection transform scan for {}",
+        collection_transform_id
+    );
+
+    Ok(())
+}
