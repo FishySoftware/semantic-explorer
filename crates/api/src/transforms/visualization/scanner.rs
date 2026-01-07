@@ -150,10 +150,10 @@ fn default_visualization_config() -> VisualizationConfig {
     VisualizationConfig {
         n_neighbors: 15,
         n_components: 3,
-        min_dist: 0.1,
+        min_dist: 0.25,
         metric: "cosine".to_string(),
-        min_cluster_size: 5,
-        min_samples: Some(3),
+        min_cluster_size: 15,
+        min_samples: Some(5),
         topic_naming_mode: "tfidf".to_string(),
         topic_naming_llm_id: None,
     }

@@ -94,16 +94,12 @@ pub async fn process_visualization_job(
     );
 
     let cluster_start = Instant::now();
-    // L2-normalize UMAP embeddings before clustering (L2 on normalized vectors ≈ cosine distance)
-    let normalized_embeddings = normalize_l2(
+    // Use cosine metric for HDBSCAN to match UMAP's metric
+    let (hdbscan, topic_vectors) = identify_topic_clusters(
         &umap.embedding,
         job.visualization_config.n_components as usize,
-    );
-    let (hdbscan, topic_vectors) = identify_topic_clusters(
-        &normalized_embeddings,
-        job.visualization_config.n_components as usize,
         job.visualization_config.min_cluster_size as usize,
-        "euclidean",
+        "cosine",
         &document_vectors,
         n_features,
     )?;
