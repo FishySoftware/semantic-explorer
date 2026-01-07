@@ -141,7 +141,7 @@ pub(crate) async fn process_file_job(
     }
 
     let chunks_with_metadata = match ChunkingService::chunk_text(
-        extraction_result.text,
+        extraction_result.text.clone(),
         &chunking_config,
         Some(extraction_metadata),
         job.embedder_config.as_ref(), // Use embedder config from job for semantic chunking
@@ -163,10 +163,29 @@ pub(crate) async fn process_file_job(
             return Ok(());
         }
     };
+
     info!(
         chunk_count = chunks_with_metadata.len(),
         "Text chunked successfully"
     );
+
+    if chunks_with_metadata.is_empty() {
+        let duration = start_time.elapsed().as_secs_f64();
+        record_worker_job("transform-file", duration, "failed_empty_chunks");
+        error!(
+            text_length = extraction_result.text.len(),
+            "Chunking produced no chunks (text too small or invalid). Raw text length: {} chars",
+            extraction_result.text.len()
+        );
+        send_result(
+            &ctx.nats_client,
+            &job,
+            Err("Chunking produced no chunks - text may be too short or invalid".to_string()),
+            Some((duration * 1000.0) as i64),
+        )
+        .await?;
+        return Ok(());
+    }
 
     let chunks_key = format!("chunks/{}.json", job.job_id);
     let chunks_json = serde_json::to_vec(&chunks_with_metadata)?;

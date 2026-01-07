@@ -176,6 +176,29 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
     };
 
     let chunk_count = chunks.len() as i32;
+
+    // Validate that we have at least one chunk
+    if chunk_count == 0 {
+        error!(
+            "File extracted to 0 chunks for {}: text extraction likely failed or resulted in empty content",
+            result.source_file_key
+        );
+        if let Err(e) = collection_transforms::record_processed_file(
+            &ctx.postgres_pool,
+            result.collection_transform_id,
+            &result.source_file_key,
+            0,
+            "failed",
+            Some("No chunks generated - text extraction may have failed or produced empty content"),
+            result.processing_duration_ms,
+        )
+        .await
+        {
+            error!("Failed to record file processing failure: {}", e);
+        }
+        return;
+    }
+
     let metadata = serde_json::json!({
         "source_file": result.source_file_key,
         "collection_transform_id": result.collection_transform_id,
