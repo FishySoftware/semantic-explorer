@@ -48,7 +48,7 @@ pub async fn generate_embedding(
             return Err(anyhow::anyhow!(
                 "Unsupported embedding provider: {}",
                 provider
-            ))
+            ));
         }
     };
 
@@ -68,11 +68,7 @@ pub async fn generate_embedding(
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await?;
-        return Err(anyhow::anyhow!(
-            "Embedding API error {}: {}",
-            status,
-            text
-        ));
+        return Err(anyhow::anyhow!("Embedding API error {}: {}", status, text));
     }
 
     let response: serde_json::Value = resp.json().await?;

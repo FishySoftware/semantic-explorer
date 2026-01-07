@@ -12,6 +12,33 @@ use std::collections::HashMap;
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
+/// L2-normalize vectors to unit length for cosine distance calculations
+fn normalize_l2(vectors: &[f32], n_features: usize) -> Vec<f32> {
+    let n_samples = vectors.len() / n_features;
+    let mut normalized = Vec::with_capacity(vectors.len());
+
+    for i in 0..n_samples {
+        let start = i * n_features;
+        let end = start + n_features;
+        let sample = &vectors[start..end];
+
+        // Calculate L2 norm
+        let norm: f32 = sample.iter().map(|&x| x * x).sum::<f32>().sqrt();
+
+        // Normalize each component
+        if norm > 1e-10 {
+            for &val in sample {
+                normalized.push(val / norm);
+            }
+        } else {
+            // Handle zero-length vectors by keeping them as-is
+            normalized.extend_from_slice(sample);
+        }
+    }
+
+    normalized
+}
+
 #[derive(Clone)]
 struct DocumentData {
     text: String,
@@ -51,12 +78,15 @@ pub async fn process_visualization_job(
     );
 
     let dim_start = Instant::now();
+    // L2-normalize input vectors for better cosine distance calculations
+    let normalized_document_vectors = normalize_l2(&document_vectors, n_features);
     let umap = reduce_dimensionality(
-        &document_vectors,
+        &normalized_document_vectors,
         n_features,
         job.visualization_config.n_neighbors as usize,
         job.visualization_config.n_components as usize,
         job.visualization_config.min_dist,
+        "cosine",
     )?;
     info!(
         "Reduced dimensionality in {:.2}s",
@@ -64,10 +94,16 @@ pub async fn process_visualization_job(
     );
 
     let cluster_start = Instant::now();
-    let (hdbscan, topic_vectors) = identify_topic_clusters(
+    // L2-normalize UMAP embeddings before clustering (L2 on normalized vectors ≈ cosine distance)
+    let normalized_embeddings = normalize_l2(
         &umap.embedding,
         job.visualization_config.n_components as usize,
+    );
+    let (hdbscan, topic_vectors) = identify_topic_clusters(
+        &normalized_embeddings,
+        job.visualization_config.n_components as usize,
         job.visualization_config.min_cluster_size as usize,
+        "euclidean",
         &document_vectors,
         n_features,
     )?;

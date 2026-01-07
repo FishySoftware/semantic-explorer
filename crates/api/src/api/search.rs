@@ -42,10 +42,8 @@ pub(crate) async fn search(
         Err(e) => return e,
     };
 
-
     if search_request.embedded_dataset_ids.is_empty() {
-        return HttpResponse::BadRequest()
-            .body("At least one embedded dataset must be selected");
+        return HttpResponse::BadRequest().body("At least one embedded dataset must be selected");
     }
 
     if search_request.query.trim().is_empty() {
@@ -85,8 +83,12 @@ pub(crate) async fn search(
             }
         };
 
-        let embedder = match embedders::get_embedder(&postgres_pool, &username, ed_details.embedder_id)
-            .await
+        let embedder = match embedders::get_embedder(
+            &postgres_pool,
+            &username,
+            ed_details.embedder_id,
+        )
+        .await
         {
             Ok(e) => e,
             Err(e) => {
@@ -105,7 +107,6 @@ pub(crate) async fn search(
                 continue;
             }
         };
-
 
         let query_vector = match crate::embedding::generate_embedding(
             &embedder.provider,

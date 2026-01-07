@@ -136,7 +136,7 @@ fn default_n_components() -> i32 {
 }
 
 fn default_min_dist() -> f32 {
-    0.1
+    0.25
 }
 
 fn default_metric() -> String {

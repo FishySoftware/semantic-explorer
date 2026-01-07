@@ -130,9 +130,14 @@ pub(crate) async fn process_file_job(
         "Chunking text"
     );
 
-    let mut extraction_metadata = extraction_result.metadata.unwrap_or_else(|| serde_json::json!({}));
+    let mut extraction_metadata = extraction_result
+        .metadata
+        .unwrap_or_else(|| serde_json::json!({}));
     if let Some(obj) = extraction_metadata.as_object_mut() {
-        obj.insert("source_file".to_string(), serde_json::json!(&job.source_file_key));
+        obj.insert(
+            "source_file".to_string(),
+            serde_json::json!(&job.source_file_key),
+        );
     }
 
     let chunks_with_metadata = match ChunkingService::chunk_text(

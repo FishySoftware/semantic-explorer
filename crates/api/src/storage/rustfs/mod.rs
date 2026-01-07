@@ -154,11 +154,7 @@ pub(crate) async fn list_files(
         files.truncate(page_size as usize);
     }
 
-    let next_token = if has_more {
-        current_token
-    } else {
-        None
-    };
+    let next_token = if has_more { current_token } else { None };
 
     let duration = start.elapsed().as_secs_f64();
     record_storage_operation("list", duration, None, true);

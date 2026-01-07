@@ -10,7 +10,10 @@ use qdrant_client::{
     },
 };
 
-use std::{cmp::Ordering, collections::{HashMap, HashSet}};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+};
 
 use crate::search::models::{DocumentResult, SearchMatch, SearchMode, SearchRequest};
 use qdrant_client::qdrant::r#match::MatchValue;
@@ -31,7 +34,15 @@ pub(crate) async fn search_collection(
 
         loop {
             // Fetch a batch
-            let batch = search_batch(qdrant, collection_name, query_vector, request, BATCH_SIZE, offset).await?;
+            let batch = search_batch(
+                qdrant,
+                collection_name,
+                query_vector,
+                request,
+                BATCH_SIZE,
+                offset,
+            )
+            .await?;
 
             if batch.is_empty() {
                 break; // No more results
@@ -67,7 +78,15 @@ pub(crate) async fn search_collection(
         Ok(all_matches)
     } else {
         // Chunks mode: just fetch the requested limit
-        search_batch(qdrant, collection_name, query_vector, request, request.limit, 0).await
+        search_batch(
+            qdrant,
+            collection_name,
+            query_vector,
+            request,
+            request.limit,
+            0,
+        )
+        .await
     }
 }
 

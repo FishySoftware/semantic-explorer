@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Deck, OrbitView, OrthographicView, type Layer } from '@deck.gl/core';
-	import { LineLayer, ScatterplotLayer } from '@deck.gl/layers';
+	import { LineLayer, ScatterplotLayer, PointCloudLayer } from '@deck.gl/layers';
 	import { onDestroy, onMount } from 'svelte';
 	import { formatError, toastStore } from '../utils/notifications';
 
@@ -149,6 +149,7 @@
 		if (clusterId === -1) return [128, 128, 128]; // Gray for noise
 		return CLUSTER_COLORS[clusterId % CLUSTER_COLORS.length];
 	};
+
 
 	function calculateBoundingBox(pts: VisualizationPoint[], mode2D: boolean): BoundingBox {
 		if (pts.length === 0) {
@@ -599,31 +600,58 @@
 			`Updating deck with ${filteredPoints.length}/${currentPoints.length} visible points, ${currentTopics.filter((t) => t.visible).length}/${currentTopics.length} visible topics`
 		);
 
-		const layers: Layer[] = [
-			new ScatterplotLayer({
-				id: 'points-layer',
-				data: filteredPoints,
-				getPosition: (d: VisualizationPoint) => d.position,
-				getFillColor: (d: VisualizationPoint) => {
-					if (currentSelectedClusters.size > 0 && !currentSelectedClusters.has(d.cluster_id)) {
-						const color = getClusterColor(d.cluster_id);
-						return [...color, 50];
-					}
-					return getClusterColor(d.cluster_id);
-				},
-				getRadius: 0.5,
-				radiusMinPixels: 4,
-				radiusMaxPixels: 20,
-				pickable: true,
-				onHover: (info) => {
-					if (info.object) {
-						hoveredPoint = info.object;
-					} else {
-						hoveredPoint = null;
-					}
-				},
-			}),
-		];
+		const layers: Layer[] = mode2D
+			? [
+					// 2D: Use ScatterplotLayer (billboards work fine for 2D)
+					new ScatterplotLayer({
+						id: 'points-layer',
+						data: filteredPoints,
+						getPosition: (d: VisualizationPoint) => d.position,
+						getFillColor: (d: VisualizationPoint) => {
+							if (currentSelectedClusters.size > 0 && !currentSelectedClusters.has(d.cluster_id)) {
+								const color = getClusterColor(d.cluster_id);
+								return [...color, 50];
+							}
+							return getClusterColor(d.cluster_id);
+						},
+						getRadius: 15,
+						radiusMinPixels: 5,
+						radiusMaxPixels: 25,
+						pickable: true,
+						onHover: (info: any) => {
+							if (info.object) {
+								hoveredPoint = info.object;
+							} else {
+								hoveredPoint = null;
+							}
+						},
+					}),
+				]
+			: [
+					// 3D: Use PointCloudLayer for proper 3D point rendering with depth
+					new PointCloudLayer({
+						id: 'points-layer',
+						data: filteredPoints,
+						getPosition: (d: VisualizationPoint) => d.position,
+						getColor: (d: VisualizationPoint) => {
+							if (currentSelectedClusters.size > 0 && !currentSelectedClusters.has(d.cluster_id)) {
+								const color = getClusterColor(d.cluster_id);
+								return [...color, 50];
+							}
+							return getClusterColor(d.cluster_id);
+						},
+						getRadius: 50,
+						radiusPixels: 5,
+						pickable: true,
+						onHover: (info: any) => {
+							if (info.object) {
+								hoveredPoint = info.object;
+							} else {
+								hoveredPoint = null;
+							}
+						},
+					}),
+				];
 
 		if (gridVisible && !mode2D) {
 			// Add axis lines (3D only)
