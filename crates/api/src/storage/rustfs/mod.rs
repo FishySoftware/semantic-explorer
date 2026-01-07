@@ -155,7 +155,7 @@ pub(crate) async fn list_files(
     }
 
     let next_token = if has_more {
-        files.last().map(|f| f.key.clone())
+        current_token
     } else {
         None
     };
