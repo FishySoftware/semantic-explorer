@@ -124,13 +124,34 @@ pub(crate) async fn search(
         {
             Ok(m) => m,
             Err(e) => {
-                results.push(EmbedderSearchResults {
-                    embedder_id: *embedder_id,
-                    embedder_name: embedder.name,
-                    collection_name: collection_name.clone(),
-                    matches: Vec::new(),
-                    error: Some(format!("Search failed: {}", e)),
-                });
+                let error_msg = e.to_string();
+                if error_msg.contains("doesn't exist")
+                    || error_msg.contains("not found")
+                    || error_msg.contains("No collection")
+                {
+                    tracing::warn!(
+                        "Collection '{}' does not exist for embedder {}, dataset might not be processed yet",
+                        collection_name,
+                        embedder_id
+                    );
+                    results.push(EmbedderSearchResults {
+                        embedder_id: *embedder_id,
+                        embedder_name: embedder.name,
+                        collection_name: collection_name.clone(),
+                        matches: Vec::new(),
+                        error: Some(format!(
+                            "This dataset has not been embedded yet with this embedder. Please wait for the embedding process to complete."
+                        )),
+                    });
+                } else {
+                    results.push(EmbedderSearchResults {
+                        embedder_id: *embedder_id,
+                        embedder_name: embedder.name,
+                        collection_name: collection_name.clone(),
+                        matches: Vec::new(),
+                        error: Some(format!("Search failed: {}", e)),
+                    });
+                }
                 continue;
             }
         };

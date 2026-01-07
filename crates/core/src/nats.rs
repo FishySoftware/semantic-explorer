@@ -15,10 +15,10 @@ pub async fn initialize_jetstream(client: &Client) -> Result<()> {
 
     ensure_stream(
         &jetstream,
-        "TRANSFORM_FILES",
+        "COLLECTION_TRANSFORMS",
         StreamConfig {
-            name: "TRANSFORM_FILES".to_string(),
-            subjects: vec!["workers.transform-file-worker".to_string()],
+            name: "COLLECTION_TRANSFORMS".to_string(),
+            subjects: vec!["workers.collection-transform".to_string()],
             retention: RetentionPolicy::WorkQueue,
             max_age: Duration::from_secs(7 * 24 * 60 * 60), // 7 days
             duplicate_window: Duration::from_secs(5 * 60),  // 5 minutes for deduplication
@@ -30,10 +30,10 @@ pub async fn initialize_jetstream(client: &Client) -> Result<()> {
 
     ensure_stream(
         &jetstream,
-        "VECTOR_EMBED",
+        "DATASET_TRANSFORMS",
         StreamConfig {
-            name: "VECTOR_EMBED".to_string(),
-            subjects: vec!["workers.vector-embed-worker".to_string()],
+            name: "DATASET_TRANSFORMS".to_string(),
+            subjects: vec!["workers.dataset-transform".to_string()],
             retention: RetentionPolicy::WorkQueue,
             max_age: Duration::from_secs(7 * 24 * 60 * 60), // 7 days
             duplicate_window: Duration::from_secs(5 * 60),  // 5 minutes for deduplication

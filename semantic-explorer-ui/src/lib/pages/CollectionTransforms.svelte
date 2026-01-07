@@ -74,6 +74,18 @@
 		total_items_created: number;
 	}
 
+	interface ProcessedFile {
+		id: number;
+		transform_type: string;
+		transform_id: number;
+		file_key: string;
+		processed_at: string;
+		item_count: number;
+		process_status: string;
+		process_error: string | null;
+		processing_duration_ms: number | null;
+	}
+
 	let transforms = $state<CollectionTransform[]>([]);
 	let collections = $state<Collection[]>([]);
 	let datasets = $state<Dataset[]>([]);
@@ -81,6 +93,13 @@
 	let statsMap = $state<Map<number, Stats>>(new Map());
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+
+	// Failed files modal state
+	let showFailedFilesModal = $state(false);
+	let failedFilesTransformId = $state<number | null>(null);
+	let failedFilesTransformTitle = $state('');
+	let failedFiles = $state<ProcessedFile[]>([]);
+	let loadingFailedFiles = $state(false);
 
 	let searchQuery = $state('');
 
@@ -160,6 +179,35 @@
 		} catch (e) {
 			console.error(`Failed to fetch stats for transform ${transformId}:`, e);
 		}
+	}
+
+	async function openFailedFilesModal(transform: CollectionTransform) {
+		failedFilesTransformId = transform.collection_transform_id;
+		failedFilesTransformTitle = transform.title;
+		showFailedFilesModal = true;
+		loadingFailedFiles = true;
+		failedFiles = [];
+
+		try {
+			const response = await fetch(`/api/collection-transforms/${transform.collection_transform_id}/processed-files`);
+			if (response.ok) {
+				const allFiles: ProcessedFile[] = await response.json();
+				// Filter to only failed files
+				failedFiles = allFiles.filter(f => f.process_status === 'failed');
+			}
+		} catch (e) {
+			console.error(`Failed to fetch processed files for transform ${transform.collection_transform_id}:`, e);
+			toastStore.error('Failed to fetch failed files');
+		} finally {
+			loadingFailedFiles = false;
+		}
+	}
+
+	function closeFailedFilesModal() {
+		showFailedFilesModal = false;
+		failedFilesTransformId = null;
+		failedFilesTransformTitle = '';
+		failedFiles = [];
 	}
 
 	async function fetchCollections() {
@@ -1487,9 +1535,19 @@
 							</div>
 							<div>
 								<p class="text-sm text-gray-600 dark:text-gray-400">Failed</p>
-								<p class="text-lg font-semibold text-red-600 dark:text-red-400">
-									{stats.failed_files}
-								</p>
+								{#if stats.failed_files > 0}
+									<button
+										onclick={() => openFailedFilesModal(transform)}
+										class="text-lg font-semibold text-red-600 dark:text-red-400 hover:underline cursor-pointer"
+										title="Click to view failed files"
+									>
+										{stats.failed_files}
+									</button>
+								{:else}
+									<p class="text-lg font-semibold text-green-600 dark:text-green-400">
+										0
+									</p>
+								{/if}
 							</div>
 							<div>
 								<p class="text-sm text-gray-600 dark:text-gray-400">Items Created</p>
@@ -1515,3 +1573,67 @@
 	on:confirm={confirmDeleteTransform}
 	on:cancel={() => (transformPendingDelete = null)}
 />
+
+<!-- Failed Files Modal -->
+{#if showFailedFilesModal}
+	<div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[80vh] flex flex-col">
+			<div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+				<h3 class="text-lg font-semibold text-gray-900 dark:text-white">
+					Failed Files - {failedFilesTransformTitle}
+				</h3>
+				<button
+					onclick={closeFailedFilesModal}
+					class="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+					aria-label="Close modal"
+				>
+					<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+					</svg>
+				</button>
+			</div>
+			
+			<div class="p-6 overflow-y-auto flex-1">
+				{#if loadingFailedFiles}
+					<div class="flex justify-center py-8">
+						<div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+					</div>
+				{:else if failedFiles.length === 0}
+					<p class="text-gray-500 dark:text-gray-400 text-center py-8">No failed files found.</p>
+				{:else}
+					<div class="space-y-4">
+						{#each failedFiles as file}
+							<div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
+								<div class="flex items-start justify-between">
+									<div class="flex-1 min-w-0">
+										<p class="font-mono text-sm text-gray-900 dark:text-white truncate" title={file.file_key}>
+											{file.file_key.split('/').pop() || file.file_key}
+										</p>
+										<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+											Processed: {new Date(file.processed_at).toLocaleString()}
+										</p>
+									</div>
+								</div>
+								{#if file.process_error}
+									<div class="mt-3 bg-red-100 dark:bg-red-900/40 rounded p-3">
+										<p class="text-xs font-semibold text-red-700 dark:text-red-300 mb-1">Error:</p>
+										<pre class="text-xs text-red-600 dark:text-red-400 whitespace-pre-wrap break-words font-mono">{file.process_error}</pre>
+									</div>
+								{/if}
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</div>
+			
+			<div class="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex justify-end">
+				<button
+					onclick={closeFailedFilesModal}
+					class="px-4 py-2 bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-lg dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+				>
+					Close
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}

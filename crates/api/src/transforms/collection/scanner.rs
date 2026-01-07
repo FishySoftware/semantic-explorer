@@ -5,15 +5,15 @@ use aws_sdk_s3::Client as S3Client;
 use sqlx::{Pool, Postgres};
 use std::collections::HashSet;
 use std::time::Duration;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use semantic_explorer_core::jobs::CollectionTransformJob;
+use semantic_explorer_core::jobs::{CollectionTransformJob, EmbedderConfig};
 
 use crate::storage::postgres::collection_transforms::{
     get_active_collection_transforms, get_processed_files,
 };
-use crate::storage::postgres::collections;
+use crate::storage::postgres::{collections, embedders};
 use crate::storage::rustfs;
 
 /// Initialize the background scanner for collection transforms
@@ -55,6 +55,56 @@ async fn scan_active_collection_transforms(
     Ok(())
 }
 
+/// Extract embedder config from chunking config if semantic chunking is used
+async fn get_embedder_config_for_chunking(
+    pool: &Pool<Postgres>,
+    owner: &str,
+    chunking_config: &serde_json::Value,
+) -> Result<Option<EmbedderConfig>> {
+    // Check if semantic chunking is configured
+    let strategy = chunking_config
+        .get("strategy")
+        .and_then(|v| v.as_str())
+        .unwrap_or("sentence");
+
+    if strategy != "semantic" {
+        return Ok(None);
+    }
+
+    // Get embedder_id from semantic options
+    let embedder_id = chunking_config
+        .get("options")
+        .and_then(|opts| opts.get("semantic"))
+        .and_then(|semantic| semantic.get("embedder_id"))
+        .and_then(|v| v.as_i64())
+        .map(|v| v as i32);
+
+    let embedder_id = match embedder_id {
+        Some(id) => id,
+        None => {
+            return Err(anyhow::anyhow!(
+                "Semantic chunking requires embedder_id in chunking config"
+            ));
+        }
+    };
+
+    // Fetch the embedder
+    let embedder = embedders::get_embedder(pool, owner, embedder_id).await?;
+
+    Ok(Some(EmbedderConfig {
+        provider: embedder.provider,
+        base_url: embedder.base_url,
+        api_key: embedder.api_key,
+        model: embedder
+            .config
+            .get("model")
+            .and_then(|m| m.as_str())
+            .map(|s| s.to_string()),
+        config: embedder.config,
+        max_batch_size: embedder.max_batch_size,
+    }))
+}
+
 #[tracing::instrument(
     name = "process_collection_transform_scan",
     skip(pool, nats, s3, transform),
@@ -83,6 +133,43 @@ async fn process_collection_transform_scan(
         transform.collection_transform_id
     );
 
+    // Build extraction and chunking configs
+    let extraction_config = transform
+        .job_config
+        .get("extraction")
+        .cloned()
+        .unwrap_or_else(|| {
+            serde_json::json!({
+                "strategy": "plain_text"
+            })
+        });
+
+    let chunking_config = transform
+        .job_config
+        .get("chunking")
+        .cloned()
+        .unwrap_or_else(|| {
+            serde_json::json!({
+                "strategy": "sentence",
+                "chunk_size": transform.chunk_size,
+                "chunk_overlap": 0
+            })
+        });
+
+    // Get embedder config if semantic chunking is used
+    let embedder_config =
+        match get_embedder_config_for_chunking(pool, &transform.owner, &chunking_config).await {
+            Ok(config) => config,
+            Err(e) => {
+                // Record config error - this affects all files
+                warn!(
+                    "Collection transform {} has invalid chunking config: {}. Skipping.",
+                    transform.collection_transform_id, e
+                );
+                return Err(e);
+            }
+        };
+
     let mut continuation_token: Option<String> = None;
     let mut files_found = 0;
     let mut jobs_sent = 0;
@@ -104,35 +191,14 @@ async fn process_collection_transform_scan(
 
             // Skip already processed files
             if !processed_keys.contains(&file.key) {
-                let extraction_config = transform
-                    .job_config
-                    .get("extraction")
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        serde_json::json!({
-                            "strategy": "plain_text"
-                        })
-                    });
-
-                let chunking_config = transform
-                    .job_config
-                    .get("chunking")
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        serde_json::json!({
-                            "strategy": "sentence",
-                            "chunk_size": transform.chunk_size,
-                            "chunk_overlap": 0
-                        })
-                    });
-
                 let job = CollectionTransformJob {
                     job_id: Uuid::new_v4(),
                     source_file_key: file.key.clone(),
                     bucket: collection.bucket.clone(),
                     collection_transform_id: transform.collection_transform_id,
-                    extraction_config,
-                    chunking_config,
+                    extraction_config: extraction_config.clone(),
+                    chunking_config: chunking_config.clone(),
+                    embedder_config: embedder_config.clone(),
                 };
 
                 let payload = serde_json::to_vec(&job)?;

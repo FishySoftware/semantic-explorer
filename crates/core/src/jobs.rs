@@ -13,6 +13,9 @@ pub struct CollectionTransformJob {
     pub collection_transform_id: i32,
     pub extraction_config: serde_json::Value,
     pub chunking_config: serde_json::Value,
+    /// Optional embedder config for semantic chunking
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub embedder_config: Option<EmbedderConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,45 +123,5 @@ pub struct VisualizationTransformResult {
     pub output_collection_reduced: String,
     pub output_collection_topics: String,
 }
-
-// ============================================================================
-// Legacy job types (kept for backwards compatibility during migration)
-// ============================================================================
-
-// Old unified transform jobs - to be removed after workers are updated
-#[deprecated(note = "Use CollectionTransformJob instead")]
-pub type TransformFileJob = CollectionTransformJob;
-
-#[deprecated(note = "Use CollectionTransformResult instead")]
-pub type FileTransformResult = CollectionTransformResult;
-
-#[deprecated(note = "Use DatasetTransformJob instead")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VectorEmbedJob {
-    pub job_id: Uuid,
-    pub batch_file_key: String,
-    pub bucket: String,
-    pub transform_id: i32,
-    pub embedder_config: EmbedderConfig,
-    pub vector_database_config: VectorDatabaseConfig,
-    pub collection_name: String,
-    #[serde(default)]
-    pub wipe_collection: bool,
-    #[serde(default)]
-    pub batch_size: Option<usize>,
-}
-
-#[deprecated(note = "Use DatasetTransformResult instead")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VectorBatchResult {
-    pub job_id: Uuid,
-    pub transform_id: i32,
-    pub batch_file_key: String,
-    pub chunk_count: usize,
-    pub status: String,
-    pub error: Option<String>,
-    pub processing_duration_ms: Option<i64>,
-}
-
 #[deprecated(note = "Use VisualizationTransformResult instead")]
 pub type VisualizationResult = VisualizationTransformResult;

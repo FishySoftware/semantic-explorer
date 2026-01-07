@@ -134,7 +134,7 @@ pub(crate) async fn process_file_job(
         extraction_result.text,
         &chunking_config,
         extraction_result.metadata,
-        None, // No embedder config for collection transforms
+        job.embedder_config.as_ref(), // Use embedder config from job for semantic chunking
     )
     .await
     {
