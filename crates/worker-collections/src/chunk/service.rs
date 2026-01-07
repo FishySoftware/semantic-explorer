@@ -1,5 +1,5 @@
 use anyhow::Result;
-use semantic_explorer_core::jobs::EmbedderConfig;
+use semantic_explorer_core::models::EmbedderConfig;
 use serde::{Deserialize, Serialize};
 
 use super::config::{ChunkingConfig, ChunkingStrategy};

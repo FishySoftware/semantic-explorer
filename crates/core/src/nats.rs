@@ -1,11 +1,11 @@
 use anyhow::{Context, Result};
 use async_nats::{
+    Client,
     jetstream::{
         self,
         consumer::pull::Config as ConsumerConfig,
         stream::{Config as StreamConfig, RetentionPolicy},
     },
-    Client,
 };
 use std::time::Duration;
 use tracing::{info, warn};

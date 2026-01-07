@@ -28,6 +28,7 @@
 		owner: string;
 		bucket: string;
 		tags: string[];
+		is_public: boolean;
 	}
 
 	interface Props {
@@ -61,6 +62,7 @@
 		totalBatches: number;
 	} | null>(null);
 	let fileInputRef: HTMLInputElement;
+	let updatingPublic = $state(false);
 
 	onMount(async () => {
 		await Promise.all([fetchCollection(), fetchFiles()]);
@@ -235,6 +237,38 @@
 		fetchFiles();
 	}
 
+	async function togglePublic() {
+		if (!collection) return;
+
+		try {
+			updatingPublic = true;
+			const response = await fetch(`/api/collections/${collectionId}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					title: collection.title,
+					details: collection.details,
+					tags: collection.tags,
+					is_public: !collection.is_public,
+				}),
+			});
+
+			if (!response.ok) {
+				throw new Error(`Failed to update collection: ${response.statusText}`);
+			}
+
+			const updatedCollection = await response.json();
+			collection = updatedCollection;
+			toastStore.success(
+				updatedCollection.is_public ? 'Collection is now public' : 'Collection is now private'
+			);
+		} catch (e) {
+			toastStore.error(formatError(e, 'Failed to update collection visibility'));
+		} finally {
+			updatingPublic = false;
+		}
+	}
+
 	async function uploadFiles(files: FileList | null) {
 		if (!files || files.length === 0) {
 			return;
@@ -381,6 +415,26 @@
 									</span>
 								{/each}
 							{/if}
+						</div>
+						<div class="mt-3">
+							<label class="inline-flex items-center gap-2 cursor-pointer">
+								<input
+									type="checkbox"
+									checked={collection.is_public}
+									onchange={togglePublic}
+									disabled={updatingPublic}
+									class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+								/>
+								<span class="text-sm text-gray-700 dark:text-gray-300">
+									{#if collection.is_public}
+										<span class="font-semibold text-green-600 dark:text-green-400">Public</span> - visible
+										in marketplace
+									{:else}
+										<span class="font-semibold text-gray-600 dark:text-gray-400">Private</span> - only
+										visible to you
+									{/if}
+								</span>
+							</label>
 						</div>
 					</div>
 					{#if paginatedFiles?.total_count && paginatedFiles.total_count > 0}

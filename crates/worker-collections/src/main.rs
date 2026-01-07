@@ -11,7 +11,7 @@ use opentelemetry_sdk::{
     trace::{RandomIdGenerator, Sampler, SdkTracerProvider},
 };
 use semantic_explorer_core::observability;
-use semantic_explorer_core::{jobs::CollectionTransformJob, storage::initialize_client};
+use semantic_explorer_core::{models::CollectionTransformJob, storage::initialize_client};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;

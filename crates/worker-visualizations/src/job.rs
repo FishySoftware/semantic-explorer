@@ -1,17 +1,16 @@
 use cuml_wrapper_rs::{identify_topic_clusters, reduce_dimensionality};
+use qdrant_client::Qdrant;
 use qdrant_client::qdrant::vectors_output::VectorsOptions;
 use qdrant_client::qdrant::{
     CreateCollectionBuilder, Distance, PointStruct, ScrollPointsBuilder, UpsertPointsBuilder,
     VectorParams, VectorsConfig,
 };
-use qdrant_client::Qdrant;
-use semantic_explorer_core::jobs::VisualizationTransformJob;
+use semantic_explorer_core::llm::{TfidfTopicNamer, TopicNamer};
+use semantic_explorer_core::models::{VisualizationTransformJob, VisualizationTransformResult};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::time::Instant;
-use tracing::{debug, info};
-
-use crate::topic_naming::TfidfTopicNamer;
+use tracing::{debug, info, warn};
 
 #[derive(Clone)]
 struct DocumentData {
@@ -81,7 +80,13 @@ pub async fn process_visualization_job(
     );
 
     let label_start = Instant::now();
-    let topic_labels = generate_topic_labels(&hdbscan.labels, &documents, n_clusters as usize);
+    let topic_labels = generate_topic_labels(
+        &hdbscan.labels,
+        &documents,
+        n_clusters as usize,
+        &job.visualization_config,
+    )
+    .await;
     info!(
         "Generated topic labels in {:.2}s",
         label_start.elapsed().as_secs_f64()
@@ -151,7 +156,7 @@ async fn send_result(
         Err(e) => (0, 0, "failed".to_string(), Some(e)),
     };
 
-    let result_msg = semantic_explorer_core::jobs::VisualizationTransformResult {
+    let result_msg = VisualizationTransformResult {
         job_id: job.job_id,
         visualization_transform_id: job.visualization_transform_id,
         status,
@@ -198,17 +203,17 @@ async fn fetch_documents_with_text(
         }
 
         for point in &points {
-            if let Some(vectors_output) = &point.vectors {
-                if let Some(vector_options) = &vectors_output.vectors_options {
-                    match vector_options {
-                        VectorsOptions::Vector(v) => match v.clone().into_vector() {
-                            qdrant_client::qdrant::vector_output::Vector::Dense(dense) => {
-                                all_vectors.extend_from_slice(&dense.data);
-                            }
-                            _ => continue,
-                        },
+            if let Some(vectors_output) = &point.vectors
+                && let Some(vector_options) = &vectors_output.vectors_options
+            {
+                match vector_options {
+                    VectorsOptions::Vector(v) => match v.clone().into_vector() {
+                        qdrant_client::qdrant::vector_output::Vector::Dense(dense) => {
+                            all_vectors.extend_from_slice(&dense.data);
+                        }
                         _ => continue,
-                    }
+                    },
+                    _ => continue,
                 }
             }
 
@@ -223,10 +228,10 @@ async fn fetch_documents_with_text(
         }
 
         let n_vectors = all_vectors.len();
-        if let Some(limit_val) = limit {
-            if n_vectors >= limit_val {
-                break;
-            }
+        if let Some(limit_val) = limit
+            && n_vectors >= limit_val
+        {
+            break;
         }
 
         if let Some(last_point) = points.last() {
@@ -257,14 +262,12 @@ async fn get_vector_size(
     collection_name: &str,
 ) -> Result<usize, Box<dyn std::error::Error>> {
     let collection_info = client.collection_info(collection_name).await?;
-    if let Some(config) = collection_info.result.and_then(|r| r.config) {
-        if let Some(vectors_config) = config.params.and_then(|p| p.vectors_config) {
-            if let Some(qdrant_client::qdrant::vectors_config::Config::Params(params)) =
-                vectors_config.config
-            {
-                return Ok(params.size as usize);
-            }
-        }
+    if let Some(config) = collection_info.result.and_then(|r| r.config)
+        && let Some(vectors_config) = config.params.and_then(|p| p.vectors_config)
+        && let Some(qdrant_client::qdrant::vectors_config::Config::Params(params)) =
+            vectors_config.config
+    {
+        return Ok(params.size as usize);
     }
     Err("Could not determine vector size".into())
 }
@@ -317,17 +320,17 @@ async fn export_reduced_vectors(
     let start = Instant::now();
     let n_samples = reduced_vectors.len() / n_components;
 
-    let mut points = Vec::new();
+    // Pre-allocate vector with exact capacity to avoid reallocations
+    let mut points = Vec::with_capacity(n_samples);
     for i in 0..n_samples {
         let vector: Vec<f32> = reduced_vectors[i * n_components..(i + 1) * n_components].to_vec();
         let cluster_id = labels[i];
-        let topic_label = topic_labels.get(&cluster_id).cloned();
 
         let mut payload = HashMap::new();
         payload.insert("cluster_id".to_string(), Value::from(cluster_id as i64));
 
-        if let Some(label) = topic_label {
-            payload.insert("topic_label".to_string(), Value::from(label));
+        if let Some(label) = topic_labels.get(&cluster_id) {
+            payload.insert("topic_label".to_string(), Value::from(label.clone()));
         }
 
         if i < documents.len() {
@@ -362,7 +365,8 @@ async fn export_topics(
     let start = Instant::now();
     let n_topics = topic_vectors.len() / n_features;
 
-    let mut points = Vec::new();
+    // Pre-allocate vector with exact capacity to avoid reallocations
+    let mut points = Vec::with_capacity(n_topics);
     for i in 0..n_topics {
         let vector: Vec<f32> = topic_vectors[i * n_features..(i + 1) * n_features].to_vec();
         let cluster_id = i as i32;
@@ -395,10 +399,11 @@ async fn export_topics(
     Ok(())
 }
 
-fn generate_topic_labels(
+async fn generate_topic_labels(
     labels: &[i32],
     documents: &[DocumentData],
     n_clusters: usize,
+    config: &semantic_explorer_core::models::VisualizationConfig,
 ) -> HashMap<i32, String> {
     let mut cluster_texts: HashMap<i32, Vec<String>> = HashMap::new();
 
@@ -412,12 +417,40 @@ fn generate_topic_labels(
     }
 
     let mut topic_labels = HashMap::new();
-    let namer = TfidfTopicNamer::new();
+
+    // Select topic namer based on configuration
+    let namer: Box<dyn TopicNamer> = match config.topic_naming_mode.to_lowercase().as_str() {
+        "llm" => {
+            if let Some(llm_id) = config.topic_naming_llm_id {
+                // TODO: Fetch LLM configuration from database using llm_id
+                // For now, fall back to TF-IDF
+                warn!(
+                    "LLM topic naming not yet fully implemented (LLM ID: {}), falling back to TF-IDF",
+                    llm_id
+                );
+                Box::new(TfidfTopicNamer::new())
+            } else {
+                warn!("LLM topic naming mode selected but no LLM ID provided, using TF-IDF");
+                Box::new(TfidfTopicNamer::new())
+            }
+        }
+        _ => Box::new(TfidfTopicNamer::new()),
+    };
 
     for cluster_id in 0..n_clusters as i32 {
         if let Some(texts) = cluster_texts.get(&cluster_id) {
-            let label = namer.generate_topic_label(texts);
-            topic_labels.insert(cluster_id, label);
+            match namer.generate_topic_label(texts).await {
+                Ok(label) => {
+                    topic_labels.insert(cluster_id, label);
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to generate topic label for cluster {}: {}, using fallback",
+                        cluster_id, e
+                    );
+                    topic_labels.insert(cluster_id, format!("Topic {}", cluster_id));
+                }
+            }
         } else {
             topic_labels.insert(cluster_id, format!("Topic {}", cluster_id));
         }

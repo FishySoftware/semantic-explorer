@@ -5,7 +5,7 @@ use futures_util::StreamExt;
 use sqlx::{Pool, Postgres};
 use tracing::{error, info};
 
-use semantic_explorer_core::jobs::{
+use semantic_explorer_core::models::{
     CollectionTransformResult, DatasetTransformResult, VisualizationTransformResult,
 };
 use semantic_explorer_core::storage::get_file;
@@ -298,7 +298,7 @@ async fn handle_visualization_result(result: VisualizationTransformResult, ctx: 
             "Visualization failed for transform {}: {:?}",
             result.visualization_transform_id, result.error
         );
-        
+
         // Update database with failure status
         let error_message = result.error.unwrap_or_else(|| "Unknown error".to_string());
         if let Err(e) = update_visualization_transform_status_failed(

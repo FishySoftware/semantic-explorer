@@ -1,8 +1,7 @@
 use anyhow::Result;
 use opentelemetry::{
-    global,
+    KeyValue, global,
     metrics::{Counter, Gauge, Histogram, Meter},
-    KeyValue,
 };
 use std::sync::OnceLock;
 

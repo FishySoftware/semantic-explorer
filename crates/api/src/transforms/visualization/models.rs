@@ -69,6 +69,12 @@ pub struct VisualizationConfig {
     pub min_cluster_size: i32,
     #[serde(default = "default_min_samples")]
     pub min_samples: Option<i32>,
+
+    // Topic naming configuration
+    #[serde(default = "default_topic_naming_mode")]
+    pub topic_naming_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub topic_naming_llm_id: Option<i32>,
 }
 
 impl Default for VisualizationConfig {
@@ -80,6 +86,8 @@ impl Default for VisualizationConfig {
             metric: default_metric(),
             min_cluster_size: default_min_cluster_size(),
             min_samples: default_min_samples(),
+            topic_naming_mode: default_topic_naming_mode(),
+            topic_naming_llm_id: None,
         }
     }
 }
@@ -142,6 +150,11 @@ fn default_min_cluster_size() -> i32 {
 
 fn default_min_samples() -> Option<i32> {
     Some(5)
+}
+
+// Default values for topic naming
+fn default_topic_naming_mode() -> String {
+    "tfidf".to_string()
 }
 
 impl VisualizationTransform {

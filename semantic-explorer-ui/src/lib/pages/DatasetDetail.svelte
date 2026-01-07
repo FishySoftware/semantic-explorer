@@ -10,6 +10,7 @@
 		details: string | null;
 		owner: string;
 		tags: string[];
+		is_public: boolean;
 	}
 
 	interface DatasetItem {
@@ -94,6 +95,7 @@
 	// Delete state
 	let deletingItem = $state<number | null>(null);
 	let itemPendingDelete = $state<DatasetItem | null>(null);
+	let updatingPublic = $state(false);
 
 	const examplePayload = {
 		items: [
@@ -134,6 +136,38 @@
 			error = e instanceof Error ? e.message : 'Failed to fetch dataset';
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function togglePublic() {
+		if (!dataset) return;
+
+		try {
+			updatingPublic = true;
+			const response = await fetch(`/api/datasets/${datasetId}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					title: dataset.title,
+					details: dataset.details,
+					tags: dataset.tags,
+					is_public: !dataset.is_public,
+				}),
+			});
+
+			if (!response.ok) {
+				throw new Error(`Failed to update dataset: ${response.statusText}`);
+			}
+
+			const updatedDataset = await response.json();
+			dataset = updatedDataset;
+			toastStore.success(
+				updatedDataset.is_public ? 'Dataset is now public' : 'Dataset is now private'
+			);
+		} catch (e) {
+			toastStore.error(formatError(e, 'Failed to update dataset visibility'));
+		} finally {
+			updatingPublic = false;
 		}
 	}
 
@@ -342,6 +376,26 @@
 							#{tag}
 						</span>
 					{/each}
+				</div>
+				<div class="mt-3">
+					<label class="inline-flex items-center gap-2 cursor-pointer">
+						<input
+							type="checkbox"
+							checked={dataset.is_public}
+							onchange={togglePublic}
+							disabled={updatingPublic}
+							class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+						/>
+						<span class="text-sm text-gray-700 dark:text-gray-300">
+							{#if dataset.is_public}
+								<span class="font-semibold text-green-600 dark:text-green-400">Public</span> - visible
+								in marketplace
+							{:else}
+								<span class="font-semibold text-gray-600 dark:text-gray-400">Private</span> - only visible
+								to you
+							{/if}
+						</span>
+					</label>
 				</div>
 			</div>
 

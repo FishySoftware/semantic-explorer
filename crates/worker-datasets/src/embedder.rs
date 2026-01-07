@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use once_cell::sync::Lazy;
-use semantic_explorer_core::jobs::EmbedderConfig;
+use semantic_explorer_core::models::EmbedderConfig;
 
 const DEFAULT_OPENAI_BATCH_SIZE: usize = 2048;
 const DEFAULT_COHERE_BATCH_SIZE: usize = 96;

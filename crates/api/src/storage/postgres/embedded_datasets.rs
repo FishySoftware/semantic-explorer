@@ -6,7 +6,6 @@ use crate::embedded_datasets::{
     EmbeddedDatasetWithDetails,
 };
 
-// Query constants
 const GET_EMBEDDED_DATASET_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
            owner, collection_name, created_at, updated_at
@@ -119,8 +118,6 @@ const RECORD_PROCESSED_BATCH_QUERY: &str = r#"
         processed_at = NOW()
 "#;
 
-// Public CRUD operations
-
 pub async fn get_embedded_dataset(
     pool: &Pool<Postgres>,
     owner: &str,
@@ -190,18 +187,13 @@ pub async fn delete_embedded_dataset(
     owner: &str,
     embedded_dataset_id: i32,
 ) -> Result<()> {
-    // First verify ownership
     get_embedded_dataset(pool, owner, embedded_dataset_id).await?;
-
-    // Then delete (cascades to processed files)
     sqlx::query(DELETE_EMBEDDED_DATASET_QUERY)
         .bind(embedded_dataset_id)
         .execute(pool)
         .await?;
     Ok(())
 }
-
-// Statistics and processed batches
 
 pub async fn get_embedded_dataset_stats(
     pool: &Pool<Postgres>,
@@ -246,8 +238,6 @@ pub async fn record_processed_batch(
     Ok(())
 }
 
-// Transaction-aware helper functions (used by dataset_transforms module)
-
 pub async fn create_embedded_dataset_in_transaction(
     tx: &mut Transaction<'_, Postgres>,
     title: &str,
@@ -267,7 +257,6 @@ pub async fn create_embedded_dataset_in_transaction(
         .fetch_one(&mut **tx)
         .await?;
 
-    // Update collection name with actual ID
     let actual_collection_name =
         EmbeddedDataset::generate_collection_name(embedded_dataset.embedded_dataset_id, owner);
     embedded_dataset =

@@ -4,7 +4,6 @@ use sqlx::{Pool, Postgres, Transaction};
 use crate::embedded_datasets::EmbeddedDataset;
 use crate::transforms::dataset::{DatasetTransform, DatasetTransformStats};
 
-// Query constants
 const GET_DATASET_TRANSFORM_QUERY: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner, is_enabled,
            job_config, created_at, updated_at
@@ -76,8 +75,6 @@ const GET_DATASET_TRANSFORM_STATS_QUERY: &str = r#"
     GROUP BY dt.dataset_transform_id, dt.embedder_ids
 "#;
 
-// CRUD operations
-
 pub async fn get_dataset_transform(
     pool: &Pool<Postgres>,
     owner: &str,
@@ -123,8 +120,6 @@ pub async fn get_active_dataset_transforms(pool: &Pool<Postgres>) -> Result<Vec<
     Ok(transforms)
 }
 
-/// Creates a Dataset Transform and automatically creates N Embedded Datasets (one per embedder)
-/// This is a transactional operation - if any embedded dataset creation fails, the entire operation is rolled back
 pub async fn create_dataset_transform(
     pool: &Pool<Postgres>,
     title: &str,

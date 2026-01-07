@@ -221,7 +221,12 @@
 		};
 	}
 
-	function calculateOptimalZoom(bbox: BoundingBox, mode2D: boolean, canvasWidth: number, canvasHeight: number): number {
+	function calculateOptimalZoom(
+		bbox: BoundingBox,
+		mode2D: boolean,
+		canvasWidth: number,
+		canvasHeight: number
+	): number {
 		// For 2D orthographic projection and 3D orbit view, calculate appropriate zoom
 		if (mode2D) {
 			// For orthographic view, zoom is a scale factor
@@ -453,11 +458,16 @@
 		// The container is constrained by the grid, so use those dimensions
 		const width = Math.min(containerWidth, window.innerWidth);
 		const height = Math.min(containerHeight, 600); // Grid height constraint
-		
+
 		deckCanvas.width = width;
 		deckCanvas.height = height;
 
-		console.log('Initializing Deck.GL with canvas:', { width, height, containerWidth, containerHeight });
+		console.log('Initializing Deck.GL with canvas:', {
+			width,
+			height,
+			containerWidth,
+			containerHeight,
+		});
 		console.log('Visualization mode:', is2D ? '2D' : '3D');
 
 		// Calculate initial view state based on bounding box
@@ -465,7 +475,12 @@
 
 		if (boundingBox) {
 			const constrainedHeight = Math.min(containerHeight, 600);
-			const optimalZoom = calculateOptimalZoom(boundingBox, is2D, containerWidth, constrainedHeight);
+			const optimalZoom = calculateOptimalZoom(
+				boundingBox,
+				is2D,
+				containerWidth,
+				constrainedHeight
+			);
 
 			if (is2D) {
 				initialViewState = {
@@ -914,7 +929,9 @@
 		<div class="grid grid-cols-1 lg:grid-cols-4 gap-6 overflow-hidden" style="height: 600px;">
 			<!-- Left sidebar: Topics -->
 			<div class="lg:col-span-1 overflow-hidden">
-				<div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 h-full flex flex-col overflow-y-auto">
+				<div
+					class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 h-full flex flex-col overflow-y-auto"
+				>
 					<div class="flex items-center justify-between mb-4">
 						<h2 class="text-lg font-semibold text-gray-900 dark:text-white">
 							Topics ({topics.filter((t) => t.visible).length}/{topics.length})
@@ -985,7 +1002,10 @@
 				>
 					<div class="absolute inset-0 rounded-lg flex" style="pointer-events: auto;">
 						<div id="deckgl-wrapper" class="w-full h-full relative flex-1" style="flex-grow: 1;">
-							<canvas bind:this={deckCanvas} class="w-full h-full block" style="touch-action: none; display: block; width: 100%; height: 100%;"
+							<canvas
+								bind:this={deckCanvas}
+								class="w-full h-full block"
+								style="touch-action: none; display: block; width: 100%; height: 100%;"
 							></canvas>
 						</div>
 					</div>

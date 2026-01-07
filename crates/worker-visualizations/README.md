@@ -31,7 +31,7 @@ This crate depends on `cuml-wrapper-rs`, which requires:
 
 ```bash
 # One-time setup: Install CUDA 12.4, Rust, micromamba, and cuML environment
-source ./crates/worker-visualizations/setup_build.sh
+source ./crates/worker-visualizations/.scripts/setup_build.sh
 
 # Build (after setup script activates environment)
 cargo build --release
@@ -41,7 +41,7 @@ cargo build --release
 
 This script is **idempotent** and will skip reinstalls if dependencies already exist:
 
-1. **Checks for CUDA 12.4** - Verifies NVIDIA drivers and CUDA Toolkit are installed
+1. **Checks for CUDA 12.4 or later** - Verifies NVIDIA drivers and CUDA Toolkit are installed
 2. **Installs system packages** - Build essentials, cmake, curl, pkg-config, SSL libraries
 3. **Sets up Rust** - Installs via rustup if not present
 4. **Installs micromamba** - Package manager for GPU libraries

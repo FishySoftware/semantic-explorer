@@ -3,7 +3,6 @@ use sqlx::{Pool, Postgres};
 
 use crate::transforms::collection::{CollectionTransform, CollectionTransformStats, ProcessedFile};
 
-// Query constants
 const GET_COLLECTION_TRANSFORM_QUERY: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner, is_enabled,
            chunk_size, job_config, created_at, updated_at
@@ -213,8 +212,6 @@ pub async fn delete_collection_transform(
         .await?;
     Ok(())
 }
-
-// Statistics and processed files
 
 pub async fn get_collection_transform_stats(
     pool: &Pool<Postgres>,

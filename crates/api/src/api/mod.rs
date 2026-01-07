@@ -1,9 +1,12 @@
+pub(crate) mod chat;
 pub(crate) mod collection_transforms;
 pub(crate) mod collections;
 pub(crate) mod dataset_transforms;
 pub(crate) mod datasets;
 pub(crate) mod embedded_datasets;
 pub(crate) mod embedders;
+pub(crate) mod llms;
+pub(crate) mod marketplace;
 pub(crate) mod search;
 pub(crate) mod visualization_transforms;
 pub(crate) mod visualizations;

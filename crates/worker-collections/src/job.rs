@@ -1,5 +1,5 @@
 use anyhow::Result;
-use semantic_explorer_core::jobs::{CollectionTransformJob, CollectionTransformResult};
+use semantic_explorer_core::models::{CollectionTransformJob, CollectionTransformResult};
 use semantic_explorer_core::observability::record_worker_job;
 use semantic_explorer_core::storage::{DocumentUpload, get_file, upload_document};
 use std::time::Instant;

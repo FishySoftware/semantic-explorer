@@ -8,7 +8,7 @@ use std::time::Duration;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use semantic_explorer_core::jobs::{CollectionTransformJob, EmbedderConfig};
+use semantic_explorer_core::models::{CollectionTransformJob, EmbedderConfig};
 
 use crate::storage::postgres::collection_transforms::{
     get_active_collection_transforms, get_processed_files,

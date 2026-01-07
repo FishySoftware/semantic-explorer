@@ -19,6 +19,8 @@ pub(crate) struct CreateEmbedder {
     pub(crate) dimensions: i32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) collection_name: Option<String>,
+    #[serde(default)]
+    pub(crate) is_public: bool,
 }
 
 fn default_batch_size() -> i32 {
@@ -47,6 +49,7 @@ pub(crate) struct Embedder {
     pub(crate) max_batch_size: i32,
     pub(crate) dimensions: i32,
     pub(crate) collection_name: Option<String>,
+    pub(crate) is_public: bool,
     #[schema(value_type = String, format = DateTime)]
     pub(crate) created_at: DateTime<Utc>,
     #[schema(value_type = String, format = DateTime)]
@@ -64,4 +67,5 @@ pub(crate) struct UpdateEmbedder {
     pub(crate) max_batch_size: Option<i32>,
     pub(crate) dimensions: Option<i32>,
     pub(crate) collection_name: Option<String>,
+    pub(crate) is_public: Option<bool>,
 }

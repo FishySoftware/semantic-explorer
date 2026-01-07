@@ -4,7 +4,7 @@
 /// 1. Fetches document vectors from source Qdrant collection
 /// 2. Reduces dimensionality using UMAP
 /// 3. Identifies topic clusters using HDBSCAN
-/// 4. Generates topic labels using TF-IDF
+/// 4. Generates topic labels using TF-IDF or LLM-based naming
 /// 5. Exports reduced vectors to `-reduced` collection
 /// 6. Exports topic centroids to `-reduced-topics` collection
 ///
@@ -12,17 +12,16 @@
 /// - NATS_URL: NATS server URL (default: nats://localhost:4222)
 /// - OTEL_EXPORTER_OTLP_ENDPOINT: OpenTelemetry collector endpoint
 mod job;
-mod topic_naming;
 
 use async_nats::jetstream::{self, consumer::pull::MessagesErrorKind};
 use futures_util::StreamExt;
-use opentelemetry::{trace::TracerProvider, KeyValue};
+use opentelemetry::{KeyValue, trace::TracerProvider};
 use opentelemetry_otlp::SpanExporter;
 use opentelemetry_sdk::{
-    trace::{SdkTracerProvider, Tracer},
     Resource,
+    trace::{SdkTracerProvider, Tracer},
 };
-use semantic_explorer_core::jobs::VisualizationTransformJob;
+use semantic_explorer_core::models::VisualizationTransformJob;
 use semantic_explorer_core::nats::{create_visualization_consumer_config, ensure_consumer};
 use std::env;
 use std::time::{Duration, Instant};
@@ -126,7 +125,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     job.job_id, duration_ms, e
                 );
 
-                let result_msg = semantic_explorer_core::jobs::VisualizationTransformResult {
+                let result_msg = semantic_explorer_core::models::VisualizationTransformResult {
                     job_id: job.job_id,
                     visualization_transform_id: job.visualization_transform_id,
                     status: "failed".to_string(),

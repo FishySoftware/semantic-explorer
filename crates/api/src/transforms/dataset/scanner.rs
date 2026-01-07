@@ -8,10 +8,12 @@ use std::time::Duration;
 use tracing::{error, info};
 use uuid::Uuid;
 
-use semantic_explorer_core::jobs::{DatasetTransformJob, EmbedderConfig, VectorDatabaseConfig};
+use semantic_explorer_core::models::{DatasetTransformJob, EmbedderConfig, VectorDatabaseConfig};
 use semantic_explorer_core::storage::{DocumentUpload, ensure_bucket_exists, upload_document};
 
-use crate::storage::postgres::dataset_transforms::get_active_dataset_transforms;
+use crate::storage::postgres::dataset_transforms::{
+    get_active_dataset_transforms, get_dataset_transform,
+};
 use crate::storage::postgres::datasets;
 use crate::storage::postgres::embedded_datasets;
 use crate::storage::postgres::embedders;
@@ -251,6 +253,7 @@ async fn process_dataset_transform_scan(
 }
 
 /// Create batch files from dataset items and dispatch jobs
+#[allow(clippy::too_many_arguments)]
 async fn create_batches_from_dataset_items(
     pool: &Pool<Postgres>,
     s3: &S3Client,
@@ -429,12 +432,7 @@ pub async fn trigger_dataset_transform_scan(
     );
 
     // Get the dataset transform
-    let transform = crate::storage::postgres::dataset_transforms::get_dataset_transform(
-        pool,
-        owner,
-        dataset_transform_id,
-    )
-    .await?;
+    let transform = get_dataset_transform(pool, owner, dataset_transform_id).await?;
 
     // Process the scan immediately
     process_dataset_transform_scan(pool, nats, s3, &transform).await?;

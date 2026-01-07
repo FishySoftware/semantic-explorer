@@ -4,6 +4,7 @@
 	import Sidebar from './lib/Sidebar.svelte';
 	import TopBanner from './lib/TopBanner.svelte';
 	import ToastHost from './lib/components/ToastHost.svelte';
+	import Chat from './lib/pages/Chat.svelte';
 	import CollectionDetail from './lib/pages/CollectionDetail.svelte';
 	import CollectionTransforms from './lib/pages/CollectionTransforms.svelte';
 	import Collections from './lib/pages/Collections.svelte';
@@ -14,6 +15,7 @@
 	import Documentation from './lib/pages/Documentation.svelte';
 	import EmbeddedDatasets from './lib/pages/EmbeddedDatasets.svelte';
 	import Embedders from './lib/pages/Embedders.svelte';
+	import Marketplace from './lib/pages/Marketplace.svelte';
 	import Search from './lib/pages/Search.svelte';
 	import VisualizationTransforms from './lib/pages/VisualizationTransforms.svelte';
 	import Visualizations from './lib/pages/Visualizations.svelte';
@@ -124,9 +126,11 @@
 	<div class="flex flex-1 overflow-hidden">
 		<Sidebar bind:activeUrl />
 
-		<main class="flex-1 overflow-y-auto p-8">
+		<main class="flex-1 overflow-y-auto {activeUrl === '/chat' ? 'p-0' : 'p-8'}">
 			{#if activeUrl === '/dashboard'}
 				<Dashboard />
+			{:else if activeUrl === '/chat'}
+				<Chat />
 			{:else if activeUrl === '/documentation'}
 				<Documentation />
 			{:else if activeUrl === '/collections'}
@@ -164,6 +168,8 @@
 				{/if}
 			{:else if activeUrl === '/search'}
 				<Search />
+			{:else if activeUrl === '/marketplace'}
+				<Marketplace />
 			{/if}
 		</main>
 	</div>

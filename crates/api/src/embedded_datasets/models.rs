@@ -55,7 +55,7 @@ pub struct EmbeddedDatasetStats {
 pub struct EmbeddedDatasetProcessedBatch {
     pub id: i32,
     pub embedded_dataset_id: i32,
-    pub file_key: String, // batch file key
+    pub file_key: String,
     #[schema(value_type = String, format = DateTime)]
     pub processed_at: DateTime<Utc>,
     pub item_count: i32,

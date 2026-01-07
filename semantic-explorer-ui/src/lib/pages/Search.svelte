@@ -46,9 +46,18 @@
 		error?: string;
 	}
 
+	interface SourceAggregation {
+		source: string;
+		matches: SearchMatch[];
+		best_score: number;
+		embedder_ids: number[];
+	}
+
 	interface SearchResponse {
 		results: EmbedderSearchResults[];
 		query: string;
+		search_mode: 'Documents' | 'Sources';
+		aggregated_sources?: SourceAggregation[];
 	}
 
 	let datasets = $state<Dataset[]>([]);
@@ -61,6 +70,9 @@
 	let selectedEmbedderIds = new SvelteSet<number>();
 	let searching = $state(false);
 	let searchResults = $state<SearchResponse | null>(null);
+	let searchMode = $state<'Documents' | 'Sources'>('Documents');
+	let comparisonMode = $state(false);
+	let selectedForComparison = new SvelteSet<string>();
 
 	$effect(() => {
 		if (selectedDatasetId !== null) {
@@ -100,6 +112,96 @@
 	let canSearch = $derived(
 		searchQuery.trim().length > 0 && selectedDatasetId !== null && selectedEmbedderIds.size > 0
 	);
+
+	let comparisonMatches = $derived.by(() => {
+		if (!searchResults || selectedForComparison.size === 0) return [];
+
+		const matches: Array<SearchMatch & { embedder_name: string }> = [];
+		searchResults.results.forEach((result) => {
+			result.matches.forEach((match) => {
+				if (selectedForComparison.has(match.id)) {
+					matches.push({ ...match, embedder_name: result.embedder_name });
+				}
+			});
+		});
+		return matches;
+	});
+
+	function toggleComparison(matchId: string) {
+		if (selectedForComparison.has(matchId)) {
+			selectedForComparison.delete(matchId);
+		} else {
+			if (selectedForComparison.size >= 4) {
+				toastStore.warning('Maximum 4 items can be compared at once');
+				return;
+			}
+			selectedForComparison.add(matchId);
+		}
+	}
+
+	function clearComparison() {
+		selectedForComparison.clear();
+		comparisonMode = false;
+	}
+
+	function computeDiff(
+		text1: string,
+		text2: string
+	): Array<{ type: 'common' | 'added' | 'removed'; text: string }> {
+		const words1 = text1.split(/(\s+)/);
+		const words2 = text2.split(/(\s+)/);
+		const diff: Array<{ type: 'common' | 'added' | 'removed'; text: string }> = [];
+
+		// Simple word-level diff algorithm
+		let i = 0,
+			j = 0;
+		while (i < words1.length || j < words2.length) {
+			if (i >= words1.length) {
+				diff.push({ type: 'added', text: words2[j] });
+				j++;
+			} else if (j >= words2.length) {
+				diff.push({ type: 'removed', text: words1[i] });
+				i++;
+			} else if (words1[i] === words2[j]) {
+				diff.push({ type: 'common', text: words1[i] });
+				i++;
+				j++;
+			} else {
+				// Look ahead to find common ground
+				let foundMatch = false;
+				for (let k = 1; k < 5 && j + k < words2.length; k++) {
+					if (words1[i] === words2[j + k]) {
+						for (let m = 0; m < k; m++) {
+							diff.push({ type: 'added', text: words2[j + m] });
+						}
+						j += k;
+						foundMatch = true;
+						break;
+					}
+				}
+				if (!foundMatch) {
+					for (let k = 1; k < 5 && i + k < words1.length; k++) {
+						if (words1[i + k] === words2[j]) {
+							for (let m = 0; m < k; m++) {
+								diff.push({ type: 'removed', text: words1[i + m] });
+							}
+							i += k;
+							foundMatch = true;
+							break;
+						}
+					}
+				}
+				if (!foundMatch) {
+					diff.push({ type: 'removed', text: words1[i] });
+					diff.push({ type: 'added', text: words2[j] });
+					i++;
+					j++;
+				}
+			}
+		}
+
+		return diff;
+	}
 
 	async function fetchData() {
 		try {
@@ -283,6 +385,7 @@
 					embeddings,
 					limit,
 					score_threshold: scoreThreshold,
+					search_mode: searchMode,
 					...(filters && { filters }),
 					...(searchParams && { search_params: searchParams }),
 				}),
@@ -315,8 +418,6 @@
 		description="Provides the ability to execute semantic searches against multiple embedded datasets for comparison purposes. Test and evaluate different embedding models side-by-side to determine which performs best for your use case."
 	/>
 
-	<h1 class="text-3xl font-bold text-gray-900 dark:text-white mb-6">Search Datasets</h1>
-
 	{#if loading}
 		<div class="flex justify-center items-center py-12">
 			<div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
@@ -326,14 +427,57 @@
 			{error}
 		</div>
 	{:else}
+		<!-- Search Query Section at Top -->
 		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
-			<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+			<h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-4">Search Query</h2>
+
+			<!-- Query Input -->
+			<div class="mb-4">
+				<textarea
+					bind:value={searchQuery}
+					onkeypress={handleKeyPress}
+					placeholder="Enter your search query..."
+					class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white resize-none focus:ring-2 focus:ring-blue-500"
+					rows="3"
+				></textarea>
+			</div>
+
+			<!-- Search Mode Toggle -->
+			<div class="mb-4 flex items-center gap-4">
+				<span class="text-sm font-medium text-gray-700 dark:text-gray-300">Search Mode:</span>
+				<div class="flex gap-2">
+					<button
+						onclick={() => (searchMode = 'Documents')}
+						class="px-4 py-2 rounded-lg transition-colors {searchMode === 'Documents'
+							? 'bg-blue-600 text-white'
+							: 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'}"
+					>
+						📄 Documents
+					</button>
+					<button
+						onclick={() => (searchMode = 'Sources')}
+						class="px-4 py-2 rounded-lg transition-colors {searchMode === 'Sources'
+							? 'bg-blue-600 text-white'
+							: 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'}"
+					>
+						📁 Sources
+					</button>
+				</div>
+				<span class="text-xs text-gray-500 dark:text-gray-400">
+					{searchMode === 'Documents'
+						? 'View individual document chunks'
+						: 'View results grouped by source'}
+				</span>
+			</div>
+
+			<!-- Dataset and Embedder Selection -->
+			<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
 				<div>
 					<label
 						for="dataset-filter"
 						class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
 					>
-						1. Select Dataset
+						Select Dataset
 					</label>
 					<select
 						id="dataset-filter"
@@ -348,11 +492,11 @@
 
 				<div class="md:col-span-2">
 					<span class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-						2. Select Embedders
+						Select Embedders
 					</span>
 					{#if selectedDatasetId !== null}
 						{@const datasetEmbeddersList = embeddersByDataset.get(selectedDatasetId) || []}
-						<div class="flex flex-wrap gap-3">
+						<div class="flex flex-wrap gap-2">
 							{#each datasetEmbeddersList as embedder (embedder.embedder_id)}
 								<label
 									class="flex items-center gap-2 cursor-pointer bg-gray-50 dark:bg-gray-700 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-600 hover:border-blue-400 dark:hover:border-blue-500 transition-colors"
@@ -386,174 +530,333 @@
 					{/if}
 				</div>
 			</div>
-		</div>
 
-		{#if selectedDatasetId !== null && selectedEmbedderIds.size > 0}
-			<div class="space-y-6">
-				<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
-					<h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-4">Search Query</h2>
+			<!-- Advanced Options -->
+			<button
+				onclick={() => (showAdvanced = !showAdvanced)}
+				class="text-sm text-blue-600 dark:text-blue-400 hover:underline mb-3"
+			>
+				{showAdvanced ? '▼' : '▶'} Advanced Options
+			</button>
 
-					<div class="mb-4">
-						<textarea
-							bind:value={searchQuery}
-							onkeypress={handleKeyPress}
-							placeholder="Enter your search query..."
-							class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white resize-none focus:ring-2 focus:ring-blue-500"
-							rows="3"
-						></textarea>
+			{#if showAdvanced}
+				<div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 mb-4 space-y-4">
+					<div class="grid grid-cols-2 gap-4">
+						<div>
+							<label
+								for="search-limit"
+								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+							>
+								Limit (per embedder)
+							</label>
+							<input
+								id="search-limit"
+								type="number"
+								bind:value={limit}
+								min="1"
+								max="100"
+								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+							/>
+						</div>
+
+						<div>
+							<label
+								for="score-threshold"
+								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+							>
+								Score Threshold (0-1)
+							</label>
+							<input
+								id="score-threshold"
+								type="number"
+								bind:value={scoreThreshold}
+								min="0"
+								max="1"
+								step="0.1"
+								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+							/>
+						</div>
 					</div>
 
-					<button
-						onclick={() => (showAdvanced = !showAdvanced)}
-						class="text-sm text-blue-600 dark:text-blue-400 hover:underline mb-3"
-					>
-						{showAdvanced ? '▼' : '▶'} Advanced Options
-					</button>
+					<div class="flex items-center gap-4">
+						<label class="flex items-center gap-2 cursor-pointer">
+							<input
+								type="checkbox"
+								bind:checked={exactSearch}
+								class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+							/>
+							<span class="text-sm text-gray-700 dark:text-gray-300"
+								>Exact search (slower, more accurate)</span
+							>
+						</label>
+					</div>
 
-					{#if showAdvanced}
-						<div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 mb-4 space-y-4">
-							<div class="grid grid-cols-2 gap-4">
-								<div>
-									<label
-										for="search-limit"
-										class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-									>
-										Limit (per embedder)
-									</label>
-									<input
-										id="search-limit"
-										type="number"
-										bind:value={limit}
-										min="1"
-										max="100"
-										class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-									/>
-								</div>
+					<div>
+						<label
+							for="hnsw-ef"
+							class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+						>
+							HNSW ef parameter (optional, higher = more accurate but slower)
+						</label>
+						<input
+							id="hnsw-ef"
+							type="number"
+							bind:value={hnswEf}
+							min="0"
+							placeholder="Leave empty for default"
+							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+						/>
+					</div>
 
-								<div>
-									<label
-										for="score-threshold"
-										class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-									>
-										Score Threshold (0-1)
-									</label>
-									<input
-										id="score-threshold"
-										type="number"
-										bind:value={scoreThreshold}
-										min="0"
-										max="1"
-										step="0.1"
-										class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-									/>
-								</div>
-							</div>
+					<div>
+						<label
+							for="metadata-filters"
+							class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+						>
+							Metadata Filters (JSON)
+						</label>
+						<textarea
+							id="metadata-filters"
+							bind:value={metadataFilters}
+							placeholder={metadataPlaceholder}
+							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
+							rows="3"
+						></textarea>
+						<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+							Filter results by metadata fields
+						</p>
+					</div>
+				</div>
+			{/if}
 
-							<div class="flex items-center gap-4">
-								<label class="flex items-center gap-2 cursor-pointer">
-									<input
-										type="checkbox"
-										bind:checked={exactSearch}
-										class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-									/>
-									<span class="text-sm text-gray-700 dark:text-gray-300"
-										>Exact search (slower, more accurate)</span
-									>
-								</label>
-							</div>
+			<button
+				onclick={performSearch}
+				disabled={!canSearch || searching}
+				class="w-full px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
+			>
+				{searching ? 'Searching...' : 'Search'}
+			</button>
+		</div>
 
-							<div>
-								<label
-									for="hnsw-ef"
-									class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-								>
-									HNSW ef parameter (optional, higher = more accurate but slower)
-								</label>
-								<input
-									id="hnsw-ef"
-									type="number"
-									bind:value={hnswEf}
-									min="0"
-									placeholder="Leave empty for default"
-									class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-								/>
-							</div>
-
-							<div>
-								<label
-									for="metadata-filters"
-									class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-								>
-									Metadata Filters (JSON)
-								</label>
-								<textarea
-									id="metadata-filters"
-									bind:value={metadataFilters}
-									placeholder={metadataPlaceholder}
-									class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
-									rows="3"
-								></textarea>
-								<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-									Filter results by metadata fields
-								</p>
-							</div>
-						</div>
-					{/if}
-
-					<button
-						onclick={performSearch}
-						disabled={!canSearch || searching}
-						class="w-full px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
-					>
-						{searching ? 'Searching...' : 'Search'}
-					</button>
+		<!-- Search Results -->
+		{#if searchResults}
+			<div class="space-y-6">
+				<div class="flex items-center justify-between">
+					<h2 class="text-xl font-semibold text-gray-900 dark:text-white">
+						Results for: "{searchResults.query}"
+					</h2>
+					<div class="flex items-center gap-4">
+						{#if searchResults.search_mode === 'Documents'}
+							<button
+								onclick={() => {
+									comparisonMode = !comparisonMode;
+									if (!comparisonMode) {
+										selectedForComparison.clear();
+									}
+								}}
+								class="px-4 py-2 rounded-lg transition-colors {comparisonMode
+									? 'bg-blue-600 text-white'
+									: 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'}"
+							>
+								{comparisonMode ? '✓ Comparing' : '⚖️ Compare'}
+								{#if selectedForComparison.size > 0}
+									({selectedForComparison.size})
+								{/if}
+							</button>
+						{/if}
+						<span class="text-sm text-gray-600 dark:text-gray-400">
+							{searchResults.search_mode === 'Sources' && searchResults.aggregated_sources
+								? `${searchResults.aggregated_sources.length} sources`
+								: `${searchResults.results.length} embedder${searchResults.results.length !== 1 ? 's' : ''}`}
+						</span>
+					</div>
 				</div>
 
-				{#if searchResults}
-					<div class="space-y-6">
-						<div class="flex items-center justify-between">
-							<h2 class="text-xl font-semibold text-gray-900 dark:text-white">
-								Results for: "{searchResults.query}"
-							</h2>
-							<span class="text-sm text-gray-600 dark:text-gray-400">
-								{searchResults.results.length} embedder{searchResults.results.length !== 1
-									? 's'
-									: ''}
-							</span>
+				{#if comparisonMode && comparisonMatches.length > 0}
+					<!-- Comparison View -->
+					<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+						<div class="flex items-center justify-between mb-4">
+							<h3 class="text-lg font-semibold text-gray-900 dark:text-white">
+								Comparing {comparisonMatches.length} Results
+							</h3>
+							<button
+								onclick={clearComparison}
+								class="text-sm text-red-600 dark:text-red-400 hover:underline"
+							>
+								Clear Comparison
+							</button>
 						</div>
 
-						<div class="overflow-x-auto pb-4">
-							<div class="flex justify-center gap-6 min-w-max">
-								{#each searchResults.results as result (result.embedder_id)}
-									<div class="w-96 shrink-0 bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
-										<div class="flex items-start justify-between mb-4">
-											<div>
-												<h3 class="text-lg font-semibold text-gray-900 dark:text-white">
-													{result.embedder_name}
-												</h3>
-												<p class="text-sm text-gray-600 dark:text-gray-400">
-													Embedded Dataset: {result.collection_name}
-												</p>
+						<div
+							class="grid grid-cols-1 {comparisonMatches.length === 2
+								? 'md:grid-cols-2'
+								: comparisonMatches.length === 3
+									? 'md:grid-cols-3'
+									: 'md:grid-cols-2 lg:grid-cols-4'} gap-4"
+						>
+							{#each comparisonMatches as match, idx (match.id)}
+								<div class="border border-blue-400 dark:border-blue-600 rounded-lg p-4">
+									<div class="mb-3">
+										<div class="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+											{match.embedder_name}
+										</div>
+										<div class="flex items-center justify-between">
+											<div class="text-sm font-semibold text-gray-900 dark:text-white">
+												{match.metadata.title ||
+													match.metadata.name ||
+													match.metadata.file ||
+													`Item ${match.metadata.item_id || idx + 1}`}
+											</div>
+											<div class="text-lg font-bold text-blue-600 dark:text-blue-400">
+												{match.score.toFixed(3)}
 											</div>
 										</div>
+									</div>
 
-										{#if result.error}
-											<div
-												class="bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 p-3 rounded text-sm"
+									{#if idx > 0}
+										{@const diff = computeDiff(comparisonMatches[0].text, match.text)}
+										<div
+											class="bg-gray-50 dark:bg-gray-900 rounded p-3 border border-gray-200 dark:border-gray-700"
+										>
+											<div class="text-xs text-gray-600 dark:text-gray-400 mb-2">
+												Diff vs. Result #1
+											</div>
+											<p class="text-sm leading-relaxed">
+												{#each diff as segment, i (i)}
+													{#if segment.type === 'common'}
+														<span class="text-gray-900 dark:text-gray-100">{segment.text}</span>
+													{:else if segment.type === 'added'}
+														<span
+															class="bg-green-200 dark:bg-green-900 text-green-900 dark:text-green-200"
+															>{segment.text}</span
+														>
+													{:else}
+														<span
+															class="bg-red-200 dark:bg-red-900 text-red-900 dark:text-red-200 line-through"
+															>{segment.text}</span
+														>
+													{/if}
+												{/each}
+											</p>
+										</div>
+									{:else}
+										<div
+											class="bg-gray-50 dark:bg-gray-900 rounded p-3 border border-gray-200 dark:border-gray-700"
+										>
+											<p
+												class="text-sm text-gray-900 dark:text-gray-100 leading-relaxed whitespace-pre-wrap"
 											>
-												{result.error}
+												{match.text}
+											</p>
+										</div>
+									{/if}
+								</div>
+							{/each}
+						</div>
+					</div>
+				{/if}
+
+				{#if searchResults.search_mode === 'Sources' && searchResults.aggregated_sources}
+					<!-- Sources Mode: Show aggregated by source -->
+					<div class="space-y-4">
+						{#each searchResults.aggregated_sources as source (source.source)}
+							<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+								<div class="flex items-start justify-between mb-4">
+									<div class="flex-1">
+										<h3 class="text-lg font-semibold text-gray-900 dark:text-white">
+											📁 {source.source}
+										</h3>
+										<p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
+											{source.matches.length} match{source.matches.length !== 1 ? 'es' : ''} from
+											{source.embedder_ids.length} embedder{source.embedder_ids.length !== 1
+												? 's'
+												: ''}
+										</p>
+									</div>
+									<div class="text-right">
+										<div class="text-xs text-gray-600 dark:text-gray-400">Best Score</div>
+										<div class="text-xl font-bold text-blue-600 dark:text-blue-400">
+											{source.best_score.toFixed(4)}
+										</div>
+									</div>
+								</div>
+
+								<div class="space-y-3">
+									{#each source.matches.slice(0, 3) as match, idx (match.id)}
+										<div
+											class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-gray-50 dark:bg-gray-900"
+										>
+											<div class="flex items-center justify-between mb-2">
+												<div class="text-xs font-medium text-gray-500 dark:text-gray-400">
+													Match #{idx + 1}
+												</div>
+												<div class="text-sm font-bold text-blue-600 dark:text-blue-400">
+													{match.score.toFixed(4)}
+												</div>
 											</div>
-										{:else if result.matches.length === 0}
-											<div class="text-gray-500 dark:text-gray-400 text-center py-4">
-												No results found
-											</div>
-										{:else}
-											<div class="space-y-3">
-												{#each result.matches as match, idx (match.id)}
-													<div
-														class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:border-blue-400 dark:hover:border-blue-600 transition-colors"
-													>
-														<div class="flex items-start justify-between mb-3">
+											<p
+												class="text-sm text-gray-900 dark:text-gray-100 leading-relaxed whitespace-pre-wrap line-clamp-3"
+											>
+												{match.text}
+											</p>
+										</div>
+									{/each}
+									{#if source.matches.length > 3}
+										<div class="text-center text-sm text-gray-500 dark:text-gray-400">
+											+ {source.matches.length - 3} more matches
+										</div>
+									{/if}
+								</div>
+							</div>
+						{/each}
+					</div>
+				{:else}
+					<!-- Documents Mode: Show side-by-side embedder results -->
+					<div class="overflow-x-auto pb-4">
+						<div class="flex justify-center gap-6 min-w-max">
+							{#each searchResults.results as result (result.embedder_id)}
+								<div class="w-96 shrink-0 bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+									<div class="flex items-start justify-between mb-4">
+										<div>
+											<h3 class="text-lg font-semibold text-gray-900 dark:text-white">
+												{result.embedder_name}
+											</h3>
+											<p class="text-sm text-gray-600 dark:text-gray-400">
+												Embedded Dataset: {result.collection_name}
+											</p>
+										</div>
+									</div>
+
+									{#if result.error}
+										<div
+											class="bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 p-3 rounded text-sm"
+										>
+											{result.error}
+										</div>
+									{:else if result.matches.length === 0}
+										<div class="text-gray-500 dark:text-gray-400 text-center py-4">
+											No results found
+										</div>
+									{:else}
+										<div class="space-y-3">
+											{#each result.matches as match, idx (match.id)}
+												<div
+													class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:border-blue-400 dark:hover:border-blue-600 transition-colors {selectedForComparison.has(
+														match.id
+													)
+														? 'ring-2 ring-blue-500'
+														: ''}"
+												>
+													<div class="flex items-start justify-between mb-3">
+														<div class="flex items-start gap-3 flex-1">
+															{#if comparisonMode}
+																<input
+																	type="checkbox"
+																	checked={selectedForComparison.has(match.id)}
+																	onchange={() => toggleComparison(match.id)}
+																	class="mt-1 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+																/>
+															{/if}
 															<div class="flex-1">
 																<div class="text-xs font-medium text-gray-500 dark:text-gray-400">
 																	Result #{idx + 1}
@@ -569,62 +872,62 @@
 																	</div>
 																{/if}
 															</div>
-															<div class="text-right">
-																<div class="text-xs text-gray-600 dark:text-gray-400">Score</div>
-																<div class="text-lg font-bold text-blue-600 dark:text-blue-400">
-																	{match.score.toFixed(4)}
-																</div>
+														</div>
+														<div class="text-right">
+															<div class="text-xs text-gray-600 dark:text-gray-400">Score</div>
+															<div class="text-lg font-bold text-blue-600 dark:text-blue-400">
+																{match.score.toFixed(4)}
 															</div>
 														</div>
-
-														<div
-															class="bg-gray-50 dark:bg-gray-900 rounded p-3 mb-3 border border-gray-200 dark:border-gray-700"
-														>
-															<p
-																class="text-sm text-gray-900 dark:text-gray-100 leading-relaxed whitespace-pre-wrap line-clamp-6"
-															>
-																{match.text}
-															</p>
-														</div>
-
-														{#if Object.keys(match.metadata).length > 0}
-															<details class="mt-3">
-																<summary
-																	class="text-xs font-medium text-gray-600 dark:text-gray-400 cursor-pointer hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-2"
-																>
-																	<span>📋 Metadata & Details</span>
-																	<span class="text-gray-400">▾</span>
-																</summary>
-																<div class="mt-2 space-y-2 text-xs">
-																	{#each Object.entries(match.metadata) as [key, value] (key)}
-																		<div class="flex flex-col">
-																			<span class="font-medium text-gray-700 dark:text-gray-300">
-																				{key}:
-																			</span>
-																			<span class="text-gray-600 dark:text-gray-400 ml-2">
-																				{typeof value === 'string' ? value : JSON.stringify(value)}
-																			</span>
-																		</div>
-																	{/each}
-																</div>
-															</details>
-														{/if}
-
-														<div class="text-xs text-gray-500 dark:text-gray-500 mt-3">
-															ID: {match.id}
-														</div>
 													</div>
-												{/each}
-											</div>
-										{/if}
-									</div>
-								{/each}
-							</div>
+
+													<div
+														class="bg-gray-50 dark:bg-gray-900 rounded p-3 mb-3 border border-gray-200 dark:border-gray-700"
+													>
+														<p
+															class="text-sm text-gray-900 dark:text-gray-100 leading-relaxed whitespace-pre-wrap line-clamp-6"
+														>
+															{match.text}
+														</p>
+													</div>
+
+													{#if Object.keys(match.metadata).length > 0}
+														<details class="mt-3">
+															<summary
+																class="text-xs font-medium text-gray-600 dark:text-gray-400 cursor-pointer hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-2"
+															>
+																<span>📋 Metadata & Details</span>
+																<span class="text-gray-400">▾</span>
+															</summary>
+															<div class="mt-2 space-y-2 text-xs">
+																{#each Object.entries(match.metadata) as [key, value] (key)}
+																	<div class="flex flex-col">
+																		<span class="font-medium text-gray-700 dark:text-gray-300">
+																			{key}:
+																		</span>
+																		<span class="text-gray-600 dark:text-gray-400 ml-2">
+																			{typeof value === 'string' ? value : JSON.stringify(value)}
+																		</span>
+																	</div>
+																{/each}
+															</div>
+														</details>
+													{/if}
+
+													<div class="text-xs text-gray-500 dark:text-gray-500 mt-3">
+														ID: {match.id}
+													</div>
+												</div>
+											{/each}
+										</div>
+									{/if}
+								</div>
+							{/each}
 						</div>
 					</div>
 				{/if}
 			</div>
-		{:else}
+		{:else if !loading}
 			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-12 text-center">
 				<svg
 					class="w-16 h-16 mx-auto mb-4 text-gray-400"
@@ -641,7 +944,7 @@
 				</svg>
 				<h3 class="text-lg font-medium text-gray-900 dark:text-white mb-2">Ready to Search</h3>
 				<p class="text-gray-500 dark:text-gray-400">
-					Select a dataset and at least one embedder above to start searching and comparing results.
+					Select a dataset and at least one embedder, enter your query, and click Search.
 				</p>
 			</div>
 		{/if}

@@ -1,8 +1,8 @@
 use crate::auth::extract_username;
 use crate::storage::postgres::dataset_transforms;
 use crate::transforms::dataset::{
-    trigger_dataset_transform_scan, CreateDatasetTransform, DatasetTransform,
-    DatasetTransformStats, UpdateDatasetTransform,
+    CreateDatasetTransform, DatasetTransform, DatasetTransformStats, UpdateDatasetTransform,
+    trigger_dataset_transform_scan,
 };
 
 use actix_web::web::{Data, Json, Path};
@@ -357,57 +357,6 @@ pub async fn get_dataset_transform_stats(
         }
     }
 }
-
-// TODO: Re-enable after implementing EmbeddedDataset type in API response models
-// #[utoipa::path(
-//     get,
-//     path = "/api/dataset-transforms/{id}/embedded-datasets",
-//     tag = "Dataset Transforms",
-//     params(
-//         ("id" = i32, Path, description = "Dataset Transform ID")
-//     ),
-//     responses(
-//         (status = 200, description = "Embedded datasets created by this transform", body = Vec<EmbeddedDataset>),
-//         (status = 404, description = "Dataset transform not found"),
-//         (status = 401, description = "Unauthorized"),
-//     ),
-// )]
-// #[get(\"/api/dataset-transforms/{id}/embedded-datasets\")]
-/* TODO: Re-enable after implementing EmbeddedDataset type
-#[tracing::instrument(name = \"get_embedded_datasets_for_transform\", skip(auth, postgres_pool), fields(dataset_transform_id = %path.as_ref()))]
-pub async fn get_embedded_datasets_for_transform(
-    auth: Authenticated,
-    postgres_pool: Data<Pool<Postgres>>,
-    path: Path<i32>,
-) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
-    let dataset_transform_id = path.into_inner();
-
-    match dataset_transforms::get_dataset_transform(&postgres_pool, &username, dataset_transform_id).await {
-        Ok(_) => {
-            match crate::storage::postgres::embedded_datasets::get_embedded_datasets_for_transform(&postgres_pool, dataset_transform_id).await {
-                Ok(embedded_datasets) => HttpResponse::Ok().json(embedded_datasets),
-                Err(e) => {
-                    error!(\"Failed to get embedded datasets: {}\", e);
-                    HttpResponse::InternalServerError().json(serde_json::json!({
-                        \"error\": format!(\"Failed to get embedded datasets: {}\", e)
-                    }))
-                }
-            }
-        }
-        Err(e) => {
-            error!(\"Dataset transform not found: {}\", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                \"error\": format!(\"Dataset transform not found: {}\", e)
-            }))
-        }
-    }
-}
-*/
 
 #[utoipa::path(
     get,

@@ -96,7 +96,6 @@
 
 	// Failed files modal state
 	let showFailedFilesModal = $state(false);
-	let failedFilesTransformId = $state<number | null>(null);
 	let failedFilesTransformTitle = $state('');
 	let failedFiles = $state<ProcessedFile[]>([]);
 	let loadingFailedFiles = $state(false);
@@ -182,7 +181,6 @@
 	}
 
 	async function openFailedFilesModal(transform: CollectionTransform) {
-		failedFilesTransformId = transform.collection_transform_id;
 		failedFilesTransformTitle = transform.title;
 		showFailedFilesModal = true;
 		loadingFailedFiles = true;
@@ -210,7 +208,6 @@
 
 	function closeFailedFilesModal() {
 		showFailedFilesModal = false;
-		failedFilesTransformId = null;
 		failedFilesTransformTitle = '';
 		failedFiles = [];
 	}
@@ -1614,7 +1611,7 @@
 					<p class="text-gray-500 dark:text-gray-400 text-center py-8">No failed files found.</p>
 				{:else}
 					<div class="space-y-4">
-						{#each failedFiles as file}
+						{#each failedFiles as file (file.file_key)}
 							<div
 								class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4"
 							>

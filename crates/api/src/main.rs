@@ -1,12 +1,16 @@
 mod api;
 mod auth;
+mod chat;
 mod collections;
 mod datasets;
-mod embedded_datasets; // New resource entity
+mod embedded_datasets;
 mod embedders;
+mod llms;
 mod observability;
+mod search;
 mod storage;
 mod transforms;
+mod visualizations;
 
 use actix_cors::Cors;
 use actix_multipart::form::MultipartFormConfig;
@@ -122,6 +126,19 @@ async fn main() -> Result<()> {
             .service(api::embedders::update_embedder)
             .service(api::embedders::delete_embedder)
             .service(api::embedders::test_embedder)
+            .service(api::llms::get_llms)
+            .service(api::llms::get_llm)
+            .service(api::llms::create_llm)
+            .service(api::llms::update_llm)
+            .service(api::llms::delete_llm)
+            .service(api::marketplace::get_public_collections)
+            .service(api::marketplace::get_public_datasets)
+            .service(api::marketplace::get_public_embedders)
+            .service(api::marketplace::get_public_llms)
+            .service(api::marketplace::grab_collection)
+            .service(api::marketplace::grab_dataset)
+            .service(api::marketplace::grab_embedder)
+            .service(api::marketplace::grab_llm)
             .service(api::search::search)
             .service(api::collection_transforms::get_collection_transforms)
             .service(api::collection_transforms::get_collection_transform)
@@ -158,6 +175,12 @@ async fn main() -> Result<()> {
             .service(api::visualization_transforms::get_visualizations_for_embedded_dataset)
             .service(api::visualizations::get_visualization_points)
             .service(api::visualizations::get_visualization_topics)
+            .service(api::chat::create_chat_session)
+            .service(api::chat::get_chat_sessions)
+            .service(api::chat::get_chat_session)
+            .service(api::chat::delete_chat_session)
+            .service(api::chat::get_chat_messages)
+            .service(api::chat::send_chat_message)
             .openapi_service(|api| {
                 SwaggerUi::new("/swagger-ui/{_:.*}").url("/api/openapi.json", api)
             })
@@ -172,7 +195,6 @@ async fn main() -> Result<()> {
     .run()
     .await?;
 
-    // Abort all scanner tasks on shutdown
     collection_scanner_handle.abort();
     dataset_scanner_handle.abort();
     visualization_scanner_handle.abort();

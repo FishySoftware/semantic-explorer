@@ -3,6 +3,7 @@
 		ArrowsRepeatOutline,
 		BookOpenSolid,
 		BrainSolid,
+		CartSolid,
 		ChartPieSolid,
 		ChevronDownOutline,
 		ChevronRightOutline,
@@ -11,6 +12,7 @@
 		FolderSolid,
 		GridSolid,
 		LayersSolid,
+		PaperClipOutline,
 		SearchOutline,
 	} from 'flowbite-svelte-icons';
 	import type { Props } from 'flowbite-svelte-icons/types';
@@ -27,6 +29,7 @@
 
 	const menuItems: MenuItem[] = [
 		{ name: 'Dashboard', icon: GridSolid, url: '/dashboard' },
+		{ name: 'Chat', icon: PaperClipOutline, url: '/chat' },
 		{ name: 'Documentation', icon: BookOpenSolid, url: '/documentation' },
 		{ name: 'Collections', icon: FolderSolid, url: '/collections' },
 		{ name: 'Datasets', icon: DatabaseSolid, url: '/datasets' },
@@ -51,6 +54,7 @@
 		},
 		{ name: 'Search', icon: SearchOutline, url: '/search' },
 		{ name: 'Visualizations', icon: ChartPieSolid, url: '/visualizations' },
+		{ name: 'Marketplace', icon: CartSolid, url: '/marketplace' },
 	];
 	let expandedFolders = $state<string[]>(['Transforms']);
 

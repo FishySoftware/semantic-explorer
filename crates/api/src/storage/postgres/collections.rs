@@ -6,16 +6,16 @@ use crate::collections::models::Collection;
 use semantic_explorer_core::observability::record_database_query;
 
 const GET_COLLECTION_QUERY: &str = r#"
-    SELECT collection_id, title, details, owner, bucket, tags, created_at, updated_at FROM collections
+    SELECT collection_id, title, details, owner, bucket, tags, is_public, created_at, updated_at FROM collections
     WHERE owner = $1 AND collection_id = $2
 "#;
 
 const GET_COLLECTIONS_QUERY: &str = r#"
-    SELECT collection_id, title, details, owner, bucket, tags, created_at, updated_at FROM collections WHERE owner = $1
+    SELECT collection_id, title, details, owner, bucket, tags, is_public, created_at, updated_at FROM collections WHERE owner = $1
 "#;
 
 const GET_COLLECTIONS_PAGINATED_QUERY: &str = r#"
-    SELECT collection_id, title, details, owner, bucket, tags, created_at, updated_at
+    SELECT collection_id, title, details, owner, bucket, tags, is_public, created_at, updated_at
     FROM collections
     WHERE owner = $1
     ORDER BY created_at DESC
@@ -27,7 +27,7 @@ const COUNT_COLLECTIONS_QUERY: &str = r#"
 "#;
 
 const SEARCH_COLLECTIONS_QUERY: &str = r#"
-    SELECT collection_id, title, details, owner, bucket, tags, created_at, updated_at
+    SELECT collection_id, title, details, owner, bucket, tags, is_public, created_at, updated_at
     FROM collections
     WHERE owner = $1 AND (title ILIKE $2 OR details ILIKE $2 OR $3 = ANY(tags))
     ORDER BY created_at DESC
@@ -41,13 +41,28 @@ const COUNT_SEARCH_COLLECTIONS_QUERY: &str = r#"
 "#;
 
 const CREATE_COLLECTION_QUERY: &str = r#"
-    INSERT INTO collections (title, details, owner, bucket, tags)
-    VALUES ($1, $2, $3, $4, $5)
-    RETURNING collection_id, title, details, owner, bucket, tags, created_at, updated_at
+    INSERT INTO collections (title, details, owner, bucket, tags, is_public)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    RETURNING collection_id, title, details, owner, bucket, tags, is_public, created_at, updated_at
 "#;
 
 const DELETE_COLLECTION_QUERY: &str = r#"
     DELETE FROM collections WHERE owner = $1 AND collection_id = $2
+"#;
+
+const GET_PUBLIC_COLLECTIONS_QUERY: &str = r#"
+    SELECT collection_id, title, details, owner, bucket, tags, is_public, created_at, updated_at
+    FROM collections
+    WHERE is_public = TRUE
+    ORDER BY created_at DESC
+"#;
+
+const GRAB_PUBLIC_COLLECTION_QUERY: &str = r#"
+    INSERT INTO collections (title, details, owner, bucket, tags, is_public)
+    SELECT title, details, $1, $2, tags, FALSE
+    FROM collections
+    WHERE collection_id = $3 AND is_public = TRUE
+    RETURNING collection_id, title, details, owner, bucket, tags, is_public, created_at, updated_at
 "#;
 
 #[tracing::instrument(name = "database.get_collection", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner = %owner, collection_id = %collection_id))]
@@ -165,6 +180,7 @@ pub(crate) async fn create_collection(
     owner: &str,
     bucket: &str,
     tags: &[String],
+    is_public: bool,
 ) -> Result<Collection> {
     let start = Instant::now();
     let result = sqlx::query_as::<_, Collection>(CREATE_COLLECTION_QUERY)
@@ -173,6 +189,7 @@ pub(crate) async fn create_collection(
         .bind(owner)
         .bind(bucket)
         .bind(tags)
+        .bind(is_public)
         .fetch_one(pool)
         .await;
 
@@ -202,4 +219,43 @@ pub(crate) async fn delete_collection(
 
     result?;
     Ok(())
+}
+
+#[tracing::instrument(name = "database.get_public_collections", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT"))]
+pub(crate) async fn get_public_collections(pool: &Pool<Postgres>) -> Result<Vec<Collection>> {
+    let start = Instant::now();
+    let result = sqlx::query_as::<_, Collection>(GET_PUBLIC_COLLECTIONS_QUERY)
+        .fetch_all(pool)
+        .await;
+
+    let duration = start.elapsed().as_secs_f64();
+    let success = result.is_ok();
+    record_database_query("SELECT", "collections", duration, success);
+
+    Ok(result?)
+}
+
+#[tracing::instrument(name = "database.grab_public_collection", skip(pool), fields(database.system = "postgresql", database.operation = "INSERT", owner = %owner, collection_id = %collection_id))]
+pub(crate) async fn grab_public_collection(
+    pool: &Pool<Postgres>,
+    owner: &str,
+    collection_id: i32,
+) -> Result<Collection> {
+    let start = Instant::now();
+
+    // Generate a unique bucket name for the new collection
+    let bucket = format!("{}_{}", owner, uuid::Uuid::new_v4());
+
+    let result = sqlx::query_as::<_, Collection>(GRAB_PUBLIC_COLLECTION_QUERY)
+        .bind(owner)
+        .bind(&bucket)
+        .bind(collection_id)
+        .fetch_one(pool)
+        .await;
+
+    let duration = start.elapsed().as_secs_f64();
+    let success = result.is_ok();
+    record_database_query("INSERT", "collections", duration, success);
+
+    Ok(result?)
 }

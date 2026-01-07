@@ -6,7 +6,7 @@ use std::time::Duration;
 use tracing::{error, info};
 use uuid::Uuid;
 
-use semantic_explorer_core::jobs::{
+use semantic_explorer_core::models::{
     VectorDatabaseConfig, VisualizationConfig, VisualizationTransformJob,
 };
 
@@ -154,6 +154,8 @@ fn default_visualization_config() -> VisualizationConfig {
         metric: "cosine".to_string(),
         min_cluster_size: 5,
         min_samples: Some(3),
+        topic_naming_mode: "tfidf".to_string(),
+        topic_naming_llm_id: None,
     }
 }
 
@@ -175,12 +177,13 @@ pub async fn trigger_visualization_transform_job(
     );
 
     // Get the visualization transform
-    let transform = crate::storage::postgres::visualization_transforms::get_visualization_transform(
-        pool,
-        owner,
-        visualization_transform_id,
-    )
-    .await?;
+    let transform =
+        crate::storage::postgres::visualization_transforms::get_visualization_transform(
+            pool,
+            owner,
+            visualization_transform_id,
+        )
+        .await?;
 
     // Get the embedded dataset
     let embedded_dataset = embedded_datasets::get_embedded_dataset(

@@ -66,6 +66,8 @@
 		metric: string;
 		min_cluster_size: number;
 		min_samples: number | null;
+		topic_naming_mode: string;
+		topic_naming_llm_id: number | null;
 	}
 
 	interface EmbeddedDataset {
@@ -84,6 +86,7 @@
 
 	let transforms = $state<VisualizationTransform[]>([]);
 	let embeddedDatasets = $state<EmbeddedDataset[]>([]);
+	let llms = $state<Array<{ llm_id: number; name: string; provider: string }>>([]);
 	let statsMap = $state<Map<number, Stats>>(new Map());
 	let loading = $state(true);
 	let error = $state<string | null>(null);
@@ -101,6 +104,8 @@
 		metric: 'cosine',
 		min_cluster_size: 10,
 		min_samples: null,
+		topic_naming_mode: 'tfidf',
+		topic_naming_llm_id: null,
 	});
 	let creating = $state(false);
 	let createError = $state<string | null>(null);
@@ -162,6 +167,18 @@
 			embeddedDatasets = await response.json();
 		} catch (e) {
 			console.error('Failed to fetch embedded datasets:', e);
+		}
+	}
+
+	async function fetchLLMs() {
+		try {
+			const response = await fetch('/api/llms');
+			if (!response.ok) {
+				throw new Error(`Failed to fetch LLMs: ${response.statusText}`);
+			}
+			llms = await response.json();
+		} catch (e) {
+			console.error('Failed to fetch LLMs:', e);
 		}
 	}
 
@@ -307,6 +324,8 @@
 			metric: 'cosine',
 			min_cluster_size: 10,
 			min_samples: null,
+			topic_naming_mode: 'tfidf',
+			topic_naming_llm_id: null,
 		};
 		showCreateForm = false;
 		editingTransform = null;
@@ -352,6 +371,7 @@
 	onMount(() => {
 		fetchTransforms();
 		fetchEmbeddedDatasets();
+		fetchLLMs();
 	});
 
 	let filteredTransforms = $derived(
@@ -638,6 +658,86 @@
 							/>
 							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Leave empty for auto</p>
 						</div>
+					</div>
+				</div>
+
+				<div
+					class="mb-4 p-4 bg-green-50 dark:bg-green-900/10 border border-green-200 dark:border-green-800 rounded-lg"
+				>
+					<h3 class="text-sm font-semibold text-green-900 dark:text-green-300 mb-3">
+						Topic Naming Configuration
+					</h3>
+
+					<div class="grid grid-cols-2 gap-4">
+						<div>
+							<label
+								for="topic-naming-mode"
+								class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+							>
+								Topic Naming Mode
+								<button
+									type="button"
+									class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+									onmouseenter={(e) =>
+										showTooltip(
+											e,
+											'TF-IDF: Fast, keyword-based topic labels using term frequency. LLM: Uses AI to generate more descriptive topic names. Default: TF-IDF'
+										)}
+								>
+									{@html InfoIcon()}
+								</button>
+							</label>
+							<select
+								id="topic-naming-mode"
+								bind:value={config.topic_naming_mode}
+								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+							>
+								<option value="tfidf">TF-IDF (Keyword-based)</option>
+								<option value="llm">LLM (AI-generated)</option>
+							</select>
+							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+								Select naming strategy for topics
+							</p>
+						</div>
+
+						{#if config.topic_naming_mode === 'llm'}
+							<div>
+								<label
+									for="topic-naming-llm"
+									class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+								>
+									LLM Model
+									<button
+										type="button"
+										class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+										onmouseenter={(e) =>
+											showTooltip(
+												e,
+												'Select which LLM to use for generating topic names. The LLM will receive document samples from each cluster and generate descriptive labels.'
+											)}
+									>
+										{@html InfoIcon()}
+									</button>
+								</label>
+								<select
+									id="topic-naming-llm"
+									bind:value={config.topic_naming_llm_id}
+									class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+								>
+									<option value={null}>Select an LLM...</option>
+									{#each llms as llm (llm.llm_id)}
+										<option value={llm.llm_id}>
+											{llm.name} ({llm.provider})
+										</option>
+									{/each}
+								</select>
+								{#if llms.length === 0}
+									<p class="text-xs text-yellow-600 dark:text-yellow-400 mt-1">
+										No LLMs available. Create one in the LLMs section first.
+									</p>
+								{/if}
+							</div>
+						{/if}
 					</div>
 				</div>
 

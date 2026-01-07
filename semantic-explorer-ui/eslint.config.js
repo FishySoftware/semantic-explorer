@@ -58,6 +58,18 @@ export default [
 			'svelte/no-at-html-tags': 'off',
 		},
 	},
+	{
+		files: ['**/VisualizationTransforms.svelte'],
+		rules: {
+			'svelte/no-at-html-tags': 'off',
+		},
+	},
+	{
+		files: ['**/VisualizationDetail.svelte'],
+		rules: {
+			'svelte/prefer-svelte-reactivity': 'off',
+		},
+	},
 	prettier,
 	{
 		ignores: ['dist/', 'node_modules/', 'build/'],

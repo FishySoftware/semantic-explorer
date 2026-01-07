@@ -2,7 +2,7 @@ use anyhow::Result;
 use qdrant_client::Qdrant;
 use qdrant_client::qdrant::{CreateCollectionBuilder, Distance, VectorParams};
 use qdrant_client::qdrant::{PointStruct, UpsertPointsBuilder};
-use semantic_explorer_core::jobs::{DatasetTransformJob, DatasetTransformResult};
+use semantic_explorer_core::models::{DatasetTransformJob, DatasetTransformResult};
 use semantic_explorer_core::observability::record_worker_job;
 use semantic_explorer_core::storage::get_file;
 use std::time::Instant;

@@ -49,7 +49,7 @@
         {
             "label": "Run Worker Visualizations",
             "type": "shell",
-            "command": "set -a && source .env && set +a && source activate_build_env.sh && cargo run",
+            "command": "set -a && source .env && set +a && source .scripts/activate_build_env.sh && cargo run",
             "options": {
                 "cwd": "${workspaceFolder}/crates/worker-visualizations"
             },

@@ -3,7 +3,6 @@ use sqlx::{Pool, Postgres};
 
 use crate::transforms::visualization::{VisualizationTransform, VisualizationTransformStats};
 
-// Query constants
 const GET_VISUALIZATION_TRANSFORM_QUERY: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,

@@ -18,7 +18,11 @@ use crate::{
     storage::{
         self,
         postgres::collections,
-        rustfs::{DocumentUpload, PaginatedFiles, delete_file, upload_document},
+        rustfs::{
+            delete_file,
+            models::{DocumentUpload, PaginatedFiles},
+            upload_document,
+        },
     },
 };
 
@@ -42,7 +46,6 @@ pub(crate) async fn get_collections(
     };
     match collections::get_collections(&postgres_pool.into_inner(), &username).await {
         Ok(mut collection_list) => {
-            // Enrich with file counts
             let s3_client = s3_client.as_ref();
             for collection in &mut collection_list {
                 collection.file_count = storage::rustfs::count_files(s3_client, &collection.bucket)
@@ -151,6 +154,7 @@ pub(crate) async fn create_collections(
         &username,
         &bucket,
         &create_collection.tags,
+        create_collection.is_public,
     )
     .await
     {

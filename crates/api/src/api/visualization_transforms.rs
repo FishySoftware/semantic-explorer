@@ -1,8 +1,8 @@
 use crate::auth::extract_username;
 use crate::storage::postgres::visualization_transforms;
 use crate::transforms::visualization::{
-    trigger_visualization_transform_job, CreateVisualizationTransform,
-    UpdateVisualizationTransform, VisualizationTransform, VisualizationTransformStats,
+    CreateVisualizationTransform, UpdateVisualizationTransform, VisualizationTransform,
+    VisualizationTransformStats, trigger_visualization_transform_job,
 };
 
 use actix_web::web::{Data, Json, Path};

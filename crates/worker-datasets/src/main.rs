@@ -1,5 +1,6 @@
 use crate::job::WorkerContext;
 use anyhow::Result;
+use async_nats::jetstream::new;
 use futures_util::StreamExt;
 use opentelemetry::{global, trace::TracerProvider};
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
@@ -11,7 +12,7 @@ use opentelemetry_sdk::{
     propagation::TraceContextPropagator,
     trace::{RandomIdGenerator, Sampler, SdkTracerProvider},
 };
-use semantic_explorer_core::jobs::DatasetTransformJob;
+use semantic_explorer_core::models::DatasetTransformJob;
 use semantic_explorer_core::observability;
 use semantic_explorer_core::storage::initialize_client;
 use std::sync::Arc;
@@ -143,7 +144,7 @@ async fn main() -> Result<()> {
 
         semantic_explorer_core::nats::initialize_jetstream(&nats_client).await?;
 
-        let jetstream = async_nats::jetstream::new(nats_client.clone());
+        let jetstream = new(nats_client.clone());
         let consumer_config = semantic_explorer_core::nats::create_vector_embed_consumer_config();
 
         let consumer = semantic_explorer_core::nats::ensure_consumer(

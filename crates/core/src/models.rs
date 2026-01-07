@@ -1,10 +1,6 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-// ============================================================================
-// Collection Transform Jobs (Collection → Dataset: file extraction & chunking)
-// ============================================================================
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionTransformJob {
     pub job_id: Uuid,
@@ -30,10 +26,6 @@ pub struct CollectionTransformResult {
     pub error: Option<String>,
     pub processing_duration_ms: Option<i64>,
 }
-
-// ============================================================================
-// Dataset Transform Jobs (Dataset → Embedded Dataset: embedding with specific embedder)
-// ============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatasetTransformJob {
@@ -63,10 +55,6 @@ pub struct DatasetTransformResult {
     pub processing_duration_ms: Option<i64>,
 }
 
-// ============================================================================
-// Shared Configuration Types
-// ============================================================================
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbedderConfig {
     pub provider: String,
@@ -84,10 +72,9 @@ pub struct VectorDatabaseConfig {
     pub api_key: Option<String>,
 }
 
-// ============================================================================
-// Visualization Transform Jobs (Embedded Dataset → 3D visualization)
-// ============================================================================
-
+fn default_topic_naming_mode() -> String {
+    "tfidf".to_string()
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VisualizationTransformJob {
     pub job_id: Uuid,
@@ -109,6 +96,11 @@ pub struct VisualizationConfig {
     // HDBSCAN parameters
     pub min_cluster_size: i32,
     pub min_samples: Option<i32>,
+    // Topic naming configuration
+    #[serde(default = "default_topic_naming_mode")]
+    pub topic_naming_mode: String, // "tfidf" or "llm"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub topic_naming_llm_id: Option<i32>, // LLM database ID when mode = "llm"
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

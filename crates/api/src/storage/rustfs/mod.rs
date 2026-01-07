@@ -1,36 +1,13 @@
+pub(crate) mod models;
+
 use anyhow::Result;
 use aws_config::{BehaviorVersion, Region};
 use aws_sdk_s3::{Client, config::Credentials};
 use semantic_explorer_core::observability::record_storage_operation;
-use serde::Serialize;
+
 use std::{env, time::Instant};
-use utoipa::ToSchema;
 
-#[derive(Debug, Clone)]
-pub(crate) struct DocumentUpload {
-    pub(crate) collection_id: String,
-    pub(crate) name: String,
-    pub(crate) content: Vec<u8>,
-    pub(crate) mime_type: String,
-}
-
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub(crate) struct CollectionFile {
-    pub(crate) key: String,
-    pub(crate) size: i64,
-    pub(crate) last_modified: Option<String>,
-    pub(crate) content_type: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub(crate) struct PaginatedFiles {
-    pub(crate) files: Vec<CollectionFile>,
-    pub(crate) page: i32,
-    pub(crate) page_size: i32,
-    pub(crate) has_more: bool,
-    pub(crate) continuation_token: Option<String>,
-    pub(crate) total_count: Option<i64>,
-}
+use crate::storage::rustfs::models::{CollectionFile, DocumentUpload, PaginatedFiles};
 
 pub(crate) async fn initialize_client() -> Result<aws_sdk_s3::Client> {
     let aws_region = env::var("AWS_REGION")?;

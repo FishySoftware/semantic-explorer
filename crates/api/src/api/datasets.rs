@@ -6,7 +6,10 @@ use actix_web::{
 use actix_web_openidconnect::openid_middleware::Authenticated;
 use qdrant_client::{
     Qdrant,
-    qdrant::{Condition, DeletePointsBuilder, FieldCondition, Filter, Match as QdrantMatch},
+    qdrant::{
+        Condition, DeletePointsBuilder, FieldCondition, Filter, Match as QdrantMatch,
+        condition::ConditionOneOf, r#match::MatchValue, points_selector::PointsSelectorOneOf,
+    },
 };
 use sqlx::{Pool, Postgres};
 use std::collections::HashMap;
@@ -15,7 +18,7 @@ use tracing::error;
 use crate::{
     auth::extract_username,
     datasets::models::{
-        CreateDataset, CreateDatasetItems, CreateDatasetItemsResponse, DatasetWithStats,
+        CreateDataset, CreateDatasetItems, CreateDatasetItemsResponse, Dataset, DatasetWithStats,
         PaginatedDatasetItems, PaginationParams,
     },
     embedders::models::Embedder,
@@ -78,6 +81,7 @@ pub(crate) async fn get_datasets(
                 details: d.details,
                 owner: d.owner,
                 tags: d.tags,
+                is_public: d.is_public,
                 created_at: d.created_at,
                 updated_at: d.updated_at,
                 item_count: *item_count,
@@ -94,7 +98,7 @@ pub(crate) async fn get_datasets(
         ("dataset_id" = i32, Path, description = "The dataset ID"),
     ),
     responses(
-        (status = 200, description = "OK", body = crate::datasets::models::Dataset),
+        (status = 200, description = "OK", body = Dataset),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Not Found"),
         (status = 500, description = "Internal Server Error"),
@@ -152,6 +156,7 @@ pub(crate) async fn create_dataset(
         create_dataset.details.as_deref(),
         &username,
         &create_dataset.tags,
+        create_dataset.is_public,
     )
     .await
     {
@@ -204,6 +209,7 @@ pub(crate) async fn update_dataset(
         update_dataset.details.as_deref(),
         &username,
         &update_dataset.tags,
+        update_dataset.is_public,
     )
     .await
     {
@@ -290,28 +296,27 @@ pub(crate) async fn upload_to_dataset(
         }
     };
 
-    let mut completed = Vec::with_capacity(payload.items.len());
-    let mut failed = Vec::new();
+    // Prepare items for batch insert
+    let batch_items: Vec<(String, Vec<_>, serde_json::Value)> = payload
+        .items
+        .into_iter()
+        .map(|item| (item.title, item.chunks, item.metadata))
+        .collect();
 
-    for item in payload.items {
-        let title = item.title;
-        match datasets::create_dataset_item(
-            &postgres_pool,
-            dataset.dataset_id,
-            &title,
-            &item.chunks,
-            item.metadata,
-        )
-        .await
+    let (completed, failed) =
+        match datasets::create_dataset_items_batch(&postgres_pool, dataset.dataset_id, batch_items)
+            .await
         {
-            Ok(_) => completed.push(title),
+            Ok((items, failed_titles)) => (
+                items.into_iter().map(|item| item.title).collect(),
+                failed_titles,
+            ),
             Err(e) => {
-                failed.push(title.clone());
-                error!("error uploading item '{title}' to dataset '{dataset_id}': {e:?}");
-                continue;
+                error!("error batch uploading items to dataset '{dataset_id}': {e:?}");
+                return HttpResponse::InternalServerError()
+                    .body(format!("failed to upload items: {e}"));
             }
-        }
-    }
+        };
 
     HttpResponse::Ok().json(CreateDatasetItemsResponse { completed, failed })
 }
@@ -456,25 +461,18 @@ pub(crate) async fn delete_dataset_item(
         for collection_name in collection_names {
             let filter = Filter {
                 must: vec![Condition {
-                    condition_one_of: Some(
-                        qdrant_client::qdrant::condition::ConditionOneOf::Field(FieldCondition {
-                            key: "metadata.item_id".to_string(),
-                            r#match: Some(QdrantMatch {
-                                match_value: Some(
-                                    qdrant_client::qdrant::r#match::MatchValue::Integer(
-                                        item_id as i64,
-                                    ),
-                                ),
-                            }),
-                            ..Default::default()
+                    condition_one_of: Some(ConditionOneOf::Field(FieldCondition {
+                        key: "metadata.item_id".to_string(),
+                        r#match: Some(QdrantMatch {
+                            match_value: Some(MatchValue::Integer(item_id as i64)),
                         }),
-                    ),
+                        ..Default::default()
+                    })),
                 }],
                 ..Default::default()
             };
 
-            let selector =
-                qdrant_client::qdrant::points_selector::PointsSelectorOneOf::Filter(filter);
+            let selector = PointsSelectorOneOf::Filter(filter);
 
             let delete_request = DeletePointsBuilder::new(&collection_name).points(selector);
 

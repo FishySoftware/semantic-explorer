@@ -14,6 +14,7 @@
 		max_batch_size?: number;
 		dimensions?: number;
 		collection_name: string;
+		is_public: boolean;
 		created_at: string;
 		updated_at: string;
 	}

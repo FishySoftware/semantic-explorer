@@ -6,23 +6,23 @@ use crate::datasets::models::{ChunkWithMetadata, Dataset, DatasetItem};
 use semantic_explorer_core::observability::record_database_query;
 
 const GET_DATASET_QUERY: &str = r#"
-    SELECT dataset_id, title, details, owner, tags, created_at, updated_at FROM datasets
+    SELECT dataset_id, title, details, owner, tags, is_public, created_at, updated_at FROM datasets
     WHERE owner = $1 AND dataset_id = $2
 "#;
 
 const GET_DATASETS_QUERY: &str = r#"
-    SELECT dataset_id, title, details, owner, tags, created_at, updated_at FROM datasets WHERE owner = $1
+    SELECT dataset_id, title, details, owner, tags, is_public, created_at, updated_at FROM datasets WHERE owner = $1
 "#;
 
 const CREATE_DATASET_QUERY: &str = r#"
-    INSERT INTO datasets (title, details, owner, tags)
-    VALUES ($1, $2, $3, $4)
-    RETURNING dataset_id, title, details, owner, tags, created_at, updated_at
+    INSERT INTO datasets (title, details, owner, tags, is_public)
+    VALUES ($1, $2, $3, $4, $5)
+    RETURNING dataset_id, title, details, owner, tags, is_public, created_at, updated_at
 "#;
 
 const DELETE_DATASET_QUERY: &str = r#"
     DELETE FROM datasets WHERE owner = $1 AND dataset_id = $2
-    RETURNING dataset_id, title, details, owner, tags, created_at, updated_at
+    RETURNING dataset_id, title, details, owner, tags, is_public, created_at, updated_at
 "#;
 
 const INSERT_DATASET_ITEM_QUERY: &str = r#"
@@ -45,9 +45,9 @@ const COUNT_DATASET_ITEMS_QUERY: &str = r#"
 
 const UPDATE_DATASET_QUERY: &str = r#"
     UPDATE datasets
-    SET title = $1, details = $2, tags = $3, updated_at = NOW()
-    WHERE dataset_id = $4 AND owner = $5
-    RETURNING dataset_id, title, details, owner, tags, created_at, updated_at
+    SET title = $1, details = $2, tags = $3, is_public = $4, updated_at = NOW()
+    WHERE dataset_id = $5 AND owner = $6
+    RETURNING dataset_id, title, details, owner, tags, is_public, created_at, updated_at
 "#;
 
 const DELETE_DATASET_ITEM_QUERY: &str = r#"
@@ -65,6 +65,24 @@ const GET_DATASET_STATS_QUERY: &str = r#"
     LEFT JOIN dataset_items di ON d.dataset_id = di.dataset_id
     WHERE d.owner = $1
     GROUP BY d.dataset_id
+"#;
+
+const GET_PUBLIC_DATASETS_QUERY: &str = r#"
+    SELECT dataset_id, title, details, owner, tags, is_public, created_at, updated_at
+    FROM datasets
+    WHERE is_public = TRUE
+    ORDER BY created_at DESC
+"#;
+
+const GRAB_PUBLIC_DATASET_QUERY: &str = r#"
+    WITH source AS (
+        SELECT dataset_id, title, details, tags FROM datasets WHERE dataset_id = $1 AND is_public = TRUE
+    ), new_dataset AS (
+        INSERT INTO datasets (title, details, owner, tags, is_public)
+        SELECT title, details, $2, tags, FALSE FROM source
+        RETURNING dataset_id, title, details, owner, tags, is_public, created_at, updated_at
+    )
+    SELECT * FROM new_dataset
 "#;
 
 #[tracing::instrument(name = "database.get_dataset", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner = %owner, dataset_id = %dataset_id))]
@@ -109,6 +127,7 @@ pub(crate) async fn create_dataset(
     details: Option<&str>,
     owner: &str,
     tags: &[String],
+    is_public: bool,
 ) -> Result<Dataset> {
     let start = Instant::now();
     let result = sqlx::query_as::<_, Dataset>(CREATE_DATASET_QUERY)
@@ -116,6 +135,7 @@ pub(crate) async fn create_dataset(
         .bind(details)
         .bind(owner)
         .bind(tags)
+        .bind(is_public)
         .fetch_one(pool)
         .await;
 
@@ -166,6 +186,39 @@ pub(crate) async fn create_dataset_item(
     Ok(item)
 }
 
+/// Batch insert dataset items for efficient bulk upload
+/// Returns a tuple of (successfully inserted items, failed titles)
+pub(crate) async fn create_dataset_items_batch(
+    pool: &Pool<Postgres>,
+    dataset_id: i32,
+    items: Vec<(String, Vec<ChunkWithMetadata>, serde_json::Value)>,
+) -> Result<(Vec<DatasetItem>, Vec<String>)> {
+    use std::time::Instant;
+    let start = Instant::now();
+
+    let mut successful = Vec::new();
+    let mut failed = Vec::new();
+
+    // Process items in batches of 1000 for efficiency
+    for chunk in items.chunks(1000) {
+        for (title, chunks, metadata) in chunk {
+            match create_dataset_item(pool, dataset_id, title, chunks, metadata.clone()).await {
+                Ok(item) => successful.push(item),
+                Err(e) => {
+                    failed.push(title.clone());
+                    tracing::warn!("Failed to insert dataset item '{}': {}", title, e);
+                }
+            }
+        }
+    }
+
+    let duration = start.elapsed().as_secs_f64();
+    let success = failed.is_empty();
+    record_database_query("INSERT", "dataset_items", duration, success);
+
+    Ok((successful, failed))
+}
+
 #[tracing::instrument(name = "database.get_dataset_items", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", dataset_id = %dataset_id, page = %page, page_size = %page_size))]
 pub(crate) async fn get_dataset_items(
     pool: &Pool<Postgres>,
@@ -200,12 +253,14 @@ pub(crate) async fn update_dataset(
     details: Option<&str>,
     owner: &str,
     tags: &[String],
+    is_public: bool,
 ) -> Result<Dataset> {
     let start = Instant::now();
     let result = sqlx::query_as::<_, Dataset>(UPDATE_DATASET_QUERY)
         .bind(title)
         .bind(details)
         .bind(tags)
+        .bind(is_public)
         .bind(dataset_id)
         .bind(owner)
         .fetch_one(pool)
@@ -270,6 +325,40 @@ pub(crate) async fn get_dataset_stats(
     let duration = start.elapsed().as_secs_f64();
     let success = result.is_ok();
     record_database_query("SELECT", "datasets_stats", duration, success);
+
+    Ok(result?)
+}
+
+#[tracing::instrument(name = "database.get_public_datasets", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT"))]
+pub(crate) async fn get_public_datasets(pool: &Pool<Postgres>) -> Result<Vec<Dataset>> {
+    let start = Instant::now();
+    let result = sqlx::query_as::<_, Dataset>(GET_PUBLIC_DATASETS_QUERY)
+        .fetch_all(pool)
+        .await;
+
+    let duration = start.elapsed().as_secs_f64();
+    let success = result.is_ok();
+    record_database_query("SELECT", "datasets", duration, success);
+
+    Ok(result?)
+}
+
+#[tracing::instrument(name = "database.grab_public_dataset", skip(pool), fields(database.system = "postgresql", database.operation = "INSERT", owner = %owner, dataset_id = %dataset_id))]
+pub(crate) async fn grab_public_dataset(
+    pool: &Pool<Postgres>,
+    owner: &str,
+    dataset_id: i32,
+) -> Result<Dataset> {
+    let start = Instant::now();
+    let result = sqlx::query_as::<_, Dataset>(GRAB_PUBLIC_DATASET_QUERY)
+        .bind(dataset_id)
+        .bind(owner)
+        .fetch_one(pool)
+        .await;
+
+    let duration = start.elapsed().as_secs_f64();
+    let success = result.is_ok();
+    record_database_query("INSERT", "datasets", duration, success);
 
     Ok(result?)
 }

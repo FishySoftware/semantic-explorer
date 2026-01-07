@@ -1,12 +1,10 @@
 [package]
 name = "worker-visualizations"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 cuml-wrapper-rs = { version = "0.3.1" }
-rust-stemmers = "1.2"
-stop-words = "0.8"
 futures-util = "0.3"
 semantic-explorer-core = { path = "../core" }
 async-nats = { workspace = true }
@@ -19,4 +17,3 @@ opentelemetry = { workspace = true }
 opentelemetry_sdk = { workspace = true }
 opentelemetry-otlp = { workspace = true }
 qdrant-client = { workspace = true }
-unicode-segmentation = { workspace = true }

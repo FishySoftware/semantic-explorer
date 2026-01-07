@@ -1,8 +1,8 @@
 use crate::auth::extract_username;
 use crate::storage::postgres::collection_transforms;
 use crate::transforms::collection::{
-    trigger_collection_transform_scan, CollectionTransform, CollectionTransformStats,
-    CreateCollectionTransform, ProcessedFile, UpdateCollectionTransform,
+    CollectionTransform, CollectionTransformStats, CreateCollectionTransform, ProcessedFile,
+    UpdateCollectionTransform, trigger_collection_transform_scan,
 };
 
 use actix_web::web::{Data, Json, Path};
@@ -266,7 +266,6 @@ pub async fn trigger_collection_transform(
 
     let collection_transform_id = path.into_inner();
 
-    // Verify ownership
     match collection_transforms::get_collection_transform(
         &postgres_pool,
         &username,
@@ -314,7 +313,6 @@ pub async fn get_collection_transform_stats(
 
     let collection_transform_id = path.into_inner();
 
-    // Verify ownership
     match collection_transforms::get_collection_transform(
         &postgres_pool,
         &username,
@@ -374,7 +372,6 @@ pub async fn get_processed_files(
 
     let collection_transform_id = path.into_inner();
 
-    // Verify ownership
     match collection_transforms::get_collection_transform(
         &postgres_pool,
         &username,

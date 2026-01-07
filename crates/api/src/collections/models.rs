@@ -14,6 +14,8 @@ pub(crate) struct CreateCollection {
     pub(crate) title: String,
     pub(crate) details: Option<String>,
     pub(crate) tags: Vec<String>,
+    #[serde(default)]
+    pub(crate) is_public: bool,
 }
 
 #[derive(Serialize, ToSchema, FromRow)]
@@ -24,6 +26,7 @@ pub(crate) struct Collection {
     pub(crate) owner: String,
     pub(crate) bucket: String,
     pub(crate) tags: Vec<String>,
+    pub(crate) is_public: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<String>, format = DateTime)]
     pub(crate) created_at: Option<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>>,

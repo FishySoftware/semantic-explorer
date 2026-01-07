@@ -79,7 +79,6 @@
 
 	// Failed batches modal state
 	let showFailedBatchesModal = $state(false);
-	let failedBatchesDatasetId = $state<number | null>(null);
 	let failedBatchesDatasetTitle = $state('');
 	let failedBatches = $state<ProcessedBatch[]>([]);
 	let loadingFailedBatches = $state(false);
@@ -170,7 +169,6 @@
 	}
 
 	async function openFailedBatchesModal(dataset: EmbeddedDataset) {
-		failedBatchesDatasetId = dataset.embedded_dataset_id;
 		failedBatchesDatasetTitle = dataset.title;
 		showFailedBatchesModal = true;
 		loadingFailedBatches = true;
@@ -198,7 +196,6 @@
 
 	function closeFailedBatchesModal() {
 		showFailedBatchesModal = false;
-		failedBatchesDatasetId = null;
 		failedBatchesDatasetTitle = '';
 		failedBatches = [];
 	}
@@ -444,7 +441,7 @@
 					<p class="text-gray-500 dark:text-gray-400 text-center py-8">No failed batches found.</p>
 				{:else}
 					<div class="space-y-4">
-						{#each failedBatches as batch}
+						{#each failedBatches as batch (batch.file_key)}
 							<div
 								class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4"
 							>

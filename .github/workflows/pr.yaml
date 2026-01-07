@@ -31,7 +31,7 @@ jobs:
       - name: Setup worker-visualizations build environment
         run: |
           cd crates/worker-visualizations
-          source setup_build.sh
+          source .scripts/setup_build.sh
       - name: Lint
         run: cargo clippy --workspace -- -D warnings
 

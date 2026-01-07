@@ -4,40 +4,17 @@ use actix_web::{
 };
 use actix_web_openidconnect::openid_middleware::Authenticated;
 use qdrant_client::{Qdrant, qdrant::ScrollPointsBuilder};
-use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres};
 use tracing::error;
 
-use crate::{auth::extract_username, storage::postgres::visualization_transforms};
-
-#[derive(Deserialize, Debug)]
-pub(crate) struct VisualizationPointsQuery {
-    #[serde(default = "default_limit")]
-    limit: u32,
-    #[serde(default)]
-    offset: Option<String>,
-}
-
-fn default_limit() -> u32 {
-    1000
-}
-
-#[derive(Serialize, utoipa::ToSchema)]
-pub(crate) struct VisualizationPoint {
-    pub(crate) id: String,
-    pub(crate) x: f32,
-    pub(crate) y: f32,
-    pub(crate) z: f32,
-    pub(crate) cluster_id: Option<i32>,
-    pub(crate) topic_label: Option<String>,
-    pub(crate) text: Option<String>,
-}
-
-#[derive(Serialize, utoipa::ToSchema)]
-pub(crate) struct VisualizationPointsResponse {
-    pub(crate) points: Vec<VisualizationPoint>,
-    pub(crate) next_offset: Option<String>,
-}
+use crate::{
+    auth::extract_username,
+    storage::postgres::visualization_transforms,
+    visualizations::models::{
+        VisualizationPoint, VisualizationPointsQuery, VisualizationPointsResponse,
+        VisualizationTopic,
+    },
+};
 
 #[utoipa::path(
     responses(
@@ -185,17 +162,6 @@ pub(crate) async fn get_visualization_points(
         points,
         next_offset,
     })
-}
-
-#[derive(Serialize, utoipa::ToSchema)]
-pub(crate) struct VisualizationTopic {
-    pub(crate) id: String,
-    pub(crate) x: f32,
-    pub(crate) y: f32,
-    pub(crate) z: f32,
-    pub(crate) cluster_id: i32,
-    pub(crate) label: String,
-    pub(crate) size: Option<i32>,
 }
 
 #[utoipa::path(
