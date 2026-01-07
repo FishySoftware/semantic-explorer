@@ -10,9 +10,9 @@ use qdrant_client::{
     },
 };
 
-use std::{cmp::Ordering, collections::HashMap};
+use std::{cmp::Ordering, collections::{HashMap, HashSet}};
 
-use crate::search::models::{EmbedderSearchResults, SearchMatch, SearchRequest, SourceAggregation};
+use crate::search::models::{DocumentResult, SearchMatch, SearchMode, SearchRequest};
 use qdrant_client::qdrant::r#match::MatchValue;
 
 pub(crate) async fn search_collection(
@@ -21,10 +21,69 @@ pub(crate) async fn search_collection(
     query_vector: &[f32],
     request: &SearchRequest,
 ) -> Result<Vec<SearchMatch>> {
+    // In document mode, fetch chunks in batches until we have enough unique documents
+    if matches!(request.search_mode, SearchMode::Documents) {
+        const BATCH_SIZE: u64 = 200;
+        let target_documents = request.limit as usize;
+        let mut all_matches = Vec::new();
+        let mut unique_item_ids = HashSet::new();
+        let mut offset = 0;
+
+        loop {
+            // Fetch a batch
+            let batch = search_batch(qdrant, collection_name, query_vector, request, BATCH_SIZE, offset).await?;
+
+            if batch.is_empty() {
+                break; // No more results
+            }
+
+            // Track unique documents in this batch
+            for m in &batch {
+                if let Some(item_id) = m.metadata.get("item_id").and_then(|v| v.as_i64()) {
+                    unique_item_ids.insert(item_id);
+                }
+            }
+
+            all_matches.extend(batch);
+
+            // Check if we have enough unique documents
+            if unique_item_ids.len() >= target_documents {
+                break;
+            }
+
+            offset += BATCH_SIZE;
+
+            // Safety check: don't fetch more than 50 batches (10000 chunks)
+            if offset >= BATCH_SIZE * 50 {
+                tracing::warn!(
+                    "Reached maximum batch limit for collection '{}', stopping at {} chunks",
+                    collection_name,
+                    all_matches.len()
+                );
+                break;
+            }
+        }
+
+        Ok(all_matches)
+    } else {
+        // Chunks mode: just fetch the requested limit
+        search_batch(qdrant, collection_name, query_vector, request, request.limit, 0).await
+    }
+}
+
+async fn search_batch(
+    qdrant: &Qdrant,
+    collection_name: &str,
+    query_vector: &[f32],
+    request: &SearchRequest,
+    limit: u64,
+    offset: u64,
+) -> Result<Vec<SearchMatch>> {
     let mut search_builder =
-        SearchPointsBuilder::new(collection_name, query_vector.to_vec(), request.limit)
+        SearchPointsBuilder::new(collection_name, query_vector.to_vec(), limit)
             .score_threshold(request.score_threshold)
-            .with_payload(true);
+            .with_payload(true)
+            .offset(offset);
 
     if let Some(filters) = &request.filters
         && let Some(obj) = filters.as_object()
@@ -150,50 +209,68 @@ pub(crate) fn qdrant_value_to_json(value: &QdrantValue) -> Option<serde_json::Va
     }
 }
 
-pub(crate) fn aggregate_by_source(results: &[EmbedderSearchResults]) -> Vec<SourceAggregation> {
-    let mut source_map: HashMap<String, SourceAggregation> = HashMap::new();
+/// Aggregate matches into unique documents based on item_id
+/// Returns a list of documents sorted by best score (descending)
+pub(crate) fn aggregate_matches_to_documents(matches: &[SearchMatch]) -> Vec<DocumentResult> {
+    let mut document_map: HashMap<i32, (f32, Vec<&SearchMatch>)> = HashMap::new();
 
-    for embedder_result in results {
-        for match_result in &embedder_result.matches {
-            // Extract source from metadata
-            let source = match_result
-                .metadata
-                .get("source")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string();
+    for match_result in matches {
+        // Extract item_id from metadata
+        let item_id = match_result
+            .metadata
+            .get("item_id")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32;
 
-            let entry = source_map
-                .entry(source.clone())
-                .or_insert(SourceAggregation {
-                    source: source.clone(),
-                    matches: Vec::new(),
-                    best_score: 0.0,
-                    embedder_ids: Vec::new(),
-                });
+        if item_id == 0 {
+            tracing::warn!(
+                "Match missing item_id in metadata, skipping aggregation for match {}",
+                match_result.id
+            );
+            continue;
+        }
 
-            // Track embedder IDs
-            if !entry.embedder_ids.contains(&embedder_result.embedder_id) {
-                entry.embedder_ids.push(embedder_result.embedder_id);
-            }
+        let entry = document_map.entry(item_id).or_insert((0.0, Vec::new()));
+        entry.1.push(match_result);
 
-            // Update best score
-            if match_result.score > entry.best_score {
-                entry.best_score = match_result.score;
-            }
-
-            // Add match to this source
-            entry.matches.push(match_result.clone());
+        // Track best score
+        if match_result.score > entry.0 {
+            entry.0 = match_result.score;
         }
     }
 
-    // Convert HashMap to Vec and sort by best_score descending
-    let mut aggregated: Vec<SourceAggregation> = source_map.into_values().collect();
-    aggregated.sort_by(|a, b| {
+    let mut documents: Vec<DocumentResult> = document_map
+        .into_iter()
+        .map(|(item_id, (best_score, chunks))| {
+            // Find the best chunk (highest score)
+            let best_chunk = chunks
+                .iter()
+                .max_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(Ordering::Equal))
+                .unwrap();
+
+            let item_title = best_chunk
+                .metadata
+                .get("item_title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown")
+                .to_string();
+
+            DocumentResult {
+                item_id,
+                item_title,
+                best_score,
+                chunk_count: chunks.len() as i32,
+                best_chunk: (*best_chunk).clone(),
+            }
+        })
+        .collect();
+
+    // Sort documents by score (descending)
+    documents.sort_by(|a, b| {
         b.best_score
             .partial_cmp(&a.best_score)
             .unwrap_or(Ordering::Equal)
     });
 
-    aggregated
+    documents
 }

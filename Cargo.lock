@@ -4621,6 +4621,7 @@ dependencies = [
  "futures-util",
  "mimalloc",
  "mime_guess",
+ "once_cell",
  "opentelemetry",
  "opentelemetry-appender-tracing",
  "opentelemetry-otlp",

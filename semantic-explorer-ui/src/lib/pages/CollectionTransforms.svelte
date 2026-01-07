@@ -685,14 +685,14 @@
 						type="number"
 						bind:value={newChunkSize}
 						min="50"
-						max="1000"
+						max="2000"
 						disabled={editingTransform !== null}
 						class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed"
 					/>
 					<p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
 						{editingTransform
 							? 'Chunk size cannot be changed after creation'
-							: 'Number of characters per chunk (50-1000)'}
+							: 'Number of characters per chunk (50-2000)'}
 					</p>
 				</div>
 
@@ -1632,7 +1632,7 @@
 									<div class="mt-3 bg-red-100 dark:bg-red-900/40 rounded p-3">
 										<p class="text-xs font-semibold text-red-700 dark:text-red-300 mb-1">Error:</p>
 										<pre
-											class="text-xs text-red-600 dark:text-red-400 whitespace-pre-wrap break-words font-mono">{file.process_error}</pre>
+											class="text-xs text-red-600 dark:text-red-400 whitespace-pre-wrap wrap-break-words font-mono">{file.process_error}</pre>
 									</div>
 								{/if}
 							</div>

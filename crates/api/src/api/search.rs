@@ -10,8 +10,8 @@ use sqlx::{Pool, Postgres};
 use crate::{
     auth::extract_username,
     search::{
-        aggregate_by_source,
-        models::{EmbedderSearchResults, SearchMode, SearchRequest, SearchResponse},
+        aggregate_matches_to_documents,
+        models::{EmbeddedDatasetSearchResults, SearchMode, SearchRequest, SearchResponse},
         search_collection,
     },
     storage::postgres::{embedded_datasets, embedders},
@@ -42,71 +42,98 @@ pub(crate) async fn search(
         Err(e) => return e,
     };
 
-    tracing::info!(
-        "Received search request, embeddings count: {}, query: '{}'",
-        search_request.embeddings.len(),
-        search_request.query
-    );
 
-    if search_request.embeddings.is_empty() {
-        return HttpResponse::BadRequest().body("At least one embedder embedding must be provided");
+    if search_request.embedded_dataset_ids.is_empty() {
+        return HttpResponse::BadRequest()
+            .body("At least one embedded dataset must be selected");
     }
 
     if search_request.query.trim().is_empty() {
         return HttpResponse::BadRequest().body("Query cannot be empty");
     }
 
-    let embedded_datasets_list = match embedded_datasets::get_embedded_datasets_for_dataset(
-        &postgres_pool,
-        &username,
-        search_request.dataset_id,
-    )
-    .await
-    {
-        Ok(eds) => eds,
-        Err(e) => {
-            tracing::error!("Failed to fetch embedded datasets: {}", e);
-            return HttpResponse::InternalServerError().body("Failed to fetch embedded datasets");
-        }
-    };
-
-    // Build a map from embedder_id to collection_name
-    let embedder_collection_map: std::collections::HashMap<i32, String> = embedded_datasets_list
-        .into_iter()
-        .map(|ed| (ed.embedder_id, ed.collection_name))
-        .collect();
-
     let mut results = Vec::new();
 
-    for (embedder_id, query_vector) in &search_request.embeddings {
-        // Get embedder details
-        let embedder = match embedders::get_embedder(&postgres_pool, &username, *embedder_id).await
+    for embedded_dataset_id in &search_request.embedded_dataset_ids {
+        let ed_details = match embedded_datasets::get_embedded_dataset_with_details(
+            &postgres_pool,
+            &username,
+            *embedded_dataset_id,
+        )
+        .await
+        {
+            Ok(ed) => ed,
+            Err(e) => {
+                tracing::error!(
+                    "Failed to fetch embedded dataset {}: {}",
+                    embedded_dataset_id,
+                    e
+                );
+                results.push(EmbeddedDatasetSearchResults {
+                    embedded_dataset_id: *embedded_dataset_id,
+                    embedded_dataset_title: format!("Embedded Dataset {}", embedded_dataset_id),
+                    source_dataset_id: 0,
+                    source_dataset_title: String::new(),
+                    embedder_id: 0,
+                    embedder_name: String::new(),
+                    collection_name: String::new(),
+                    matches: Vec::new(),
+                    documents: None,
+                    error: Some(format!("Failed to fetch embedded dataset: {}", e)),
+                });
+                continue;
+            }
+        };
+
+        let embedder = match embedders::get_embedder(&postgres_pool, &username, ed_details.embedder_id)
+            .await
         {
             Ok(e) => e,
             Err(e) => {
-                results.push(EmbedderSearchResults {
-                    embedder_id: *embedder_id,
-                    embedder_name: format!("Embedder {}", embedder_id),
-                    collection_name: String::new(),
+                results.push(EmbeddedDatasetSearchResults {
+                    embedded_dataset_id: *embedded_dataset_id,
+                    embedded_dataset_title: ed_details.title,
+                    source_dataset_id: ed_details.source_dataset_id,
+                    source_dataset_title: ed_details.source_dataset_title,
+                    embedder_id: ed_details.embedder_id,
+                    embedder_name: ed_details.embedder_name,
+                    collection_name: ed_details.collection_name,
                     matches: Vec::new(),
+                    documents: None,
                     error: Some(format!("Failed to fetch embedder: {}", e)),
                 });
                 continue;
             }
         };
 
-        let collection_name = match embedder_collection_map.get(embedder_id) {
-            Some(name) => name.clone(),
-            None => {
-                results.push(EmbedderSearchResults {
-                    embedder_id: *embedder_id,
-                    embedder_name: embedder.name,
-                    collection_name: String::new(),
+
+        let query_vector = match crate::embedding::generate_embedding(
+            &embedder.provider,
+            &embedder.base_url,
+            embedder.api_key.as_deref(),
+            &embedder.config,
+            &search_request.query,
+        )
+        .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(
+                    "Failed to generate embedding for embedded dataset {}: {}",
+                    embedded_dataset_id,
+                    e
+                );
+                results.push(EmbeddedDatasetSearchResults {
+                    embedded_dataset_id: *embedded_dataset_id,
+                    embedded_dataset_title: ed_details.title,
+                    source_dataset_id: ed_details.source_dataset_id,
+                    source_dataset_title: ed_details.source_dataset_title,
+                    embedder_id: ed_details.embedder_id,
+                    embedder_name: ed_details.embedder_name,
+                    collection_name: ed_details.collection_name.clone(),
                     matches: Vec::new(),
-                    error: Some(format!(
-                        "No embedded dataset found for dataset {} with embedder {}",
-                        search_request.dataset_id, embedder_id
-                    )),
+                    documents: None,
+                    error: Some(format!("Failed to generate embedding: {}", e)),
                 });
                 continue;
             }
@@ -114,8 +141,8 @@ pub(crate) async fn search(
 
         let matches = match search_collection(
             &qdrant_client,
-            &collection_name,
-            query_vector,
+            &ed_details.collection_name,
+            &query_vector,
             &search_request,
         )
         .await
@@ -128,25 +155,34 @@ pub(crate) async fn search(
                     || error_msg.contains("No collection")
                 {
                     tracing::warn!(
-                        "Collection '{}' does not exist for embedder {}, dataset might not be processed yet",
-                        collection_name,
-                        embedder_id
+                        "Collection '{}' does not exist, embedded dataset might not be processed yet",
+                        ed_details.collection_name
                     );
-                    results.push(EmbedderSearchResults {
-                        embedder_id: *embedder_id,
-                        embedder_name: embedder.name,
-                        collection_name: collection_name.clone(),
+                    results.push(EmbeddedDatasetSearchResults {
+                        embedded_dataset_id: *embedded_dataset_id,
+                        embedded_dataset_title: ed_details.title,
+                        source_dataset_id: ed_details.source_dataset_id,
+                        source_dataset_title: ed_details.source_dataset_title,
+                        embedder_id: ed_details.embedder_id,
+                        embedder_name: ed_details.embedder_name,
+                        collection_name: ed_details.collection_name,
                         matches: Vec::new(),
+                        documents: None,
                         error: Some(
-                            "This dataset has not been embedded yet with this embedder. Please wait for the embedding process to complete.".to_string()
+                            "This embedded dataset has not been processed yet. Please wait for the embedding process to complete.".to_string()
                         ),
                     });
                 } else {
-                    results.push(EmbedderSearchResults {
-                        embedder_id: *embedder_id,
-                        embedder_name: embedder.name,
-                        collection_name: collection_name.clone(),
+                    results.push(EmbeddedDatasetSearchResults {
+                        embedded_dataset_id: *embedded_dataset_id,
+                        embedded_dataset_title: ed_details.title,
+                        source_dataset_id: ed_details.source_dataset_id,
+                        source_dataset_title: ed_details.source_dataset_title,
+                        embedder_id: ed_details.embedder_id,
+                        embedder_name: ed_details.embedder_name,
+                        collection_name: ed_details.collection_name,
                         matches: Vec::new(),
+                        documents: None,
                         error: Some(format!("Search failed: {}", e)),
                     });
                 }
@@ -154,26 +190,29 @@ pub(crate) async fn search(
             }
         };
 
-        results.push(EmbedderSearchResults {
-            embedder_id: *embedder_id,
-            embedder_name: embedder.name,
-            collection_name,
+        let documents = if matches!(search_request.search_mode, SearchMode::Documents) {
+            Some(aggregate_matches_to_documents(&matches))
+        } else {
+            None
+        };
+
+        results.push(EmbeddedDatasetSearchResults {
+            embedded_dataset_id: *embedded_dataset_id,
+            embedded_dataset_title: ed_details.title,
+            source_dataset_id: ed_details.source_dataset_id,
+            source_dataset_title: ed_details.source_dataset_title,
+            embedder_id: ed_details.embedder_id,
+            embedder_name: ed_details.embedder_name,
+            collection_name: ed_details.collection_name,
             matches,
+            documents,
             error: None,
         });
     }
-
-    // Aggregate by source if requested
-    let aggregated_sources = if matches!(search_request.search_mode, SearchMode::Sources) {
-        Some(aggregate_by_source(&results))
-    } else {
-        None
-    };
 
     HttpResponse::Ok().json(SearchResponse {
         results,
         query: search_request.query.clone(),
         search_mode: search_request.search_mode,
-        aggregated_sources,
     })
 }

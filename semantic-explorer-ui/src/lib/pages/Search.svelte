@@ -13,22 +13,18 @@
 		tags: string[];
 	}
 
-	interface Embedder {
+	interface EmbeddedDataset {
+		embedded_dataset_id: number;
+		title: string;
+		dataset_transform_id: number;
+		source_dataset_id: number;
+		source_dataset_title: string;
 		embedder_id: number;
-		name: string;
+		embedder_name: string;
 		owner: string;
-		provider: string;
-		base_url: string;
-		api_key: string | null;
-		config: Record<string, any>;
 		collection_name: string;
 		created_at: string;
 		updated_at: string;
-	}
-
-	interface DatasetEmbedders {
-		dataset_id: number;
-		embedders: Embedder[];
 	}
 
 	interface SearchMatch {
@@ -38,49 +34,44 @@
 		metadata: Record<string, any>;
 	}
 
-	interface EmbedderSearchResults {
+	interface DocumentResult {
+		item_id: number;
+		item_title: string;
+		best_score: number;
+		chunk_count: number;
+		best_chunk: SearchMatch;
+	}
+
+	interface EmbeddedDatasetSearchResults {
+		embedded_dataset_id: number;
+		embedded_dataset_title: string;
+		source_dataset_id: number;
+		source_dataset_title: string;
 		embedder_id: number;
 		embedder_name: string;
 		collection_name: string;
 		matches: SearchMatch[];
+		documents?: DocumentResult[];
 		error?: string;
 	}
 
-	interface SourceAggregation {
-		source: string;
-		matches: SearchMatch[];
-		best_score: number;
-		embedder_ids: number[];
-	}
-
 	interface SearchResponse {
-		results: EmbedderSearchResults[];
+		results: EmbeddedDatasetSearchResults[];
 		query: string;
-		search_mode: 'Documents' | 'Sources';
-		aggregated_sources?: SourceAggregation[];
+		search_mode: 'documents' | 'chunks';
 	}
 
 	let datasets = $state<Dataset[]>([]);
-	let datasetEmbedders = $state<DatasetEmbedders[]>([]);
+	let allEmbeddedDatasets = $state<EmbeddedDataset[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
 	let searchQuery = $state('');
-	let selectedDatasetId = $state<number | null>(null);
-	let selectedEmbedderIds = new SvelteSet<number>();
+	let selectedDatasetId = $state<number | null>(null); // For filtering display
+	let selectedEmbeddedDatasetIds = new SvelteSet<number>();
 	let searching = $state(false);
 	let searchResults = $state<SearchResponse | null>(null);
-	let searchMode = $state<'Documents' | 'Sources'>('Documents');
-	let comparisonMode = $state(false);
-	let selectedForComparison = new SvelteSet<string>();
-
-	$effect(() => {
-		if (selectedDatasetId !== null) {
-			const datasetEmbeddersList = embeddersByDataset.get(selectedDatasetId) || [];
-			selectedEmbedderIds.clear();
-			datasetEmbeddersList.forEach((e) => selectedEmbedderIds.add(e.embedder_id));
-		}
-	});
+	let searchMode = $state<'documents' | 'chunks'>('documents');
 
 	let showAdvanced = $state(false);
 	let limit = $state(10);
@@ -91,136 +82,52 @@
 
 	const metadataPlaceholder = '{"category": "example", "year": 2024}';
 
-	let embeddersByDataset = $derived.by(() => {
-		const grouped = new SvelteMap<number, Embedder[]>();
+	// Group embedded datasets by source dataset for UI display
+	let embeddedDatasetsByDataset = $derived.by(() => {
+		const grouped = new SvelteMap<number, EmbeddedDataset[]>();
 
-		datasetEmbedders.forEach((de) => {
-			grouped.set(de.dataset_id, de.embedders);
+		allEmbeddedDatasets.forEach((ed) => {
+			if (!grouped.has(ed.source_dataset_id)) {
+				grouped.set(ed.source_dataset_id, []);
+			}
+			grouped.get(ed.source_dataset_id)!.push(ed);
 		});
 
 		return grouped;
 	});
 
-	let allEmbedders = $derived.by(() => {
-		const result: Embedder[] = [];
-		datasetEmbedders.forEach((de) => {
-			result.push(...de.embedders);
-		});
-		return result;
+	// Filtered embedded datasets based on selected dataset (for display)
+	let filteredEmbeddedDatasets = $derived.by(() => {
+		if (selectedDatasetId === null) {
+			return allEmbeddedDatasets;
+		}
+		return embeddedDatasetsByDataset.get(selectedDatasetId) || [];
 	});
 
 	let canSearch = $derived(
-		searchQuery.trim().length > 0 && selectedDatasetId !== null && selectedEmbedderIds.size > 0
+		searchQuery.trim().length > 0 && selectedEmbeddedDatasetIds.size > 0
 	);
 
-	let comparisonMatches = $derived.by(() => {
-		if (!searchResults || selectedForComparison.size === 0) return [];
-
-		const matches: Array<SearchMatch & { embedder_name: string }> = [];
-		searchResults.results.forEach((result) => {
-			result.matches.forEach((match) => {
-				if (selectedForComparison.has(match.id)) {
-					matches.push({ ...match, embedder_name: result.embedder_name });
-				}
-			});
-		});
-		return matches;
-	});
-
-	function toggleComparison(matchId: string) {
-		if (selectedForComparison.has(matchId)) {
-			selectedForComparison.delete(matchId);
-		} else {
-			if (selectedForComparison.size >= 4) {
-				toastStore.warning('Maximum 4 items can be compared at once');
-				return;
-			}
-			selectedForComparison.add(matchId);
-		}
-	}
-
-	function clearComparison() {
-		selectedForComparison.clear();
-		comparisonMode = false;
-	}
-
-	function computeDiff(
-		text1: string,
-		text2: string
-	): Array<{ type: 'common' | 'added' | 'removed'; text: string }> {
-		const words1 = text1.split(/(\s+)/);
-		const words2 = text2.split(/(\s+)/);
-		const diff: Array<{ type: 'common' | 'added' | 'removed'; text: string }> = [];
-
-		// Simple word-level diff algorithm
-		let i = 0,
-			j = 0;
-		while (i < words1.length || j < words2.length) {
-			if (i >= words1.length) {
-				diff.push({ type: 'added', text: words2[j] });
-				j++;
-			} else if (j >= words2.length) {
-				diff.push({ type: 'removed', text: words1[i] });
-				i++;
-			} else if (words1[i] === words2[j]) {
-				diff.push({ type: 'common', text: words1[i] });
-				i++;
-				j++;
-			} else {
-				// Look ahead to find common ground
-				let foundMatch = false;
-				for (let k = 1; k < 5 && j + k < words2.length; k++) {
-					if (words1[i] === words2[j + k]) {
-						for (let m = 0; m < k; m++) {
-							diff.push({ type: 'added', text: words2[j + m] });
-						}
-						j += k;
-						foundMatch = true;
-						break;
-					}
-				}
-				if (!foundMatch) {
-					for (let k = 1; k < 5 && i + k < words1.length; k++) {
-						if (words1[i + k] === words2[j]) {
-							for (let m = 0; m < k; m++) {
-								diff.push({ type: 'removed', text: words1[i + m] });
-							}
-							i += k;
-							foundMatch = true;
-							break;
-						}
-					}
-				}
-				if (!foundMatch) {
-					diff.push({ type: 'removed', text: words1[i] });
-					diff.push({ type: 'added', text: words2[j] });
-					i++;
-					j++;
-				}
-			}
-		}
-
-		return diff;
-	}
 
 	async function fetchData() {
 		try {
 			loading = true;
 			error = null;
 
-			const [datasetsData, datasetEmbeddersData] = await Promise.all([
+			const [datasetsData, embeddedDatasetsData] = await Promise.all([
 				apiCall<Dataset[]>('/api/datasets'),
-				apiCall<DatasetEmbedders[]>('/api/datasets/embedders'),
+				apiCall<EmbeddedDataset[]>('/api/embedded-datasets'),
 			]);
 
 			datasets = datasetsData;
-			datasetEmbedders = datasetEmbeddersData;
+			allEmbeddedDatasets = embeddedDatasetsData;
 
+			// Default to first dataset for filtering display
 			if (datasets.length > 0 && selectedDatasetId === null) {
 				selectedDatasetId = datasets[0].dataset_id;
 			}
 		} catch (e) {
-			const message = formatError(e, 'Failed to load datasets');
+			const message = formatError(e, 'Failed to load data');
 			error = message;
 			toastStore.error(message);
 		} finally {
@@ -228,15 +135,15 @@
 		}
 	}
 
-	function toggleEmbedder(embedderId: number) {
-		if (selectedEmbedderIds.has(embedderId)) {
-			selectedEmbedderIds.delete(embedderId);
+	function toggleEmbeddedDataset(embeddedDatasetId: number) {
+		if (selectedEmbeddedDatasetIds.has(embeddedDatasetId)) {
+			selectedEmbeddedDatasetIds.delete(embeddedDatasetId);
 		} else {
-			selectedEmbedderIds.add(embedderId);
+			selectedEmbeddedDatasetIds.add(embeddedDatasetId);
 		}
 	}
 
-	async function embedQuery(embedder: Embedder, query: string): Promise<number[]> {
+	async function __unused_old_embedQuery(embedder: any, query: string): Promise<number[]> {
 		const { provider, base_url, api_key, config } = embedder;
 
 		const headers: Record<string, string> = {
@@ -331,49 +238,6 @@
 						}
 					: null;
 
-			const embeddings: Record<number, number[]> = {};
-			const embeddingErrors: string[] = [];
-
-			for (const embedderId of selectedEmbedderIds) {
-				const embedder = allEmbedders.find((e) => e.embedder_id === embedderId);
-				if (!embedder) {
-					console.error(`Embedder ${embedderId} not found in allEmbedders`);
-					embeddingErrors.push(`Embedder ${embedderId} not found`);
-					continue;
-				}
-
-				try {
-					const embedding = await embedQuery(embedder, searchQuery);
-					embeddings[embedderId] = embedding;
-				} catch (error) {
-					console.error(`Failed to embed query for ${embedder.name}:`, error);
-					embeddingErrors.push(
-						`${embedder.name}: ${error instanceof Error ? error.message : String(error)}`
-					);
-				}
-			}
-
-			if (Object.keys(embeddings).length === 0) {
-				const detail = embeddingErrors.join('; ');
-				toastStore.error(
-					'Could not embed the query for any selected embedders',
-					'Embedding failed'
-				);
-				if (detail) {
-					console.error('Embedding failures:', detail);
-				}
-				return;
-			}
-
-			if (embeddingErrors.length > 0) {
-				toastStore.warning(
-					`Some embeds failed: ${embeddingErrors.join('; ')}`,
-					'Partial embedding issues',
-					8000
-				);
-				console.warn('Some embeddings failed:', embeddingErrors);
-			}
-
 			const response = await apiCall<SearchResponse>('/api/search', {
 				method: 'POST',
 				headers: {
@@ -381,8 +245,7 @@
 				},
 				body: JSON.stringify({
 					query: searchQuery,
-					dataset_id: selectedDatasetId,
-					embeddings,
+					embedded_dataset_ids: Array.from(selectedEmbeddedDatasetIds),
 					limit,
 					score_threshold: scoreThreshold,
 					search_mode: searchMode,
@@ -415,7 +278,7 @@
 <div class="max-w-7xl mx-auto">
 	<PageHeader
 		title="Search"
-		description="Provides the ability to execute semantic searches against multiple embedded datasets for comparison purposes. Test and evaluate different embedding models side-by-side to determine which performs best for your use case."
+		description="Execute semantic searches against multiple embedded datasets to test and evaluate different embedding models."
 	/>
 
 	{#if loading}
@@ -447,85 +310,95 @@
 				<span class="text-sm font-medium text-gray-700 dark:text-gray-300">Search Mode:</span>
 				<div class="flex gap-2">
 					<button
-						onclick={() => (searchMode = 'Documents')}
-						class="px-4 py-2 rounded-lg transition-colors {searchMode === 'Documents'
+						onclick={() => (searchMode = 'documents')}
+						class="px-4 py-2 rounded-lg transition-colors {searchMode === 'documents'
 							? 'bg-blue-600 text-white'
 							: 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'}"
 					>
 						📄 Documents
 					</button>
 					<button
-						onclick={() => (searchMode = 'Sources')}
-						class="px-4 py-2 rounded-lg transition-colors {searchMode === 'Sources'
+						onclick={() => (searchMode = 'chunks')}
+						class="px-4 py-2 rounded-lg transition-colors {searchMode === 'chunks'
 							? 'bg-blue-600 text-white'
 							: 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'}"
 					>
-						📁 Sources
+						📁 Chunks
 					</button>
 				</div>
 				<span class="text-xs text-gray-500 dark:text-gray-400">
-					{searchMode === 'Documents'
-						? 'View individual document chunks'
-						: 'View results grouped by source'}
+					{searchMode === 'chunks'
+						? 'View individual chunks'
+						: 'View results grouped by documents'}
 				</span>
 			</div>
 
-			<!-- Dataset and Embedder Selection -->
-			<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-				<div>
-					<label
-						for="dataset-filter"
-						class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-					>
-						Select Dataset
-					</label>
-					<select
-						id="dataset-filter"
-						bind:value={selectedDatasetId}
-						class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-					>
-						{#each datasets as dataset (dataset.dataset_id)}
-							<option value={dataset.dataset_id}>{dataset.title}</option>
-						{/each}
-					</select>
-				</div>
+			<!-- Dataset Filter and Embedded Dataset Selection -->
+			<div class="mb-4">
+				<label
+					for="dataset-filter"
+					class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+				>
+					Filter by Dataset (optional)
+				</label>
+				<select
+					id="dataset-filter"
+					bind:value={selectedDatasetId}
+					class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+				>
+					<option value={null}>All Datasets</option>
+					{#each datasets as dataset (dataset.dataset_id)}
+						<option value={dataset.dataset_id}>{dataset.title}</option>
+					{/each}
+				</select>
+			</div>
 
-				<div class="md:col-span-2">
-					<span class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-						Select Embedders
-					</span>
-					{#if selectedDatasetId !== null}
-						{@const datasetEmbeddersList = embeddersByDataset.get(selectedDatasetId) || []}
-						<div class="flex flex-wrap gap-2">
-							{#each datasetEmbeddersList as embedder (embedder.embedder_id)}
+			<div class="mb-4">
+				<span class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+					Select Embedded Datasets to Search
+					{#if selectedEmbeddedDatasetIds.size > 0}
+						<span class="text-blue-600 dark:text-blue-400">
+							({selectedEmbeddedDatasetIds.size} selected)
+						</span>
+					{/if}
+				</span>
+
+				<div
+					class="max-h-64 overflow-y-auto border border-gray-200 dark:border-gray-600 rounded-lg p-3 bg-gray-50 dark:bg-gray-900"
+				>
+					{#if filteredEmbeddedDatasets.length === 0}
+						<div class="text-sm text-gray-500 dark:text-gray-400 py-2 text-center">
+							No embedded datasets available.
+						</div>
+					{:else}
+						<div class="space-y-2">
+							{#each filteredEmbeddedDatasets as embeddedDataset (embeddedDataset.embedded_dataset_id)}
 								<label
-									class="flex items-center gap-2 cursor-pointer bg-gray-50 dark:bg-gray-700 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-600 hover:border-blue-400 dark:hover:border-blue-500 transition-colors"
+									class="flex items-start gap-3 cursor-pointer bg-white dark:bg-gray-800 px-3 py-2 rounded border border-gray-200 dark:border-gray-600 hover:border-blue-400 dark:hover:border-blue-500 transition-colors"
 								>
 									<input
 										type="checkbox"
-										checked={selectedEmbedderIds.has(embedder.embedder_id)}
-										onchange={() => toggleEmbedder(embedder.embedder_id)}
-										class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+										checked={selectedEmbeddedDatasetIds.has(
+											embeddedDataset.embedded_dataset_id
+										)}
+										onchange={() =>
+											toggleEmbeddedDataset(embeddedDataset.embedded_dataset_id)}
+										class="mt-1 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
 									/>
-									<div class="flex flex-col">
+									<div class="flex-1 flex flex-col">
 										<span class="text-sm font-medium text-gray-900 dark:text-white">
-											{embedder.name}
+											{embeddedDataset.title}
 										</span>
-										<span class="text-xs text-gray-500 dark:text-gray-400">
-											{embedder.provider}
-										</span>
+										<div class="text-xs text-gray-500 dark:text-gray-400 mt-1 space-y-0.5">
+											<div>Dataset: {embeddedDataset.source_dataset_title}</div>
+											<div>Embedder: {embeddedDataset.embedder_name}</div>
+											<div class="font-mono text-[10px]">
+												{embeddedDataset.collection_name}
+											</div>
+										</div>
 									</div>
 								</label>
 							{/each}
-							{#if datasetEmbeddersList.length === 0}
-								<div class="text-sm text-gray-500 dark:text-gray-400 py-2">
-									No embedders configured for this dataset.
-								</div>
-							{/if}
-						</div>
-					{:else}
-						<div class="text-sm text-gray-500 dark:text-gray-400 py-2">
-							Please select a dataset first.
 						</div>
 					{/if}
 				</div>
@@ -547,7 +420,7 @@
 								for="search-limit"
 								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
 							>
-								Limit (per embedder)
+								Limit (per embedded dataset)
 							</label>
 							<input
 								id="search-limit"
@@ -645,184 +518,108 @@
 					<h2 class="text-xl font-semibold text-gray-900 dark:text-white">
 						Results for: "{searchResults.query}"
 					</h2>
-					<div class="flex items-center gap-4">
-						{#if searchResults.search_mode === 'Documents'}
-							<button
-								onclick={() => {
-									comparisonMode = !comparisonMode;
-									if (!comparisonMode) {
-										selectedForComparison.clear();
-									}
-								}}
-								class="px-4 py-2 rounded-lg transition-colors {comparisonMode
-									? 'bg-blue-600 text-white'
-									: 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'}"
-							>
-								{comparisonMode ? '✓ Comparing' : '⚖️ Compare'}
-								{#if selectedForComparison.size > 0}
-									({selectedForComparison.size})
-								{/if}
-							</button>
-						{/if}
-						<span class="text-sm text-gray-600 dark:text-gray-400">
-							{searchResults.search_mode === 'Sources' && searchResults.aggregated_sources
-								? `${searchResults.aggregated_sources.length} sources`
-								: `${searchResults.results.length} embedder${searchResults.results.length !== 1 ? 's' : ''}`}
-						</span>
-					</div>
+					<span class="text-sm text-gray-600 dark:text-gray-400">
+						{searchResults.search_mode === 'documents'
+							? `${searchResults.results.reduce((sum, r) => sum + (r.documents?.length || 0), 0)} document${searchResults.results.reduce((sum, r) => sum + (r.documents?.length || 0), 0) !== 1 ? 's' : ''}`
+							: `${searchResults.results.length} embedded dataset${searchResults.results.length !== 1 ? 's' : ''}`}
+					</span>
 				</div>
 
-				{#if comparisonMode && comparisonMatches.length > 0}
-					<!-- Comparison View -->
-					<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
-						<div class="flex items-center justify-between mb-4">
-							<h3 class="text-lg font-semibold text-gray-900 dark:text-white">
-								Comparing {comparisonMatches.length} Results
-							</h3>
-							<button
-								onclick={clearComparison}
-								class="text-sm text-red-600 dark:text-red-400 hover:underline"
-							>
-								Clear Comparison
-							</button>
-						</div>
 
-						<div
-							class="grid grid-cols-1 {comparisonMatches.length === 2
-								? 'md:grid-cols-2'
-								: comparisonMatches.length === 3
-									? 'md:grid-cols-3'
-									: 'md:grid-cols-2 lg:grid-cols-4'} gap-4"
-						>
-							{#each comparisonMatches as match, idx (match.id)}
-								<div class="border border-blue-400 dark:border-blue-600 rounded-lg p-4">
-									<div class="mb-3">
-										<div class="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
-											{match.embedder_name}
-										</div>
-										<div class="flex items-center justify-between">
-											<div class="text-sm font-semibold text-gray-900 dark:text-white">
-												{match.metadata.title ||
-													match.metadata.name ||
-													match.metadata.file ||
-													`Item ${match.metadata.item_id || idx + 1}`}
-											</div>
-											<div class="text-lg font-bold text-blue-600 dark:text-blue-400">
-												{match.score.toFixed(3)}
-											</div>
+				<!-- Results display: side-by-side columns per embedded dataset -->
+				{#if searchResults.search_mode === 'documents'}
+					<div class="overflow-x-auto pb-4">
+						<div class="flex justify-center gap-6 min-w-max">
+							{#each searchResults.results as result (result.embedded_dataset_id)}
+								<div class="w-96 shrink-0 bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+									<div class="flex items-start justify-between mb-4">
+										<div>
+											<h3 class="text-lg font-semibold text-gray-900 dark:text-white">
+												{result.embedded_dataset_title}
+											</h3>
+											<p class="text-sm text-gray-600 dark:text-gray-400">
+												Dataset: {result.source_dataset_title}
+											</p>
+											<p class="text-xs text-gray-500 dark:text-gray-500">
+												Embedder: {result.embedder_name}
+											</p>
 										</div>
 									</div>
 
-									{#if idx > 0}
-										{@const diff = computeDiff(comparisonMatches[0].text, match.text)}
+									{#if result.error}
 										<div
-											class="bg-gray-50 dark:bg-gray-900 rounded p-3 border border-gray-200 dark:border-gray-700"
+											class="bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 p-3 rounded text-sm"
 										>
-											<div class="text-xs text-gray-600 dark:text-gray-400 mb-2">
-												Diff vs. Result #1
-											</div>
-											<p class="text-sm leading-relaxed">
-												{#each diff as segment, i (i)}
-													{#if segment.type === 'common'}
-														<span class="text-gray-900 dark:text-gray-100">{segment.text}</span>
-													{:else if segment.type === 'added'}
-														<span
-															class="bg-green-200 dark:bg-green-900 text-green-900 dark:text-green-200"
-															>{segment.text}</span
-														>
-													{:else}
-														<span
-															class="bg-red-200 dark:bg-red-900 text-red-900 dark:text-red-200 line-through"
-															>{segment.text}</span
-														>
-													{/if}
-												{/each}
-											</p>
+											{result.error}
+										</div>
+									{:else if !result.documents || result.documents.length === 0}
+										<div class="text-gray-500 dark:text-gray-400 text-center py-4">
+											No results found
 										</div>
 									{:else}
-										<div
-											class="bg-gray-50 dark:bg-gray-900 rounded p-3 border border-gray-200 dark:border-gray-700"
-										>
-											<p
-												class="text-sm text-gray-900 dark:text-gray-100 leading-relaxed whitespace-pre-wrap"
-											>
-												{match.text}
-											</p>
+										<div class="space-y-3">
+											{#each result.documents as document, idx (document.item_id)}
+												<div
+													class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:border-blue-400 dark:hover:border-blue-600 transition-colors"
+												>
+													<div class="flex items-start justify-between mb-3">
+														<div class="flex-1">
+															<div class="text-xs font-medium text-gray-500 dark:text-gray-400">
+																Document #{idx + 1}
+															</div>
+															<div class="text-sm font-semibold text-gray-900 dark:text-white mt-1">
+																📄 {document.item_title}
+															</div>
+															<div class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+																{document.chunk_count} chunk{document.chunk_count !== 1
+																	? 's'
+																	: ''}
+															</div>
+														</div>
+														<div class="text-right">
+															<div class="text-xs text-gray-600 dark:text-gray-400">Best Score</div>
+															<div class="text-lg font-bold text-blue-600 dark:text-blue-400">
+																{document.best_score.toFixed(4)}
+															</div>
+														</div>
+													</div>
+
+													<div
+														class="bg-gray-50 dark:bg-gray-900 rounded p-3 border border-gray-200 dark:border-gray-700"
+													>
+														<div class="text-xs text-gray-600 dark:text-gray-400 mb-2">
+															Best matching chunk:
+														</div>
+														<p
+															class="text-sm text-gray-900 dark:text-gray-100 leading-relaxed whitespace-pre-wrap line-clamp-4"
+														>
+															{document.best_chunk.text}
+														</p>
+													</div>
+												</div>
+											{/each}
 										</div>
 									{/if}
 								</div>
 							{/each}
 						</div>
 					</div>
-				{/if}
-
-				{#if searchResults.search_mode === 'Sources' && searchResults.aggregated_sources}
-					<!-- Sources Mode: Show aggregated by source -->
-					<div class="space-y-4">
-						{#each searchResults.aggregated_sources as source (source.source)}
-							<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
-								<div class="flex items-start justify-between mb-4">
-									<div class="flex-1">
-										<h3 class="text-lg font-semibold text-gray-900 dark:text-white">
-											📁 {source.source}
-										</h3>
-										<p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
-											{source.matches.length} match{source.matches.length !== 1 ? 'es' : ''} from
-											{source.embedder_ids.length} embedder{source.embedder_ids.length !== 1
-												? 's'
-												: ''}
-										</p>
-									</div>
-									<div class="text-right">
-										<div class="text-xs text-gray-600 dark:text-gray-400">Best Score</div>
-										<div class="text-xl font-bold text-blue-600 dark:text-blue-400">
-											{source.best_score.toFixed(4)}
-										</div>
-									</div>
-								</div>
-
-								<div class="space-y-3">
-									{#each source.matches.slice(0, 3) as match, idx (match.id)}
-										<div
-											class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-gray-50 dark:bg-gray-900"
-										>
-											<div class="flex items-center justify-between mb-2">
-												<div class="text-xs font-medium text-gray-500 dark:text-gray-400">
-													Match #{idx + 1}
-												</div>
-												<div class="text-sm font-bold text-blue-600 dark:text-blue-400">
-													{match.score.toFixed(4)}
-												</div>
-											</div>
-											<p
-												class="text-sm text-gray-900 dark:text-gray-100 leading-relaxed whitespace-pre-wrap line-clamp-3"
-											>
-												{match.text}
-											</p>
-										</div>
-									{/each}
-									{#if source.matches.length > 3}
-										<div class="text-center text-sm text-gray-500 dark:text-gray-400">
-											+ {source.matches.length - 3} more matches
-										</div>
-									{/if}
-								</div>
-							</div>
-						{/each}
-					</div>
 				{:else}
-					<!-- Documents Mode: Show side-by-side embedder results -->
+					<!-- Chunks Mode: Show side-by-side embedded dataset results -->
 					<div class="overflow-x-auto pb-4">
 						<div class="flex justify-center gap-6 min-w-max">
-							{#each searchResults.results as result (result.embedder_id)}
+							{#each searchResults.results as result (result.embedded_dataset_id)}
 								<div class="w-96 shrink-0 bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
 									<div class="flex items-start justify-between mb-4">
 										<div>
 											<h3 class="text-lg font-semibold text-gray-900 dark:text-white">
-												{result.embedder_name}
+												{result.embedded_dataset_title}
 											</h3>
 											<p class="text-sm text-gray-600 dark:text-gray-400">
-												Embedded Dataset: {result.collection_name}
+												Dataset: {result.source_dataset_title}
+											</p>
+											<p class="text-xs text-gray-500 dark:text-gray-500">
+												Embedder: {result.embedder_name}
 											</p>
 										</div>
 									</div>
@@ -841,37 +638,18 @@
 										<div class="space-y-3">
 											{#each result.matches as match, idx (match.id)}
 												<div
-													class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:border-blue-400 dark:hover:border-blue-600 transition-colors {selectedForComparison.has(
-														match.id
-													)
-														? 'ring-2 ring-blue-500'
-														: ''}"
+													class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:border-blue-400 dark:hover:border-blue-600 transition-colors"
 												>
 													<div class="flex items-start justify-between mb-3">
-														<div class="flex items-start gap-3 flex-1">
-															{#if comparisonMode}
-																<input
-																	type="checkbox"
-																	checked={selectedForComparison.has(match.id)}
-																	onchange={() => toggleComparison(match.id)}
-																	class="mt-1 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-																/>
-															{/if}
-															<div class="flex-1">
-																<div class="text-xs font-medium text-gray-500 dark:text-gray-400">
-																	Result #{idx + 1}
-																</div>
-																{#if match.metadata.item_id || match.metadata.name || match.metadata.file || match.metadata.title}
-																	<div
-																		class="text-sm font-semibold text-gray-900 dark:text-white mt-1"
-																	>
-																		{match.metadata.title ||
-																			match.metadata.name ||
-																			match.metadata.file ||
-																			`Item ${match.metadata.item_id}`}
-																	</div>
-																{/if}
+														<div class="flex-1">
+															<div class="text-xs font-medium text-gray-500 dark:text-gray-400">
+																Chunk #{match.metadata.chunk_index || idx + 1}
 															</div>
+															{#if match.metadata.item_title}
+																<div class="text-sm font-semibold text-gray-900 dark:text-white mt-1">
+																	{match.metadata.item_title}
+																</div>
+															{/if}
 														</div>
 														<div class="text-right">
 															<div class="text-xs text-gray-600 dark:text-gray-400">Score</div>
@@ -882,40 +660,13 @@
 													</div>
 
 													<div
-														class="bg-gray-50 dark:bg-gray-900 rounded p-3 mb-3 border border-gray-200 dark:border-gray-700"
+														class="bg-gray-50 dark:bg-gray-900 rounded p-3 border border-gray-200 dark:border-gray-700"
 													>
 														<p
 															class="text-sm text-gray-900 dark:text-gray-100 leading-relaxed whitespace-pre-wrap line-clamp-6"
 														>
 															{match.text}
 														</p>
-													</div>
-
-													{#if Object.keys(match.metadata).length > 0}
-														<details class="mt-3">
-															<summary
-																class="text-xs font-medium text-gray-600 dark:text-gray-400 cursor-pointer hover:text-gray-900 dark:hover:text-gray-200 flex items-center gap-2"
-															>
-																<span>📋 Metadata & Details</span>
-																<span class="text-gray-400">▾</span>
-															</summary>
-															<div class="mt-2 space-y-2 text-xs">
-																{#each Object.entries(match.metadata) as [key, value] (key)}
-																	<div class="flex flex-col">
-																		<span class="font-medium text-gray-700 dark:text-gray-300">
-																			{key}:
-																		</span>
-																		<span class="text-gray-600 dark:text-gray-400 ml-2">
-																			{typeof value === 'string' ? value : JSON.stringify(value)}
-																		</span>
-																	</div>
-																{/each}
-															</div>
-														</details>
-													{/if}
-
-													<div class="text-xs text-gray-500 dark:text-gray-500 mt-3">
-														ID: {match.id}
 													</div>
 												</div>
 											{/each}

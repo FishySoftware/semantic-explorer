@@ -4,8 +4,7 @@ use utoipa::ToSchema;
 #[derive(Debug, Deserialize, ToSchema)]
 pub(crate) struct SearchRequest {
     pub query: String,
-    pub dataset_id: i32,
-    pub embeddings: std::collections::HashMap<i32, Vec<f32>>,
+    pub embedded_dataset_ids: Vec<i32>,
     #[serde(default = "default_limit")]
     pub limit: u64,
     #[serde(default)]
@@ -23,7 +22,7 @@ pub(crate) struct SearchRequest {
 pub(crate) enum SearchMode {
     #[default]
     Documents,
-    Sources,
+    Chunks,
 }
 
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
@@ -39,27 +38,32 @@ fn default_limit() -> u64 {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct SearchResponse {
-    pub results: Vec<EmbedderSearchResults>,
+    pub results: Vec<EmbeddedDatasetSearchResults>,
     pub query: String,
     pub search_mode: SearchMode,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub aggregated_sources: Option<Vec<SourceAggregation>>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct SourceAggregation {
-    pub source: String,
-    pub matches: Vec<SearchMatch>,
+pub(crate) struct DocumentResult {
+    pub item_id: i32,
+    pub item_title: String,
     pub best_score: f32,
-    pub embedder_ids: Vec<i32>,
+    pub chunk_count: i32,
+    pub best_chunk: SearchMatch,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct EmbedderSearchResults {
+pub(crate) struct EmbeddedDatasetSearchResults {
+    pub embedded_dataset_id: i32,
+    pub embedded_dataset_title: String,
+    pub source_dataset_id: i32,
+    pub source_dataset_title: String,
     pub embedder_id: i32,
     pub embedder_name: String,
     pub collection_name: String,
     pub matches: Vec<SearchMatch>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub documents: Option<Vec<DocumentResult>>,
     pub error: Option<String>,
 }
 

@@ -5,6 +5,7 @@ mod collections;
 mod datasets;
 mod embedded_datasets;
 mod embedders;
+mod embedding;
 mod llms;
 mod observability;
 mod search;

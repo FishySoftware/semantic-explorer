@@ -33,7 +33,6 @@
 		{ name: 'Marketplace', icon: CartSolid, url: '/marketplace' },
 		{ name: 'Collections', icon: FolderSolid, url: '/collections' },
 		{ name: 'Datasets', icon: DatabaseSolid, url: '/datasets' },
-		{ name: 'Embedders', icon: BrainSolid, url: '/embedders' },
 		{ name: 'Embedded Datasets', icon: CubeSolid, url: '/embedded-datasets' },
 		{
 			name: 'Transforms',
@@ -52,6 +51,7 @@
 				},
 			],
 		},
+		{ name: 'Embedders', icon: BrainSolid, url: '/embedders' },
 		{ name: 'Search', icon: SearchOutline, url: '/search' },
 		{ name: 'Visualizations', icon: ChartPieSolid, url: '/visualizations' },
 		{ name: 'Chat', icon: PaperClipOutline, url: '/chat' },
