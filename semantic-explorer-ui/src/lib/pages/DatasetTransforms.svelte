@@ -587,7 +587,7 @@
 										<p class="ml-4">None</p>
 									{:else}
 										<ul class="ml-4 list-disc list-inside">
-											{#each embeddersList as embedder}
+											{#each embeddersList as embedder (embedder.embedder_id)}
 												<li>
 													<a
 														href="#/embedders?name={encodeURIComponent(embedder.name)}"

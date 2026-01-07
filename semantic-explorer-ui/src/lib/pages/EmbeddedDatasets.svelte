@@ -4,8 +4,8 @@
 	import { formatError, toastStore } from '../utils/notifications';
 
 	let { onNavigate, onViewDataset } = $props<{
-		onNavigate: (path: string) => void;
-		onViewDataset: (datasetId: number) => void;
+		onNavigate: (_path: string) => void;
+		onViewDataset: (_datasetId: number) => void;
 	}>();
 
 	interface EmbeddedDataset {

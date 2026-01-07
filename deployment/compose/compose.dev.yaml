@@ -1,101 +1,101 @@
 
 services:
 
-  semantic-explorer:
-    build:
-      context: ../../
-      dockerfile: crates/api/Dockerfile
-    depends_on:      
-      - rustfs
-      - qdrant
-      - dex
-      - postgres
-      - nats
-      - otel-collector
-    restart: unless-stopped
-    environment:
-      - HOSTNAME=localhost
-      - RUST_LOG=warn,actix_web_prom=error,semantic_explorer=debug
-      - AWS_ACCESS_KEY_ID=test_access_key
-      - AWS_SECRET_ACCESS_KEY=test_secret_key
-      - AWS_REGION=us-east-1
-      - AWS_ENDPOINT_URL=http://127.0.0.1:9000
-      - QDRANT_URL=http://localhost:6334
-      - DATABASE_URL=postgresql://user:password@localhost:5432/explorer
-      - OIDC_ISSUER_URL=http://localhost:5556/dex
-      - OIDC_CLIENT_ID=semantic-explorer
-      - OIDC_CLIENT_SECRET=ZXhhbXBsZS1hcHAtc2VjcmV0
-      - NATS_URL=nats://localhost:4222
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
-      - SERVICE_NAME=semantic-explorer
-    ports:
-      - "8080:8080"
-    network_mode: host
+  # semantic-explorer:
+  #   build:
+  #     context: ../../
+  #     dockerfile: crates/api/Dockerfile
+  #   depends_on:      
+  #     - rustfs
+  #     - qdrant
+  #     - dex
+  #     - postgres
+  #     - nats
+  #     - otel-collector
+  #   restart: unless-stopped
+  #   environment:
+  #     - HOSTNAME=localhost
+  #     - RUST_LOG=warn,actix_web_prom=error,semantic_explorer=debug
+  #     - AWS_ACCESS_KEY_ID=test_access_key
+  #     - AWS_SECRET_ACCESS_KEY=test_secret_key
+  #     - AWS_REGION=us-east-1
+  #     - AWS_ENDPOINT_URL=http://127.0.0.1:9000
+  #     - QDRANT_URL=http://localhost:6334
+  #     - DATABASE_URL=postgresql://user:password@localhost:5432/explorer
+  #     - OIDC_ISSUER_URL=http://localhost:5556/dex
+  #     - OIDC_CLIENT_ID=semantic-explorer
+  #     - OIDC_CLIENT_SECRET=ZXhhbXBsZS1hcHAtc2VjcmV0
+  #     - NATS_URL=nats://localhost:4222
+  #     - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+  #     - SERVICE_NAME=semantic-explorer
+  #   ports:
+  #     - "8080:8080"
+  #   network_mode: host
 
-  worker-collections:
-    build:
-      context: ../../
-      dockerfile: crates/worker-collections/Dockerfile
-    depends_on:
-      - nats
-      - rustfs
-      - otel-collector
-    restart: unless-stopped
-    environment:
-      - RUST_LOG=warn,actix_web_prom=error,worker_collections=debug
-      - NATS_URL=nats://localhost:4222
-      - AWS_ACCESS_KEY_ID=test_access_key
-      - AWS_SECRET_ACCESS_KEY=test_secret_key
-      - AWS_REGION=us-east-1
-      - AWS_ENDPOINT_URL=http://127.0.0.1:9000
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
-      - SERVICE_NAME=worker-collections
-    network_mode: host
+  # worker-collections:
+  #   build:
+  #     context: ../../
+  #     dockerfile: crates/worker-collections/Dockerfile
+  #   depends_on:
+  #     - nats
+  #     - rustfs
+  #     - otel-collector
+  #   restart: unless-stopped
+  #   environment:
+  #     - RUST_LOG=warn,actix_web_prom=error,worker_collections=debug
+  #     - NATS_URL=nats://localhost:4222
+  #     - AWS_ACCESS_KEY_ID=test_access_key
+  #     - AWS_SECRET_ACCESS_KEY=test_secret_key
+  #     - AWS_REGION=us-east-1
+  #     - AWS_ENDPOINT_URL=http://127.0.0.1:9000
+  #     - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+  #     - SERVICE_NAME=worker-collections
+  #   network_mode: host
 
-  worker-datasets:
-    build:
-      context: ../../
-      dockerfile: crates/worker-datasets/Dockerfile
-    depends_on:
-      - nats
-      - rustfs
-      - qdrant
-      - otel-collector
-    restart: unless-stopped
-    environment:
-      - RUST_LOG=warn,actix_web_prom=error,worker_datasets=debug
-      - NATS_URL=nats://localhost:4222
-      - AWS_ACCESS_KEY_ID=test_access_key
-      - AWS_SECRET_ACCESS_KEY=test_secret_key
-      - AWS_REGION=us-east-1
-      - AWS_ENDPOINT_URL=http://127.0.0.1:9000
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
-      - SERVICE_NAME=worker-datasets
-    network_mode: host
+  # worker-datasets:
+  #   build:
+  #     context: ../../
+  #     dockerfile: crates/worker-datasets/Dockerfile
+  #   depends_on:
+  #     - nats
+  #     - rustfs
+  #     - qdrant
+  #     - otel-collector
+  #   restart: unless-stopped
+  #   environment:
+  #     - RUST_LOG=warn,actix_web_prom=error,worker_datasets=debug
+  #     - NATS_URL=nats://localhost:4222
+  #     - AWS_ACCESS_KEY_ID=test_access_key
+  #     - AWS_SECRET_ACCESS_KEY=test_secret_key
+  #     - AWS_REGION=us-east-1
+  #     - AWS_ENDPOINT_URL=http://127.0.0.1:9000
+  #     - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+  #     - SERVICE_NAME=worker-datasets
+  #   network_mode: host
 
-  worker-visualizations:
-    build:
-      context: ../../
-      dockerfile: crates/worker-visualizations/Dockerfile
-    depends_on:
-      - nats
-      - qdrant
-      - otel-collector
-    restart: unless-stopped
-    environment:
-      - RUST_LOG=warn,actix_web_prom=error,worker_visualizations=debug
-      - NATS_URL=nats://localhost:4222
-      - QDRANT_URL=http://localhost:6334
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
-      - SERVICE_NAME=worker-visualizations
-    network_mode: host
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+  # worker-visualizations:
+  #   build:
+  #     context: ../../
+  #     dockerfile: crates/worker-visualizations/Dockerfile
+  #   depends_on:
+  #     - nats
+  #     - qdrant
+  #     - otel-collector
+  #   restart: unless-stopped
+  #   environment:
+  #     - RUST_LOG=warn,actix_web_prom=error,worker_visualizations=debug
+  #     - NATS_URL=nats://localhost:4222
+  #     - QDRANT_URL=http://localhost:6334
+  #     - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+  #     - SERVICE_NAME=worker-visualizations
+  #   network_mode: host
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: all
+  #             capabilities: [gpu]
 
   rustfs:
     image: rustfs/rustfs:latest

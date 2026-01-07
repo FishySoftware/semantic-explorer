@@ -52,17 +52,14 @@
 		{ name: 'Search', icon: SearchOutline, url: '/search' },
 		{ name: 'Visualizations', icon: ChartPieSolid, url: '/visualizations' },
 	];
-
-	let expandedFolders = $state<Set<string>>(new Set(['Transforms']));
+	let expandedFolders = $state<string[]>(['Transforms']);
 
 	function toggleFolder(folderName: string) {
-		const newExpanded = new Set(expandedFolders);
-		if (newExpanded.has(folderName)) {
-			newExpanded.delete(folderName);
+		if (expandedFolders.includes(folderName)) {
+			expandedFolders = expandedFolders.filter((f) => f !== folderName);
 		} else {
-			newExpanded.add(folderName);
+			expandedFolders = [...expandedFolders, folderName];
 		}
-		expandedFolders = newExpanded;
 	}
 </script>
 
@@ -82,14 +79,14 @@
 						>
 							<Icon class="w-5 h-5" />
 							<span class="ml-3 flex-1 text-left">{item.name}</span>
-							{#if expandedFolders.has(item.name)}
+							{#if expandedFolders.includes(item.name)}
 								<ChevronDownOutline class="w-4 h-4" />
 							{:else}
 								<ChevronRightOutline class="w-4 h-4" />
 							{/if}
 						</button>
 
-						{#if expandedFolders.has(item.name)}
+						{#if expandedFolders.includes(item.name)}
 							<ul class="ml-6 mt-2 space-y-2">
 								{#each item.children as child (child.url)}
 									{@const ChildIcon = child.icon}

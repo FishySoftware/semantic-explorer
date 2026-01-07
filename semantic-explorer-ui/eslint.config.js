@@ -52,6 +52,12 @@ export default [
 			'svelte/require-each-key': 'warn',
 		},
 	},
+	{
+		files: ['**/CollectionTransforms.svelte'],
+		rules: {
+			'svelte/no-at-html-tags': 'off',
+		},
+	},
 	prettier,
 	{
 		ignores: ['dist/', 'node_modules/', 'build/'],
