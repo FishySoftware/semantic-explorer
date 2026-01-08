@@ -62,7 +62,7 @@
 	let messageInput = $state('');
 	let sendingMessage = $state(false);
 	let messageError = $state<string | null>(null);
-	
+
 	// Track expanded state of retrieved documents per message
 	let expandedDocs = $state<Record<number, boolean>>({});
 
