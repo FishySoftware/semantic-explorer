@@ -84,6 +84,8 @@ info!("Identified {} clusters in {:.2}s (cluster labels range: {:?})", ...);
 - The wrapper may have a bug in parameter handling
 - Default `min_samples` in cuML might be too high
 - Investigate cuML version and wrapper implementation
+- the `cuml-wrapper-rs` repo is owned by me at `/home/jonathan/cuml-wrapper-rs-1`
+- source build environment: `source setup_build.sh` in the repo root
 
 ### Hypothesis 2: Data Characteristics
 - If documents are very similar, UMAP might produce tight clusters
@@ -104,7 +106,7 @@ info!("Identified {} clusters in {:.2}s (cluster labels range: {:?})", ...);
 - [x] Log cluster label ranges and distributions
 - [x] Document the missing `min_samples` parameter
 
-### Short-term (User Action Required)
+### Short-term (Action Required)
 - [ ] Check cuml-wrapper-rs repository for:
   - HDBSCAN function signature
   - How parameters are passed to cuML

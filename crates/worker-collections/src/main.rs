@@ -161,12 +161,12 @@ async fn main() -> Result<()> {
 
     let consumer = semantic_explorer_core::nats::ensure_consumer(
         &jetstream,
-        "TRANSFORM_FILES",
+        "COLLECTION_TRANSFORMS",
         consumer_config,
     )
     .await?;
 
-    info!("Worker started with JetStream, listening on TRANSFORM_FILES stream");
+    info!("Worker started with JetStream, listening on COLLECTION_TRANSFORMS stream");
 
     let mut messages = consumer.messages().await?;
 

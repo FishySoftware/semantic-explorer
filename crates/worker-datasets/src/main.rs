@@ -159,10 +159,10 @@ async fn main() -> Result<()> {
     let consumer_config = semantic_explorer_core::nats::create_vector_embed_consumer_config();
 
     let consumer =
-        semantic_explorer_core::nats::ensure_consumer(&jetstream, "VECTOR_EMBED", consumer_config)
+        semantic_explorer_core::nats::ensure_consumer(&jetstream, "DATASET_TRANSFORMS", consumer_config)
             .await?;
 
-    info!("Worker started with JetStream, listening on VECTOR_EMBED stream");
+    info!("Worker started with JetStream, listening on DATASET_TRANSFORMS stream");
 
     let mut messages = consumer.messages().await?;
 
