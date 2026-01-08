@@ -81,11 +81,22 @@ pub async fn process_visualization_job(
     // L2-normalize input vectors for better cosine distance calculations
     let normalized_document_vectors = normalize_l2(&document_vectors, n_features);
 
+    // spread: Controls the scale of the embedding - higher values spread points more in 3D
+    // Using spread=2.0 to avoid flat "saucer" shaped embeddings
+    let spread = 2.0_f32;
+    
+    // init: 0=random, 1=spectral
+    // Random initialization tends to produce more 3D-like embeddings
+    // Spectral initialization is faster but often produces flat embeddings
+    let init = 0_i32; // Random initialization for better 3D distribution
+
     info!(
-        "Running UMAP with n_neighbors={}, n_components={}, min_dist={}, metric={}",
+        "Running UMAP with n_neighbors={}, n_components={}, min_dist={}, spread={}, init={}, metric={}",
         job.visualization_config.n_neighbors,
         job.visualization_config.n_components,
         job.visualization_config.min_dist,
+        spread,
+        init,
         job.visualization_config.metric
     );
 
@@ -95,6 +106,8 @@ pub async fn process_visualization_job(
         job.visualization_config.n_neighbors as usize,
         job.visualization_config.n_components as usize,
         job.visualization_config.min_dist,
+        spread,
+        init,
         "cosine",
     )?;
 
@@ -122,10 +135,14 @@ pub async fn process_visualization_job(
     // Cluster selection method: 0 = EOM (Excess of Mass), 1 = LEAF (more fine-grained clusters)
     // LEAF tends to produce more, smaller clusters by selecting leaves of the condensed tree
     let cluster_selection_method = 1_i32; // LEAF
+    
+    // Cluster selection epsilon: Distance threshold for merging clusters
+    // 0.0 = no merging (more clusters), higher values merge nearby clusters
+    let cluster_selection_epsilon = 0.0_f32;
 
     info!(
-        "Running HDBSCAN with min_cluster_size={}, min_samples={}, cluster_selection_method={}, n_samples={}, n_components={}",
-        job.visualization_config.min_cluster_size, min_samples, cluster_selection_method, n_samples, job.visualization_config.n_components
+        "Running HDBSCAN with min_cluster_size={}, min_samples={}, method=LEAF, epsilon={}, n_samples={}, n_components={}",
+        job.visualization_config.min_cluster_size, min_samples, cluster_selection_epsilon, n_samples, job.visualization_config.n_components
     );
 
     let (hdbscan, topic_vectors) = identify_topic_clusters(
@@ -134,6 +151,7 @@ pub async fn process_visualization_job(
         job.visualization_config.min_cluster_size as usize,
         min_samples,
         cluster_selection_method,
+        cluster_selection_epsilon,
         "euclidean",
         &document_vectors,
         n_features,
