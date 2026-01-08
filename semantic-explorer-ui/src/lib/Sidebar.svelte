@@ -12,8 +12,6 @@
 		GridSolid,
 		LayersSolid,
 		MessageDotsOutline,
-		PaperClipOutline,
-		SearchOutline,
 	} from 'flowbite-svelte-icons';
 	import type { Props } from 'flowbite-svelte-icons/types';
 	import type { Component } from 'svelte';
@@ -25,21 +23,26 @@
 		icon: Component<Props, {}, ''>;
 		url?: string;
 		children?: MenuItem[];
+		isDivider?: boolean;
 	};
 
 	const menuItems: MenuItem[] = [
 		{ name: 'Dashboard', icon: GridSolid, url: '/dashboard' },
+		{ name: 'Marketplace', icon: CartSolid, url: '/marketplace' },
+
+		{ name: 'divider-1', icon: GridSolid, isDivider: true },
+
 		{ name: 'Collections', icon: FolderSolid, url: '/collections' },
 		{ name: 'Datasets', icon: DatabaseSolid, url: '/datasets' },
-
-		{ name: 'Search', icon: SearchOutline, url: '/search' },
-		{ name: 'Chat', icon: PaperClipOutline, url: '/chat' },
+		{ name: 'Embedded Datasets', icon: LayersSolid, url: '/embedded-datasets' },
 		{ name: 'Visualizations', icon: ChartPieSolid, url: '/visualizations' },
 
-		{ name: 'Marketplace', icon: CartSolid, url: '/marketplace' },
+		{ name: 'divider-2', icon: GridSolid, isDivider: true },
 
 		{ name: 'Embedders', icon: BrainSolid, url: '/embedders' },
 		{ name: 'LLMs', icon: MessageDotsOutline, url: '/llms' },
+
+		{ name: 'divider-3', icon: GridSolid, isDivider: true },
 
 		{
 			name: 'Transforms',
@@ -58,6 +61,8 @@
 				},
 			],
 		},
+		{ name: 'divider-4', icon: GridSolid, isDivider: true },
+
 		{ name: 'Documentation', icon: BookOpenSolid, url: '/documentation' },
 	];
 	let expandedFolders = $state<string[]>(['Transforms']);
@@ -78,9 +83,14 @@
 		<ul class="space-y-2 font-medium">
 			{#each menuItems as item (item.url || item.name)}
 				{@const Icon = item.icon}
-				<li>
-					{#if item.children}
-						<!-- Folder item with children -->
+				{#if item.isDivider}
+					<!-- Divider -->
+					<li class="py-2">
+						<hr class="border-gray-200 dark:border-gray-700" />
+					</li>
+				{:else if item.children}
+					<!-- Folder item with children -->
+					<li>
 						<button
 							class="flex items-center w-full p-2 rounded-lg transition-colors duration-200 text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-700"
 							onclick={() => toggleFolder(item.name)}
@@ -118,8 +128,10 @@
 								{/each}
 							</ul>
 						{/if}
-					{:else}
-						<!-- Regular menu item -->
+					</li>
+				{:else}
+					<!-- Regular menu item -->
+					<li>
 						<a
 							href={`#${item.url}`}
 							class="flex items-center p-2 rounded-lg transition-colors duration-200
@@ -135,8 +147,8 @@
 							<Icon class="w-5 h-5" />
 							<span class="ml-3">{item.name}</span>
 						</a>
-					{/if}
-				</li>
+					</li>
+				{/if}
 			{/each}
 		</ul>
 	</div>

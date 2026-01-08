@@ -3,6 +3,7 @@ use actix_web::{
     web::{Data, Path, Query},
 };
 use actix_web_openidconnect::openid_middleware::Authenticated;
+use aws_sdk_s3::Client;
 use serde::Deserialize;
 use sqlx::{Pool, Postgres};
 
@@ -235,9 +236,10 @@ pub(crate) async fn get_public_llms(
     tag = "Marketplace",
 )]
 #[post("/api/marketplace/collections/{collection_id}/grab")]
-#[tracing::instrument(name = "grab_collection", skip(auth, postgres_pool))]
+#[tracing::instrument(name = "grab_collection", skip(auth, s3_client, postgres_pool))]
 pub(crate) async fn grab_collection(
     auth: Authenticated,
+    s3_client: Data<Client>,
     postgres_pool: Data<Pool<Postgres>>,
     collection_id: Path<i32>,
 ) -> impl Responder {
@@ -248,6 +250,7 @@ pub(crate) async fn grab_collection(
 
     match collections::grab_public_collection(
         &postgres_pool.into_inner(),
+        &s3_client.into_inner(),
         &username,
         *collection_id,
     )

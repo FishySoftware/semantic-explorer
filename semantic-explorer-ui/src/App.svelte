@@ -16,6 +16,7 @@
 	import EmbeddedDatasets from './lib/pages/EmbeddedDatasets.svelte';
 	import EmbedderDetail from './lib/pages/EmbedderDetail.svelte';
 	import Embedders from './lib/pages/Embedders.svelte';
+	import GrabResource from './lib/pages/GrabResource.svelte';
 	import LLMs from './lib/pages/LLMs.svelte';
 	import Marketplace from './lib/pages/Marketplace.svelte';
 	import Search from './lib/pages/Search.svelte';
@@ -23,35 +24,55 @@
 	import Visualizations from './lib/pages/Visualizations.svelte';
 	import { initializeTheme } from './lib/utils/theme';
 
-	let activeUrl = $state('/datasets');
+	let activeUrl = $state('/dashboard');
 	let selectedCollectionId = $state<number | null>(null);
 	let selectedDatasetId = $state<number | null>(null);
 	let selectedVisualizationId = $state<number | null>(null);
 	let selectedEmbedderId = $state<number | null>(null);
+	let grabResourceType = $state<'collections' | 'datasets' | 'embedders' | 'llms' | null>(null);
+	let grabResourceId = $state<number | null>(null);
 
 	function parseRoute(hash: string): { path: string; params: Record<string, string> } {
-		const hashWithoutQuery = hash.split('?')[0];
+		const [hashWithoutQuery, queryString] = hash.split('?');
 		const parts = hashWithoutQuery
 			.slice(1)
 			.split('/')
 			.filter((p) => p);
 
-		if (parts.length === 0) return { path: '/datasets', params: {} };
+		const params: Record<string, string> = {};
+
+		// Parse query string if present
+		if (queryString) {
+			const searchParams = new URLSearchParams(queryString);
+			searchParams.forEach((value, key) => {
+				params[key] = value;
+			});
+		}
+
+		if (parts.length === 0) return { path: '/dashboard', params };
 
 		if (parts.length === 3 && parts[0] === 'collections' && parts[2] === 'details') {
-			return { path: '/collections/detail', params: { id: parts[1] } };
+			return { path: '/collections/detail', params: { ...params, id: parts[1] } };
 		}
 		if (parts.length === 3 && parts[0] === 'datasets' && parts[2] === 'details') {
-			return { path: '/datasets/detail', params: { id: parts[1] } };
+			return { path: '/datasets/detail', params: { ...params, id: parts[1] } };
 		}
 		if (parts.length === 3 && parts[0] === 'visualizations' && parts[2] === 'details') {
-			return { path: '/visualizations/detail', params: { id: parts[1] } };
+			return { path: '/visualizations/detail', params: { ...params, id: parts[1] } };
 		}
 		if (parts.length === 3 && parts[0] === 'embedders' && parts[2] === 'details') {
-			return { path: '/embedders/detail', params: { id: parts[1] } };
+			return { path: '/embedders/detail', params: { ...params, id: parts[1] } };
 		}
 
-		const result = { path: '/' + parts.join('/'), params: {} };
+		if (parts.length === 4 && parts[0] === 'marketplace' && parts[3] === 'grab') {
+			const resourceType = parts[1] as 'collections' | 'datasets' | 'embedders' | 'llms';
+			return {
+				path: `/marketplace/${resourceType}/grab`,
+				params: { ...params, resourceType, id: parts[2] },
+			};
+		}
+
+		const result = { path: '/' + parts.join('/'), params };
 		return result;
 	}
 
@@ -81,6 +102,16 @@
 			selectedEmbedderId = parseInt(params.id, 10);
 		} else if (path !== '/embedders/detail') {
 			selectedEmbedderId = null;
+		}
+
+		if (path.includes('/marketplace/') && path.includes('/grab')) {
+			if (params.resourceType && params.id) {
+				grabResourceType = params.resourceType as 'collections' | 'datasets' | 'embedders' | 'llms';
+				grabResourceId = parseInt(params.id, 10);
+			}
+		} else {
+			grabResourceType = null;
+			grabResourceId = null;
 		}
 	}
 
@@ -202,6 +233,10 @@
 				<Search onViewDataset={viewDataset} onViewEmbedder={viewEmbedder} />
 			{:else if activeUrl === '/marketplace'}
 				<Marketplace />
+			{:else if activeUrl.includes('/marketplace/') && activeUrl.includes('/grab')}
+				{#if grabResourceType && grabResourceId !== null}
+					<GrabResource resourceType={grabResourceType} resourceId={grabResourceId} />
+				{/if}
 			{/if}
 		</main>
 	</div>

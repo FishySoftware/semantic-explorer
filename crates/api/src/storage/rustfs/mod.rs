@@ -345,11 +345,12 @@ pub(crate) async fn copy_bucket_files(
             );
         }
         Err(e) => {
-            tracing::warn!(
+            tracing::error!(
                 bucket = %destination_bucket,
                 error = %e,
-                "Bucket may already exist or creation failed - continuing with copy"
+                "Failed to create destination bucket - cannot proceed"
             );
+            return Err(e.into());
         }
     }
 

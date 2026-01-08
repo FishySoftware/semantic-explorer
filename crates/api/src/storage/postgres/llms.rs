@@ -57,7 +57,7 @@ const UPDATE_LLM_QUERY: &str = r#"
 
 const GRAB_PUBLIC_LLM_QUERY: &str = r#"
     INSERT INTO llms (name, owner, provider, base_url, api_key, config, is_public, created_at, updated_at)
-    SELECT name, $1, provider, base_url, api_key, config, FALSE, NOW(), NOW()
+    SELECT name || ' - grabbed', $1, provider, base_url, api_key, config, FALSE, NOW(), NOW()
     FROM llms
     WHERE llm_id = $2 AND is_public = TRUE
     RETURNING llm_id, name, owner, provider, base_url, api_key, config, is_public, created_at, updated_at

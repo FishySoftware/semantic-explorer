@@ -15,13 +15,13 @@
 	function getVariantClasses(variant: ToastMessage['variant']) {
 		switch (variant) {
 			case 'success':
-				return 'border-green-500 bg-green-50 text-green-900 dark:border-green-600 dark:bg-green-900/40 dark:text-green-100';
+				return 'border-green-500 bg-green-50 text-green-900 dark:border-green-500 dark:bg-green-900/80 dark:text-green-50';
 			case 'error':
-				return 'border-red-500 bg-red-50 text-red-900 dark:border-red-600 dark:bg-red-900/40 dark:text-red-100';
+				return 'border-red-500 bg-red-50 text-red-900 dark:border-red-500 dark:bg-red-900/80 dark:text-red-50';
 			case 'warning':
-				return 'border-yellow-500 bg-yellow-50 text-yellow-900 dark:border-yellow-600 dark:bg-yellow-900/40 dark:text-yellow-100';
+				return 'border-yellow-500 bg-yellow-50 text-yellow-900 dark:border-yellow-500 dark:bg-yellow-900/80 dark:text-yellow-50';
 			default:
-				return 'border-blue-500 bg-blue-50 text-blue-900 dark:border-blue-600 dark:bg-blue-900/40 dark:text-blue-100';
+				return 'border-blue-500 bg-blue-50 text-blue-900 dark:border-blue-500 dark:bg-blue-900/80 dark:text-blue-50';
 		}
 	}
 </script>

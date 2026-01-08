@@ -5,7 +5,7 @@ members = [
     "crates/core",
     "crates/worker-collections",
     "crates/worker-datasets",
-    "crates/worker-visualizations",
+    # "crates/worker-visualizations",  // Disabled for now - needs work.
 ]
 
 [workspace.dependencies]

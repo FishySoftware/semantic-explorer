@@ -83,6 +83,8 @@
 	let datasetTransforms = $state<DatasetTransform[]>([]);
 	let embeddedDatasets = $state<EmbeddedDataset[]>([]);
 	let transformsLoading = $state(false);
+	let collectionTransformStatsMap = $state<Map<number, any>>(new Map());
+	let datasetTransformStatsMap = $state<Map<number, any>>(new Map());
 
 	let paginatedItems = $state<PaginatedItems | null>(null);
 	let itemsLoading = $state(false);
@@ -200,6 +202,32 @@
 		}
 	}
 
+	async function fetchCollectionTransformStats(transformId: number) {
+		try {
+			const response = await fetch(`/api/collection-transforms/${transformId}/stats`);
+			if (response.ok) {
+				const stats = await response.json();
+				collectionTransformStatsMap.set(transformId, stats);
+				collectionTransformStatsMap = collectionTransformStatsMap; // Trigger reactivity
+			}
+		} catch (e) {
+			console.error(e);
+		}
+	}
+
+	async function fetchDatasetTransformStats(transformId: number) {
+		try {
+			const response = await fetch(`/api/dataset-transforms/${transformId}/stats`);
+			if (response.ok) {
+				const stats = await response.json();
+				datasetTransformStatsMap.set(transformId, stats);
+				datasetTransformStatsMap = datasetTransformStatsMap; // Trigger reactivity
+			}
+		} catch (e) {
+			console.error(e);
+		}
+	}
+
 	async function fetchDatasetTransforms() {
 		try {
 			transformsLoading = true;
@@ -211,6 +239,11 @@
 				collectionTransforms = allCollectionTransforms
 					.filter((t) => t.dataset_id === datasetId)
 					.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+
+				// Fetch stats for each collection transform
+				for (const transform of collectionTransforms) {
+					fetchCollectionTransformStats(transform.collection_transform_id);
+				}
 			}
 
 			// Fetch dataset transforms (this Dataset → Embedded Datasets)
@@ -220,6 +253,11 @@
 				datasetTransforms = allDatasetTransforms
 					.filter((t) => t.source_dataset_id === datasetId)
 					.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+
+				// Fetch stats for each dataset transform
+				for (const transform of datasetTransforms) {
+					fetchDatasetTransformStats(transform.dataset_transform_id);
+				}
 			}
 
 			// Fetch embedded datasets (created from this Dataset)
@@ -830,7 +868,12 @@
 														Transforms that process collections and output to this dataset
 													</p>
 													<TransformsList
-														transforms={collectionTransforms}
+														transforms={collectionTransforms.map((t) => ({
+															...t,
+															last_run_stats: collectionTransformStatsMap.get(
+																t.collection_transform_id
+															),
+														}))}
 														type="collection"
 														loading={transformsLoading}
 													/>
@@ -854,7 +897,10 @@
 														Transforms that embed items from this dataset
 													</p>
 													<TransformsList
-														transforms={datasetTransforms}
+														transforms={datasetTransforms.map((t) => ({
+															...t,
+															last_run_stats: datasetTransformStatsMap.get(t.dataset_transform_id),
+														}))}
 														type="dataset"
 														loading={transformsLoading}
 													/>

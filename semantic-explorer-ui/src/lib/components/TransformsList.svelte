@@ -34,6 +34,69 @@
 	}
 
 	function getStatusBadge(transform: any): { label: string; color: string } {
+		// For dataset transforms, derive status from stats
+		if (type === 'dataset') {
+			const stats = transform.last_run_stats;
+			if (!stats || stats.total_batches_processed === 0) {
+				return {
+					label: 'Never run',
+					color: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200',
+				};
+			}
+
+			// If there are failed batches or failed chunks, show partial success or error
+			if (stats.failed_batches > 0 || stats.total_chunks_failed > 0) {
+				if (stats.successful_batches === 0) {
+					return {
+						label: 'Failed',
+						color: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
+					};
+				} else {
+					return {
+						label: 'Partial Success',
+						color: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
+					};
+				}
+			}
+
+			return {
+				label: 'Success',
+				color: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
+			};
+		}
+
+		// For collection transforms, derive status from stats
+		if (type === 'collection') {
+			const stats = transform.last_run_stats;
+			if (!stats || stats.total_files_processed === 0) {
+				return {
+					label: 'Never run',
+					color: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200',
+				};
+			}
+
+			// If there are failed files, show partial success or error
+			if (stats.failed_files > 0) {
+				if (stats.successful_files === 0) {
+					return {
+						label: 'Failed',
+						color: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
+					};
+				} else {
+					return {
+						label: 'Partial Success',
+						color: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
+					};
+				}
+			}
+
+			return {
+				label: 'Success',
+				color: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
+			};
+		}
+
+		// For other transform types, use last_run_status if available
 		if (!transform.last_run_status) {
 			return {
 				label: 'Never run',
@@ -64,10 +127,24 @@
 	function getStats(transform: any): string {
 		if (type === 'dataset') {
 			const stats = transform.last_run_stats;
-			if (!stats) return 'No data';
-			return `${stats.successful_batches ?? 0}/${stats.total_batches ?? 0} batches, ${stats.total_chunks_embedded ?? 0} chunks`;
+			if (!stats) return 'No runs yet';
+
+			const totalChunks = (stats.total_chunks_embedded ?? 0) + (stats.total_chunks_failed ?? 0);
+			const successRate =
+				totalChunks > 0
+					? (((stats.total_chunks_embedded ?? 0) / totalChunks) * 100).toFixed(1)
+					: '0';
+
+			return `${stats.total_chunks_embedded ?? 0}/${totalChunks} chunks (${successRate}% success) • ${stats.successful_batches ?? 0}/${stats.total_batches_processed ?? 0} batches`;
 		} else if (type === 'collection') {
-			return transform.job_config?.strategy ?? 'Standard';
+			const stats = transform.last_run_stats;
+			if (!stats) return 'No runs yet';
+
+			const totalFiles = (stats.successful_files ?? 0) + (stats.failed_files ?? 0);
+			const successRate =
+				totalFiles > 0 ? (((stats.successful_files ?? 0) / totalFiles) * 100).toFixed(1) : '0';
+
+			return `${stats.total_items_created ?? 0} items • ${stats.successful_files ?? 0}/${totalFiles} files (${successRate}% success)`;
 		} else if (type === 'visualization') {
 			const stats = transform.last_run_stats;
 			if (!stats) return 'No data';

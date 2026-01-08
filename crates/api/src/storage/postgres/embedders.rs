@@ -54,7 +54,7 @@ const GET_RECENT_PUBLIC_EMBEDDERS_QUERY: &str = r#"
 
 const GRAB_PUBLIC_EMBEDDER_QUERY: &str = r#"
     INSERT INTO embedders (name, owner, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, max_input_tokens, truncate_strategy, collection_name, is_public, created_at, updated_at)
-    SELECT name, $1, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, max_input_tokens, truncate_strategy, NULL, FALSE, NOW(), NOW()
+    SELECT name || ' - grabbed', $1, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, max_input_tokens, truncate_strategy, NULL, FALSE, NOW(), NOW()
     FROM embedders
     WHERE embedder_id = $2 AND is_public = TRUE
     RETURNING embedder_id, name, owner, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, max_input_tokens, truncate_strategy, collection_name, is_public, created_at, updated_at

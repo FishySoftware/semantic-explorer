@@ -55,6 +55,7 @@
 	let editFormDimensions = $state(1536);
 	let editFormMaxInputTokens = $state(8191);
 	let editFormTruncateStrategy = $state('NONE');
+	let editFormIsPublic = $state(false);
 	let editError = $state<string | null>(null);
 	let editLoading = $state(false);
 
@@ -64,7 +65,6 @@
 
 	// Delete state
 	let embedderPendingDelete = $state(false);
-	let updatingPublic = $state(false);
 
 	// Tab state
 	let activeTab = $state('overview');
@@ -123,6 +123,7 @@
 		editFormDimensions = embedder.dimensions ?? 1536;
 		editFormMaxInputTokens = (embedder as any).max_input_tokens ?? 8191;
 		editFormTruncateStrategy = (embedder as any).truncate_strategy ?? 'NONE';
+		editFormIsPublic = embedder.is_public || false;
 		editError = null;
 	}
 
@@ -148,6 +149,7 @@
 				dimensions: editFormDimensions,
 				max_input_tokens: editFormMaxInputTokens,
 				truncate_strategy: editFormTruncateStrategy,
+				is_public: editFormIsPublic,
 			};
 
 			const response = await fetch(`/api/embedders/${embedderId}`, {
@@ -264,39 +266,6 @@
 		}
 	}
 
-	async function togglePublic() {
-		if (!embedder) return;
-
-		try {
-			updatingPublic = true;
-			const response = await fetch(`/api/embedders/${embedderId}`, {
-				method: 'PATCH',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					name: embedder.name,
-					base_url: embedder.base_url,
-					api_key: embedder.api_key,
-					config: embedder.config,
-					is_public: !embedder.is_public,
-				}),
-			});
-
-			if (!response.ok) {
-				throw new Error(`Failed to update embedder: ${response.statusText}`);
-			}
-
-			const updatedEmbedder = await response.json();
-			embedder = updatedEmbedder;
-			toastStore.success(
-				updatedEmbedder.is_public ? 'Embedder is now public' : 'Embedder is now private'
-			);
-		} catch (e) {
-			toastStore.error(formatError(e, 'Failed to update embedder visibility'));
-		} finally {
-			updatingPublic = false;
-		}
-	}
-
 	async function confirmDeleteEmbedder() {
 		if (!embedder) return;
 
@@ -407,27 +376,6 @@
 								<div class="text-sm font-medium text-gray-600 dark:text-gray-400">Batch Size</div>
 								<div class="text-lg font-semibold text-gray-900 dark:text-white mt-1">
 									{embedder.max_batch_size || 'Not specified'}
-								</div>
-							</div>
-							<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
-								<div class="text-sm font-medium text-gray-600 dark:text-gray-400">Visibility</div>
-								<div class="flex items-center gap-2 mt-1">
-									<span
-										class={`inline-block px-2 py-1 rounded text-sm font-medium ${
-											embedder.is_public
-												? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
-												: 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
-										}`}
-									>
-										{embedder.is_public ? 'Public' : 'Private'}
-									</span>
-									<button
-										onclick={togglePublic}
-										disabled={updatingPublic}
-										class="text-sm text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50"
-									>
-										{updatingPublic ? 'Updating...' : 'Change'}
-									</button>
 								</div>
 							</div>
 						</div>
@@ -582,6 +530,19 @@
 											rows="6"
 											class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
 										></textarea>
+									</div>
+
+									<div>
+										<label class="flex items-center gap-2 cursor-pointer">
+											<input
+												type="checkbox"
+												bind:checked={editFormIsPublic}
+												class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+											/>
+											<span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+												Make this embedder public (visible in marketplace)
+											</span>
+										</label>
 									</div>
 
 									<div class="flex gap-2">

@@ -100,30 +100,30 @@ jobs:
           cache-to: type=gha,mode=max,scope=worker-datasets
           outputs: type=image,name=${{ secrets.DOCKERHUB_USERNAME }}/worker-datasets,push-by-digest=false
 
-      - name: Docker meta - Worker Visualizations
-        id: meta_worker_visualizations
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/worker-visualizations
-          tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=raw,value=latest,enable={{is_default_branch}}
+      # - name: Docker meta - Worker Visualizations
+      #   id: meta_worker_visualizations
+      #   uses: docker/metadata-action@v5
+      #   with:
+      #     images: ${{ secrets.DOCKERHUB_USERNAME }}/worker-visualizations
+      #     tags: |
+      #       type=ref,event=branch
+      #       type=semver,pattern={{version}}
+      #       type=semver,pattern={{major}}.{{minor}}
+      #       type=semver,pattern={{major}}
+      #       type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and push Worker Visualizations
-        id: docker_build_worker_visualizations
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./crates/worker-visualizations/Dockerfile
-          push: true
-          tags: ${{ steps.meta_worker_visualizations.outputs.tags }}
-          labels: ${{ steps.meta_worker_visualizations.outputs.labels }}
-          cache-from: type=gha,scope=worker-visualizations
-          cache-to: type=gha,mode=max,scope=worker-visualizations
-          outputs: type=image,name=${{ secrets.DOCKERHUB_USERNAME }}/worker-visualizations,push-by-digest=false
+      # - name: Build and push Worker Visualizations
+      #   id: docker_build_worker_visualizations
+      #   uses: docker/build-push-action@v6
+      #   with:
+      #     context: .
+      #     file: ./crates/worker-visualizations/Dockerfile
+      #     push: true
+      #     tags: ${{ steps.meta_worker_visualizations.outputs.tags }}
+      #     labels: ${{ steps.meta_worker_visualizations.outputs.labels }}
+      #     cache-from: type=gha,scope=worker-visualizations
+      #     cache-to: type=gha,mode=max,scope=worker-visualizations
+      #     outputs: type=image,name=${{ secrets.DOCKERHUB_USERNAME }}/worker-visualizations,push-by-digest=false
 
       - name: Generate build summary
         run: |
@@ -143,6 +143,4 @@ jobs:
           echo "- **Digest:** \`${{ steps.docker_build_worker_datasets.outputs.digest }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Image ID:** \`${{ steps.docker_build_worker_datasets.outputs.imageid }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Worker Visualizations" >> $GITHUB_STEP_SUMMARY
-          echo "- **Digest:** \`${{ steps.docker_build_worker_visualizations.outputs.digest }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Image ID:** \`${{ steps.docker_build_worker_visualizations.outputs.imageid }}\`" >> $GITHUB_STEP_SUMMARY
+

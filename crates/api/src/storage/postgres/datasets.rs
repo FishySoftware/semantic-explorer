@@ -87,7 +87,7 @@ const GRAB_PUBLIC_DATASET_QUERY: &str = r#"
         SELECT dataset_id, title, details, tags FROM datasets WHERE dataset_id = $1 AND is_public = TRUE
     ), new_dataset AS (
         INSERT INTO datasets (title, details, owner, tags, is_public)
-        SELECT title, details, $2, tags, FALSE FROM source
+        SELECT title || ' - grabbed', details, $2, tags, FALSE FROM source
         RETURNING dataset_id, title, details, owner, tags, is_public, created_at, updated_at
     )
     SELECT * FROM new_dataset
@@ -386,5 +386,41 @@ pub(crate) async fn grab_public_dataset(
     let success = result.is_ok();
     record_database_query("INSERT", "datasets", duration, success);
 
-    Ok(result?)
+    let new_dataset = result?;
+
+    // Copy dataset items from source to new dataset
+    match get_dataset_items(pool, dataset_id, 0, 10000).await {
+        Ok(source_items) => {
+            for item in source_items {
+                if let Err(e) = create_dataset_item(
+                    pool,
+                    new_dataset.dataset_id,
+                    &item.title,
+                    &item.chunks,
+                    item.metadata,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        source_item_id = item.item_id,
+                        new_dataset_id = new_dataset.dataset_id,
+                        error = %e,
+                        "Failed to copy dataset item"
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!(
+                source_dataset_id = dataset_id,
+                new_dataset_id = new_dataset.dataset_id,
+                error = %e,
+                "Failed to copy dataset items for grabbed dataset"
+            );
+            // Note: We don't fail the whole operation if item copy fails
+            // The dataset record is already created
+        }
+    }
+
+    Ok(new_dataset)
 }
