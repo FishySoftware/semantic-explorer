@@ -74,6 +74,14 @@ const GET_PUBLIC_DATASETS_QUERY: &str = r#"
     ORDER BY created_at DESC
 "#;
 
+const GET_RECENT_PUBLIC_DATASETS_QUERY: &str = r#"
+    SELECT dataset_id, title, details, owner, tags, is_public, created_at, updated_at
+    FROM datasets
+    WHERE is_public = TRUE
+    ORDER BY updated_at DESC
+    LIMIT $1
+"#;
+
 const GRAB_PUBLIC_DATASET_QUERY: &str = r#"
     WITH source AS (
         SELECT dataset_id, title, details, tags FROM datasets WHERE dataset_id = $1 AND is_public = TRUE
@@ -333,6 +341,24 @@ pub(crate) async fn get_dataset_stats(
 pub(crate) async fn get_public_datasets(pool: &Pool<Postgres>) -> Result<Vec<Dataset>> {
     let start = Instant::now();
     let result = sqlx::query_as::<_, Dataset>(GET_PUBLIC_DATASETS_QUERY)
+        .fetch_all(pool)
+        .await;
+
+    let duration = start.elapsed().as_secs_f64();
+    let success = result.is_ok();
+    record_database_query("SELECT", "datasets", duration, success);
+
+    Ok(result?)
+}
+
+#[tracing::instrument(name = "database.get_recent_public_datasets", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT"))]
+pub(crate) async fn get_recent_public_datasets(
+    pool: &Pool<Postgres>,
+    limit: i32,
+) -> Result<Vec<Dataset>> {
+    let start = Instant::now();
+    let result = sqlx::query_as::<_, Dataset>(GET_RECENT_PUBLIC_DATASETS_QUERY)
+        .bind(limit)
         .fetch_all(pool)
         .await;
 

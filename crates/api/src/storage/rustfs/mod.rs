@@ -95,30 +95,29 @@ pub(crate) async fn list_files(
         "Listing files in S3 bucket"
     );
 
-    // We need page_size + 1 files to know if there are more pages
-    let target_count = (page_size + 1) as usize;
-    let mut files = Vec::with_capacity(target_count);
-    let mut last_key_seen: Option<String> = None;
+    let mut files = Vec::new();
+    let page_size_usize = page_size as usize;
+    let target_count = page_size_usize + 1; // Need page_size + 1 to know if there are more
 
-    // Use start_after for cursor-based pagination (more reliable when filtering)
-    let mut request = s3_client
-        .list_objects_v2()
-        .bucket(bucket)
-        .max_keys(page_size * 3); // Fetch extra to account for chunks/ filtering
-
-    // continuation_token is actually a key name for start_after pagination
-    if let Some(key) = continuation_token {
-        request = request.start_after(key);
+    // Build the paginator request
+    let mut request = s3_client.list_objects_v2().bucket(bucket);
+    
+    // If we have a continuation token, use it as start_after
+    if let Some(token) = continuation_token {
+        request = request.start_after(token);
     }
 
-    loop {
-        let output = match request.send().await {
+    let mut paginator = request.into_paginator().send();
+
+    // Iterate through pages until we have enough files or run out
+    while let Some(result) = paginator.next().await {
+        let output = match result {
             Ok(output) => output,
             Err(e) => {
                 tracing::error!(
                     bucket = %bucket,
                     error = %e,
-                    "Failed to list files in S3 bucket. Check network connectivity and bucket existence."
+                    "Failed to list files in S3 bucket"
                 );
                 return Err(e.into());
             }
@@ -126,8 +125,7 @@ pub(crate) async fn list_files(
 
         for obj in output.contents() {
             let key = obj.key().unwrap_or_default();
-            last_key_seen = Some(key.to_string());
-
+            
             // Skip chunk files
             if key.starts_with("chunks/") {
                 continue;
@@ -142,38 +140,24 @@ pub(crate) async fn list_files(
                     .map(|s| s.to_string()),
             });
 
-            // Stop once we have enough files
+            // Stop once we have enough files to determine if there are more pages
             if files.len() >= target_count {
                 break;
             }
         }
 
-        // For start_after pagination, we don't use S3's continuation_token
-        // Instead, we continue from the last key we saw
-
-        // Stop if we have enough files or there are no more objects
-        if files.len() >= target_count || output.contents().is_empty() {
-            break;
-        }
-
-        // Continue fetching from the last key we saw
-        if let Some(ref last_key) = last_key_seen {
-            request = s3_client
-                .list_objects_v2()
-                .bucket(bucket)
-                .max_keys(page_size * 3)
-                .start_after(last_key);
-        } else {
+        // Stop paginating if we have enough files
+        if files.len() >= target_count {
             break;
         }
     }
 
     // Determine if there are more pages
-    let has_more = files.len() > page_size as usize;
+    let has_more = files.len() > page_size_usize;
 
     // Truncate to page_size and determine next cursor
     let next_cursor = if has_more {
-        files.truncate(page_size as usize);
+        files.truncate(page_size_usize);
         // Use the last file's key as the cursor for start_after pagination
         files.last().map(|f| f.key.clone())
     } else {

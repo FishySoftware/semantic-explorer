@@ -28,8 +28,11 @@ pub(crate) struct RecentCollectionsQuery {
     tag = "Marketplace",
 )]
 #[get("/api/marketplace/collections")]
-#[tracing::instrument(name = "get_public_collections", skip(postgres_pool))]
-pub(crate) async fn get_public_collections(postgres_pool: Data<Pool<Postgres>>) -> impl Responder {
+#[tracing::instrument(name = "get_public_collections", skip(_auth, postgres_pool))]
+pub(crate) async fn get_public_collections(
+    _auth: Authenticated,
+    postgres_pool: Data<Pool<Postgres>>,
+) -> impl Responder {
     match collections::get_public_collections(&postgres_pool.into_inner()).await {
         Ok(collections_list) => HttpResponse::Ok().json(collections_list),
         Err(e) => {
@@ -51,8 +54,9 @@ pub(crate) async fn get_public_collections(postgres_pool: Data<Pool<Postgres>>) 
     tag = "Marketplace",
 )]
 #[get("/api/marketplace/collections/recent")]
-#[tracing::instrument(name = "get_recent_public_collections", skip(postgres_pool))]
+#[tracing::instrument(name = "get_recent_public_collections", skip(_auth, postgres_pool))]
 pub(crate) async fn get_recent_public_collections(
+    _auth: Authenticated,
     postgres_pool: Data<Pool<Postgres>>,
     Query(query): Query<RecentCollectionsQuery>,
 ) -> impl Responder {
@@ -72,11 +76,98 @@ pub(crate) async fn get_recent_public_collections(
         (status = 200, description = "OK", body = Vec<Dataset>),
         (status = 500, description = "Internal Server Error"),
     ),
+    params(
+        ("limit" = i32, Query, description = "Number of recent datasets to fetch"),
+    ),
+    tag = "Marketplace",
+)]
+#[get("/api/marketplace/datasets/recent")]
+#[tracing::instrument(name = "get_recent_public_datasets", skip(_auth, postgres_pool))]
+pub(crate) async fn get_recent_public_datasets(
+    _auth: Authenticated,
+    postgres_pool: Data<Pool<Postgres>>,
+    Query(query): Query<RecentCollectionsQuery>,
+) -> impl Responder {
+    let limit = query.limit.unwrap_or(5);
+    match datasets::get_recent_public_datasets(&postgres_pool.into_inner(), limit).await {
+        Ok(datasets_list) => HttpResponse::Ok().json(datasets_list),
+        Err(e) => {
+            tracing::error!(error = %e, "failed to fetch recent public datasets");
+            HttpResponse::InternalServerError()
+                .body(format!("error fetching recent public datasets: {e:?}"))
+        }
+    }
+}
+
+#[utoipa::path(
+    responses(
+        (status = 200, description = "OK", body = Vec<Embedder>),
+        (status = 500, description = "Internal Server Error"),
+    ),
+    params(
+        ("limit" = i32, Query, description = "Number of recent embedders to fetch"),
+    ),
+    tag = "Marketplace",
+)]
+#[get("/api/marketplace/embedders/recent")]
+#[tracing::instrument(name = "get_recent_public_embedders", skip(_auth, postgres_pool))]
+pub(crate) async fn get_recent_public_embedders(
+    _auth: Authenticated,
+    postgres_pool: Data<Pool<Postgres>>,
+    Query(query): Query<RecentCollectionsQuery>,
+) -> impl Responder {
+    let limit = query.limit.unwrap_or(5);
+    match embedders::get_recent_public_embedders(&postgres_pool.into_inner(), limit).await {
+        Ok(embedders_list) => HttpResponse::Ok().json(embedders_list),
+        Err(e) => {
+            tracing::error!(error = %e, "failed to fetch recent public embedders");
+            HttpResponse::InternalServerError()
+                .body(format!("error fetching recent public embedders: {e:?}"))
+        }
+    }
+}
+
+#[utoipa::path(
+    responses(
+        (status = 200, description = "OK", body = Vec<LLMModel>),
+        (status = 500, description = "Internal Server Error"),
+    ),
+    params(
+        ("limit" = i32, Query, description = "Number of recent LLMs to fetch"),
+    ),
+    tag = "Marketplace",
+)]
+#[get("/api/marketplace/llms/recent")]
+#[tracing::instrument(name = "get_recent_public_llms", skip(_auth, postgres_pool))]
+pub(crate) async fn get_recent_public_llms(
+    _auth: Authenticated,
+    postgres_pool: Data<Pool<Postgres>>,
+    Query(query): Query<RecentCollectionsQuery>,
+) -> impl Responder {
+    let limit = query.limit.unwrap_or(5);
+    match llms::get_recent_public_llms(&postgres_pool.into_inner(), limit).await {
+        Ok(llms_list) => HttpResponse::Ok().json(llms_list),
+        Err(e) => {
+            tracing::error!(error = %e, "failed to fetch recent public LLMs");
+            HttpResponse::InternalServerError()
+                .body(format!("error fetching recent public LLMs: {e:?}"))
+        }
+    }
+}
+
+#[utoipa::path(
+    responses(
+        (status = 200, description = "OK", body = Vec<Dataset>),
+        (status = 500, description = "Internal Server Error"),
+    ),
     tag = "Marketplace",
 )]
 #[get("/api/marketplace/datasets")]
-#[tracing::instrument(name = "get_public_datasets", skip(postgres_pool))]
-pub(crate) async fn get_public_datasets(postgres_pool: Data<Pool<Postgres>>) -> impl Responder {
+#[tracing::instrument(name = "get_public_datasets", skip(_auth, postgres_pool))]
+pub(crate) async fn get_public_datasets(
+    _auth: Authenticated,
+    postgres_pool: Data<Pool<Postgres>>,
+) -> impl Responder {
     match datasets::get_public_datasets(&postgres_pool.into_inner()).await {
         Ok(datasets_list) => HttpResponse::Ok().json(datasets_list),
         Err(e) => {
@@ -95,8 +186,11 @@ pub(crate) async fn get_public_datasets(postgres_pool: Data<Pool<Postgres>>) -> 
     tag = "Marketplace",
 )]
 #[get("/api/marketplace/embedders")]
-#[tracing::instrument(name = "get_public_embedders", skip(postgres_pool))]
-pub(crate) async fn get_public_embedders(postgres_pool: Data<Pool<Postgres>>) -> impl Responder {
+#[tracing::instrument(name = "get_public_embedders", skip(_auth, postgres_pool))]
+pub(crate) async fn get_public_embedders(
+    _auth: Authenticated,
+    postgres_pool: Data<Pool<Postgres>>,
+) -> impl Responder {
     match embedders::get_public_embedders(&postgres_pool.into_inner()).await {
         Ok(embedders_list) => HttpResponse::Ok().json(embedders_list),
         Err(e) => {
@@ -115,8 +209,11 @@ pub(crate) async fn get_public_embedders(postgres_pool: Data<Pool<Postgres>>) ->
     tag = "Marketplace",
 )]
 #[get("/api/marketplace/llms")]
-#[tracing::instrument(name = "get_public_llms", skip(postgres_pool))]
-pub(crate) async fn get_public_llms(postgres_pool: Data<Pool<Postgres>>) -> impl Responder {
+#[tracing::instrument(name = "get_public_llms", skip(_auth, postgres_pool))]
+pub(crate) async fn get_public_llms(
+    _auth: Authenticated,
+    postgres_pool: Data<Pool<Postgres>>,
+) -> impl Responder {
     match llms::get_public_llms(&postgres_pool.into_inner()).await {
         Ok(llms_list) => HttpResponse::Ok().json(llms_list),
         Err(e) => {

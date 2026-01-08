@@ -25,6 +25,14 @@ const GET_PUBLIC_LLMS_QUERY: &str = r#"
     ORDER BY created_at DESC
 "#;
 
+const GET_RECENT_PUBLIC_LLMS_QUERY: &str = r#"
+    SELECT llm_id, name, owner, provider, base_url, api_key, config, is_public, created_at, updated_at
+    FROM llms
+    WHERE is_public = TRUE
+    ORDER BY updated_at DESC
+    LIMIT $1
+"#;
+
 const CREATE_LLM_QUERY: &str = r#"
     INSERT INTO llms (name, owner, provider, base_url, api_key, config, is_public, created_at, updated_at)
     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
@@ -97,6 +105,24 @@ pub(crate) async fn get_llms(
 pub(crate) async fn get_public_llms(pool: &Pool<Postgres>) -> Result<Vec<LargeLanguageModel>> {
     let start = Instant::now();
     let result = sqlx::query_as::<_, LargeLanguageModel>(GET_PUBLIC_LLMS_QUERY)
+        .fetch_all(pool)
+        .await;
+
+    let duration = start.elapsed().as_secs_f64();
+    let success = result.is_ok();
+    record_database_query("SELECT", "llms", duration, success);
+
+    Ok(result?)
+}
+
+#[tracing::instrument(name = "database.get_recent_public_llms", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT"))]
+pub(crate) async fn get_recent_public_llms(
+    pool: &Pool<Postgres>,
+    limit: i32,
+) -> Result<Vec<LargeLanguageModel>> {
+    let start = Instant::now();
+    let result = sqlx::query_as::<_, LargeLanguageModel>(GET_RECENT_PUBLIC_LLMS_QUERY)
+        .bind(limit)
         .fetch_all(pool)
         .await;
 

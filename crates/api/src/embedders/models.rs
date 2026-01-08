@@ -19,6 +19,8 @@ pub(crate) struct CreateEmbedder {
     pub(crate) dimensions: i32,
     #[serde(default = "default_max_input_tokens")]
     pub(crate) max_input_tokens: i32,
+    #[serde(default = "default_truncate_strategy")]
+    pub(crate) truncate_strategy: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) collection_name: Option<String>,
     #[serde(default)]
@@ -41,6 +43,10 @@ fn default_max_input_tokens() -> i32 {
     8191 // OpenAI default for text-embedding-ada-002
 }
 
+fn default_truncate_strategy() -> String {
+    "NONE".to_string()
+}
+
 #[derive(Serialize, ToSchema, FromRow, Clone)]
 pub(crate) struct Embedder {
     pub(crate) embedder_id: i32,
@@ -56,6 +62,7 @@ pub(crate) struct Embedder {
     pub(crate) dimensions: i32,
     #[serde(default = "default_max_input_tokens")]
     pub(crate) max_input_tokens: i32,
+    pub(crate) truncate_strategy: String,
     pub(crate) collection_name: Option<String>,
     pub(crate) is_public: bool,
     #[schema(value_type = String, format = DateTime)]
@@ -75,6 +82,7 @@ pub(crate) struct UpdateEmbedder {
     pub(crate) max_batch_size: Option<i32>,
     pub(crate) dimensions: Option<i32>,
     pub(crate) max_input_tokens: Option<i32>,
+    pub(crate) truncate_strategy: Option<String>,
     pub(crate) collection_name: Option<String>,
     pub(crate) is_public: Option<bool>,
 }

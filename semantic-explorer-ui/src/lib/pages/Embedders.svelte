@@ -43,6 +43,8 @@
 	let formConfig = $state('{}');
 	let formMaxBatchSize = $state(96);
 	let formDimensions = $state(1536);
+	let formMaxInputTokens = $state(8191);
+	let formTruncateStrategy = $state('NONE');
 
 	let testStatus = $state<'idle' | 'testing' | 'success' | 'error'>('idle');
 	let testMessage = $state('');
@@ -282,6 +284,8 @@
 		formConfig = JSON.stringify(embedder.config, null, 2);
 		formMaxBatchSize = embedder.max_batch_size ?? 96;
 		formDimensions = embedder.dimensions ?? 1536;
+		formMaxInputTokens = (embedder as any).max_input_tokens ?? 8191;
+		formTruncateStrategy = (embedder as any).truncate_strategy ?? 'NONE';
 		try {
 			const cfg = embedder.config || {};
 			const defaults = providerDefaults[formProvider] || {};
@@ -360,8 +364,11 @@
 				base_url: formBaseUrl,
 				api_key: formApiKey || null,
 				config,
+				batch_size: editingEmbedder ? undefined : 50,
 				max_batch_size: formMaxBatchSize,
 				dimensions: formDimensions,
+				max_input_tokens: formMaxInputTokens,
+				truncate_strategy: formTruncateStrategy,
 			};
 
 			const url = editingEmbedder
@@ -619,6 +626,47 @@
 								{:else}
 									Enter embedding vector dimensions for this model
 								{/if}
+							</div>
+						</div>
+
+						<div>
+							<label
+								for="embedder-max-input-tokens"
+								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+							>
+								Max Input Tokens
+							</label>
+							<input
+								id="embedder-max-input-tokens"
+								type="number"
+								bind:value={formMaxInputTokens}
+								min="1"
+								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+								placeholder="e.g., 8191"
+							/>
+							<div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+								Maximum tokens accepted by this embedder model
+							</div>
+						</div>
+
+						<div>
+							<label
+								for="embedder-truncate-strategy"
+								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+							>
+								Truncate Strategy
+							</label>
+							<select
+								id="embedder-truncate-strategy"
+								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+								bind:value={formTruncateStrategy}
+							>
+								<option value="NONE">NONE - Return error if text exceeds max_input_tokens</option>
+								<option value="START">START - Truncate from beginning, keep end</option>
+								<option value="END">END - Truncate from end, keep beginning</option>
+							</select>
+							<div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+								How to handle text longer than max_input_tokens
 							</div>
 						</div>
 

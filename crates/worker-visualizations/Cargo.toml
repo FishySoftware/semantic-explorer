@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-cuml-wrapper-rs = { version = "0.3.3" }
+cuml-wrapper-rs = { path = "../../../cuml-wrapper-rs-1" }
 futures-util = "0.3"
 semantic-explorer-core = { path = "../core" }
 async-nats = { workspace = true }
