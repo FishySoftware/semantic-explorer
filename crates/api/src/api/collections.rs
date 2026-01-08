@@ -1,6 +1,6 @@
 use actix_multipart::form::MultipartForm;
 use actix_web::{
-    HttpResponse, Responder, delete, get, post,
+    HttpResponse, Responder, delete, get, patch, post,
     web::{self, Data, Json, Path},
 };
 use actix_web_openidconnect::openid_middleware::Authenticated;
@@ -13,12 +13,16 @@ use crate::{
     auth::extract_username,
     collections::models::{
         Collection, CollectionSearchQuery, CollectionUpload, CollectionUploadResponse,
-        CreateCollection, FileListQuery, PaginatedCollections,
+        CreateCollection, FileListQuery, PaginatedCollections, UpdateCollection,
     },
     storage::{
         self,
         postgres::collections,
-        rustfs::{DocumentUpload, PaginatedFiles, delete_file, upload_document},
+        rustfs::{
+            delete_file,
+            models::{DocumentUpload, PaginatedFiles},
+            upload_document,
+        },
     },
 };
 
@@ -30,9 +34,10 @@ use crate::{
     tag = "Collections",
 )]
 #[get("/api/collections")]
-#[tracing::instrument(name = "get_collections", skip(auth, postgres_pool))]
+#[tracing::instrument(name = "get_collections", skip(auth, s3_client, postgres_pool))]
 pub(crate) async fn get_collections(
     auth: Authenticated,
+    s3_client: Data<Client>,
     postgres_pool: Data<Pool<Postgres>>,
 ) -> impl Responder {
     let username = match extract_username(&auth) {
@@ -40,7 +45,15 @@ pub(crate) async fn get_collections(
         Err(e) => return e,
     };
     match collections::get_collections(&postgres_pool.into_inner(), &username).await {
-        Ok(collections) => HttpResponse::Ok().json(collections),
+        Ok(mut collection_list) => {
+            let s3_client = s3_client.as_ref();
+            for collection in &mut collection_list {
+                collection.file_count = storage::rustfs::count_files(s3_client, &collection.bucket)
+                    .await
+                    .ok();
+            }
+            HttpResponse::Ok().json(collection_list)
+        }
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch collections");
             HttpResponse::InternalServerError().body(format!("error fetching collections: {e:?}"))
@@ -141,6 +154,7 @@ pub(crate) async fn create_collections(
         &username,
         &bucket,
         &create_collection.tags,
+        create_collection.is_public,
     )
     .await
     {
@@ -204,6 +218,48 @@ pub(crate) async fn delete_collections(
             tracing::error!(error = %e, "failed to delete collection");
             HttpResponse::InternalServerError()
                 .body(format!("error deleting collection due to: {e:?}"))
+        }
+    }
+}
+
+#[utoipa::path(
+    request_body = UpdateCollection,
+    responses(
+        (status = 200, description = "Updated collection", body = Collection),
+        (status = 404, description = "Not Found"),
+        (status = 500, description = "Internal Server Error"),
+    ),
+    tag = "Collections",
+)]
+#[patch("/api/collections/{collection_id}")]
+#[tracing::instrument(name = "update_collection", skip(auth, postgres_pool, update_collection), fields(collection_id = %collection_id.as_ref()))]
+pub(crate) async fn update_collections(
+    auth: Authenticated,
+    postgres_pool: Data<Pool<Postgres>>,
+    collection_id: Path<i32>,
+    Json(update_collection): Json<UpdateCollection>,
+) -> impl Responder {
+    let username = match extract_username(&auth) {
+        Ok(username) => username,
+        Err(e) => return e,
+    };
+    let postgres_pool = postgres_pool.into_inner();
+    let collection_id = collection_id.into_inner();
+
+    match collections::update_collection(
+        &postgres_pool,
+        collection_id,
+        &username,
+        &update_collection.title,
+        update_collection.details.as_deref(),
+        &update_collection.tags,
+        update_collection.is_public,
+    )
+    .await
+    {
+        Ok(collection) => HttpResponse::Ok().json(collection),
+        Err(_) => {
+            return HttpResponse::NotFound().finish();
         }
     }
 }

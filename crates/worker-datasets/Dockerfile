@@ -32,3 +32,4 @@ COPY --from=builder /etc/passwd /etc/passwd
 
 USER appuser
 ENTRYPOINT ["/worker-datasets"]
+

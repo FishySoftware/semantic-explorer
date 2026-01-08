@@ -73,6 +73,30 @@ services:
   #     - SERVICE_NAME=worker-datasets
   #   network_mode: host
 
+  # worker-visualizations:
+  #   build:
+  #     context: ../../
+  #     dockerfile: crates/worker-visualizations/Dockerfile
+  #   depends_on:
+  #     - nats
+  #     - qdrant
+  #     - otel-collector
+  #   restart: unless-stopped
+  #   environment:
+  #     - RUST_LOG=warn,actix_web_prom=error,worker_visualizations=debug
+  #     - NATS_URL=nats://localhost:4222
+  #     - QDRANT_URL=http://localhost:6334
+  #     - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+  #     - SERVICE_NAME=worker-visualizations
+  #   network_mode: host
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: all
+  #             capabilities: [gpu]
+
   rustfs:
     image: rustfs/rustfs:latest
     volumes:
@@ -189,6 +213,22 @@ services:
     restart: unless-stopped
     network_mode: host
 
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus:rw
+    restart: unless-stopped
+    network_mode: host
+
   otel-collector:
     image: otel/opentelemetry-collector-contrib:latest
     command: ["--config=/etc/otel-collector-config.yaml"]
@@ -203,22 +243,6 @@ services:
     depends_on:
       - quickwit
       - prometheus
-    restart: unless-stopped
-    network_mode: host
-
-  prometheus:
-    image: prom/prometheus:latest
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
-      - '--web.console.templates=/usr/share/prometheus/consoles'
-      - '--web.enable-lifecycle'
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus:rw
     restart: unless-stopped
     network_mode: host
 

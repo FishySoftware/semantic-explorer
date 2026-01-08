@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use semantic_explorer_core::jobs::EmbedderConfig;
+use semantic_explorer_core::models::EmbedderConfig;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::chunk::config::ChunkingConfig;

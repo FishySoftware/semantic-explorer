@@ -1,5 +1,5 @@
 use anyhow::Result;
-use semantic_explorer_core::jobs::{FileTransformResult, TransformFileJob};
+use semantic_explorer_core::models::{CollectionTransformJob, CollectionTransformResult};
 use semantic_explorer_core::observability::record_worker_job;
 use semantic_explorer_core::storage::{DocumentUpload, get_file, upload_document};
 use std::time::Instant;
@@ -14,8 +14,11 @@ pub(crate) struct WorkerContext {
     pub(crate) nats_client: async_nats::Client,
 }
 
-#[instrument(skip(ctx), fields(job_id = %job.job_id, transform_id = %job.transform_id, file = %job.source_file_key))]
-pub(crate) async fn process_file_job(job: TransformFileJob, ctx: WorkerContext) -> Result<()> {
+#[instrument(skip(ctx), fields(job_id = %job.job_id, collection_transform_id = %job.collection_transform_id, file = %job.source_file_key))]
+pub(crate) async fn process_file_job(
+    job: CollectionTransformJob,
+    ctx: WorkerContext,
+) -> Result<()> {
     let start_time = Instant::now();
     info!("Processing file job");
 
@@ -127,11 +130,21 @@ pub(crate) async fn process_file_job(job: TransformFileJob, ctx: WorkerContext) 
         "Chunking text"
     );
 
+    let mut extraction_metadata = extraction_result
+        .metadata
+        .unwrap_or_else(|| serde_json::json!({}));
+    if let Some(obj) = extraction_metadata.as_object_mut() {
+        obj.insert(
+            "source_file".to_string(),
+            serde_json::json!(&job.source_file_key),
+        );
+    }
+
     let chunks_with_metadata = match ChunkingService::chunk_text(
-        extraction_result.text,
+        extraction_result.text.clone(),
         &chunking_config,
-        extraction_result.metadata,
-        job.embedder_config.as_ref(),
+        Some(extraction_metadata),
+        job.embedder_config.as_ref(), // Use embedder config from job for semantic chunking
     )
     .await
     {
@@ -150,10 +163,29 @@ pub(crate) async fn process_file_job(job: TransformFileJob, ctx: WorkerContext) 
             return Ok(());
         }
     };
+
     info!(
         chunk_count = chunks_with_metadata.len(),
         "Text chunked successfully"
     );
+
+    if chunks_with_metadata.is_empty() {
+        let duration = start_time.elapsed().as_secs_f64();
+        record_worker_job("transform-file", duration, "failed_empty_chunks");
+        error!(
+            text_length = extraction_result.text.len(),
+            "Chunking produced no chunks (text too small or invalid). Raw text length: {} chars",
+            extraction_result.text.len()
+        );
+        send_result(
+            &ctx.nats_client,
+            &job,
+            Err("Chunking produced no chunks - text may be too short or invalid".to_string()),
+            Some((duration * 1000.0) as i64),
+        )
+        .await?;
+        return Ok(());
+    }
 
     let chunks_key = format!("chunks/{}.json", job.job_id);
     let chunks_json = serde_json::to_vec(&chunks_with_metadata)?;
@@ -195,7 +227,7 @@ pub(crate) async fn process_file_job(job: TransformFileJob, ctx: WorkerContext) 
 
 async fn send_result(
     nats: &async_nats::Client,
-    job: &TransformFileJob,
+    job: &CollectionTransformJob,
     result: Result<(String, usize), String>,
     processing_duration_ms: Option<i64>,
 ) -> Result<()> {
@@ -204,9 +236,9 @@ async fn send_result(
         Err(e) => ("".to_string(), 0, "failed".to_string(), Some(e)),
     };
 
-    let result_msg = FileTransformResult {
+    let result_msg = CollectionTransformResult {
         job_id: job.job_id,
-        transform_id: job.transform_id,
+        collection_transform_id: job.collection_transform_id,
         source_file_key: job.source_file_key.clone(),
         bucket: job.bucket.clone(),
         chunks_file_key: chunks_key,

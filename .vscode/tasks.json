@@ -47,6 +47,22 @@
             "problemMatcher": []
         },
         {
+            "label": "Run Worker Visualizations",
+            "type": "shell",
+            "command": "set -a && source .env && set +a && source .scripts/activate_build_env.sh && cargo run",
+            "options": {
+                "cwd": "${workspaceFolder}/crates/worker-visualizations"
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "echo": true,
+                "focus": false
+            },
+            "problemMatcher": []
+        },
+
+        {
             "label": "Run UI Watch",
             "type": "shell",
             "command": "npm run build-watch",

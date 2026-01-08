@@ -4,28 +4,39 @@
 	import Sidebar from './lib/Sidebar.svelte';
 	import TopBanner from './lib/TopBanner.svelte';
 	import ToastHost from './lib/components/ToastHost.svelte';
+	import Chat from './lib/pages/Chat.svelte';
 	import CollectionDetail from './lib/pages/CollectionDetail.svelte';
+	import CollectionTransforms from './lib/pages/CollectionTransforms.svelte';
 	import Collections from './lib/pages/Collections.svelte';
 	import Dashboard from './lib/pages/Dashboard.svelte';
 	import DatasetDetail from './lib/pages/DatasetDetail.svelte';
+	import DatasetTransforms from './lib/pages/DatasetTransforms.svelte';
 	import Datasets from './lib/pages/Datasets.svelte';
 	import Documentation from './lib/pages/Documentation.svelte';
+	import EmbeddedDatasets from './lib/pages/EmbeddedDatasets.svelte';
+	import EmbedderDetail from './lib/pages/EmbedderDetail.svelte';
 	import Embedders from './lib/pages/Embedders.svelte';
+	import LLMs from './lib/pages/LLMs.svelte';
+	import Marketplace from './lib/pages/Marketplace.svelte';
 	import Search from './lib/pages/Search.svelte';
-	import Transforms from './lib/pages/Transforms.svelte';
+	import VisualizationTransforms from './lib/pages/VisualizationTransforms.svelte';
 	import Visualizations from './lib/pages/Visualizations.svelte';
+	import { initializeTheme } from './lib/utils/theme';
 
-	let activeUrl = $state('/dashboard');
+	let activeUrl = $state('/datasets');
 	let selectedCollectionId = $state<number | null>(null);
 	let selectedDatasetId = $state<number | null>(null);
+	let selectedVisualizationId = $state<number | null>(null);
+	let selectedEmbedderId = $state<number | null>(null);
 
 	function parseRoute(hash: string): { path: string; params: Record<string, string> } {
-		const parts = hash
+		const hashWithoutQuery = hash.split('?')[0];
+		const parts = hashWithoutQuery
 			.slice(1)
 			.split('/')
 			.filter((p) => p);
 
-		if (parts.length === 0) return { path: '/dashboard', params: {} };
+		if (parts.length === 0) return { path: '/datasets', params: {} };
 
 		if (parts.length === 3 && parts[0] === 'collections' && parts[2] === 'details') {
 			return { path: '/collections/detail', params: { id: parts[1] } };
@@ -33,11 +44,15 @@
 		if (parts.length === 3 && parts[0] === 'datasets' && parts[2] === 'details') {
 			return { path: '/datasets/detail', params: { id: parts[1] } };
 		}
-		if (parts.length === 3 && parts[0] === 'transforms' && parts[2] === 'details') {
-			return { path: '/transforms/detail', params: { id: parts[1] } };
+		if (parts.length === 3 && parts[0] === 'visualizations' && parts[2] === 'details') {
+			return { path: '/visualizations/detail', params: { id: parts[1] } };
+		}
+		if (parts.length === 3 && parts[0] === 'embedders' && parts[2] === 'details') {
+			return { path: '/embedders/detail', params: { id: parts[1] } };
 		}
 
-		return { path: '/' + parts.join('/'), params: {} };
+		const result = { path: '/' + parts.join('/'), params: {} };
+		return result;
 	}
 
 	function handleHashChange() {
@@ -49,9 +64,28 @@
 		} else if (path !== '/collections/detail') {
 			selectedCollectionId = null;
 		}
+
+		if (path === '/datasets/detail' && params.id) {
+			selectedDatasetId = parseInt(params.id, 10);
+		} else if (path !== '/datasets/detail') {
+			selectedDatasetId = null;
+		}
+
+		if (path === '/visualizations/detail' && params.id) {
+			selectedVisualizationId = parseInt(params.id, 10);
+		} else if (path !== '/visualizations/detail') {
+			selectedVisualizationId = null;
+		}
+
+		if (path === '/embedders/detail' && params.id) {
+			selectedEmbedderId = parseInt(params.id, 10);
+		} else if (path !== '/embedders/detail') {
+			selectedEmbedderId = null;
+		}
 	}
 
 	onMount(() => {
+		initializeTheme();
 		handleHashChange();
 		window.addEventListener('hashchange', handleHashChange);
 		return () => {
@@ -82,6 +116,34 @@
 		activeUrl = '/datasets';
 		window.location.hash = '/datasets';
 	}
+
+	function viewVisualization(transformId: number) {
+		selectedVisualizationId = transformId;
+		activeUrl = '/visualizations/detail';
+		window.location.hash = `/visualizations/${transformId}/details`;
+	}
+
+	function backToVisualizations() {
+		selectedVisualizationId = null;
+		activeUrl = '/visualizations';
+		window.location.hash = '/visualizations';
+	}
+
+	function viewEmbedder(embedderId: number) {
+		selectedEmbedderId = embedderId;
+		activeUrl = '/embedders/detail';
+		window.location.hash = `/embedders/${embedderId}/details`;
+	}
+
+	function backToEmbedders() {
+		selectedEmbedderId = null;
+		activeUrl = '/embedders';
+		window.location.hash = '/embedders';
+	}
+
+	function navigate(path: string) {
+		window.location.hash = path;
+	}
 </script>
 
 <div class="h-screen flex flex-col bg-gray-50 dark:bg-gray-900">
@@ -90,9 +152,11 @@
 	<div class="flex flex-1 overflow-hidden">
 		<Sidebar bind:activeUrl />
 
-		<main class="flex-1 overflow-y-auto p-8">
+		<main class="flex-1 overflow-y-auto {activeUrl === '/chat' ? 'p-0' : 'p-6'}">
 			{#if activeUrl === '/dashboard'}
 				<Dashboard />
+			{:else if activeUrl === '/chat'}
+				<Chat />
 			{:else if activeUrl === '/documentation'}
 				<Documentation />
 			{:else if activeUrl === '/collections'}
@@ -108,13 +172,36 @@
 					<DatasetDetail datasetId={selectedDatasetId} onBack={backToDatasets} />
 				{/if}
 			{:else if activeUrl === '/embedders'}
-				<Embedders />
-			{:else if activeUrl === '/transforms'}
-				<Transforms />
+				<Embedders onViewEmbedder={viewEmbedder} />
+			{:else if activeUrl === '/embedders/detail'}
+				{#if selectedEmbedderId !== null}
+					<EmbedderDetail embedderId={selectedEmbedderId} onBack={backToEmbedders} />
+				{/if}
+			{:else if activeUrl === '/llms'}
+				<LLMs />
+			{:else if activeUrl === '/collection-transforms'}
+				<CollectionTransforms />
+			{:else if activeUrl === '/dataset-transforms'}
+				<DatasetTransforms />
+			{:else if activeUrl === '/embedded-datasets'}
+				<EmbeddedDatasets onViewDataset={viewDataset} onNavigate={navigate} />
+			{:else if activeUrl === '/visualization-transforms'}
+				<VisualizationTransforms />
 			{:else if activeUrl === '/visualizations'}
-				<Visualizations />
+				<Visualizations onViewVisualization={viewVisualization} />
+			{:else if activeUrl === '/visualizations/detail'}
+				{#if selectedVisualizationId !== null}
+					{#await import('./lib/pages/VisualizationDetail.svelte') then { default: VisualizationDetail }}
+						<VisualizationDetail
+							transformId={selectedVisualizationId}
+							onBack={backToVisualizations}
+						/>
+					{/await}
+				{/if}
 			{:else if activeUrl === '/search'}
-				<Search />
+				<Search onViewDataset={viewDataset} onViewEmbedder={viewEmbedder} />
+			{:else if activeUrl === '/marketplace'}
+				<Marketplace />
 			{/if}
 		</main>
 	</div>

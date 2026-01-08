@@ -132,7 +132,7 @@ mod tests {
         let chunks = result.unwrap();
         assert!(!chunks.is_empty());
         // Should split on double newlines when possible
-        assert!(chunks.len() >= 1);
+        assert!(!chunks.is_empty());
     }
 
     #[test]

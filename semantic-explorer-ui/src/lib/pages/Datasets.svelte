@@ -1,6 +1,9 @@
 <script lang="ts">
+	import { Table, TableBody, TableBodyCell, TableHead, TableHeadCell } from 'flowbite-svelte';
 	import { onMount } from 'svelte';
+	import ActionMenu from '../components/ActionMenu.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
+	import CreateDatasetTransformModal from '../components/CreateDatasetTransformModal.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
 
@@ -10,6 +13,8 @@
 		details: string | null;
 		owner: string;
 		tags: string[];
+		item_count?: number;
+		total_chunks?: number;
 	}
 
 	let { onViewDataset: handleViewDataset } = $props<{
@@ -18,6 +23,11 @@
 
 	const onViewDataset = (id: number) => {
 		handleViewDataset(id);
+	};
+
+	const onCreateTransform = (datasetId: number) => {
+		selectedDatasetForTransform = datasetId;
+		transformModalOpen = true;
 	};
 
 	let datasets = $state<Dataset[]>([]);
@@ -34,8 +44,10 @@
 	let creating = $state(false);
 	let createError = $state<string | null>(null);
 
-	let deleting = $state<number | null>(null);
 	let datasetPendingDelete = $state<Dataset | null>(null);
+
+	let transformModalOpen = $state(false);
+	let selectedDatasetForTransform = $state<number | null>(null);
 
 	$effect(() => {
 		if (showCreateForm && !editingDataset && !newTitle) {
@@ -147,7 +159,6 @@
 		datasetPendingDelete = null;
 
 		try {
-			deleting = target.dataset_id;
 			const response = await fetch(`/api/datasets/${target.dataset_id}`, {
 				method: 'DELETE',
 			});
@@ -160,8 +171,6 @@
 			toastStore.success('Dataset deleted');
 		} catch (e) {
 			toastStore.error(formatError(e, 'Failed to delete dataset'));
-		} finally {
-			deleting = null;
 		}
 	}
 
@@ -189,18 +198,15 @@
 		description="Contains processed texts as JSON with name and chunks, to be used for embedding transforms. Datasets can be generated from collections using transforms, or exported to the dataset endpoints directly via API."
 	/>
 
-	<div class="flex justify-between items-center mb-6">
+	<div class="flex justify-between items-center mb-4">
 		<h1 class="text-3xl font-bold text-gray-900 dark:text-white">Datasets</h1>
-		<button
-			onclick={() => (showCreateForm = !showCreateForm)}
-			class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-		>
+		<button onclick={() => (showCreateForm = !showCreateForm)} class="btn-primary">
 			{showCreateForm ? 'Cancel' : 'Create Dataset'}
 		</button>
 	</div>
 
 	{#if showCreateForm}
-		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-4">
 			<h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-4">
 				{editingDataset ? 'Edit Dataset' : 'Create New Dataset'}
 			</h2>
@@ -267,7 +273,7 @@
 					<button
 						type="submit"
 						disabled={creating}
-						class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+						class="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
 					>
 						{creating
 							? editingDataset
@@ -287,7 +293,7 @@
 							newTags = '';
 							createError = null;
 						}}
-						class="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+						class="btn-secondary"
 					>
 						Cancel
 					</button>
@@ -339,7 +345,7 @@
 			</button>
 		</div>
 	{:else if datasets.length === 0}
-		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-12 text-center">
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-8 text-center">
 			<p class="text-gray-500 dark:text-gray-400 mb-4">No datasets yet</p>
 			<button
 				onclick={() => (showCreateForm = true)}
@@ -349,7 +355,7 @@
 			</button>
 		</div>
 	{:else if filteredDatasets.length === 0}
-		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-12 text-center">
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-8 text-center">
 			<p class="text-gray-500 dark:text-gray-400 mb-4">No datasets match your search</p>
 			<button
 				onclick={() => (searchQuery = '')}
@@ -359,110 +365,106 @@
 			</button>
 		</div>
 	{:else}
-		<div class="grid gap-4">
-			{#each filteredDatasets as dataset (dataset.dataset_id)}
-				<div
-					class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 hover:shadow-lg transition-shadow"
-				>
-					<div class="flex justify-between items-start">
-						<div class="flex-1">
-							<div class="flex items-baseline gap-3 mb-2">
-								<h3 class="text-xl font-semibold text-gray-900 dark:text-white">
-									{dataset.title}
-								</h3>
-								<span class="text-sm text-gray-500 dark:text-gray-400">
-									#{dataset.dataset_id}
-								</span>
-							</div>
-							{#if dataset.details}
-								<p class="text-gray-600 dark:text-gray-400 mb-3">
-									{dataset.details}
-								</p>
-							{/if}
-							<div class="flex items-center gap-2 flex-wrap">
-								<span
-									class="inline-flex items-center gap-1.5 px-3 py-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full text-sm"
-								>
-									<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width="2"
-											d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-										></path>
-									</svg>
-									{dataset.owner}
-								</span>
-								{#each dataset.tags as tag (tag)}
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
+			<Table hoverable striped>
+				<TableHead>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Title</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Items</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Chunks</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Owner</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Tags</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Actions</TableHeadCell>
+				</TableHead>
+				<TableBody>
+					{#each filteredDatasets as dataset (dataset.dataset_id)}
+						<tr class="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50">
+							<TableBodyCell class="px-4 py-2">
+								<div>
+									<button
+										onclick={() => onViewDataset(dataset.dataset_id)}
+										class="font-medium text-blue-600 dark:text-blue-400 hover:underline"
+									>
+										{dataset.title}
+									</button>
+									{#if dataset.details}
+										<div class="text-xs text-gray-600 dark:text-gray-400 mt-1 line-clamp-1">
+											{dataset.details}
+										</div>
+									{/if}
+								</div>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-2 text-center">
+								{#if dataset.item_count !== undefined && dataset.item_count !== null}
 									<span
-										class="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs font-medium"
+										class="inline-block px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded text-sm font-medium"
 									>
-										#{tag}
+										{dataset.item_count}
 									</span>
-								{/each}
-							</div>
-						</div>
-						<div class="ml-4 flex gap-2">
-							<button
-								onclick={() => openEditForm(dataset)}
-								class="p-2 text-gray-600 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400"
-								title="Edit dataset"
-							>
-								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width="2"
-										d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-									/>
-								</svg>
-							</button>
-							<button
-								onclick={() => onViewDataset(dataset.dataset_id)}
-								class="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
-								title="Manage dataset"
-							>
-								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width="2"
-										d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"
-									></path>
-								</svg>
-								Manage Dataset
-							</button>
-							<button
-								onclick={() => requestDeleteDataset(dataset)}
-								disabled={deleting === dataset.dataset_id}
-								class="px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-								title="Delete dataset"
-							>
-								{#if deleting === dataset.dataset_id}
-									<span class="animate-spin" role="status" aria-label="Deleting dataset">⏳</span>
-									Deleting...
 								{:else}
-									<svg
-										class="w-4 h-4"
-										fill="none"
-										stroke="currentColor"
-										viewBox="0 0 24 24"
-										aria-hidden="true"
-									>
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width="2"
-											d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-										/>
-									</svg>
-									Delete
+									<span class="text-gray-500 dark:text-gray-400">—</span>
 								{/if}
-							</button>
-						</div>
-					</div>
-				</div>
-			{/each}
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-2 text-center">
+								{#if dataset.total_chunks !== undefined && dataset.total_chunks !== null}
+									<span
+										class="inline-block px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded text-sm font-medium"
+									>
+										{dataset.total_chunks}
+									</span>
+								{:else}
+									<span class="text-gray-500 dark:text-gray-400">—</span>
+								{/if}
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-2 text-sm">
+								<span class="text-gray-700 dark:text-gray-300">{dataset.owner}</span>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-2">
+								<div class="flex gap-1 flex-wrap">
+									{#each dataset.tags.slice(0, 2) as tag (tag)}
+										<span
+											class="text-xs px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded"
+										>
+											#{tag}
+										</span>
+									{/each}
+									{#if dataset.tags.length > 2}
+										<span class="text-xs px-2 py-0.5 text-gray-600 dark:text-gray-400">
+											+{dataset.tags.length - 2}
+										</span>
+									{/if}
+								</div>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-2 text-center">
+								<ActionMenu
+									actions={[
+										{
+											label: 'View Details',
+											handler: () => onViewDataset(dataset.dataset_id),
+										},
+										{
+											label: 'Edit',
+											handler: () => openEditForm(dataset),
+										},
+										...(dataset.item_count && dataset.item_count > 0
+											? [
+													{
+														label: 'Create Transform',
+														handler: () => onCreateTransform(dataset.dataset_id),
+													},
+												]
+											: []),
+										{
+											label: 'Delete',
+											handler: () => requestDeleteDataset(dataset),
+											isDangerous: true,
+										},
+									]}
+								/>
+							</TableBodyCell>
+						</tr>
+					{/each}
+				</TableBody>
+			</Table>
 		</div>
 	{/if}
 </div>
@@ -477,4 +479,15 @@
 	variant="danger"
 	on:confirm={confirmDeleteDataset}
 	on:cancel={() => (datasetPendingDelete = null)}
+/>
+
+<CreateDatasetTransformModal
+	open={transformModalOpen}
+	datasetId={selectedDatasetForTransform}
+	onSuccess={() => {
+		transformModalOpen = false;
+		selectedDatasetForTransform = null;
+		toastStore.success('Transform created successfully');
+		fetchDatasets();
+	}}
 />

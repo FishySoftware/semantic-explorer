@@ -278,6 +278,65 @@ workerDatasets:
   metrics:
     enabled: false
 
+# Worker Visualizations Configuration
+workerVisualizations:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: jofish89/worker-visualizations
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  statefulset:
+    podManagementPolicy: Parallel
+    updateStrategy:
+      type: RollingUpdate
+      rollingUpdate:
+        partition: 0
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 1Gi
+    limits:
+      cpu: 4000m
+      memory: 4Gi
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  livenessProbe: {}
+  readinessProbe: {}
+  env:
+    RUST_LOG: "warn,actix_web_prom=error,worker_visualizations=info"
+  envFrom: []
+  nodeSelector: {}
+  tolerations: []
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values:
+                    - worker-visualizations
+            topologyKey: kubernetes.io/hostname
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  priorityClassName: ""
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: "sa-semantic-explorer-worker-visualizations"
+  podAnnotations: {}
+  podLabels: {}
+  metrics:
+    enabled: false
+
 # PostgreSQL Configuration (Optional Infrastructure)
 # Disabled by default - configure external.* for production use
 # When enabled: true, deploys PostgreSQL subchart (CloudNativePG)

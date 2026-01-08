@@ -1,5 +1,9 @@
 use serde::{Deserialize, Deserializer, Serialize};
-use sqlx::FromRow;
+use sqlx::{
+    FromRow,
+    postgres::PgRow,
+    types::chrono::{DateTime, Utc},
+};
 use utoipa::ToSchema;
 
 fn non_empty<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
@@ -27,6 +31,8 @@ pub(crate) struct CreateDataset {
     pub(crate) title: String,
     pub(crate) details: Option<String>,
     pub(crate) tags: Vec<String>,
+    #[serde(default)]
+    pub(crate) is_public: bool,
 }
 
 #[derive(Serialize, ToSchema, FromRow)]
@@ -36,12 +42,31 @@ pub(crate) struct Dataset {
     pub(crate) details: Option<String>,
     pub(crate) owner: String,
     pub(crate) tags: Vec<String>,
+    pub(crate) is_public: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<String>, format = DateTime)]
-    pub(crate) created_at: Option<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>>,
+    pub(crate) created_at: Option<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<String>, format = DateTime)]
-    pub(crate) updated_at: Option<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>>,
+    pub(crate) updated_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct DatasetWithStats {
+    pub(crate) dataset_id: i32,
+    pub(crate) title: String,
+    pub(crate) details: Option<String>,
+    pub(crate) owner: String,
+    pub(crate) tags: Vec<String>,
+    pub(crate) is_public: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub(crate) created_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub(crate) updated_at: Option<DateTime<Utc>>,
+    pub(crate) item_count: i64,
+    pub(crate) total_chunks: i64,
 }
 
 #[derive(Serialize, Deserialize, ToSchema, FromRow)]
@@ -75,8 +100,8 @@ pub(crate) struct DatasetItem {
     pub(crate) metadata: serde_json::Value,
 }
 
-impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for DatasetItem {
-    fn from_row(row: &sqlx::postgres::PgRow) -> Result<Self, sqlx::Error> {
+impl sqlx::FromRow<'_, PgRow> for DatasetItem {
+    fn from_row(row: &PgRow) -> Result<Self, sqlx::Error> {
         use sqlx::Row;
 
         let chunks_json: serde_json::Value = row.try_get("chunks")?;

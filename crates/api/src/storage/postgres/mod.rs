@@ -1,7 +1,13 @@
+pub(crate) mod chat;
 pub(crate) mod collections;
 pub(crate) mod datasets;
 pub(crate) mod embedders;
-pub(crate) mod transforms;
+pub(crate) mod llms;
+
+pub(crate) mod collection_transforms;
+pub(crate) mod dataset_transforms;
+pub(crate) mod embedded_datasets;
+pub(crate) mod visualization_transforms;
 
 use std::time::Duration;
 
@@ -14,8 +20,10 @@ pub(crate) async fn initialize_pool() -> Result<Pool<Postgres>> {
     let url = std::env::var("DATABASE_URL")?;
     let pool = PgPoolOptions::new()
         .max_connections(50)
-        .min_connections(5)
-        .acquire_timeout(Duration::from_secs(10))
+        .min_connections(15)
+        .acquire_timeout(Duration::from_secs(5))
+        .idle_timeout(Duration::from_secs(300))
+        .max_lifetime(Duration::from_secs(1800))
         .connect(&url)
         .await?;
     sqlx::migrate!("src/storage/postgres/migrations")

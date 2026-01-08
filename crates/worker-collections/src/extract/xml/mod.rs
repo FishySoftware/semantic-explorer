@@ -85,7 +85,7 @@ mod tests {
         assert!(result.is_ok());
         let text = result.unwrap();
         // Entities should be decoded by the XML parser
-        assert!(text.contains("<tag>") || text.len() > 0);
+        assert!(text.contains("<tag>") || !text.is_empty());
     }
 
     #[test]

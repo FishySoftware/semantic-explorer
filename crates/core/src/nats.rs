@@ -1,11 +1,11 @@
 use anyhow::{Context, Result};
 use async_nats::{
+    Client,
     jetstream::{
         self,
         consumer::pull::Config as ConsumerConfig,
         stream::{Config as StreamConfig, RetentionPolicy},
     },
-    Client,
 };
 use std::time::Duration;
 use tracing::{info, warn};
@@ -15,10 +15,10 @@ pub async fn initialize_jetstream(client: &Client) -> Result<()> {
 
     ensure_stream(
         &jetstream,
-        "TRANSFORM_FILES",
+        "COLLECTION_TRANSFORMS",
         StreamConfig {
-            name: "TRANSFORM_FILES".to_string(),
-            subjects: vec!["workers.transform-file-worker".to_string()],
+            name: "COLLECTION_TRANSFORMS".to_string(),
+            subjects: vec!["workers.collection-transform".to_string()],
             retention: RetentionPolicy::WorkQueue,
             max_age: Duration::from_secs(7 * 24 * 60 * 60), // 7 days
             duplicate_window: Duration::from_secs(5 * 60),  // 5 minutes for deduplication
@@ -30,10 +30,25 @@ pub async fn initialize_jetstream(client: &Client) -> Result<()> {
 
     ensure_stream(
         &jetstream,
-        "VECTOR_EMBED",
+        "DATASET_TRANSFORMS",
         StreamConfig {
-            name: "VECTOR_EMBED".to_string(),
-            subjects: vec!["workers.vector-embed-worker".to_string()],
+            name: "DATASET_TRANSFORMS".to_string(),
+            subjects: vec!["workers.dataset-transform".to_string()],
+            retention: RetentionPolicy::WorkQueue,
+            max_age: Duration::from_secs(7 * 24 * 60 * 60), // 7 days
+            duplicate_window: Duration::from_secs(5 * 60),  // 5 minutes for deduplication
+            num_replicas: 1,
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    ensure_stream(
+        &jetstream,
+        "VISUALIZATION_TRANSFORMS",
+        StreamConfig {
+            name: "VISUALIZATION_TRANSFORMS".to_string(),
+            subjects: vec!["workers.visualization-transform".to_string()],
             retention: RetentionPolicy::WorkQueue,
             max_age: Duration::from_secs(7 * 24 * 60 * 60), // 7 days
             duplicate_window: Duration::from_secs(5 * 60),  // 5 minutes for deduplication
@@ -111,6 +126,18 @@ pub fn create_vector_embed_consumer_config() -> ConsumerConfig {
         ack_wait: Duration::from_secs(10 * 60), // 10 minutes to process
         max_deliver: 5,                         // Retry up to 5 times
         max_ack_pending: 100,                   // Backpressure limit
+        ..Default::default()
+    }
+}
+
+pub fn create_visualization_consumer_config() -> ConsumerConfig {
+    ConsumerConfig {
+        durable_name: Some("visualization-workers".to_string()),
+        description: Some("Consumer for visualization transform jobs (UMAP/HDBSCAN)".to_string()),
+        ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
+        ack_wait: Duration::from_secs(30 * 60), // 30 minutes - visualization can be slow
+        max_deliver: 3,                         // Retry up to 3 times
+        max_ack_pending: 10,                    // Lower limit - these are resource-intensive
         ..Default::default()
     }
 }

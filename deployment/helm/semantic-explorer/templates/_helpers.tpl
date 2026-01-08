@@ -127,6 +127,31 @@ app.kubernetes.io/component: worker-datasets
 {{- end }}
 
 {{/*
+Worker Visualizations labels
+*/}}
+{{- define "semantic-explorer.workerVisualizations.labels" -}}
+helm.sh/chart: {{ include "semantic-explorer.chart" . }}
+{{ include "semantic-explorer.workerVisualizations.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+app.kubernetes.io/component: worker-visualizations
+{{- with .Values.commonLabels }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{/*
+Worker Visualizations selector labels
+*/}}
+{{- define "semantic-explorer.workerVisualizations.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "semantic-explorer.name" . }}-worker-visualizations
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: worker-visualizations
+{{- end }}
+
+{{/*
 Create the name of the service account to use for API
 */}}
 {{- define "semantic-explorer.api.serviceAccountName" -}}
@@ -156,6 +181,17 @@ Create the name of the service account to use for Worker Datasets
 {{- default (printf "%s-worker-datasets" (include "semantic-explorer.fullname" .)) .Values.workerDatasets.serviceAccount.name }}
 {{- else }}
 {{- default "default" .Values.workerDatasets.serviceAccount.name }}
+{{- end }}
+{{- end }}
+
+{{/*
+Create the name of the service account to use for Worker Visualizations
+*/}}
+{{- define "semantic-explorer.workerVisualizations.serviceAccountName" -}}
+{{- if .Values.workerVisualizations.serviceAccount.create }}
+{{- default (printf "%s-worker-visualizations" (include "semantic-explorer.fullname" .)) .Values.workerVisualizations.serviceAccount.name }}
+{{- else }}
+{{- default "default" .Values.workerVisualizations.serviceAccount.name }}
 {{- end }}
 {{- end }}
 
@@ -205,6 +241,20 @@ Get the full image name for Worker Datasets
 {{- $registry := include "semantic-explorer.imageRegistry" (dict "registry" .Values.workerDatasets.image.registry "global" .Values.global) }}
 {{- $repository := .Values.workerDatasets.image.repository }}
 {{- $tag := .Values.workerDatasets.image.tag | default .Chart.AppVersion }}
+{{- if $registry }}
+{{- printf "%s/%s:%s" $registry $repository $tag }}
+{{- else }}
+{{- printf "%s:%s" $repository $tag }}
+{{- end }}
+{{- end }}
+
+{{/*
+Get the full image name for Worker Visualizations
+*/}}
+{{- define "semantic-explorer.workerVisualizations.image" -}}
+{{- $registry := include "semantic-explorer.imageRegistry" (dict "registry" .Values.workerVisualizations.image.registry "global" .Values.global) }}
+{{- $repository := .Values.workerVisualizations.image.repository }}
+{{- $tag := .Values.workerVisualizations.image.tag | default .Chart.AppVersion }}
 {{- if $registry }}
 {{- printf "%s/%s:%s" $registry $repository $tag }}
 {{- else }}

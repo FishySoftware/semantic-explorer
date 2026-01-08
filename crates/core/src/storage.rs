@@ -1,7 +1,7 @@
 use crate::observability::record_storage_operation;
 use anyhow::Result;
 use aws_config::{BehaviorVersion, Region};
-use aws_sdk_s3::{config::Credentials, Client};
+use aws_sdk_s3::{Client, config::Credentials};
 use serde::Serialize;
 use std::{env, time::Instant};
 

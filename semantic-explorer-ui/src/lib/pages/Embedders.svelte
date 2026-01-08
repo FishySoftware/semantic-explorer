@@ -1,7 +1,17 @@
 <script lang="ts">
+	import ActionMenu from '$lib/components/ActionMenu.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
+	import { Table, TableBody, TableBodyCell, TableHead, TableHeadCell } from 'flowbite-svelte';
 	import { onMount } from 'svelte';
+
+	let { onViewEmbedder: handleViewEmbedder } = $props<{
+		onViewEmbedder?: (_: number) => void;
+	}>();
+
+	const onViewEmbedder = (id: number) => {
+		handleViewEmbedder?.(id);
+	};
 
 	interface Embedder {
 		embedder_id: number;
@@ -14,6 +24,7 @@
 		max_batch_size?: number;
 		dimensions?: number;
 		collection_name: string;
+		is_public: boolean;
 		created_at: string;
 		updated_at: string;
 	}
@@ -33,6 +44,8 @@
 	let showCreateForm = $state(false);
 	let editingEmbedder = $state<Embedder | null>(null);
 
+	let searchQuery = $state('');
+
 	let formName = $state('');
 	let formProvider = $state('openai');
 	let formBaseUrl = $state('https://api.openai.com/v1');
@@ -40,6 +53,8 @@
 	let formConfig = $state('{}');
 	let formMaxBatchSize = $state(96);
 	let formDimensions = $state(1536);
+	let formMaxInputTokens = $state(8191);
+	let formTruncateStrategy = $state('NONE');
 
 	let testStatus = $state<'idle' | 'testing' | 'success' | 'error'>('idle');
 	let testMessage = $state('');
@@ -58,7 +73,7 @@
 		'text-embedding-3-small': 1536,
 		'text-embedding-3-large': 3072,
 		'text-embedding-ada-002': 1536,
-		'embed-v4.0': 1024,
+		'embed-v4.0': 1536,
 		'embed-english-v3.0': 1024,
 		'embed-multilingual-v3.0': 1024,
 		'embed-english-light-v3.0': 384,
@@ -199,6 +214,24 @@
 
 	onMount(() => {
 		fetchEmbedders();
+
+		// Check for name parameter in URL to pre-filter search
+		const hashParts = window.location.hash.split('?');
+		if (hashParts.length > 1) {
+			const urlParams = new URLSearchParams(hashParts[1]);
+			const nameParam = urlParams.get('name');
+
+			if (nameParam) {
+				searchQuery = nameParam;
+				// Clean up URL after setting search
+				const basePath = hashParts[0];
+				window.history.replaceState(
+					null,
+					'',
+					window.location.pathname + window.location.search + basePath
+				);
+			}
+		}
 	});
 
 	async function fetchEmbedders() {
@@ -261,6 +294,8 @@
 		formConfig = JSON.stringify(embedder.config, null, 2);
 		formMaxBatchSize = embedder.max_batch_size ?? 96;
 		formDimensions = embedder.dimensions ?? 1536;
+		formMaxInputTokens = (embedder as any).max_input_tokens ?? 8191;
+		formTruncateStrategy = (embedder as any).truncate_strategy ?? 'NONE';
 		try {
 			const cfg = embedder.config || {};
 			const defaults = providerDefaults[formProvider] || {};
@@ -339,8 +374,11 @@
 				base_url: formBaseUrl,
 				api_key: formApiKey || null,
 				config,
+				batch_size: editingEmbedder ? undefined : 50,
 				max_batch_size: formMaxBatchSize,
 				dimensions: formDimensions,
+				max_input_tokens: formMaxInputTokens,
+				truncate_strategy: formTruncateStrategy,
 			};
 
 			const url = editingEmbedder
@@ -392,6 +430,19 @@
 			error = e.message || 'Failed to delete embedder';
 		}
 	}
+
+	let filteredEmbedders = $derived(
+		embedders.filter((e) => {
+			if (!searchQuery.trim()) return true;
+			const query = searchQuery.toLowerCase();
+			return (
+				e.name.toLowerCase().includes(query) ||
+				e.provider.toLowerCase().includes(query) ||
+				e.owner.toLowerCase().includes(query) ||
+				e.base_url.toLowerCase().includes(query)
+			);
+		})
+	);
 </script>
 
 <div class="max-w-7xl mx-auto">
@@ -400,13 +451,8 @@
 		description="Provides embedding provider instances that are user-managed. Define OpenAI or Cohere compatible embedders that can be used on dataset transforms to produce vector embeddings for semantic search."
 	/>
 
-	<div class="mb-8 flex justify-between items-center">
-		<div>
-			<h1 class="text-3xl font-bold text-gray-900 dark:text-white">Embedders</h1>
-			<p class="mt-2 text-gray-600 dark:text-gray-400">
-				Manage embedding providers (OpenAI, Cohere, etc.)
-			</p>
-		</div>
+	<div class="flex justify-between items-center mb-4">
+		<h1 class="text-3xl font-bold text-gray-900 dark:text-white">Embedders</h1>
 		<button
 			onclick={() => {
 				if (showCreateForm) {
@@ -418,20 +464,14 @@
 					openCreateForm();
 				}
 			}}
-			class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+			class="btn-primary"
 		>
 			{showCreateForm ? 'Cancel' : 'Create Embedder'}
 		</button>
 	</div>
 
-	{#if error}
-		<div class="mb-4 p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg">
-			{error}
-		</div>
-	{/if}
-
 	{#if showCreateForm}
-		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-4">
 			<h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-4">
 				{editingEmbedder ? 'Edit Embedder' : 'Create New Embedder'}
 			</h2>
@@ -596,6 +636,47 @@
 								{:else}
 									Enter embedding vector dimensions for this model
 								{/if}
+							</div>
+						</div>
+
+						<div>
+							<label
+								for="embedder-max-input-tokens"
+								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+							>
+								Max Input Tokens
+							</label>
+							<input
+								id="embedder-max-input-tokens"
+								type="number"
+								bind:value={formMaxInputTokens}
+								min="1"
+								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+								placeholder="e.g., 8191"
+							/>
+							<div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+								Maximum tokens accepted by this embedder model
+							</div>
+						</div>
+
+						<div>
+							<label
+								for="embedder-truncate-strategy"
+								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+							>
+								Truncate Strategy
+							</label>
+							<select
+								id="embedder-truncate-strategy"
+								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+								bind:value={formTruncateStrategy}
+							>
+								<option value="NONE">NONE - Return error if text exceeds max_input_tokens</option>
+								<option value="START">START - Truncate from beginning, keep end</option>
+								<option value="END">END - Truncate from end, keep beginning</option>
+							</select>
+							<div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+								How to handle text longer than max_input_tokens
 							</div>
 						</div>
 
@@ -779,7 +860,7 @@
 						</div>
 					</div>
 
-					<div class="mt-6 flex flex-col gap-2">
+					<div class="mt-4 flex flex-col gap-2">
 						{#if testStatus === 'success'}
 							<div
 								class="p-2 bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300 rounded text-sm"
@@ -800,16 +881,13 @@
 							</div>
 						{/if}
 						<div class="flex gap-3">
-							<button
-								type="submit"
-								class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-							>
+							<button type="submit" class="btn-primary">
 								{editingEmbedder ? 'Update' : 'Create'}
 							</button>
 							<button
 								type="button"
 								onclick={testEmbedderConnection}
-								class="px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 transition-colors"
+								class="px-4 py-2 bg-yellow-500 hover:bg-yellow-600 text-white font-semibold rounded-lg shadow-md transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:ring-offset-2 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed"
 								disabled={testStatus === 'testing'}
 							>
 								Test Connection
@@ -822,7 +900,7 @@
 									testStatus = 'idle';
 									testMessage = '';
 								}}
-								class="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+								class="btn-secondary"
 							>
 								Cancel
 							</button>
@@ -833,116 +911,135 @@
 		</div>
 	{/if}
 
+	{#if !showCreateForm && embedders.length > 0}
+		<div class="mb-4">
+			<div class="relative">
+				<input
+					type="text"
+					bind:value={searchQuery}
+					placeholder="Search embedders by name, provider, owner, or URL..."
+					class="w-full px-4 py-2 pl-10 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+				/>
+				<svg
+					class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400"
+					fill="none"
+					stroke="currentColor"
+					viewBox="0 0 24 24"
+				>
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width="2"
+						d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+					/>
+				</svg>
+			</div>
+		</div>
+	{/if}
+
 	{#if loading}
-		<div class="text-center py-12">
-			<div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-			<p class="mt-2 text-gray-600 dark:text-gray-400">Loading embedders...</p>
+		<div class="flex items-center justify-center py-12">
+			<div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+		</div>
+	{:else if error}
+		<div
+			class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4"
+		>
+			<p class="text-red-700 dark:text-red-400">{error}</p>
+			<button
+				onclick={fetchEmbedders}
+				class="mt-2 text-sm text-red-600 dark:text-red-400 hover:underline"
+			>
+				Try again
+			</button>
 		</div>
 	{:else if embedders.length === 0}
-		<div
-			class="text-center py-12 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700"
-		>
-			<p class="text-gray-600 dark:text-gray-400">No embedders configured yet.</p>
-			<p class="text-sm text-gray-500 dark:text-gray-500 mt-1">
-				Create an embedder to start embedding datasets.
-			</p>
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-12 text-center">
+			<p class="text-gray-500 dark:text-gray-400 mb-4">No embedders yet</p>
+			<button
+				onclick={() => openCreateForm()}
+				class="text-blue-600 dark:text-blue-400 hover:underline"
+			>
+				Create your first embedder
+			</button>
+		</div>
+	{:else if filteredEmbedders.length === 0}
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-12 text-center">
+			<p class="text-gray-500 dark:text-gray-400 mb-4">No embedders match your search</p>
+			<button
+				onclick={() => (searchQuery = '')}
+				class="text-blue-600 dark:text-blue-400 hover:underline"
+			>
+				Clear search
+			</button>
 		</div>
 	{:else}
-		<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-			{#each embedders as embedder (embedder.embedder_id)}
-				<div
-					class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6"
-				>
-					<div class="flex justify-between items-start mb-4">
-						<div class="flex-1">
-							<div class="flex items-center gap-2 mb-1">
-								<h3 class="text-lg font-semibold text-gray-900 dark:text-white">
-									{embedder.name}
-								</h3>
-								<span
-									class="px-2 py-0.5 text-xs font-mono bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300 rounded"
-									title="Embedder ID"
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
+			<Table hoverable striped>
+				<TableHead>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Name</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Provider</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Model</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center"
+						>Dimensions</TableHeadCell
+					>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Owner</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Actions</TableHeadCell>
+				</TableHead>
+				<TableBody>
+					{#each filteredEmbedders as embedder (embedder.embedder_id)}
+						<tr class="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50">
+							<TableBodyCell class="px-4 py-3">
+								<button
+									onclick={() => onViewEmbedder(embedder.embedder_id)}
+									class="font-semibold text-blue-600 dark:text-blue-400 hover:underline"
 								>
-									#{embedder.embedder_id}
-								</span>
-							</div>
-							<div class="flex gap-2">
+									{embedder.name}
+								</button>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3">
 								<span
-									class="inline-block px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 rounded"
+									class="inline-block px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-sm font-medium"
 								>
 									{embedder.provider}
 								</span>
-							</div>
-						</div>
-						<div class="flex gap-2">
-							<button
-								onclick={() => openEditForm(embedder)}
-								class="p-2 text-gray-600 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400"
-								title="Edit"
-							>
-								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width="2"
-										d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-									/>
-								</svg>
-							</button>
-							<button
-								onclick={() => requestDeleteEmbedder(embedder)}
-								class="p-2 text-gray-600 hover:text-red-600 dark:text-gray-400 dark:hover:text-red-400"
-								title="Delete"
-							>
-								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width="2"
-										d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-									/>
-								</svg>
-							</button>
-						</div>
-					</div>
-
-					<div class="space-y-2 text-sm">
-						<div>
-							<span class="text-gray-500 dark:text-gray-400">URL:</span>
-							<span class="ml-2 text-gray-900 dark:text-gray-100 break-all"
-								>{embedder.base_url}</span
-							>
-						</div>
-						<div>
-							<span class="text-gray-500 dark:text-gray-400">API Key:</span>
-							<span class="ml-2 text-gray-900 dark:text-gray-100">
-								{embedder.api_key ? '••••••••' : 'Not set'}
-							</span>
-						</div>
-						<div>
-							<span class="text-gray-500 dark:text-gray-400">Max Batch Size:</span>
-							<span class="ml-2 text-gray-900 dark:text-gray-100"
-								>{embedder.max_batch_size ?? 96}</span
-							>
-						</div>
-						<div>
-							<span class="text-gray-500 dark:text-gray-400">Dimensions:</span>
-							<span class="ml-2 text-gray-900 dark:text-gray-100"
-								>{embedder.dimensions ?? 1536}</span
-							>
-						</div>
-						<div>
-							<span class="text-gray-500 dark:text-gray-400">Config:</span>
-							<pre
-								class="mt-1 p-2 bg-gray-100 dark:bg-gray-900 rounded text-xs overflow-auto">{JSON.stringify(
-									embedder.config,
-									null,
-									2
-								)}</pre>
-						</div>
-					</div>
-				</div>
-			{/each}
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3">
+								<span class="text-gray-700 dark:text-gray-300 text-sm">
+									{embedder.config?.model ?? 'N/A'}
+								</span>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3 text-center">
+								<span class="text-gray-700 dark:text-gray-300 text-sm font-medium">
+									{embedder.dimensions ?? embedder.config?.dimensions ?? 1536}
+								</span>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3">
+								<span class="text-gray-700 dark:text-gray-300">{embedder.owner}</span>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3 text-center">
+								<ActionMenu
+									actions={[
+										{
+											label: 'View',
+											handler: () => onViewEmbedder(embedder.embedder_id),
+										},
+										{
+											label: 'Edit',
+											handler: () => openEditForm(embedder),
+										},
+										{
+											label: 'Delete',
+											handler: () => requestDeleteEmbedder(embedder),
+											isDangerous: true,
+										},
+									]}
+								/>
+							</TableBodyCell>
+						</tr>
+					{/each}
+				</TableBody>
+			</Table>
 		</div>
 	{/if}
 </div>
