@@ -50,7 +50,14 @@
 			loading = true;
 			error = null;
 
-			const [collectionsRes, datasetsRes, publicCollectionsRes, publicDatasetsRes, publicEmbeddersRes, publicLLMsRes] = await Promise.all([
+			const [
+				collectionsRes,
+				datasetsRes,
+				publicCollectionsRes,
+				publicDatasetsRes,
+				publicEmbeddersRes,
+				publicLLMsRes,
+			] = await Promise.all([
 				fetch('/api/collections'),
 				fetch('/api/datasets'),
 				fetch('/api/marketplace/collections/recent?limit=5'),
@@ -59,7 +66,14 @@
 				fetch('/api/marketplace/llms/recent?limit=5'),
 			]);
 
-			if (!collectionsRes.ok || !datasetsRes.ok || !publicCollectionsRes.ok || !publicDatasetsRes.ok || !publicEmbeddersRes.ok || !publicLLMsRes.ok) {
+			if (
+				!collectionsRes.ok ||
+				!datasetsRes.ok ||
+				!publicCollectionsRes.ok ||
+				!publicDatasetsRes.ok ||
+				!publicEmbeddersRes.ok ||
+				!publicLLMsRes.ok
+			) {
 				throw new Error('Failed to fetch data');
 			}
 
@@ -122,7 +136,6 @@
 			Welcome to Semantic Explorer - Your document processing and embedding platform
 		</p>
 	</div>
-
 
 	<div class="mt-6 mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
 		<a
@@ -304,7 +317,9 @@
 		<!-- Recent Public Collections Section -->
 		<div class="mt-6 bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
 			<div class="flex justify-between items-center mb-4">
-				<h2 class="text-xl font-semibold text-gray-900 dark:text-white">Recent Public Collections</h2>
+				<h2 class="text-xl font-semibold text-gray-900 dark:text-white">
+					Recent Public Collections
+				</h2>
 				<a href="#/marketplace" class="text-blue-600 dark:text-blue-400 hover:underline text-sm">
 					View marketplace
 				</a>
@@ -334,7 +349,9 @@
 									</span>
 								{/each}
 							</div>
-							<div class="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400">
+							<div
+								class="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400"
+							>
 								<span>{formatDate(collection.updated_at)}</span>
 								<a
 									href={`#/marketplace/collections/${collection.collection_id}/grab`}
@@ -382,7 +399,9 @@
 									</span>
 								{/each}
 							</div>
-							<div class="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400">
+							<div
+								class="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400"
+							>
 								<span>{formatDate(dataset.updated_at)}</span>
 								<a
 									href={`#/marketplace/datasets/${dataset.dataset_id}/grab`}
@@ -419,7 +438,9 @@
 							<p class="text-sm text-gray-600 dark:text-gray-400 mb-3">
 								Provider: {embedder.provider}
 							</p>
-							<div class="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400">
+							<div
+								class="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400"
+							>
 								<span>{formatDate(embedder.updated_at)}</span>
 								<a
 									href={`#/marketplace/embedders/${embedder.embedder_id}/grab`}
@@ -456,7 +477,9 @@
 							<p class="text-sm text-gray-600 dark:text-gray-400 mb-3">
 								Provider: {llm.provider}
 							</p>
-							<div class="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400">
+							<div
+								class="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400"
+							>
 								<span>{formatDate(llm.updated_at)}</span>
 								<a
 									href={`#/marketplace/llms/${llm.llm_id}/grab`}
@@ -470,7 +493,5 @@
 				</div>
 			{/if}
 		</div>
-
-		
 	{/if}
 </div>

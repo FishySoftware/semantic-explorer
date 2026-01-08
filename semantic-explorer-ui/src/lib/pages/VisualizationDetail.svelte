@@ -150,7 +150,6 @@
 		return CLUSTER_COLORS[clusterId % CLUSTER_COLORS.length];
 	};
 
-
 	function calculateBoundingBox(pts: VisualizationPoint[], mode2D: boolean): BoundingBox {
 		if (pts.length === 0) {
 			return {
@@ -316,23 +315,25 @@
 			let allPoints: ApiVisualizationPoint[] = [];
 			let nextOffset: string | null = null;
 			let pageCount = 0;
-			
+
 			do {
 				pageCount++;
-				const url = nextOffset 
+				const url = nextOffset
 					? `/api/visualizations/${transformId}/points?offset=${encodeURIComponent(nextOffset)}`
 					: `/api/visualizations/${transformId}/points`;
-				
+
 				const pointsResponse = await fetch(url);
 				if (!pointsResponse.ok) {
 					throw new Error(`Failed to fetch points: ${pointsResponse.statusText}`);
 				}
 				const pointsData: ApiPointsResponse = await pointsResponse.json();
-				
+
 				allPoints = [...allPoints, ...pointsData.points];
 				nextOffset = pointsData.next_offset;
-				
-				console.log(`Loaded page ${pageCount}: ${pointsData.points.length} points (total: ${allPoints.length})`);
+
+				console.log(
+					`Loaded page ${pageCount}: ${pointsData.points.length} points (total: ${allPoints.length})`
+				);
 			} while (nextOffset);
 
 			console.log(`Total points loaded: ${allPoints.length} across ${pageCount} pages`);

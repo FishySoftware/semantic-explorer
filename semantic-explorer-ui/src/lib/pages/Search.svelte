@@ -104,10 +104,7 @@
 		return embeddedDatasetsByDataset.get(selectedDatasetId) || [];
 	});
 
-	let canSearch = $derived(
-		searchQuery.trim().length > 0 && selectedEmbeddedDatasetIds.size > 0
-	);
-
+	let canSearch = $derived(searchQuery.trim().length > 0 && selectedEmbeddedDatasetIds.size > 0);
 
 	async function fetchData() {
 		try {
@@ -141,76 +138,6 @@
 		} else {
 			selectedEmbeddedDatasetIds.add(embeddedDatasetId);
 		}
-	}
-
-	async function __unused_old_embedQuery(embedder: any, query: string): Promise<number[]> {
-		const { provider, base_url, api_key, config } = embedder;
-
-		const headers: Record<string, string> = {
-			'Content-Type': 'application/json',
-		};
-
-		if (api_key) {
-			headers['Authorization'] = `Bearer ${api_key}`;
-		}
-
-		let body: any;
-		let endpoint = base_url;
-
-		if (provider === 'openai') {
-			endpoint = `${base_url}/embeddings`;
-			body = {
-				input: query,
-				model: config.model || 'text-embedding-3-small',
-			};
-		} else if (provider === 'cohere') {
-			body = {
-				texts: [query],
-				model: config.model || 'embed-v4.0',
-				input_type: 'search_query',
-			};
-		} else {
-			throw new Error(`Unsupported provider: ${provider}`);
-		}
-
-		const response = await fetch(endpoint, {
-			method: 'POST',
-			headers,
-			body: JSON.stringify(body),
-		});
-
-		if (!response.ok) {
-			const errorText = await response.text();
-			throw new Error(`Embedding failed (${response.status}): ${errorText}`);
-		}
-
-		const data = await response.json();
-
-		let embedding: number[] | undefined;
-
-		if (provider === 'openai') {
-			embedding = data?.data?.[0]?.embedding;
-		} else if (provider === 'cohere') {
-			if (
-				data?.embeddings &&
-				typeof data.embeddings === 'object' &&
-				!Array.isArray(data.embeddings)
-			) {
-				const embeddingsArray = data.embeddings.float || data.embeddings.int;
-				embedding = embeddingsArray?.[0];
-			} else {
-				embedding = data?.embeddings?.[0];
-			}
-		}
-
-		if (!embedding || !Array.isArray(embedding)) {
-			console.error(`Invalid embedding response from ${provider}:`, data);
-			throw new Error(
-				`Invalid embedding format from ${provider}. Expected array, got: ${typeof embedding}. Raw response: ${JSON.stringify(data)}`
-			);
-		}
-
-		return embedding;
 	}
 
 	async function performSearch() {
@@ -327,9 +254,7 @@
 					</button>
 				</div>
 				<span class="text-xs text-gray-500 dark:text-gray-400">
-					{searchMode === 'chunks'
-						? 'View individual chunks'
-						: 'View results grouped by documents'}
+					{searchMode === 'chunks' ? 'View individual chunks' : 'View results grouped by documents'}
 				</span>
 			</div>
 
@@ -378,11 +303,8 @@
 								>
 									<input
 										type="checkbox"
-										checked={selectedEmbeddedDatasetIds.has(
-											embeddedDataset.embedded_dataset_id
-										)}
-										onchange={() =>
-											toggleEmbeddedDataset(embeddedDataset.embedded_dataset_id)}
+										checked={selectedEmbeddedDatasetIds.has(embeddedDataset.embedded_dataset_id)}
+										onchange={() => toggleEmbeddedDataset(embeddedDataset.embedded_dataset_id)}
 										class="mt-1 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
 									/>
 									<div class="flex-1 flex flex-col">
@@ -525,7 +447,6 @@
 					</span>
 				</div>
 
-
 				<!-- Results display: side-by-side columns per embedded dataset -->
 				{#if searchResults.search_mode === 'documents'}
 					<div class="overflow-x-auto pb-4">
@@ -571,9 +492,7 @@
 																📄 {document.item_title}
 															</div>
 															<div class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-																{document.chunk_count} chunk{document.chunk_count !== 1
-																	? 's'
-																	: ''}
+																{document.chunk_count} chunk{document.chunk_count !== 1 ? 's' : ''}
 															</div>
 														</div>
 														<div class="text-right">
@@ -646,7 +565,9 @@
 																Chunk #{match.metadata.chunk_index || idx + 1}
 															</div>
 															{#if match.metadata.item_title}
-																<div class="text-sm font-semibold text-gray-900 dark:text-white mt-1">
+																<div
+																	class="text-sm font-semibold text-gray-900 dark:text-white mt-1"
+																>
 																	{match.metadata.item_title}
 																</div>
 															{/if}

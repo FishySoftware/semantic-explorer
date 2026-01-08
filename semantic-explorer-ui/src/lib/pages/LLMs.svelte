@@ -633,7 +633,10 @@
 			class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4"
 		>
 			<p class="text-red-700 dark:text-red-400">{error}</p>
-			<button onclick={fetchLLMs} class="mt-2 text-sm text-red-600 dark:text-red-400 hover:underline">
+			<button
+				onclick={fetchLLMs}
+				class="mt-2 text-sm text-red-600 dark:text-red-400 hover:underline"
+			>
 				Try again
 			</button>
 		</div>
@@ -711,8 +714,7 @@
 							<div class="space-y-2 text-sm">
 								<div>
 									<span class="text-gray-500 dark:text-gray-400">URL:</span>
-									<span class="ml-2 text-gray-900 dark:text-gray-100 break-all"
-										>{llm.base_url}</span
+									<span class="ml-2 text-gray-900 dark:text-gray-100 break-all">{llm.base_url}</span
 									>
 								</div>
 								<div>
