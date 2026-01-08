@@ -5,6 +5,19 @@
 	import { apiCall } from '../utils/api';
 	import { formatError, toastStore } from '../utils/notifications';
 
+	let { onViewDataset: handleViewDataset, onViewEmbedder: handleViewEmbedder } = $props<{
+		onViewDataset?: (_: number) => void;
+		onViewEmbedder?: (_: number) => void;
+	}>();
+
+	const onViewDataset = (id: number) => {
+		handleViewDataset?.(id);
+	};
+
+	const onViewEmbedder = (id: number) => {
+		handleViewEmbedder?.(id);
+	};
+
 	interface Dataset {
 		dataset_id: number;
 		title: string;
@@ -452,17 +465,29 @@
 					<div class="overflow-x-auto pb-4">
 						<div class="flex justify-center gap-4 min-w-max">
 							{#each searchResults.results as result (result.embedded_dataset_id)}
-								<div class="w-96 shrink-0 bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
+								<div class="w-150 shrink-0 bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
 									<div class="flex items-start justify-between mb-4">
-										<div>
-											<h3 class="text-lg font-semibold text-gray-900 dark:text-white">
+										<div class="flex-1 min-w-0">
+											<h3
+												class="text-lg font-semibold text-gray-900 dark:text-white wrap-break-word"
+											>
 												{result.embedded_dataset_title}
 											</h3>
-											<p class="text-sm text-gray-600 dark:text-gray-400">
-												Dataset: {result.source_dataset_title}
+											<p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
+												Dataset: <button
+													onclick={() => onViewDataset(result.source_dataset_id)}
+													class="text-blue-600 dark:text-blue-400 hover:underline font-medium"
+												>
+													{result.source_dataset_title}
+												</button>
 											</p>
-											<p class="text-xs text-gray-500 dark:text-gray-500">
-												Embedder: {result.embedder_name}
+											<p class="text-xs text-gray-500 dark:text-gray-500 mt-1">
+												Embedder: <button
+													onclick={() => onViewEmbedder(result.embedder_id)}
+													class="text-blue-600 dark:text-blue-400 hover:underline"
+												>
+													{result.embedder_name}
+												</button>
 											</p>
 										</div>
 									</div>
@@ -491,8 +516,16 @@
 															<div class="text-sm font-semibold text-gray-900 dark:text-white mt-1">
 																📄 {document.item_title}
 															</div>
-															<div class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-																{document.chunk_count} chunk{document.chunk_count !== 1 ? 's' : ''}
+															<div
+																class="text-xs text-gray-500 dark:text-gray-400 mt-2 flex items-center gap-2"
+															>
+																<span
+																	class="inline-block px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded text-xs font-medium"
+																>
+																	{document.chunk_count} chunk{document.chunk_count !== 1
+																		? 's'
+																		: ''}
+																</span>
 															</div>
 														</div>
 														<div class="text-right">
@@ -528,17 +561,29 @@
 					<div class="overflow-x-auto pb-4">
 						<div class="flex justify-center gap-4 min-w-max">
 							{#each searchResults.results as result (result.embedded_dataset_id)}
-								<div class="w-96 shrink-0 bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
+								<div class="w-150 shrink-0 bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
 									<div class="flex items-start justify-between mb-4">
-										<div>
-											<h3 class="text-lg font-semibold text-gray-900 dark:text-white">
+										<div class="flex-1 min-w-0">
+											<h3
+												class="text-lg font-semibold text-gray-900 dark:text-white wrap-break-word"
+											>
 												{result.embedded_dataset_title}
 											</h3>
-											<p class="text-sm text-gray-600 dark:text-gray-400">
-												Dataset: {result.source_dataset_title}
+											<p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
+												Dataset: <button
+													onclick={() => onViewDataset(result.source_dataset_id)}
+													class="text-blue-600 dark:text-blue-400 hover:underline font-medium"
+												>
+													{result.source_dataset_title}
+												</button>
 											</p>
-											<p class="text-xs text-gray-500 dark:text-gray-500">
-												Embedder: {result.embedder_name}
+											<p class="text-xs text-gray-500 dark:text-gray-500 mt-1">
+												Embedder: <button
+													onclick={() => onViewEmbedder(result.embedder_id)}
+													class="text-blue-600 dark:text-blue-400 hover:underline"
+												>
+													{result.embedder_name}
+												</button>
 											</p>
 										</div>
 									</div>

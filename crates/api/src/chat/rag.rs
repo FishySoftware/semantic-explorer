@@ -1,9 +1,11 @@
 use crate::chat::models::{RAGConfig, RetrievedDocument};
+use crate::embedding::generate_embedding;
+use crate::storage::postgres::{embedded_datasets, embedders};
 use qdrant_client::qdrant::SearchPointsBuilder;
 use qdrant_client::qdrant::value::Kind;
 use qdrant_client::{Qdrant, qdrant::point_id::PointIdOptions};
 use sqlx::{Pool, Postgres};
-use tracing::{debug, error, instrument};
+use tracing::{debug, error, instrument, warn};
 
 #[instrument(name = "retrieve_documents", skip(postgres_pool, qdrant_client), fields(embedded_dataset_id, query_len = query.len()))]
 pub async fn retrieve_documents(
@@ -13,19 +15,31 @@ pub async fn retrieve_documents(
     query: &str,
     config: &RAGConfig,
 ) -> Result<Vec<RetrievedDocument>, String> {
-    let row = sqlx::query_as::<_, (String, i32)>(
-        "SELECT collection_name, embedder_id FROM embedded_datasets WHERE embedded_dataset_id = $1",
-    )
-    .bind(embedded_dataset_id)
-    .fetch_optional(postgres_pool)
-    .await
-    .map_err(|e| {
-        error!(error = %e, "failed to get collection info");
-        format!("failed to get collection info: {e}")
-    })?
-    .ok_or_else(|| "embedded dataset not found".to_string())?;
+    // Fetch embedded dataset info (collection name and embedder ID)
+    let dataset_info =
+        embedded_datasets::get_embedded_dataset_info(postgres_pool, embedded_dataset_id)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to get embedded dataset info");
+                format!("failed to get embedded dataset info: {e}")
+            })?;
 
-    let (collection_name, embedder_id) = row;
+    let collection_name = dataset_info.collection_name;
+    let embedder_id = dataset_info.embedder_id;
+
+    // Fetch embedder configuration
+    let embedder_config = embedders::get_embedder_config(postgres_pool, embedder_id)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to get embedder config");
+            format!("failed to get embedder config: {e}")
+        })?;
+
+    let embedder_provider = embedder_config.provider;
+    let embedder_base_url = embedder_config.base_url;
+    let embedder_api_key = embedder_config.api_key;
+    let embedder_config_value = embedder_config.config;
+    let _dimensions = embedder_config.dimensions;
     debug!(collection = %collection_name, embedder_id = embedder_id, "retrieving documents from Qdrant");
 
     let _collection_info = qdrant_client
@@ -38,21 +52,24 @@ pub async fn retrieve_documents(
 
     debug!(collection = %collection_name, "collection found");
 
-    let embedder = sqlx::query_as::<_, (String, String, String, i32)>(
-        r#"SELECT provider, base_url, api_key, dimensions FROM embedders WHERE embedder_id = $1"#,
+    // Generate embedding using the actual embedder service
+    let query_embedding = match generate_embedding(
+        &embedder_provider,
+        &embedder_base_url,
+        embedder_api_key.as_deref(),
+        &embedder_config_value,
+        query,
     )
-    .bind(embedder_id)
-    .fetch_optional(postgres_pool)
     .await
-    .map_err(|e| {
-        error!(error = %e, "failed to get embedder");
-        format!("failed to get embedder: {e}")
-    })?
-    .ok_or_else(|| "embedder not found".to_string())?;
-
-    let (_embedder_provider, _embedder_base_url, _embedder_api_key, dimensions) = embedder;
-
-    let query_embedding = generate_simple_embedding(query, dimensions as usize);
+    {
+        Ok(embedding) => embedding,
+        Err(e) => {
+            error!(error = %e, "failed to generate embedding");
+            // Fallback to placeholder embedding
+            warn!("falling back to placeholder embedding for query");
+            generate_simple_embedding(query, _dimensions as usize)
+        }
+    };
 
     let search_builder = SearchPointsBuilder::new(
         &collection_name,

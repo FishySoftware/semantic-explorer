@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import './app.css';
-	import { initializeTheme } from './lib/utils/theme';
 	import Sidebar from './lib/Sidebar.svelte';
 	import TopBanner from './lib/TopBanner.svelte';
 	import ToastHost from './lib/components/ToastHost.svelte';
@@ -15,17 +14,20 @@
 	import Datasets from './lib/pages/Datasets.svelte';
 	import Documentation from './lib/pages/Documentation.svelte';
 	import EmbeddedDatasets from './lib/pages/EmbeddedDatasets.svelte';
+	import EmbedderDetail from './lib/pages/EmbedderDetail.svelte';
 	import Embedders from './lib/pages/Embedders.svelte';
 	import LLMs from './lib/pages/LLMs.svelte';
 	import Marketplace from './lib/pages/Marketplace.svelte';
 	import Search from './lib/pages/Search.svelte';
 	import VisualizationTransforms from './lib/pages/VisualizationTransforms.svelte';
 	import Visualizations from './lib/pages/Visualizations.svelte';
+	import { initializeTheme } from './lib/utils/theme';
 
 	let activeUrl = $state('/datasets');
 	let selectedCollectionId = $state<number | null>(null);
 	let selectedDatasetId = $state<number | null>(null);
 	let selectedVisualizationId = $state<number | null>(null);
+	let selectedEmbedderId = $state<number | null>(null);
 
 	function parseRoute(hash: string): { path: string; params: Record<string, string> } {
 		const hashWithoutQuery = hash.split('?')[0];
@@ -44,6 +46,9 @@
 		}
 		if (parts.length === 3 && parts[0] === 'visualizations' && parts[2] === 'details') {
 			return { path: '/visualizations/detail', params: { id: parts[1] } };
+		}
+		if (parts.length === 3 && parts[0] === 'embedders' && parts[2] === 'details') {
+			return { path: '/embedders/detail', params: { id: parts[1] } };
 		}
 
 		const result = { path: '/' + parts.join('/'), params: {} };
@@ -70,6 +75,12 @@
 			selectedVisualizationId = parseInt(params.id, 10);
 		} else if (path !== '/visualizations/detail') {
 			selectedVisualizationId = null;
+		}
+
+		if (path === '/embedders/detail' && params.id) {
+			selectedEmbedderId = parseInt(params.id, 10);
+		} else if (path !== '/embedders/detail') {
+			selectedEmbedderId = null;
 		}
 	}
 
@@ -118,6 +129,18 @@
 		window.location.hash = '/visualizations';
 	}
 
+	function viewEmbedder(embedderId: number) {
+		selectedEmbedderId = embedderId;
+		activeUrl = '/embedders/detail';
+		window.location.hash = `/embedders/${embedderId}/details`;
+	}
+
+	function backToEmbedders() {
+		selectedEmbedderId = null;
+		activeUrl = '/embedders';
+		window.location.hash = '/embedders';
+	}
+
 	function navigate(path: string) {
 		window.location.hash = path;
 	}
@@ -149,7 +172,11 @@
 					<DatasetDetail datasetId={selectedDatasetId} onBack={backToDatasets} />
 				{/if}
 			{:else if activeUrl === '/embedders'}
-				<Embedders />
+				<Embedders onViewEmbedder={viewEmbedder} />
+			{:else if activeUrl === '/embedders/detail'}
+				{#if selectedEmbedderId !== null}
+					<EmbedderDetail embedderId={selectedEmbedderId} onBack={backToEmbedders} />
+				{/if}
 			{:else if activeUrl === '/llms'}
 				<LLMs />
 			{:else if activeUrl === '/collection-transforms'}
@@ -172,7 +199,7 @@
 					{/await}
 				{/if}
 			{:else if activeUrl === '/search'}
-				<Search />
+				<Search onViewDataset={viewDataset} onViewEmbedder={viewEmbedder} />
 			{:else if activeUrl === '/marketplace'}
 				<Marketplace />
 			{/if}

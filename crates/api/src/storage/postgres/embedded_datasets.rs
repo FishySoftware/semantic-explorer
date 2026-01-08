@@ -1,10 +1,16 @@
 use anyhow::Result;
-use sqlx::{Pool, Postgres, Transaction};
+use sqlx::{FromRow, Pool, Postgres, Transaction};
 
 use crate::embedded_datasets::{
     EmbeddedDataset, EmbeddedDatasetProcessedBatch, EmbeddedDatasetStats,
     EmbeddedDatasetWithDetails,
 };
+
+#[derive(FromRow)]
+pub struct EmbeddedDatasetInfo {
+    pub collection_name: String,
+    pub embedder_id: i32,
+}
 
 const GET_EMBEDDED_DATASET_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
@@ -116,6 +122,10 @@ const RECORD_PROCESSED_BATCH_QUERY: &str = r#"
         process_error = EXCLUDED.process_error,
         processing_duration_ms = EXCLUDED.processing_duration_ms,
         processed_at = NOW()
+"#;
+
+const GET_EMBEDDED_DATASET_INFO_QUERY: &str = r#"
+    SELECT collection_name, embedder_id FROM embedded_datasets WHERE embedded_dataset_id = $1
 "#;
 
 pub async fn get_embedded_dataset(
@@ -290,4 +300,15 @@ pub async fn delete_embedded_dataset_in_transaction(
         .execute(&mut **tx)
         .await?;
     Ok(())
+}
+
+pub async fn get_embedded_dataset_info(
+    pool: &Pool<Postgres>,
+    embedded_dataset_id: i32,
+) -> Result<EmbeddedDatasetInfo> {
+    let info = sqlx::query_as::<_, EmbeddedDatasetInfo>(GET_EMBEDDED_DATASET_INFO_QUERY)
+        .bind(embedded_dataset_id)
+        .fetch_one(pool)
+        .await?;
+    Ok(info)
 }

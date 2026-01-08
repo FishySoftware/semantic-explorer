@@ -5,6 +5,14 @@
 	import { Table, TableBody, TableBodyCell, TableHead, TableHeadCell } from 'flowbite-svelte';
 	import { onMount } from 'svelte';
 
+	let { onViewEmbedder: handleViewEmbedder } = $props<{
+		onViewEmbedder?: (_: number) => void;
+	}>();
+
+	const onViewEmbedder = (id: number) => {
+		handleViewEmbedder?.(id);
+	};
+
 	interface Embedder {
 		embedder_id: number;
 		name: string;
@@ -983,7 +991,7 @@
 						<tr class="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50">
 							<TableBodyCell class="px-4 py-3">
 								<button
-									onclick={() => openEditForm(embedder)}
+									onclick={() => onViewEmbedder(embedder.embedder_id)}
 									class="font-semibold text-blue-600 dark:text-blue-400 hover:underline"
 								>
 									{embedder.name}
@@ -1012,6 +1020,10 @@
 							<TableBodyCell class="px-4 py-3 text-center">
 								<ActionMenu
 									actions={[
+										{
+											label: 'View',
+											handler: () => onViewEmbedder(embedder.embedder_id),
+										},
 										{
 											label: 'Edit',
 											handler: () => openEditForm(embedder),

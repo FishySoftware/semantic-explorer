@@ -21,6 +21,8 @@ pub struct ChatMessageResponse {
     pub role: String,
     pub content: String,
     pub documents_retrieved: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retrieved_documents: Option<Vec<RetrievedDocument>>,
     #[schema(value_type = String, format = DateTime)]
     pub created_at: chrono::DateTime<Utc>,
 }
@@ -77,7 +79,7 @@ pub(crate) struct ChatResponse {
 }
 
 #[derive(Serialize, Deserialize, ToSchema, Debug, Clone)]
-pub(crate) struct RetrievedDocument {
+pub struct RetrievedDocument {
     pub document_id: Option<String>,
     pub text: String,
     pub similarity_score: f32,

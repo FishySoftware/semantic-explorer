@@ -40,7 +40,7 @@
 
 		{ name: 'Embedders', icon: BrainSolid, url: '/embedders' },
 		{ name: 'LLMs', icon: MessageDotsOutline, url: '/llms' },
-		
+
 		{
 			name: 'Transforms',
 			icon: ArrowsRepeatOutline,

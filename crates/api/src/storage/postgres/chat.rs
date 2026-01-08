@@ -3,7 +3,7 @@ use sqlx::{Pool, Postgres};
 use std::time::Instant;
 use uuid::Uuid;
 
-use crate::chat::models::{ChatMessage, ChatSession, CreateChatSessionRequest};
+use crate::chat::models::{ChatMessage, ChatSession, CreateChatSessionRequest, RetrievedDocument};
 use semantic_explorer_core::observability::record_database_query;
 
 const ENSURE_USER_QUERY: &str = r#"
@@ -52,6 +52,18 @@ const GET_LLM_DETAILS_QUERY: &str = r#"
     SELECT name, provider, base_url, config->>'model' as model, api_key
     FROM llms
     WHERE llm_id = $1
+"#;
+
+const INSERT_RETRIEVED_DOCUMENT_QUERY: &str = r#"
+    INSERT INTO chat_message_retrieved_documents (message_id, document_id, text, similarity_score, source, created_at)
+    VALUES ($1, $2, $3, $4, $5, NOW())
+"#;
+
+const GET_RETRIEVED_DOCUMENTS_QUERY: &str = r#"
+    SELECT document_id, text, similarity_score, source
+    FROM chat_message_retrieved_documents
+    WHERE message_id = $1
+    ORDER BY similarity_score DESC
 "#;
 
 #[tracing::instrument(name = "database.create_chat_session", skip(pool), fields(database.system = "postgresql", database.operation = "INSERT", owner = %owner))]
@@ -204,4 +216,61 @@ pub(crate) async fn get_llm_details(
     record_database_query("SELECT", "llms", duration, success);
 
     result?.ok_or_else(|| anyhow::anyhow!("LLM not found"))
+}
+
+#[tracing::instrument(name = "database.store_retrieved_documents", skip(pool, documents), fields(database.system = "postgresql", database.operation = "INSERT"))]
+pub(crate) async fn store_retrieved_documents(
+    pool: &Pool<Postgres>,
+    message_id: i32,
+    documents: &[RetrievedDocument],
+) -> Result<()> {
+    let start = Instant::now();
+
+    for doc in documents {
+        sqlx::query(INSERT_RETRIEVED_DOCUMENT_QUERY)
+            .bind(message_id)
+            .bind(&doc.document_id)
+            .bind(&doc.text)
+            .bind(doc.similarity_score)
+            .bind(&doc.source)
+            .execute(pool)
+            .await?;
+    }
+
+    let duration = start.elapsed().as_secs_f64();
+    record_database_query("INSERT", "chat_message_retrieved_documents", duration, true);
+
+    Ok(())
+}
+
+#[tracing::instrument(name = "database.get_retrieved_documents", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT"))]
+pub(crate) async fn get_retrieved_documents(
+    pool: &Pool<Postgres>,
+    message_id: i32,
+) -> Result<Vec<RetrievedDocument>> {
+    let start = Instant::now();
+
+    let result = sqlx::query_as::<_, (Option<String>, String, f32, Option<String>)>(
+        GET_RETRIEVED_DOCUMENTS_QUERY,
+    )
+    .bind(message_id)
+    .fetch_all(pool)
+    .await?;
+
+    let documents: Vec<RetrievedDocument> = result
+        .into_iter()
+        .map(
+            |(document_id, text, similarity_score, source)| RetrievedDocument {
+                document_id,
+                text,
+                similarity_score,
+                source,
+            },
+        )
+        .collect();
+
+    let duration = start.elapsed().as_secs_f64();
+    record_database_query("SELECT", "chat_message_retrieved_documents", duration, true);
+
+    Ok(documents)
 }

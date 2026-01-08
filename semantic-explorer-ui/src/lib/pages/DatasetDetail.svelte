@@ -104,8 +104,22 @@
 		{ id: 'embeddings', label: 'Embeddings', icon: '🧬' },
 	];
 
+	// Initialize search query from hash URL parameter early
+	function getInitialSearchQuery(): string {
+		if (typeof window === 'undefined') return '';
+		const hashParts = window.location.hash.split('?');
+		if (hashParts.length > 1) {
+			const params = new URLSearchParams(hashParts[1]);
+			const queryParam = params.get('q');
+			if (queryParam) {
+				return decodeURIComponent(queryParam);
+			}
+		}
+		return '';
+	}
+
 	// Search state
-	let searchQuery = $state('');
+	let searchQuery = $state(getInitialSearchQuery());
 
 	// Delete state
 	let deletingItem = $state<number | null>(null);
@@ -277,7 +291,10 @@
 		chunkCurrentPages[itemId] = page;
 	}
 
-	function getPaginatedChunks(itemId: number, chunks: Array<{ content: string; metadata: Record<string, any> }>) {
+	function getPaginatedChunks(
+		itemId: number,
+		chunks: Array<{ content: string; metadata: Record<string, any> }>
+	) {
 		const currentChunkPage = getChunkPage(itemId);
 		const startIdx = currentChunkPage * chunkPageSize;
 		const endIdx = startIdx + chunkPageSize;
@@ -300,20 +317,39 @@
 		};
 	}
 
-	// Filtered items based on search
+	// Filtered items based on search (title only)
 	let filteredItems = $derived(
 		paginatedItems?.items.filter((item) => {
 			if (!searchQuery.trim()) return true;
 			const query = searchQuery.toLowerCase();
-			return (
-				item.title.toLowerCase().includes(query) ||
-				item.chunks.some((chunk) => chunk.content.toLowerCase().includes(query)) ||
-				Object.values(item.metadata || {}).some((value) =>
-					String(value).toLowerCase().includes(query)
-				)
-			);
+			return item.title.toLowerCase().includes(query);
 		}) || []
 	);
+
+	// Reset to page 0 when search query changes
+	$effect(() => {
+		searchQuery;
+		currentPage = 0;
+	});
+
+	// Refetch items when current page changes
+	$effect(() => {
+		currentPage;
+		fetchItems();
+	});
+
+	// Update URL when search query changes
+	$effect(() => {
+		if (typeof window !== 'undefined') {
+			const hashBase = window.location.hash.split('?')[0];
+			if (searchQuery.trim()) {
+				const newHash = `${hashBase}?q=${encodeURIComponent(searchQuery)}`;
+				window.history.replaceState(null, '', newHash);
+			} else {
+				window.history.replaceState(null, '', hashBase);
+			}
+		}
+	});
 
 	function requestDeleteItem(item: DatasetItem) {
 		itemPendingDelete = item;
@@ -352,7 +388,7 @@
 	onMount(() => {
 		fetchDataset();
 		fetchDatasetTransforms();
-		fetchItems();
+		// fetchItems will be called by the $effect watching currentPage
 	});
 </script>
 
@@ -615,7 +651,9 @@
 																			>
 																				Chunks ({item.chunks.length})
 																			</h4>
-																			<label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+																			<label
+																				class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400"
+																			>
 																				<span>Per page:</span>
 																				<select
 																					bind:value={chunkPageSize}
@@ -632,7 +670,10 @@
 																		{#if item.chunks.length > 0}
 																			<div class="space-y-2 mb-3">
 																				{#each getPaginatedChunks(item.item_id, item.chunks) as chunk, idx (idx)}
-																					{@const chunkPageInfo = getChunkPageInfo(item.item_id, item.chunks.length)}
+																					{@const chunkPageInfo = getChunkPageInfo(
+																						item.item_id,
+																						item.chunks.length
+																					)}
 																					{@const actualChunkNumber = chunkPageInfo.startIdx + idx}
 																					<div
 																						class="bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700"
@@ -652,24 +693,40 @@
 																			</div>
 
 																			{#if item.chunks.length > chunkPageSize}
-																				{@const chunkPageInfo = getChunkPageInfo(item.item_id, item.chunks.length)}
-																				<div class="flex items-center justify-between border-t border-gray-200 dark:border-gray-700 pt-3">
+																				{@const chunkPageInfo = getChunkPageInfo(
+																					item.item_id,
+																					item.chunks.length
+																				)}
+																				<div
+																					class="flex items-center justify-between border-t border-gray-200 dark:border-gray-700 pt-3"
+																				>
 																					<div class="text-xs text-gray-600 dark:text-gray-400">
-																						Showing {chunkPageInfo.startIdx} to {chunkPageInfo.endIdx} of {chunkPageInfo.totalChunks}
+																						Showing {chunkPageInfo.startIdx} to {chunkPageInfo.endIdx}
+																						of {chunkPageInfo.totalChunks}
 																					</div>
 																					<div class="flex gap-2">
 																						<button
-																							onclick={() => goToChunkPage(item.item_id, getChunkPage(item.item_id) - 1)}
+																							onclick={() =>
+																								goToChunkPage(
+																									item.item_id,
+																									getChunkPage(item.item_id) - 1
+																								)}
 																							disabled={!chunkPageInfo.hasPrevious}
 																							class="px-2 py-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
 																						>
 																							Previous
 																						</button>
-																						<span class="px-2 py-1 text-xs text-gray-600 dark:text-gray-400">
+																						<span
+																							class="px-2 py-1 text-xs text-gray-600 dark:text-gray-400"
+																						>
 																							Page {chunkPageInfo.currentPage + 1} of {chunkPageInfo.totalPages}
 																						</span>
 																						<button
-																							onclick={() => goToChunkPage(item.item_id, getChunkPage(item.item_id) + 1)}
+																							onclick={() =>
+																								goToChunkPage(
+																									item.item_id,
+																									getChunkPage(item.item_id) + 1
+																								)}
 																							disabled={!chunkPageInfo.hasMore}
 																							class="px-2 py-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
 																						>

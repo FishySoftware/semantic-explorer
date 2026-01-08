@@ -6,7 +6,6 @@ use actix_web_openidconnect::openid_middleware::Authenticated;
 use qdrant_client::Qdrant;
 use sqlx::Pool;
 use sqlx::Postgres;
-use sqlx::types::chrono::Utc;
 
 use crate::{
     auth::extract_username,
@@ -198,16 +197,40 @@ pub(crate) async fn get_chat_messages(
             // Session exists and user owns it
             match chat::get_chat_messages(&postgres_pool, &session_id).await {
                 Ok(messages) => {
-                    let messages_response: Vec<ChatMessageResponse> = messages
-                        .into_iter()
-                        .map(|m| ChatMessageResponse {
-                            message_id: m.message_id,
-                            role: m.role,
-                            content: m.content,
-                            documents_retrieved: m.documents_retrieved,
-                            created_at: m.created_at,
-                        })
-                        .collect();
+                    let mut messages_response: Vec<ChatMessageResponse> = Vec::new();
+
+                    for message in messages {
+                        // Fetch retrieved documents for assistant messages
+                        let retrieved_documents = if message.role == "assistant" {
+                            match chat::get_retrieved_documents(&postgres_pool, message.message_id)
+                                .await
+                            {
+                                Ok(docs) => {
+                                    if docs.is_empty() {
+                                        None
+                                    } else {
+                                        Some(docs)
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!(error = %e, message_id = message.message_id, "failed to fetch retrieved documents");
+                                    None
+                                }
+                            }
+                        } else {
+                            None
+                        };
+
+                        messages_response.push(ChatMessageResponse {
+                            message_id: message.message_id,
+                            role: message.role,
+                            content: message.content,
+                            documents_retrieved: message.documents_retrieved,
+                            retrieved_documents,
+                            created_at: message.created_at,
+                        });
+                    }
+
                     HttpResponse::Ok().json(ChatMessagesResponse {
                         messages: messages_response,
                     })
@@ -308,7 +331,7 @@ pub(crate) async fn send_chat_message(
         };
 
     // Store assistant message
-    if let Err(e) = chat::add_chat_message(
+    let assistant_message = match chat::add_chat_message(
         &postgres_pool,
         &session_id,
         "assistant",
@@ -317,16 +340,33 @@ pub(crate) async fn send_chat_message(
     )
     .await
     {
-        tracing::error!(error = %e, "failed to store assistant message");
+        Ok(msg) => msg,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to store assistant message");
+            return HttpResponse::InternalServerError()
+                .body(format!("error storing assistant message: {e:?}"));
+        }
+    };
+
+    // Store retrieved documents for this message
+    if let Err(e) = chat::store_retrieved_documents(
+        &postgres_pool,
+        assistant_message.message_id,
+        &retrieved_documents,
+    )
+    .await
+    {
+        tracing::error!(error = %e, "failed to store retrieved documents");
+        // Continue anyway - this is not critical
     }
 
     // Return response with retrieved documents
     let response = ChatResponse {
-        message_id: 0,
+        message_id: assistant_message.message_id,
         content: response_content,
         documents_retrieved: document_count,
         retrieved_documents,
-        created_at: Utc::now(),
+        created_at: assistant_message.created_at,
     };
 
     HttpResponse::Ok().json(response)

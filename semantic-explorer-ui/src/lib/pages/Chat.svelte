@@ -13,12 +13,20 @@
 		updated_at: string;
 	}
 
+	interface RetrievedDocument {
+		document_id: string | null;
+		text: string;
+		similarity_score: number;
+		source: string | null;
+	}
+
 	interface ChatMessage {
 		message_id: number;
 		role: string;
 		content: string;
 		documents_retrieved: number | null;
 		created_at: string;
+		retrieved_documents?: RetrievedDocument[];
 	}
 
 	interface EmbeddedDataset {
@@ -26,6 +34,7 @@
 		title: string;
 		embedder_name: string;
 		source_dataset_title: string;
+		source_dataset_id: number;
 	}
 
 	interface LLM {
@@ -53,6 +62,9 @@
 	let messageInput = $state('');
 	let sendingMessage = $state(false);
 	let messageError = $state<string | null>(null);
+	
+	// Track expanded state of retrieved documents per message
+	let expandedDocs = $state<Record<number, boolean>>({});
 
 	async function fetchSessions() {
 		try {
@@ -197,7 +209,7 @@
 				},
 			];
 
-			// Add assistant message
+			// Add assistant message with retrieved documents
 			currentMessages = [
 				...currentMessages,
 				{
@@ -206,6 +218,7 @@
 					content: result.content,
 					documents_retrieved: result.documents_retrieved,
 					created_at: new Date().toISOString(),
+					retrieved_documents: result.retrieved_documents || [],
 				},
 			];
 
@@ -265,6 +278,11 @@
 		return dataset ? `${dataset.title} (${dataset.embedder_name})` : `Dataset ${id}`;
 	}
 
+	function getSourceDatasetId(embeddedDatasetId: number): number | null {
+		const dataset = embeddedDatasets.find((d) => d.embedded_dataset_id === embeddedDatasetId);
+		return dataset ? dataset.source_dataset_id : null;
+	}
+
 	function getLLMTitle(id: number): string {
 		const llm = llms.find((l) => l.llm_id === id);
 		return llm ? `${llm.name} (${llm.provider})` : `LLM ${id}`;
@@ -277,10 +295,10 @@
 	});
 </script>
 
-<div class="flex h-screen bg-gray-50 dark:bg-gray-900">
+<div class="flex h-full overflow-hidden bg-gray-50 dark:bg-gray-900">
 	<!-- Sidebar with sessions -->
 	<div
-		class="w-72 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col"
+		class="w-72 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col overflow-hidden"
 	>
 		<div class="p-6 border-b border-gray-200 dark:border-gray-700">
 			<h1 class="text-2xl font-bold text-gray-900 dark:text-white">Chat</h1>
@@ -323,7 +341,7 @@
 						for="session-dataset"
 						class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
 					>
-						Dataset
+						Embedded Dataset
 					</label>
 					<select
 						id="session-dataset"
@@ -401,15 +419,13 @@
 	</div>
 
 	<!-- Main chat area -->
-	<div class="flex-1 flex flex-col">
+	<div class="flex-1 flex flex-col overflow-hidden">
 		{#if !currentSession}
 			<div class="flex-1 flex items-center justify-center">
-				<div class="text-center">
-					<PageHeader
-						title="Welcome to Chat"
-						description="Select a chat session from the sidebar or create a new one to get started."
-					/>
-				</div>
+				<PageHeader
+					title="Welcome to Chat"
+					description="Select a chat session from the sidebar or create a new one to get started."
+				/>
 			</div>
 		{:else}
 			<!-- Chat header -->
@@ -436,38 +452,81 @@
 			</div>
 
 			<!-- Messages area -->
-			<div class="flex-1 min-h-0 overflow-y-auto p-6 space-y-4">
-				{#if messagesLoading}
-					<div class="flex justify-center">
-						<div class="text-gray-500 dark:text-gray-400">Loading messages...</div>
-					</div>
-				{:else if currentMessages.length === 0}
-					<div class="flex items-center justify-center h-full">
-						<div class="text-center text-gray-500 dark:text-gray-400">
-							<p class="mb-2">Start a conversation</p>
-							<p class="text-sm">Type a message below to begin chatting with the RAG system.</p>
+			<div class="flex-1 min-h-0 overflow-y-auto">
+				<div class="space-y-4 p-6">
+					{#if messagesLoading}
+						<div class="flex justify-center">
+							<div class="text-gray-500 dark:text-gray-400">Loading messages...</div>
 						</div>
-					</div>
-				{:else}
-					{#each currentMessages as message (message.message_id)}
-						<div class="flex {message.role === 'user' ? 'justify-end' : 'justify-start'} gap-4">
-							<div
-								class="max-w-md {message.role === 'user'
-									? 'bg-blue-600 text-white'
-									: 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white'} rounded-lg px-4 py-2"
-							>
-								<p class="text-sm">{message.content}</p>
-								{#if message.role === 'assistant' && message.documents_retrieved}
-									<p class="text-xs mt-2 opacity-75">
-										Found {message.documents_retrieved} document{message.documents_retrieved !== 1
-											? 's'
-											: ''}
-									</p>
-								{/if}
+					{:else if currentMessages.length === 0}
+						<div class="flex items-center justify-center">
+							<div class="text-center text-gray-500 dark:text-gray-400">
+								<p class="mb-2">Start a conversation</p>
+								<p class="text-sm">Type a message below to begin chatting with the RAG system.</p>
 							</div>
 						</div>
-					{/each}
-				{/if}
+					{:else}
+						{#each currentMessages as message (message.message_id)}
+							<div class="flex {message.role === 'user' ? 'justify-end' : 'justify-start'} gap-4">
+								<div
+									class="max-w-2xl {message.role === 'user'
+										? 'bg-blue-600 text-white'
+										: 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white'} rounded-lg px-4 py-2"
+								>
+									<p class="text-sm">{message.content}</p>
+									{#if message.role === 'assistant' && message.retrieved_documents && message.retrieved_documents.length > 0}
+										<div class="mt-3 pt-3 border-t border-current opacity-75">
+											<button
+												onclick={() => {
+													expandedDocs[message.message_id] = !expandedDocs[message.message_id];
+												}}
+												class="flex items-center justify-between w-full text-xs font-semibold mb-2 hover:opacity-80 transition-opacity"
+											>
+												<span>
+													Retrieved {message.documents_retrieved} chunk{message.documents_retrieved !==
+													1
+														? 's'
+														: ''}
+												</span>
+												<span class="ml-2">
+													{expandedDocs[message.message_id] ? '▼' : '▶'}
+												</span>
+											</button>
+											{#if expandedDocs[message.message_id]}
+												<div class="space-y-2 mt-2">
+													{#each message.retrieved_documents as doc, idx (doc.document_id || idx)}
+														<div class="text-xs p-2 rounded bg-gray-300 dark:bg-gray-600">
+															<div class="flex items-start justify-between mb-1">
+																<span class="font-semibold text-[10px] opacity-70">
+																	Chunk {idx + 1}
+																</span>
+																<span class="font-mono text-[10px] opacity-70">
+																	Score: {doc.similarity_score.toFixed(3)}
+																</span>
+															</div>
+															<p class="mb-1 leading-relaxed">{doc.text}</p>
+															{#if doc.source}
+																<a
+																	href="ui#/datasets/{getSourceDatasetId(
+																		currentSession?.embedded_dataset_id || 0
+																	)}/details?q={encodeURIComponent(doc.source)}"
+																	class="text-[10px] underline hover:font-semibold transition-all opacity-70 hover:opacity-100"
+																	target="_blank"
+																>
+																	Source: {doc.source}
+																</a>
+															{/if}
+														</div>
+													{/each}
+												</div>
+											{/if}
+										</div>
+									{/if}
+								</div>
+							</div>
+						{/each}
+					{/if}
+				</div>
 			</div>
 
 			<!-- Input area -->

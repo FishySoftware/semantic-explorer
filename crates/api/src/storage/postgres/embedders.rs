@@ -1,9 +1,18 @@
 use anyhow::Result;
-use sqlx::{Pool, Postgres};
+use sqlx::{FromRow, Pool, Postgres};
 use std::time::Instant;
 
 use crate::embedders::models::{CreateEmbedder, Embedder, UpdateEmbedder};
 use semantic_explorer_core::observability::record_database_query;
+
+#[derive(FromRow)]
+pub struct EmbedderConfig {
+    pub provider: String,
+    pub base_url: String,
+    pub api_key: Option<String>,
+    pub config: serde_json::Value,
+    pub dimensions: i32,
+}
 
 const GET_EMBEDDER_QUERY: &str = r#"
     SELECT embedder_id, name, owner, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, max_input_tokens, truncate_strategy, collection_name, is_public, created_at, updated_at
@@ -67,6 +76,12 @@ const UPDATE_EMBEDDER_QUERY: &str = r#"
         updated_at = NOW()
     WHERE owner = $1 AND embedder_id = $2
     RETURNING embedder_id, name, owner, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, max_input_tokens, truncate_strategy, collection_name, is_public, created_at, updated_at
+"#;
+
+const GET_EMBEDDER_BY_ID_QUERY: &str = r#"
+    SELECT provider, base_url, api_key, config, dimensions
+    FROM embedders
+    WHERE embedder_id = $1
 "#;
 
 #[tracing::instrument(name = "database.get_embedder", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner = %owner, embedder_id = %embedder_id))]
@@ -236,6 +251,24 @@ pub(crate) async fn grab_public_embedder(
     let duration = start.elapsed().as_secs_f64();
     let success = result.is_ok();
     record_database_query("INSERT", "embedders", duration, success);
+
+    Ok(result?)
+}
+
+#[tracing::instrument(name = "database.get_embedder_config", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", embedder_id = %embedder_id))]
+pub async fn get_embedder_config(
+    pool: &Pool<Postgres>,
+    embedder_id: i32,
+) -> Result<EmbedderConfig> {
+    let start = Instant::now();
+    let result = sqlx::query_as::<_, EmbedderConfig>(GET_EMBEDDER_BY_ID_QUERY)
+        .bind(embedder_id)
+        .fetch_one(pool)
+        .await;
+
+    let duration = start.elapsed().as_secs_f64();
+    let success = result.is_ok();
+    record_database_query("SELECT", "embedders", duration, success);
 
     Ok(result?)
 }

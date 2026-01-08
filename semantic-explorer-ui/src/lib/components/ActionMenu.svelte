@@ -18,12 +18,6 @@
 		$props();
 </script>
 
-<style>
-	:global([role='tooltip'] li) {
-		list-style: none;
-	}
-</style>
-
 <div>
 	<Button color="alternative" size="xs" class="p-1.5" {id} title="More actions">
 		<DotsVerticalOutline class="w-5 h-5" />
@@ -48,3 +42,9 @@
 		{/each}
 	</Dropdown>
 </div>
+
+<style>
+	:global([role='tooltip'] li) {
+		list-style: none;
+	}
+</style>
