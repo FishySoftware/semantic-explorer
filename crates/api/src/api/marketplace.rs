@@ -1,8 +1,9 @@
 use actix_web::{
     HttpResponse, Responder, get, post,
-    web::{Data, Path},
+    web::{Data, Path, Query},
 };
 use actix_web_openidconnect::openid_middleware::Authenticated;
+use serde::Deserialize;
 use sqlx::{Pool, Postgres};
 
 use crate::{
@@ -13,6 +14,11 @@ use crate::{
     llms::models::LargeLanguageModel as LLMModel,
     storage::postgres::{collections, datasets, embedders, llms},
 };
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct RecentCollectionsQuery {
+    pub(crate) limit: Option<i32>,
+}
 
 #[utoipa::path(
     responses(
@@ -30,6 +36,33 @@ pub(crate) async fn get_public_collections(postgres_pool: Data<Pool<Postgres>>) 
             tracing::error!(error = %e, "failed to fetch public collections");
             HttpResponse::InternalServerError()
                 .body(format!("error fetching public collections: {e:?}"))
+        }
+    }
+}
+
+#[utoipa::path(
+    responses(
+        (status = 200, description = "OK", body = Vec<Collection>),
+        (status = 500, description = "Internal Server Error"),
+    ),
+    params(
+        ("limit" = i32, Query, description = "Number of recent collections to fetch"),
+    ),
+    tag = "Marketplace",
+)]
+#[get("/api/marketplace/collections/recent")]
+#[tracing::instrument(name = "get_recent_public_collections", skip(postgres_pool))]
+pub(crate) async fn get_recent_public_collections(
+    postgres_pool: Data<Pool<Postgres>>,
+    Query(query): Query<RecentCollectionsQuery>,
+) -> impl Responder {
+    let limit = query.limit.unwrap_or(5);
+    match collections::get_recent_public_collections(&postgres_pool.into_inner(), limit).await {
+        Ok(collections_list) => HttpResponse::Ok().json(collections_list),
+        Err(e) => {
+            tracing::error!(error = %e, "failed to fetch recent public collections");
+            HttpResponse::InternalServerError()
+                .body(format!("error fetching recent public collections: {e:?}"))
         }
     }
 }

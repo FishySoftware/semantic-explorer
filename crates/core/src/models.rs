@@ -63,6 +63,12 @@ pub struct EmbedderConfig {
     pub model: Option<String>,
     pub config: serde_json::Value,
     pub max_batch_size: i32,
+    #[serde(default = "default_max_input_tokens")]
+    pub max_input_tokens: i32,
+}
+
+fn default_max_input_tokens() -> i32 {
+    8191 // OpenAI default for text-embedding-ada-002
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,6 +81,7 @@ pub struct VectorDatabaseConfig {
 fn default_topic_naming_mode() -> String {
     "tfidf".to_string()
 }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VisualizationTransformJob {
     pub job_id: Uuid,

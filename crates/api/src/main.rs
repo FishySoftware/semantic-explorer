@@ -134,6 +134,7 @@ async fn main() -> Result<()> {
             .service(api::llms::update_llm)
             .service(api::llms::delete_llm)
             .service(api::marketplace::get_public_collections)
+            .service(api::marketplace::get_recent_public_collections)
             .service(api::marketplace::get_public_datasets)
             .service(api::marketplace::get_public_embedders)
             .service(api::marketplace::get_public_llms)

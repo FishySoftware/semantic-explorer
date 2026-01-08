@@ -100,9 +100,9 @@
 	let config = $state<VisualizationConfig>({
 		n_neighbors: 15,
 		n_components: 3,
-		min_dist: 0.1,
+		min_dist: 0.25,
 		metric: 'cosine',
-		min_cluster_size: 10,
+		min_cluster_size: 15,
 		min_samples: null,
 		topic_naming_mode: 'tfidf',
 		topic_naming_llm_id: null,
@@ -320,9 +320,9 @@
 		config = {
 			n_neighbors: 15,
 			n_components: 3,
-			min_dist: 0.1,
+			min_dist: 0.25,
 			metric: 'cosine',
-			min_cluster_size: 10,
+			min_cluster_size: 15,
 			min_samples: null,
 			topic_naming_mode: 'tfidf',
 			topic_naming_llm_id: null,

@@ -95,12 +95,29 @@ async fn main() -> Result<()> {
         .or_else(|_| EnvFilter::try_new("info"))
         .expect("failed to initialize tracing filter layer");
 
-    let format_layer = tracing_subscriber::fmt::layer()
-        .json()
-        .with_current_span(true)
-        .with_span_list(true)
-        .with_target(true)
-        .boxed();
+    // Use JSON format for structured logging in production, human-readable for development
+    let use_json = std::env::var("LOG_FORMAT")
+        .unwrap_or_else(|_| "json".to_string())
+        .to_lowercase()
+        == "json";
+
+    let format_layer = if use_json {
+        tracing_subscriber::fmt::layer()
+            .json()
+            .with_current_span(true)
+            .with_span_list(true)
+            .with_target(true)
+            .with_file(true)
+            .flatten_event(true)
+            .boxed()
+    } else {
+        tracing_subscriber::fmt::layer()
+            .with_ansi(true)
+            .with_target(true)
+            .with_file(true)
+            .with_line_number(true)
+            .boxed()
+    };
 
     let tracer = global::tracer_provider().tracer(service_name);
     let otel_trace_layer = tracing_opentelemetry::layer().with_tracer(tracer);
@@ -132,129 +149,81 @@ async fn main() -> Result<()> {
         nats_client: nats_client.clone(),
     };
 
-    let use_jetstream = std::env::var("NATS_USE_JETSTREAM")
-        .unwrap_or_else(|_| "false".to_string())
-        .parse::<bool>()
-        .unwrap_or(false);
-
     let semaphore = Arc::new(Semaphore::new(100));
 
-    if use_jetstream {
-        info!("Using JetStream mode for reliable message delivery");
+    info!("Using JetStream mode for reliable message delivery");
 
-        semantic_explorer_core::nats::initialize_jetstream(&nats_client).await?;
+    semantic_explorer_core::nats::initialize_jetstream(&nats_client).await?;
 
-        let jetstream = new(nats_client.clone());
-        let consumer_config = semantic_explorer_core::nats::create_vector_embed_consumer_config();
+    let jetstream = new(nats_client.clone());
+    let consumer_config = semantic_explorer_core::nats::create_vector_embed_consumer_config();
 
-        let consumer = semantic_explorer_core::nats::ensure_consumer(
-            &jetstream,
-            "VECTOR_EMBED",
-            consumer_config,
-        )
-        .await?;
-
-        info!("Worker started with JetStream, listening on VECTOR_EMBED stream");
-
-        let mut messages = consumer.messages().await?;
-
-        while let Some(msg) = messages.next().await {
-            let msg = match msg {
-                Ok(m) => m,
-                Err(e) => {
-                    error!("Failed to receive message: {}", e);
-                    continue;
-                }
-            };
-
-            let job: DatasetTransformJob = match serde_json::from_slice(&msg.payload) {
-                Ok(j) => j,
-                Err(e) => {
-                    error!("Failed to deserialize job: {}", e);
-                    // Acknowledge the message to prevent reprocessing bad messages
-                    if let Err(ack_err) = msg.ack().await {
-                        error!("Failed to acknowledge bad message: {}", ack_err);
-                    }
-                    continue;
-                }
-            };
-
-            // Acquire semaphore permit for backpressure
-            let permit = match semaphore.clone().try_acquire_owned() {
-                Ok(p) => p,
-                Err(_) => {
-                    warn!(
-                        "Semaphore limit reached, workers are at capacity. Message will be redelivered."
-                    );
-                    // Don't acknowledge - let message be redelivered after ack_wait timeout
-                    continue;
-                }
-            };
-
-            let ctx = context.clone();
-            tokio::spawn(async move {
-                let _permit = permit; // Hold permit until task completes
-
-                match job::process_vector_job(job, ctx).await {
-                    Ok(_) => {
-                        // Acknowledge success
-                        if let Err(e) = msg.ack().await {
-                            error!("Failed to acknowledge successful job: {}", e);
-                        }
-                    }
-                    Err(e) => {
-                        error!("Job failed: {}", e);
-                        // Negative acknowledgment for retry (30s delay)
-                        if let Err(ack_err) = msg
-                            .ack_with(async_nats::jetstream::AckKind::Nak(Some(
-                                Duration::from_secs(30),
-                            )))
-                            .await
-                        {
-                            error!("Failed to negatively acknowledge failed job: {}", ack_err);
-                        }
-                    }
-                }
-            });
-        }
-    } else {
-        info!("Using legacy pub/sub mode (consider migrating to JetStream)");
-
-        let mut subscriber = nats_client
-            .subscribe("workers.dataset-transform".to_string())
+    let consumer =
+        semantic_explorer_core::nats::ensure_consumer(&jetstream, "VECTOR_EMBED", consumer_config)
             .await?;
 
-        info!("Worker started, listening on workers.dataset-transform");
+    info!("Worker started with JetStream, listening on VECTOR_EMBED stream");
 
-        while let Some(msg) = subscriber.next().await {
-            let job: DatasetTransformJob = match serde_json::from_slice(&msg.payload) {
-                Ok(j) => j,
+    let mut messages = consumer.messages().await?;
+
+    while let Some(msg) = messages.next().await {
+        let msg = match msg {
+            Ok(m) => m,
+            Err(e) => {
+                error!("Failed to receive message: {}", e);
+                continue;
+            }
+        };
+
+        let job: DatasetTransformJob = match serde_json::from_slice(&msg.payload) {
+            Ok(j) => j,
+            Err(e) => {
+                error!("Failed to deserialize job: {}", e);
+                // Acknowledge the message to prevent reprocessing bad messages
+                if let Err(ack_err) = msg.ack().await {
+                    error!("Failed to acknowledge bad message: {}", ack_err);
+                }
+                continue;
+            }
+        };
+
+        // Acquire semaphore permit for backpressure
+        let permit = match semaphore.clone().try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => {
+                warn!(
+                    "Semaphore limit reached, workers are at capacity. Message will be redelivered."
+                );
+                // Don't acknowledge - let message be redelivered after ack_wait timeout
+                continue;
+            }
+        };
+
+        let ctx = context.clone();
+        tokio::spawn(async move {
+            let _permit = permit; // Hold permit until task completes
+
+            match job::process_vector_job(job, ctx).await {
+                Ok(_) => {
+                    // Acknowledge success
+                    if let Err(e) = msg.ack().await {
+                        error!("Failed to acknowledge successful job: {}", e);
+                    }
+                }
                 Err(e) => {
-                    error!("Failed to deserialize job: {}", e);
-                    continue;
-                }
-            };
-
-            // Acquire semaphore permit for backpressure even in legacy mode
-            let permit = match semaphore.clone().try_acquire_owned() {
-                Ok(p) => p,
-                Err(_) => {
-                    warn!(
-                        "Semaphore limit reached, workers are at capacity. Dropping message (legacy mode)."
-                    );
-                    continue;
-                }
-            };
-
-            let ctx = context.clone();
-            tokio::spawn(async move {
-                let _permit = permit; // Hold permit until task completes
-
-                if let Err(e) = job::process_vector_job(job, ctx).await {
                     error!("Job failed: {}", e);
+                    // Negative acknowledgment for retry (30s delay)
+                    if let Err(ack_err) = msg
+                        .ack_with(async_nats::jetstream::AckKind::Nak(Some(
+                            Duration::from_secs(30),
+                        )))
+                        .await
+                    {
+                        error!("Failed to negatively acknowledge failed job: {}", ack_err);
+                    }
                 }
-            });
-        }
+            }
+        });
     }
 
     Ok(())

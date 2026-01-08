@@ -80,6 +80,15 @@ pub async fn process_visualization_job(
     let dim_start = Instant::now();
     // L2-normalize input vectors for better cosine distance calculations
     let normalized_document_vectors = normalize_l2(&document_vectors, n_features);
+
+    info!(
+        "Running UMAP with n_neighbors={}, n_components={}, min_dist={}, metric={}",
+        job.visualization_config.n_neighbors,
+        job.visualization_config.n_components,
+        job.visualization_config.min_dist,
+        job.visualization_config.metric
+    );
+
     let umap = reduce_dimensionality(
         &normalized_document_vectors,
         n_features,
@@ -88,27 +97,52 @@ pub async fn process_visualization_job(
         job.visualization_config.min_dist,
         "cosine",
     )?;
+
     info!(
-        "Reduced dimensionality in {:.2}s",
-        dim_start.elapsed().as_secs_f64()
+        "Reduced dimensionality in {:.2}s (output shape: {}x{})",
+        dim_start.elapsed().as_secs_f64(),
+        umap.embedding.len() / job.visualization_config.n_components as usize,
+        job.visualization_config.n_components
     );
 
     let cluster_start = Instant::now();
-    // Use cosine metric for HDBSCAN to match UMAP's metric
-    let (hdbscan, topic_vectors) = identify_topic_clusters(
+    // L2-normalize UMAP embeddings before clustering
+    // Note: cuML's HDBSCAN only supports L2 distance, but L2 distance on L2-normalized vectors ≈ cosine distance
+    let normalized_embeddings = normalize_l2(
         &umap.embedding,
         job.visualization_config.n_components as usize,
+    );
+
+    info!(
+        "Running HDBSCAN with min_cluster_size={}, n_samples={}, n_components={}",
+        job.visualization_config.min_cluster_size, n_samples, job.visualization_config.n_components
+    );
+
+    // TODO: Add support for min_samples parameter in cuml-wrapper-rs
+    // Currently, cuml-wrapper-rs identify_topic_clusters doesn't accept min_samples
+    // This may be causing the "always 2 clusters" issue
+    let (hdbscan, topic_vectors) = identify_topic_clusters(
+        &normalized_embeddings,
+        job.visualization_config.n_components as usize,
         job.visualization_config.min_cluster_size as usize,
-        "cosine",
+        "euclidean",
         &document_vectors,
         n_features,
     )?;
 
     let n_clusters = hdbscan.n_clusters;
     info!(
-        "Identified {} clusters in {:.2}s",
+        "Identified {} clusters in {:.2}s (cluster labels range: {:?})",
         n_clusters,
-        cluster_start.elapsed().as_secs_f64()
+        cluster_start.elapsed().as_secs_f64(),
+        if hdbscan.labels.is_empty() {
+            None
+        } else {
+            Some((
+                *hdbscan.labels.iter().min().unwrap(),
+                *hdbscan.labels.iter().max().unwrap(),
+            ))
+        }
     );
 
     let label_start = Instant::now();

@@ -6,22 +6,22 @@ use crate::embedders::models::{CreateEmbedder, Embedder, UpdateEmbedder};
 use semantic_explorer_core::observability::record_database_query;
 
 const GET_EMBEDDER_QUERY: &str = r#"
-    SELECT embedder_id, name, owner, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, collection_name, is_public, created_at, updated_at
+    SELECT embedder_id, name, owner, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, max_input_tokens, collection_name, is_public, created_at, updated_at
     FROM embedders
     WHERE owner = $1 AND embedder_id = $2
 "#;
 
 const GET_EMBEDDERS_QUERY: &str = r#"
-    SELECT embedder_id, name, owner, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, collection_name, is_public, created_at, updated_at
+    SELECT embedder_id, name, owner, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, max_input_tokens, collection_name, is_public, created_at, updated_at
     FROM embedders
     WHERE owner = $1
     ORDER BY created_at DESC
 "#;
 
 const CREATE_EMBEDDER_QUERY: &str = r#"
-    INSERT INTO embedders (name, owner, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, collection_name, is_public, created_at, updated_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
-    RETURNING embedder_id, name, owner, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, collection_name, is_public, created_at, updated_at
+    INSERT INTO embedders (name, owner, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, max_input_tokens, collection_name, is_public, created_at, updated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+    RETURNING embedder_id, name, owner, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, max_input_tokens, collection_name, is_public, created_at, updated_at
 "#;
 
 const DELETE_EMBEDDER_QUERY: &str = r#"
@@ -29,18 +29,18 @@ const DELETE_EMBEDDER_QUERY: &str = r#"
 "#;
 
 const GET_PUBLIC_EMBEDDERS_QUERY: &str = r#"
-    SELECT embedder_id, name, owner, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, collection_name, is_public, created_at, updated_at
+    SELECT embedder_id, name, owner, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, max_input_tokens, collection_name, is_public, created_at, updated_at
     FROM embedders
     WHERE is_public = TRUE
     ORDER BY created_at DESC
 "#;
 
 const GRAB_PUBLIC_EMBEDDER_QUERY: &str = r#"
-    INSERT INTO embedders (name, owner, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, collection_name, is_public, created_at, updated_at)
-    SELECT name, $1, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, NULL, FALSE, NOW(), NOW()
+    INSERT INTO embedders (name, owner, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, max_input_tokens, collection_name, is_public, created_at, updated_at)
+    SELECT name, $1, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, max_input_tokens, NULL, FALSE, NOW(), NOW()
     FROM embedders
     WHERE embedder_id = $2 AND is_public = TRUE
-    RETURNING embedder_id, name, owner, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, collection_name, is_public, created_at, updated_at
+    RETURNING embedder_id, name, owner, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, max_input_tokens, collection_name, is_public, created_at, updated_at
 "#;
 
 const UPDATE_EMBEDDER_QUERY: &str = r#"
@@ -52,11 +52,12 @@ const UPDATE_EMBEDDER_QUERY: &str = r#"
         batch_size = COALESCE($7, batch_size),
         max_batch_size = COALESCE($8, max_batch_size),
         dimensions = COALESCE($9, dimensions),
-        collection_name = COALESCE($10, collection_name),
-        is_public = COALESCE($11, is_public),
+        max_input_tokens = COALESCE($10, max_input_tokens),
+        collection_name = COALESCE($11, collection_name),
+        is_public = COALESCE($12, is_public),
         updated_at = NOW()
     WHERE owner = $1 AND embedder_id = $2
-    RETURNING embedder_id, name, owner, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, collection_name, is_public, created_at, updated_at
+    RETURNING embedder_id, name, owner, provider, base_url, api_key, config, batch_size, max_batch_size, dimensions, max_input_tokens, collection_name, is_public, created_at, updated_at
 "#;
 
 #[tracing::instrument(name = "database.get_embedder", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner = %owner, embedder_id = %embedder_id))]
@@ -111,6 +112,7 @@ pub(crate) async fn create_embedder(
         .bind(create_embedder.batch_size)
         .bind(create_embedder.max_batch_size)
         .bind(create_embedder.dimensions)
+        .bind(create_embedder.max_input_tokens)
         .bind(&create_embedder.collection_name)
         .bind(create_embedder.is_public)
         .fetch_one(pool)
@@ -162,6 +164,7 @@ pub(crate) async fn update_embedder(
         .bind(update_embedder.batch_size)
         .bind(update_embedder.max_batch_size)
         .bind(update_embedder.dimensions)
+        .bind(update_embedder.max_input_tokens)
         .bind(&update_embedder.collection_name)
         .bind(update_embedder.is_public)
         .fetch_one(pool)

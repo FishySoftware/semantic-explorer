@@ -86,17 +86,29 @@ pub(crate) fn init_observability() -> Result<PrometheusMetrics> {
         .or_else(|_| EnvFilter::try_new("info"))
         .expect("failed to initialize tracing filter layer");
 
-    let format_layer = tracing_subscriber::fmt::layer()
-        .json()
-        .with_current_span(true)
-        .with_span_list(true)
-        .with_target(true)
-        .log_internal_errors(true)
-        .with_ansi(true)
-        .with_file(true)
-        .flatten_event(true)
-        .pretty()
-        .boxed();
+    // Use JSON format for structured logging in production, human-readable for development
+    let use_json = env::var("LOG_FORMAT")
+        .unwrap_or_else(|_| "json".to_string())
+        .to_lowercase()
+        == "json";
+
+    let format_layer = if use_json {
+        tracing_subscriber::fmt::layer()
+            .json()
+            .with_current_span(true)
+            .with_span_list(true)
+            .with_target(true)
+            .with_file(true)
+            .flatten_event(true)
+            .boxed()
+    } else {
+        tracing_subscriber::fmt::layer()
+            .with_ansi(true)
+            .with_target(true)
+            .with_file(true)
+            .with_line_number(true)
+            .boxed()
+    };
 
     let tracer = global::tracer_provider().tracer(service_name.clone());
     let otel_trace_layer = tracing_opentelemetry::layer().with_tracer(tracer);

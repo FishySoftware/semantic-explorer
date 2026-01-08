@@ -1,6 +1,6 @@
 use actix_web::rt::{spawn, task::JoinHandle, time::interval};
 use anyhow::Result;
-use async_nats::Client as NatsClient;
+use async_nats::{Client as NatsClient, jetstream};
 use aws_sdk_s3::Client as S3Client;
 use sqlx::{Pool, Postgres};
 use std::collections::HashSet;
@@ -102,6 +102,7 @@ async fn get_embedder_config_for_chunking(
             .map(|s| s.to_string()),
         config: embedder.config,
         max_batch_size: embedder.max_batch_size,
+        max_input_tokens: embedder.max_input_tokens,
     }))
 }
 
@@ -191,6 +192,8 @@ async fn process_collection_transform_scan(
 
             // Skip already processed files
             if !processed_keys.contains(&file.key) {
+                let msg_id = format!("ct-{}-{}", transform.collection_transform_id, file.key);
+
                 let job = CollectionTransformJob {
                     job_id: Uuid::new_v4(),
                     source_file_key: file.key.clone(),
@@ -202,8 +205,20 @@ async fn process_collection_transform_scan(
                 };
 
                 let payload = serde_json::to_vec(&job)?;
-                nats.publish("workers.collection-transform".to_string(), payload.into())
-                    .await?;
+
+                // Use JetStream publish with message ID for deduplication
+                let jetstream = jetstream::new(nats.clone());
+                let mut headers = async_nats::HeaderMap::new();
+                headers.insert("Nats-Msg-Id", msg_id.as_str());
+
+                jetstream
+                    .publish_with_headers(
+                        "workers.collection-transform".to_string(),
+                        headers,
+                        payload.into(),
+                    )
+                    .await?
+                    .await?; // Wait for ack
                 jobs_sent += 1;
             }
         }

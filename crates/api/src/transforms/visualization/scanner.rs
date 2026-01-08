@@ -1,6 +1,6 @@
 use actix_web::rt::{spawn, task::JoinHandle, time::interval};
 use anyhow::Result;
-use async_nats::Client as NatsClient;
+use async_nats::{Client as NatsClient, jetstream};
 use sqlx::{Pool, Postgres};
 use std::time::Duration;
 use tracing::{error, info};
@@ -132,11 +132,21 @@ async fn process_visualization_transform_scan(
     }
 
     let payload = serde_json::to_vec(&job)?;
-    nats.publish(
-        "workers.visualization-transform".to_string(),
-        payload.into(),
-    )
-    .await?;
+
+    // Use JetStream with message ID for deduplication
+    let msg_id = format!("vt-{}", transform.visualization_transform_id);
+    let jetstream = jetstream::new(nats.clone());
+    let mut headers = async_nats::HeaderMap::new();
+    headers.insert("Nats-Msg-Id", msg_id.as_str());
+
+    jetstream
+        .publish_with_headers(
+            "workers.visualization-transform".to_string(),
+            headers,
+            payload.into(),
+        )
+        .await?
+        .await?;
 
     info!(
         "Created visualization job for transform {}",
@@ -232,11 +242,21 @@ pub async fn trigger_visualization_transform_job(
         .await?;
 
     let payload = serde_json::to_vec(&job)?;
-    nats.publish(
-        "workers.visualization-transform".to_string(),
-        payload.into(),
-    )
-    .await?;
+
+    // Use JetStream with message ID for deduplication
+    let msg_id = format!("vt-{}", transform.visualization_transform_id);
+    let jetstream = jetstream::new(nats.clone());
+    let mut headers = async_nats::HeaderMap::new();
+    headers.insert("Nats-Msg-Id", msg_id.as_str());
+
+    jetstream
+        .publish_with_headers(
+            "workers.visualization-transform".to_string(),
+            headers,
+            payload.into(),
+        )
+        .await?
+        .await?;
 
     info!(
         "Triggered visualization job for transform {}",

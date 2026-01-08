@@ -20,6 +20,7 @@
 
 	let collections = $state<Collection[]>([]);
 	let datasets = $state<Dataset[]>([]);
+	let publicCollections = $state<Collection[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
@@ -32,17 +33,19 @@
 			loading = true;
 			error = null;
 
-			const [collectionsRes, datasetsRes] = await Promise.all([
+			const [collectionsRes, datasetsRes, publicCollectionsRes] = await Promise.all([
 				fetch('/api/collections'),
 				fetch('/api/datasets'),
+				fetch('/api/marketplace/collections/recent?limit=5'),
 			]);
 
-			if (!collectionsRes.ok || !datasetsRes.ok) {
+			if (!collectionsRes.ok || !datasetsRes.ok || !publicCollectionsRes.ok) {
 				throw new Error('Failed to fetch data');
 			}
 
 			const allCollections = await collectionsRes.json();
 			const allDatasets = await datasetsRes.json();
+			publicCollections = await publicCollectionsRes.json();
 
 			collections = allCollections
 				.sort(
@@ -200,6 +203,54 @@
 					</div>
 				{/if}
 			</div>
+		</div>
+
+		<!-- Recent Public Collections Section -->
+		<div class="mt-6 bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+			<div class="flex justify-between items-center mb-4">
+				<h2 class="text-xl font-semibold text-gray-900 dark:text-white">Recent Public Collections</h2>
+				<a href="#/marketplace" class="text-blue-600 dark:text-blue-400 hover:underline text-sm">
+					View marketplace
+				</a>
+			</div>
+			{#if publicCollections.length === 0}
+				<p class="text-gray-500 dark:text-gray-400 text-sm py-4">No public collections available</p>
+			{:else}
+				<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+					{#each publicCollections as collection (collection.collection_id)}
+						<div
+							class="p-4 bg-gray-50 dark:bg-gray-900 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-750 transition-colors"
+						>
+							<h3 class="font-medium text-gray-900 dark:text-white mb-2">
+								{collection.title}
+							</h3>
+							{#if collection.details}
+								<p class="text-sm text-gray-600 dark:text-gray-400 mb-3 line-clamp-2">
+									{collection.details}
+								</p>
+							{/if}
+							<div class="flex gap-2 flex-wrap mb-3">
+								{#each collection.tags.slice(0, 3) as tag (tag)}
+									<span
+										class="text-xs px-2 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded"
+									>
+										#{tag}
+									</span>
+								{/each}
+							</div>
+							<div class="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400">
+								<span>{formatDate(collection.updated_at)}</span>
+								<a
+									href={`#/marketplace/collections/${collection.collection_id}/grab`}
+									class="text-blue-600 dark:text-blue-400 hover:underline"
+								>
+									Grab →
+								</a>
+							</div>
+						</div>
+					{/each}
+				</div>
+			{/if}
 		</div>
 
 		<div class="mt-6 grid grid-cols-1 md:grid-cols-4 gap-4">

@@ -95,19 +95,23 @@ pub(crate) async fn list_files(
         "Listing files in S3 bucket"
     );
 
-    let mut files = Vec::with_capacity(page_size as usize);
-    let mut current_token = continuation_token.map(|s| s.to_string());
+    // We need page_size + 1 files to know if there are more pages
+    let target_count = (page_size + 1) as usize;
+    let mut files = Vec::with_capacity(target_count);
+    let mut last_key_seen: Option<String> = None;
+
+    // Use start_after for cursor-based pagination (more reliable when filtering)
+    let mut request = s3_client
+        .list_objects_v2()
+        .bucket(bucket)
+        .max_keys(page_size * 3); // Fetch extra to account for chunks/ filtering
+
+    // continuation_token is actually a key name for start_after pagination
+    if let Some(key) = continuation_token {
+        request = request.start_after(key);
+    }
 
     loop {
-        let mut request = s3_client
-            .list_objects_v2()
-            .bucket(bucket)
-            .max_keys(page_size * 3);
-
-        if let Some(token) = &current_token {
-            request = request.start_after(token);
-        }
-
         let output = match request.send().await {
             Ok(output) => output,
             Err(e) => {
@@ -122,7 +126,9 @@ pub(crate) async fn list_files(
 
         for obj in output.contents() {
             let key = obj.key().unwrap_or_default();
+            last_key_seen = Some(key.to_string());
 
+            // Skip chunk files
             if key.starts_with("chunks/") {
                 continue;
             }
@@ -136,25 +142,43 @@ pub(crate) async fn list_files(
                     .map(|s| s.to_string()),
             });
 
-            if files.len() > page_size as usize {
+            // Stop once we have enough files
+            if files.len() >= target_count {
                 break;
             }
         }
 
-        current_token = output.next_continuation_token().map(|s| s.to_string());
+        // For start_after pagination, we don't use S3's continuation_token
+        // Instead, we continue from the last key we saw
 
-        if files.len() > page_size as usize || current_token.is_none() {
+        // Stop if we have enough files or there are no more objects
+        if files.len() >= target_count || output.contents().is_empty() {
+            break;
+        }
+
+        // Continue fetching from the last key we saw
+        if let Some(ref last_key) = last_key_seen {
+            request = s3_client
+                .list_objects_v2()
+                .bucket(bucket)
+                .max_keys(page_size * 3)
+                .start_after(last_key);
+        } else {
             break;
         }
     }
 
+    // Determine if there are more pages
     let has_more = files.len() > page_size as usize;
 
-    if has_more {
+    // Truncate to page_size and determine next cursor
+    let next_cursor = if has_more {
         files.truncate(page_size as usize);
-    }
-
-    let next_token = if has_more { current_token } else { None };
+        // Use the last file's key as the cursor for start_after pagination
+        files.last().map(|f| f.key.clone())
+    } else {
+        None
+    };
 
     let duration = start.elapsed().as_secs_f64();
     record_storage_operation("list", duration, None, true);
@@ -172,7 +196,7 @@ pub(crate) async fn list_files(
         page: 0,
         page_size,
         has_more,
-        continuation_token: next_token,
+        continuation_token: next_cursor,
         total_count: None,
     })
 }
@@ -307,4 +331,110 @@ pub(crate) async fn count_files(client: &Client, bucket: &str) -> Result<i64> {
     );
 
     Ok(count)
+}
+
+pub(crate) async fn copy_bucket_files(
+    s3_client: &Client,
+    source_bucket: &str,
+    destination_bucket: &str,
+) -> Result<usize> {
+    let start = Instant::now();
+    let mut copied_count = 0;
+
+    tracing::info!(
+        source_bucket = %source_bucket,
+        destination_bucket = %destination_bucket,
+        "Copying all files from source bucket to destination bucket"
+    );
+
+    // First, create the destination bucket
+    match s3_client
+        .create_bucket()
+        .bucket(destination_bucket)
+        .send()
+        .await
+    {
+        Ok(_) => {
+            tracing::debug!(
+                bucket = %destination_bucket,
+                "Successfully created destination bucket"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                bucket = %destination_bucket,
+                error = %e,
+                "Bucket may already exist or creation failed - continuing with copy"
+            );
+        }
+    }
+
+    // List all objects in source bucket
+    let mut paginator = s3_client
+        .list_objects_v2()
+        .bucket(source_bucket)
+        .into_paginator()
+        .send();
+
+    while let Some(result) = paginator.next().await {
+        let output = match result {
+            Ok(output) => output,
+            Err(e) => {
+                tracing::error!(
+                    bucket = %source_bucket,
+                    error = %e,
+                    "Failed to list objects in source bucket"
+                );
+                return Err(e.into());
+            }
+        };
+
+        for obj in output.contents() {
+            let key = obj.key().unwrap_or_default();
+            let copy_source = format!("{}/{}", source_bucket, key);
+
+            // Copy the object
+            match s3_client
+                .copy_object()
+                .copy_source(&copy_source)
+                .bucket(destination_bucket)
+                .key(key)
+                .send()
+                .await
+            {
+                Ok(_) => {
+                    copied_count += 1;
+                    tracing::debug!(
+                        key = %key,
+                        source = %source_bucket,
+                        destination = %destination_bucket,
+                        "Successfully copied file"
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(
+                        key = %key,
+                        source = %source_bucket,
+                        destination = %destination_bucket,
+                        error = %e,
+                        "Failed to copy file"
+                    );
+                    return Err(e.into());
+                }
+            }
+        }
+    }
+
+    let duration = start.elapsed().as_secs_f64();
+    record_storage_operation("copy_bucket", duration, None, true);
+
+    tracing::info!(
+        source_bucket = %source_bucket,
+        destination_bucket = %destination_bucket,
+        copied_count = copied_count,
+        duration_ms = duration * 1000.0,
+        "Successfully copied all files from source to destination bucket"
+    );
+
+    Ok(copied_count)
 }

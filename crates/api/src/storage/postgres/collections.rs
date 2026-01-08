@@ -57,9 +57,17 @@ const GET_PUBLIC_COLLECTIONS_QUERY: &str = r#"
     ORDER BY created_at DESC
 "#;
 
+const GET_RECENT_PUBLIC_COLLECTIONS_QUERY: &str = r#"
+    SELECT collection_id, title, details, owner, bucket, tags, is_public, created_at, updated_at
+    FROM collections
+    WHERE is_public = TRUE
+    ORDER BY updated_at DESC
+    LIMIT $1
+"#;
+
 const GRAB_PUBLIC_COLLECTION_QUERY: &str = r#"
     INSERT INTO collections (title, details, owner, bucket, tags, is_public)
-    SELECT title, details, $1, $2, tags, FALSE
+    SELECT title || ' - grabbed', details, $1, $2, tags, FALSE
     FROM collections
     WHERE collection_id = $3 AND is_public = TRUE
     RETURNING collection_id, title, details, owner, bucket, tags, is_public, created_at, updated_at
@@ -242,6 +250,24 @@ pub(crate) async fn get_public_collections(pool: &Pool<Postgres>) -> Result<Vec<
     Ok(result?)
 }
 
+#[tracing::instrument(name = "database.get_recent_public_collections", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", limit = %limit))]
+pub(crate) async fn get_recent_public_collections(
+    pool: &Pool<Postgres>,
+    limit: i32,
+) -> Result<Vec<Collection>> {
+    let start = Instant::now();
+    let result = sqlx::query_as::<_, Collection>(GET_RECENT_PUBLIC_COLLECTIONS_QUERY)
+        .bind(limit)
+        .fetch_all(pool)
+        .await;
+
+    let duration = start.elapsed().as_secs_f64();
+    let success = result.is_ok();
+    record_database_query("SELECT", "collections", duration, success);
+
+    Ok(result?)
+}
+
 #[tracing::instrument(name = "database.grab_public_collection", skip(pool), fields(database.system = "postgresql", database.operation = "INSERT", owner = %owner, collection_id = %collection_id))]
 pub(crate) async fn grab_public_collection(
     pool: &Pool<Postgres>,
@@ -250,12 +276,21 @@ pub(crate) async fn grab_public_collection(
 ) -> Result<Collection> {
     let start = Instant::now();
 
-    // Generate a unique bucket name for the new collection
-    let bucket = format!("{}_{}", owner, uuid::Uuid::new_v4());
+    // First, get the source collection to find its bucket
+    let source_collection = sqlx::query_as::<_, Collection>(
+        "SELECT * FROM collections WHERE collection_id = $1 AND is_public = TRUE",
+    )
+    .bind(collection_id)
+    .fetch_one(pool)
+    .await?;
 
+    // Generate a unique bucket name for the new collection
+    let new_bucket = format!("{}_{}", owner, uuid::Uuid::new_v4());
+
+    // Insert the new collection
     let result = sqlx::query_as::<_, Collection>(GRAB_PUBLIC_COLLECTION_QUERY)
         .bind(owner)
-        .bind(&bucket)
+        .bind(&new_bucket)
         .bind(collection_id)
         .fetch_one(pool)
         .await;
@@ -264,7 +299,38 @@ pub(crate) async fn grab_public_collection(
     let success = result.is_ok();
     record_database_query("INSERT", "collections", duration, success);
 
-    Ok(result?)
+    let new_collection = result?;
+
+    // Copy S3 files from source bucket to new bucket
+    let s3_client = crate::storage::rustfs::initialize_client().await?;
+    match crate::storage::rustfs::copy_bucket_files(
+        &s3_client,
+        &source_collection.bucket,
+        &new_bucket,
+    )
+    .await
+    {
+        Ok(copied_count) => {
+            tracing::info!(
+                source_bucket = %source_collection.bucket,
+                destination_bucket = %new_bucket,
+                copied_count = copied_count,
+                "Successfully copied S3 files for grabbed collection"
+            );
+        }
+        Err(e) => {
+            tracing::error!(
+                source_bucket = %source_collection.bucket,
+                destination_bucket = %new_bucket,
+                error = %e,
+                "Failed to copy S3 files for grabbed collection"
+            );
+            // Note: We don't fail the whole operation if S3 copy fails
+            // The collection record is already created
+        }
+    }
+
+    Ok(new_collection)
 }
 
 #[tracing::instrument(name = "database.update_collection", skip(pool), fields(database.system = "postgresql", database.operation = "UPDATE", collection_id = %collection_id, owner = %owner))]

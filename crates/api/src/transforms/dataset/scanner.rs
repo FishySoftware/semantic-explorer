@@ -1,6 +1,6 @@
 use actix_web::rt::{spawn, task::JoinHandle, time::interval};
 use anyhow::Result;
-use async_nats::Client as NatsClient;
+use async_nats::{Client as NatsClient, jetstream};
 use aws_sdk_s3::Client as S3Client;
 use sqlx::{Pool, Postgres};
 use std::collections::HashSet;
@@ -130,6 +130,7 @@ async fn process_dataset_transform_scan(
                 .map(|s| s.to_string()),
             config: embedder.config.clone(),
             max_batch_size: embedder.max_batch_size,
+            max_input_tokens: embedder.max_input_tokens,
         };
 
         // Use the minimum of configured batch size and embedder's max_batch_size
@@ -218,7 +219,20 @@ async fn process_dataset_transform_scan(
             };
 
             let payload = serde_json::to_vec(&job)?;
-            nats.publish("workers.dataset-transform".to_string(), payload.into())
+
+            // Use JetStream with message ID for deduplication
+            let msg_id = format!("dt-{}-{}", transform.dataset_transform_id, batch_file_key);
+            let jetstream = jetstream::new(nats.clone());
+            let mut headers = async_nats::HeaderMap::new();
+            headers.insert("Nats-Msg-Id", msg_id.as_str());
+
+            jetstream
+                .publish_with_headers(
+                    "workers.dataset-transform".to_string(),
+                    headers,
+                    payload.into(),
+                )
+                .await?
                 .await?;
             total_jobs += 1;
         }
@@ -388,7 +402,7 @@ async fn create_batches_from_dataset_items(
         // Dispatch job for this batch
         let job = DatasetTransformJob {
             job_id: Uuid::new_v4(),
-            batch_file_key: batch_key,
+            batch_file_key: batch_key.clone(),
             bucket: bucket.to_string(),
             dataset_transform_id: transform.dataset_transform_id,
             embedded_dataset_id: embedded_dataset.embedded_dataset_id,
@@ -400,7 +414,20 @@ async fn create_batches_from_dataset_items(
         };
 
         let payload = serde_json::to_vec(&job)?;
-        nats.publish("workers.dataset-transform".to_string(), payload.into())
+
+        // Use JetStream with message ID for deduplication
+        let msg_id = format!("dt-{}-{}", transform.dataset_transform_id, batch_key);
+        let jetstream = jetstream::new(nats.clone());
+        let mut headers = async_nats::HeaderMap::new();
+        headers.insert("Nats-Msg-Id", msg_id.as_str());
+
+        jetstream
+            .publish_with_headers(
+                "workers.dataset-transform".to_string(),
+                headers,
+                payload.into(),
+            )
+            .await?
             .await?;
         jobs_created += 1;
     }

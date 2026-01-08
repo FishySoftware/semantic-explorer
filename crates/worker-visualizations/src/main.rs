@@ -26,7 +26,7 @@ use semantic_explorer_core::nats::{create_visualization_consumer_config, ensure_
 use std::env;
 use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
 
 fn init_tracing() -> Result<Tracer, Box<dyn std::error::Error + Send + Sync>> {
     let exporter = SpanExporter::builder().with_tonic().build()?;
@@ -44,9 +44,33 @@ fn init_tracing() -> Result<Tracer, Box<dyn std::error::Error + Send + Sync>> {
 
     let telemetry_layer = tracing_opentelemetry::layer().with_tracer(tracer.clone());
 
+    // Use JSON format for structured logging in production, human-readable for development
+    let use_json = std::env::var("LOG_FORMAT")
+        .unwrap_or_else(|_| "json".to_string())
+        .to_lowercase()
+        == "json";
+
+    let format_layer = if use_json {
+        tracing_subscriber::fmt::layer()
+            .json()
+            .with_current_span(true)
+            .with_span_list(true)
+            .with_target(true)
+            .with_file(true)
+            .flatten_event(true)
+            .boxed()
+    } else {
+        tracing_subscriber::fmt::layer()
+            .with_ansi(true)
+            .with_target(true)
+            .with_file(true)
+            .with_line_number(true)
+            .boxed()
+    };
+
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::from_default_env())
-        .with(tracing_subscriber::fmt::layer())
+        .with(format_layer)
         .with(telemetry_layer)
         .init();
 

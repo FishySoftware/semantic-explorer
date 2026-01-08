@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Deck, OrbitView, OrthographicView, type Layer } from '@deck.gl/core';
-	import { LineLayer, ScatterplotLayer, PointCloudLayer } from '@deck.gl/layers';
+	import { LineLayer, PointCloudLayer, ScatterplotLayer } from '@deck.gl/layers';
 	import { onDestroy, onMount } from 'svelte';
 	import { formatError, toastStore } from '../utils/notifications';
 
@@ -312,23 +312,41 @@
 		error = null;
 
 		try {
-			// Load points
-			const pointsResponse = await fetch(`/api/visualizations/${transformId}/points`);
-			if (!pointsResponse.ok) {
-				throw new Error(`Failed to fetch points: ${pointsResponse.statusText}`);
-			}
-			const pointsData: ApiPointsResponse = await pointsResponse.json();
+			// Load all points with pagination
+			let allPoints: ApiVisualizationPoint[] = [];
+			let nextOffset: string | null = null;
+			let pageCount = 0;
+			
+			do {
+				pageCount++;
+				const url = nextOffset 
+					? `/api/visualizations/${transformId}/points?offset=${encodeURIComponent(nextOffset)}`
+					: `/api/visualizations/${transformId}/points`;
+				
+				const pointsResponse = await fetch(url);
+				if (!pointsResponse.ok) {
+					throw new Error(`Failed to fetch points: ${pointsResponse.statusText}`);
+				}
+				const pointsData: ApiPointsResponse = await pointsResponse.json();
+				
+				allPoints = [...allPoints, ...pointsData.points];
+				nextOffset = pointsData.next_offset;
+				
+				console.log(`Loaded page ${pageCount}: ${pointsData.points.length} points (total: ${allPoints.length})`);
+			} while (nextOffset);
+
+			console.log(`Total points loaded: ${allPoints.length} across ${pageCount} pages`);
 
 			// Check dimensionality
 			const nComponents = transform?.visualization_config.n_components || 3;
 			console.log('Transform config:', transform?.visualization_config);
 			console.log('nComponents detected:', nComponents);
-			console.log('First few points from API:', pointsData.points.slice(0, 3));
+			console.log('First few points from API:', allPoints.slice(0, 3));
 
 			// Calculate center of the point cloud from raw data
-			const rawXValues = pointsData.points.map((p) => p.x);
-			const rawYValues = pointsData.points.map((p) => p.y);
-			const rawZValues = pointsData.points.map((p) => p.z);
+			const rawXValues = allPoints.map((p) => p.x);
+			const rawYValues = allPoints.map((p) => p.y);
+			const rawZValues = allPoints.map((p) => p.z);
 
 			const centerX = (Math.min(...rawXValues) + Math.max(...rawXValues)) / 2;
 			const centerY = (Math.min(...rawYValues) + Math.max(...rawYValues)) / 2;
@@ -347,7 +365,7 @@
 				{ label: string | null; count: number; sumX: number; sumY: number; sumZ: number }
 			>();
 
-			points = pointsData.points.map((p) => {
+			points = allPoints.map((p) => {
 				const clusterId = p.cluster_id ?? -1;
 
 				// Accumulate cluster info
