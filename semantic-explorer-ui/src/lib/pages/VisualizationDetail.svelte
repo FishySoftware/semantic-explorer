@@ -191,19 +191,6 @@
 		// Add padding to the max size (10% on each side = 20% total)
 		const maxSize = Math.max(sizeX, sizeY, sizeZ) * 1.2;
 
-		console.log('Bounding box calculated:', {
-			minX,
-			maxX,
-			minY,
-			maxY,
-			minZ,
-			maxZ,
-			sizeX,
-			sizeY,
-			sizeZ,
-			maxSize,
-		});
-
 		return {
 			minX,
 			maxX,
@@ -275,7 +262,6 @@
 	// Initialize deck when container dimensions are available
 	$effect(() => {
 		if (!deck && deckCanvas && containerWidth > 0 && containerHeight > 0) {
-			console.log('Initializing Deck.GL with dimensions:', containerWidth, containerHeight);
 			initializeDeck();
 		}
 	});
@@ -285,7 +271,6 @@
 		if (deck && containerWidth > 0 && containerHeight > 0) {
 			// Respect the grid height constraint of 600px
 			const constrainedHeight = Math.min(containerHeight, 600);
-			console.log('Resizing deck to:', containerWidth, constrainedHeight);
 			deck.setProps({
 				width: containerWidth,
 				height: constrainedHeight,
@@ -314,10 +299,7 @@
 			// Load all points with pagination
 			let allPoints: ApiVisualizationPoint[] = [];
 			let nextOffset: string | null = null;
-			let pageCount = 0;
-
 			do {
-				pageCount++;
 				const url = nextOffset
 					? `/api/visualizations/${transformId}/points?offset=${encodeURIComponent(nextOffset)}`
 					: `/api/visualizations/${transformId}/points`;
@@ -330,19 +312,10 @@
 
 				allPoints = [...allPoints, ...pointsData.points];
 				nextOffset = pointsData.next_offset;
-
-				console.log(
-					`Loaded page ${pageCount}: ${pointsData.points.length} points (total: ${allPoints.length})`
-				);
 			} while (nextOffset);
-
-			console.log(`Total points loaded: ${allPoints.length} across ${pageCount} pages`);
 
 			// Check dimensionality
 			const nComponents = transform?.visualization_config.n_components || 3;
-			console.log('Transform config:', transform?.visualization_config);
-			console.log('nComponents detected:', nComponents);
-			console.log('First few points from API:', allPoints.slice(0, 3));
 
 			// Calculate center of the point cloud from raw data
 			const rawXValues = allPoints.map((p) => p.x);
@@ -352,9 +325,6 @@
 			const centerX = (Math.min(...rawXValues) + Math.max(...rawXValues)) / 2;
 			const centerY = (Math.min(...rawYValues) + Math.max(...rawYValues)) / 2;
 			const centerZ = (Math.min(...rawZValues) + Math.max(...rawZValues)) / 2;
-
-			console.log('Raw Z values range:', [Math.min(...rawZValues), Math.max(...rawZValues)]);
-			console.log('Point cloud center:', [centerX, centerY, centerZ]);
 
 			// Scale factor: UMAP outputs are in [0,1] range but tightly clustered
 			// Scale up by 10000x to make the small variations visible
@@ -425,27 +395,7 @@
 				}))
 				.sort((a, b) => b.size - a.size); // Sort by size descending
 
-			console.log(`Loaded ${points.length} points`);
-			console.log(`Generated ${topics.length} topics from cluster data`);
-			console.log('nComponents:', nComponents, '- is 3D?', nComponents === 3);
 			if (points.length > 0) {
-				console.log('Sample point:', points[0]);
-				console.log('Sample position:', points[0].position);
-				console.log('Sample position length:', (points[0].position as any).length);
-
-				// Check coordinate ranges after scaling
-				const xValues = points.map((p) => p.position[0]);
-				const yValues = points.map((p) => p.position[1]);
-				console.log('Scaled X range:', [Math.min(...xValues), Math.max(...xValues)]);
-				console.log('Scaled Y range:', [Math.min(...yValues), Math.max(...yValues)]);
-				if (nComponents === 3) {
-					const zValues = points.map((p) => (p.position as [number, number, number])[2]);
-					console.log('Scaled Z range:', [Math.min(...zValues), Math.max(...zValues)]);
-					console.log('Z values sample:', zValues.slice(0, 5));
-				} else {
-					console.log('Detected as 2D - Z values not extracted');
-				}
-
 				// Calculate bounding box
 				boundingBox = calculateBoundingBox(points, nComponents === 2);
 			}
@@ -465,7 +415,6 @@
 		}
 
 		if (deck) {
-			console.log('Deck already initialized');
 			return;
 		}
 
@@ -481,14 +430,6 @@
 
 		deckCanvas.width = width;
 		deckCanvas.height = height;
-
-		console.log('Initializing Deck.GL with canvas:', {
-			width,
-			height,
-			containerWidth,
-			containerHeight,
-		});
-		console.log('Visualization mode:', is2D ? '2D' : '3D');
 
 		// Calculate initial view state based on bounding box
 		let initialViewState: any;
@@ -518,8 +459,6 @@
 					maxZoom: 10,
 				};
 			}
-
-			console.log('Initial view state from bounding box:', initialViewState);
 		} else {
 			// Fallback if bounding box not available
 			initialViewState = is2D
@@ -579,13 +518,6 @@
 				}
 			},
 		} as any);
-
-		console.log(
-			'Deck.GL initialized successfully with size:',
-			containerWidth,
-			'x',
-			containerHeight
-		);
 	}
 
 	// Update deck layers when points, topics, or selectedClusters changes
@@ -598,7 +530,6 @@
 		const mode2D = is2D;
 
 		if (!deck) {
-			console.log('Deck not initialized yet');
 			return;
 		}
 
@@ -614,10 +545,6 @@
 			// Show if topic is visible
 			return visibleClusters.has(p.cluster_id);
 		});
-
-		console.log(
-			`Updating deck with ${filteredPoints.length}/${currentPoints.length} visible points, ${currentTopics.filter((t) => t.visible).length}/${currentTopics.length} visible topics`
-		);
 
 		const layers: Layer[] = mode2D
 			? [
