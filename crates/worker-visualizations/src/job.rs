@@ -113,18 +113,27 @@ pub async fn process_visualization_job(
         job.visualization_config.n_components as usize,
     );
 
+    // Get min_samples from config, defaulting to min_cluster_size if not specified
+    let min_samples = job
+        .visualization_config
+        .min_samples
+        .unwrap_or(job.visualization_config.min_cluster_size) as usize;
+
+    // Cluster selection method: 0 = EOM (Excess of Mass), 1 = LEAF (more fine-grained clusters)
+    // LEAF tends to produce more, smaller clusters by selecting leaves of the condensed tree
+    let cluster_selection_method = 1_i32; // LEAF
+
     info!(
-        "Running HDBSCAN with min_cluster_size={}, n_samples={}, n_components={}",
-        job.visualization_config.min_cluster_size, n_samples, job.visualization_config.n_components
+        "Running HDBSCAN with min_cluster_size={}, min_samples={}, cluster_selection_method={}, n_samples={}, n_components={}",
+        job.visualization_config.min_cluster_size, min_samples, cluster_selection_method, n_samples, job.visualization_config.n_components
     );
 
-    // TODO: Add support for min_samples parameter in cuml-wrapper-rs
-    // Currently, cuml-wrapper-rs identify_topic_clusters doesn't accept min_samples
-    // This may be causing the "always 2 clusters" issue
     let (hdbscan, topic_vectors) = identify_topic_clusters(
         &normalized_embeddings,
         job.visualization_config.n_components as usize,
         job.visualization_config.min_cluster_size as usize,
+        min_samples,
+        cluster_selection_method,
         "euclidean",
         &document_vectors,
         n_features,
