@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import './app.css';
+	import { initializeTheme } from './lib/utils/theme';
 	import Sidebar from './lib/Sidebar.svelte';
 	import TopBanner from './lib/TopBanner.svelte';
 	import ToastHost from './lib/components/ToastHost.svelte';
@@ -21,7 +22,7 @@
 	import VisualizationTransforms from './lib/pages/VisualizationTransforms.svelte';
 	import Visualizations from './lib/pages/Visualizations.svelte';
 
-	let activeUrl = $state('/dashboard');
+	let activeUrl = $state('/datasets');
 	let selectedCollectionId = $state<number | null>(null);
 	let selectedDatasetId = $state<number | null>(null);
 	let selectedVisualizationId = $state<number | null>(null);
@@ -33,7 +34,7 @@
 			.split('/')
 			.filter((p) => p);
 
-		if (parts.length === 0) return { path: '/dashboard', params: {} };
+		if (parts.length === 0) return { path: '/datasets', params: {} };
 
 		if (parts.length === 3 && parts[0] === 'collections' && parts[2] === 'details') {
 			return { path: '/collections/detail', params: { id: parts[1] } };
@@ -73,6 +74,7 @@
 	}
 
 	onMount(() => {
+		initializeTheme();
 		handleHashChange();
 		window.addEventListener('hashchange', handleHashChange);
 		return () => {
@@ -127,7 +129,7 @@
 	<div class="flex flex-1 overflow-hidden">
 		<Sidebar bind:activeUrl />
 
-		<main class="flex-1 overflow-y-auto {activeUrl === '/chat' ? 'p-0' : 'p-8'}">
+		<main class="flex-1 overflow-y-auto {activeUrl === '/chat' ? 'p-0' : 'p-6'}">
 			{#if activeUrl === '/dashboard'}
 				<Dashboard />
 			{:else if activeUrl === '/chat'}
@@ -135,13 +137,13 @@
 			{:else if activeUrl === '/documentation'}
 				<Documentation />
 			{:else if activeUrl === '/collections'}
-				<Collections onViewCollection={viewCollection} onNavigate={navigate} />
+				<Collections onViewCollection={viewCollection} />
 			{:else if activeUrl === '/collections/detail'}
 				{#if selectedCollectionId !== null}
 					<CollectionDetail collectionId={selectedCollectionId} onBack={backToCollections} />
 				{/if}
 			{:else if activeUrl === '/datasets'}
-				<Datasets onViewDataset={viewDataset} onNavigate={navigate} />
+				<Datasets onViewDataset={viewDataset} />
 			{:else if activeUrl === '/datasets/detail'}
 				{#if selectedDatasetId !== null}
 					<DatasetDetail datasetId={selectedDatasetId} onBack={backToDatasets} />

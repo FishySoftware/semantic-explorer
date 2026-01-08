@@ -2,6 +2,8 @@
 	import { onMount } from 'svelte';
 	import ApiExamples from '../ApiExamples.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
+	import TabPanel from '../components/TabPanel.svelte';
+	import TransformsList from '../components/TransformsList.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
 
 	interface Dataset {
@@ -88,6 +90,19 @@
 	let currentPage = $state(0);
 	let pageSize = $state(10);
 	let expandedItemId = $state<number | null>(null);
+
+	// Chunk pagination state
+	let chunkPageSize = $state(5);
+	let chunkCurrentPages = $state<Record<number, number>>({});
+
+	// Tab state
+	let activeTab = $state('overview');
+
+	const tabs = [
+		{ id: 'overview', label: 'Overview', icon: '📋' },
+		{ id: 'transforms', label: 'Transforms', icon: '🔄' },
+		{ id: 'embeddings', label: 'Embeddings', icon: '🧬' },
+	];
 
 	// Search state
 	let searchQuery = $state('');
@@ -248,6 +263,41 @@
 
 	function toggleItem(itemId: number) {
 		expandedItemId = expandedItemId === itemId ? null : itemId;
+		// Reset chunk pagination when toggling items
+		if (expandedItemId !== itemId) {
+			delete chunkCurrentPages[itemId];
+		}
+	}
+
+	function getChunkPage(itemId: number): number {
+		return chunkCurrentPages[itemId] ?? 0;
+	}
+
+	function goToChunkPage(itemId: number, page: number) {
+		chunkCurrentPages[itemId] = page;
+	}
+
+	function getPaginatedChunks(itemId: number, chunks: Array<{ content: string; metadata: Record<string, any> }>) {
+		const currentChunkPage = getChunkPage(itemId);
+		const startIdx = currentChunkPage * chunkPageSize;
+		const endIdx = startIdx + chunkPageSize;
+		return chunks.slice(startIdx, endIdx);
+	}
+
+	function getChunkPageInfo(itemId: number, totalChunks: number) {
+		const currentChunkPage = getChunkPage(itemId);
+		const totalPages = Math.ceil(totalChunks / chunkPageSize);
+		const startIdx = currentChunkPage * chunkPageSize;
+		const endIdx = Math.min(startIdx + chunkPageSize, totalChunks);
+		return {
+			currentPage: currentChunkPage,
+			totalPages,
+			startIdx: startIdx + 1,
+			endIdx,
+			totalChunks,
+			hasMore: currentChunkPage + 1 < totalPages,
+			hasPrevious: currentChunkPage > 0,
+		};
 	}
 
 	// Filtered items based on search
@@ -307,11 +357,8 @@
 </script>
 
 <div class="max-w-7xl mx-auto">
-	<div class="mb-6">
-		<button
-			onclick={onBack}
-			class="mb-4 px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors inline-flex items-center gap-2"
-		>
+	<div class="mb-4">
+		<button onclick={onBack} class="mb-4 btn-secondary inline-flex items-center gap-2">
 			<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path
 					stroke-linecap="round"
@@ -340,7 +387,7 @@
 				</button>
 			</div>
 		{:else if dataset}
-			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
+			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-4">
 				<div class="flex items-baseline gap-3 mb-2">
 					<h1 class="text-3xl font-bold text-gray-900 dark:text-white">
 						{dataset.title}
@@ -355,20 +402,6 @@
 					</p>
 				{/if}
 				<div class="flex items-center gap-2 flex-wrap">
-					<span
-						class="inline-flex items-center gap-1.5 px-3 py-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full text-sm"
-					>
-						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width="2"
-								d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-							></path>
-						</svg>
-						{dataset.owner}
-					</span>
-
 					{#each dataset.tags as tag (tag)}
 						<span
 							class="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs font-medium"
@@ -399,443 +432,461 @@
 				</div>
 			</div>
 
-			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
-				<div class="flex items-center justify-between mb-4">
-					<h2 class="text-2xl font-bold text-gray-900 dark:text-white">Related Transforms</h2>
-				</div>
-
-				<p class="text-gray-600 dark:text-gray-400 mb-6">
-					Transforms and embeddings related to this dataset.
-				</p>
-
-				{#if transformsLoading}
-					<div class="flex items-center justify-center py-8">
-						<div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-					</div>
-				{:else if collectionTransforms.length === 0 && datasetTransforms.length === 0 && embeddedDatasets.length === 0}
-					<div
-						class="text-center py-8 bg-gray-50 dark:bg-gray-900/30 rounded-lg border border-dashed border-gray-300 dark:border-gray-700"
-					>
-						<p class="text-gray-500 dark:text-gray-400 mb-2">
-							No transforms reference this dataset yet.
-						</p>
-						<p class="text-sm text-gray-400 dark:text-gray-500">
-							Create transforms to process collections into this dataset or embed items from this
-							dataset.
-						</p>
-					</div>
-				{:else}
-					<div class="space-y-6">
-						<!-- Collection Transforms: Collection → This Dataset -->
-						{#if collectionTransforms.length > 0}
-							<div>
-								<h3
-									class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2"
-								>
-									<span
-										class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 text-xs font-bold"
-									>
-										{collectionTransforms.length}
-									</span>
-									Collection Transforms (Collection → Dataset)
-								</h3>
-								<div class="space-y-2">
-									{#each collectionTransforms as transform (transform.collection_transform_id)}
-										<div
-											class="rounded-lg border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 p-3"
-										>
-											<div
-												class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"
+			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-4">
+				<TabPanel {tabs} activeTabId={activeTab} onChange={(tabId: string) => (activeTab = tabId)}>
+					{#snippet children(tabId)}
+						{#if tabId === 'overview'}
+							<div id="overview-panel" role="tabpanel" class="animate-fadeIn">
+								<div class="p-4 border-b border-gray-200 dark:border-gray-700">
+									<div class="flex justify-between items-center">
+										<h2 class="text-2xl font-bold text-gray-900 dark:text-white">Dataset Items</h2>
+										<label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+											<span>Per page:</span>
+											<select
+												bind:value={pageSize}
+												onchange={() => changePageSize(pageSize)}
+												class="pl-3 pr-8 py-1 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white"
 											>
-												<div>
-													<button
-														onclick={() => {
-															if (typeof window !== 'undefined') {
-																window.location.hash = '/collection-transforms';
-															}
-														}}
-														class="text-sm font-semibold text-green-700 dark:text-green-300 hover:underline text-left"
-														type="button"
-													>
-														{transform.title}
-													</button>
-													<p class="text-xs text-gray-600 dark:text-gray-400">
-														Chunk size: {transform.chunk_size}
-														{#if transform.is_enabled}
-															<span class="ml-2 text-green-600 dark:text-green-400">● Enabled</span>
-														{:else}
-															<span class="ml-2 text-gray-500 dark:text-gray-500">● Disabled</span>
-														{/if}
-													</p>
-												</div>
-												<div class="text-xs text-gray-500 dark:text-gray-400">
-													Updated {formatTimestamp(transform.updated_at)}
-												</div>
-											</div>
-										</div>
-									{/each}
+												<option value={10}>10</option>
+												<option value={25}>25</option>
+												<option value={50}>50</option>
+												<option value={100}>100</option>
+											</select>
+										</label>
+									</div>
 								</div>
-							</div>
-						{/if}
 
-						<!-- Dataset Transforms: This Dataset → Embedded Datasets -->
-						{#if datasetTransforms.length > 0}
-							<div>
-								<h3
-									class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2"
-								>
-									<span
-										class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 text-xs font-bold"
-									>
-										{datasetTransforms.length}
-									</span>
-									Dataset Transforms (Dataset → Embedded Datasets)
-								</h3>
-								<div class="space-y-2">
-									{#each datasetTransforms as transform (transform.dataset_transform_id)}
-										<div
-											class="rounded-lg border border-purple-200 dark:border-purple-800 bg-purple-50 dark:bg-purple-900/20 p-3"
-										>
-											<div
-												class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"
+								{#if paginatedItems && paginatedItems.items.length > 0}
+									<div class="px-6 pt-4 pb-4">
+										<div class="relative">
+											<input
+												type="text"
+												bind:value={searchQuery}
+												placeholder="Search items by title, chunks, or metadata..."
+												class="w-full px-4 py-2 pl-10 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+											/>
+											<svg
+												class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400"
+												fill="none"
+												stroke="currentColor"
+												viewBox="0 0 24 24"
 											>
-												<div>
-													<button
-														onclick={() => {
-															if (typeof window !== 'undefined') {
-																window.location.hash = '/dataset-transforms';
-															}
-														}}
-														class="text-sm font-semibold text-purple-700 dark:text-purple-300 hover:underline text-left"
-														type="button"
-													>
-														{transform.title}
-													</button>
-													<p class="text-xs text-gray-600 dark:text-gray-400">
-														{transform.embedder_ids.length} embedder{transform.embedder_ids
-															.length !== 1
-															? 's'
-															: ''} configured
-														{#if transform.is_enabled}
-															<span class="ml-2 text-purple-600 dark:text-purple-400"
-																>● Enabled</span
-															>
-														{:else}
-															<span class="ml-2 text-gray-500 dark:text-gray-500">● Disabled</span>
-														{/if}
-													</p>
-												</div>
-												<div class="text-xs text-gray-500 dark:text-gray-400">
-													Updated {formatTimestamp(transform.updated_at)}
-												</div>
-											</div>
+												<path
+													stroke-linecap="round"
+													stroke-linejoin="round"
+													stroke-width="2"
+													d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+												/>
+											</svg>
 										</div>
-									{/each}
-								</div>
-							</div>
-						{/if}
+									</div>
+								{/if}
 
-						<!-- Embedded Datasets: Results from Dataset Transforms -->
-						{#if embeddedDatasets.length > 0}
-							<div>
-								<h3
-									class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2"
-								>
-									<span
-										class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-xs font-bold"
-									>
-										{embeddedDatasets.length}
-									</span>
-									Embedded Datasets (Vector Embeddings)
-								</h3>
-								<div class="space-y-2">
-									{#each embeddedDatasets as embedded (embedded.embedded_dataset_id)}
+								{#if itemsLoading}
+									<div class="flex items-center justify-center py-12">
 										<div
-											class="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-3"
+											class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"
+										></div>
+									</div>
+								{:else if itemsError}
+									<div class="p-4">
+										<div
+											class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4"
 										>
-											<div
-												class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"
+											<p class="text-red-700 dark:text-red-400">{itemsError}</p>
+											<button
+												onclick={fetchItems}
+												class="mt-2 text-sm text-red-600 dark:text-red-400 hover:underline"
 											>
-												<div>
-													<button
-														onclick={() => {
-															if (typeof window !== 'undefined') {
-																window.location.hash = '/embedded-datasets';
-															}
-														}}
-														class="text-sm font-semibold text-blue-700 dark:text-blue-300 hover:underline text-left"
-														type="button"
-													>
-														{embedded.title}
-													</button>
-													<p class="text-xs text-gray-600 dark:text-gray-400">
-														Collection: {embedded.collection_name}
-													</p>
-												</div>
-												<div class="text-xs text-gray-500 dark:text-gray-400">
-													Updated {formatTimestamp(embedded.updated_at)}
-												</div>
-											</div>
+												Try again
+											</button>
 										</div>
-									{/each}
-								</div>
-							</div>
-						{/if}
-					</div>
-				{/if}
-			</div>
-
-			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md mb-6">
-				<div class="p-4 border-b border-gray-200 dark:border-gray-700">
-					<div class="flex justify-between items-center">
-						<h2 class="text-2xl font-bold text-gray-900 dark:text-white">Dataset Items</h2>
-						<label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-							<span>Per page:</span>
-							<select
-								bind:value={pageSize}
-								onchange={() => changePageSize(pageSize)}
-								class="pl-3 pr-8 py-1 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white"
-							>
-								<option value={10}>10</option>
-								<option value={25}>25</option>
-								<option value={50}>50</option>
-								<option value={100}>100</option>
-							</select>
-						</label>
-					</div>
-				</div>
-
-				{#if paginatedItems && paginatedItems.items.length > 0}
-					<div class="px-6 pt-4 pb-4">
-						<div class="relative">
-							<input
-								type="text"
-								bind:value={searchQuery}
-								placeholder="Search items by title, chunks, or metadata..."
-								class="w-full px-4 py-2 pl-10 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
-							/>
-							<svg
-								class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400"
-								fill="none"
-								stroke="currentColor"
-								viewBox="0 0 24 24"
-							>
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width="2"
-									d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-								/>
-							</svg>
-						</div>
-					</div>
-				{/if}
-
-				{#if itemsLoading}
-					<div class="flex items-center justify-center py-12">
-						<div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-					</div>
-				{:else if itemsError}
-					<div class="p-6">
-						<div
-							class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4"
-						>
-							<p class="text-red-700 dark:text-red-400">{itemsError}</p>
-							<button
-								onclick={fetchItems}
-								class="mt-2 text-sm text-red-600 dark:text-red-400 hover:underline"
-							>
-								Try again
-							</button>
-						</div>
-					</div>
-				{:else if paginatedItems && paginatedItems.items.length === 0}
-					<div class="p-12 text-center">
-						<svg
-							class="w-16 h-16 mx-auto mb-4 text-gray-400"
-							fill="none"
-							stroke="currentColor"
-							viewBox="0 0 24 24"
-						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width="2"
-								d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-							></path>
-						</svg>
-						<p class="text-gray-500 dark:text-gray-400 mb-2">No items yet</p>
-						<p class="text-sm text-gray-400 dark:text-gray-500">
-							Upload data via the API below to populate this dataset
-						</p>
-					</div>
-				{:else if paginatedItems && filteredItems.length === 0}
-					<div class="p-12 text-center">
-						<p class="text-gray-500 dark:text-gray-400 mb-4">No items match your search</p>
-						<button
-							onclick={() => (searchQuery = '')}
-							class="text-blue-600 dark:text-blue-400 hover:underline"
-						>
-							Clear search
-						</button>
-					</div>
-				{:else if paginatedItems}
-					<div class="overflow-x-auto">
-						<table class="w-full">
-							<thead
-								class="bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700"
-							>
-								<tr>
-									<th
-										class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider"
-									>
-										ID
-									</th>
-									<th
-										class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider"
-									>
-										Title
-									</th>
-									<th
-										class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider"
-									>
-										Chunks
-									</th>
-									<th
-										class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider"
-									>
-										Actions
-									</th>
-								</tr>
-							</thead>
-							<tbody
-								class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700"
-							>
-								{#each filteredItems as item (item.item_id)}
-									<tr class="hover:bg-gray-50 dark:hover:bg-gray-750">
-										<td
-											class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400"
+									</div>
+								{:else if paginatedItems && paginatedItems.items.length === 0}
+									<div class="p-12 text-center">
+										<svg
+											class="w-16 h-16 mx-auto mb-4 text-gray-400"
+											fill="none"
+											stroke="currentColor"
+											viewBox="0 0 24 24"
 										>
-											#{item.item_id}
-										</td>
-										<td class="px-6 py-4 text-sm text-gray-900 dark:text-white">
-											<div class="max-w-md truncate">
-												{item.title}
-											</div>
-										</td>
-										<td
-											class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400"
+											<path
+												stroke-linecap="round"
+												stroke-linejoin="round"
+												stroke-width="2"
+												d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+											></path>
+										</svg>
+										<p class="text-gray-500 dark:text-gray-400 mb-2">No items yet</p>
+										<p class="text-sm text-gray-400 dark:text-gray-500">
+											Upload data via the API below to populate this dataset
+										</p>
+									</div>
+								{:else if paginatedItems && filteredItems.length === 0}
+									<div class="p-12 text-center">
+										<p class="text-gray-500 dark:text-gray-400 mb-4">No items match your search</p>
+										<button
+											onclick={() => (searchQuery = '')}
+											class="text-blue-600 dark:text-blue-400 hover:underline"
 										>
-											{item.chunks.length} chunk{item.chunks.length !== 1 ? 's' : ''}
-										</td>
-										<td class="px-6 py-4 whitespace-nowrap text-sm">
-											<div class="flex items-center gap-2">
-												<button
-													onclick={() => toggleItem(item.item_id)}
-													class="text-blue-600 dark:text-blue-400 hover:underline"
-												>
-													{expandedItemId === item.item_id ? 'Hide' : 'View'} Details
-												</button>
-												<button
-													onclick={() => requestDeleteItem(item)}
-													disabled={deletingItem === item.item_id}
-													class="text-red-600 dark:text-red-400 hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
-													title="Delete item"
-												>
-													{#if deletingItem === item.item_id}
-														Deleting...
-													{:else}
-														Delete
-													{/if}
-												</button>
-											</div>
-										</td>
-									</tr>
-									{#if expandedItemId === item.item_id}
-										<tr>
-											<td colspan="4" class="px-6 py-4 bg-gray-50 dark:bg-gray-900">
-												<div class="space-y-4">
-													<div>
-														<h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-															Chunks ({item.chunks.length})
-														</h4>
-														<div class="space-y-2">
-															{#each item.chunks as chunk, idx (idx)}
-																<div
-																	class="bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700"
+											Clear search
+										</button>
+									</div>
+								{:else if paginatedItems}
+									<div class="overflow-x-auto">
+										<table class="w-full">
+											<thead
+												class="bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700"
+											>
+												<tr>
+													<th
+														class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider"
+													>
+														ID
+													</th>
+													<th
+														class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider"
+													>
+														Title
+													</th>
+													<th
+														class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider"
+													>
+														Chunks
+													</th>
+													<th
+														class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider"
+													>
+														Actions
+													</th>
+												</tr>
+											</thead>
+											<tbody
+												class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700"
+											>
+												{#each filteredItems as item (item.item_id)}
+													<tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
+														<td
+															class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400"
+														>
+															#{item.item_id}
+														</td>
+														<td class="px-6 py-4 text-sm text-gray-900 dark:text-white">
+															<div class="max-w-md truncate">
+																{item.title}
+															</div>
+														</td>
+														<td
+															class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400"
+														>
+															{item.chunks.length} chunk{item.chunks.length !== 1 ? 's' : ''}
+														</td>
+														<td class="px-6 py-4 whitespace-nowrap text-sm">
+															<div class="flex items-center gap-2">
+																<button
+																	onclick={() => toggleItem(item.item_id)}
+																	class="text-blue-600 dark:text-blue-400 hover:underline"
 																>
-																	<div class="text-xs text-gray-500 dark:text-gray-400 mb-1">
-																		Chunk {idx + 1}
+																	{expandedItemId === item.item_id ? 'Hide' : 'View'} Details
+																</button>
+																<button
+																	onclick={() => requestDeleteItem(item)}
+																	disabled={deletingItem === item.item_id}
+																	class="text-red-600 dark:text-red-400 hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
+																	title="Delete item"
+																>
+																	{#if deletingItem === item.item_id}
+																		Deleting...
+																	{:else}
+																		Delete
+																	{/if}
+																</button>
+															</div>
+														</td>
+													</tr>
+													{#if expandedItemId === item.item_id}
+														<tr>
+															<td colspan="4" class="px-6 py-4 bg-gray-50 dark:bg-gray-900">
+																<div class="space-y-4">
+																	<div>
+																		<div class="flex items-center justify-between mb-2">
+																			<h4
+																				class="text-sm font-semibold text-gray-700 dark:text-gray-300"
+																			>
+																				Chunks ({item.chunks.length})
+																			</h4>
+																			<label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+																				<span>Per page:</span>
+																				<select
+																					bind:value={chunkPageSize}
+																					onchange={() => {}}
+																					class="pl-2 pr-6 py-1 border border-gray-300 dark:border-gray-600 rounded text-xs dark:bg-gray-700 dark:text-white"
+																				>
+																					<option value={5}>5</option>
+																					<option value={10}>10</option>
+																					<option value={20}>20</option>
+																				</select>
+																			</label>
+																		</div>
+
+																		{#if item.chunks.length > 0}
+																			<div class="space-y-2 mb-3">
+																				{#each getPaginatedChunks(item.item_id, item.chunks) as chunk, idx (idx)}
+																					{@const chunkPageInfo = getChunkPageInfo(item.item_id, item.chunks.length)}
+																					{@const actualChunkNumber = chunkPageInfo.startIdx + idx}
+																					<div
+																						class="bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700"
+																					>
+																						<div
+																							class="text-xs text-gray-500 dark:text-gray-400 mb-1"
+																						>
+																							Chunk {actualChunkNumber}
+																						</div>
+																						<p
+																							class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap"
+																						>
+																							{chunk.content}
+																						</p>
+																					</div>
+																				{/each}
+																			</div>
+
+																			{#if item.chunks.length > chunkPageSize}
+																				{@const chunkPageInfo = getChunkPageInfo(item.item_id, item.chunks.length)}
+																				<div class="flex items-center justify-between border-t border-gray-200 dark:border-gray-700 pt-3">
+																					<div class="text-xs text-gray-600 dark:text-gray-400">
+																						Showing {chunkPageInfo.startIdx} to {chunkPageInfo.endIdx} of {chunkPageInfo.totalChunks}
+																					</div>
+																					<div class="flex gap-2">
+																						<button
+																							onclick={() => goToChunkPage(item.item_id, getChunkPage(item.item_id) - 1)}
+																							disabled={!chunkPageInfo.hasPrevious}
+																							class="px-2 py-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+																						>
+																							Previous
+																						</button>
+																						<span class="px-2 py-1 text-xs text-gray-600 dark:text-gray-400">
+																							Page {chunkPageInfo.currentPage + 1} of {chunkPageInfo.totalPages}
+																						</span>
+																						<button
+																							onclick={() => goToChunkPage(item.item_id, getChunkPage(item.item_id) + 1)}
+																							disabled={!chunkPageInfo.hasMore}
+																							class="px-2 py-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+																						>
+																							Next
+																						</button>
+																					</div>
+																				</div>
+																			{/if}
+																		{/if}
 																	</div>
-																	<p
-																		class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap"
-																	>
-																		{chunk.content}
-																	</p>
+																	{#if item.metadata && Object.keys(item.metadata).length > 0}
+																		<div>
+																			<h4
+																				class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2"
+																			>
+																				Metadata
+																			</h4>
+																			<pre
+																				class="bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700 text-xs overflow-x-auto"><code
+																					class="text-gray-900 dark:text-gray-300"
+																					>{JSON.stringify(item.metadata, null, 2)}</code
+																				></pre>
+																		</div>
+																	{/if}
 																</div>
-															{/each}
+															</td>
+														</tr>
+													{/if}
+												{/each}
+											</tbody>
+										</table>
+									</div>
+
+									{#if paginatedItems.total_count > 0}
+										<div
+											class="px-6 py-4 bg-gray-50 dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between"
+										>
+											<div class="text-sm text-gray-700 dark:text-gray-300">
+												Showing {currentPage * pageSize + 1} to {Math.min(
+													(currentPage + 1) * pageSize,
+													paginatedItems.total_count
+												)} of {paginatedItems.total_count} items
+											</div>
+											<div class="flex gap-2">
+												<button
+													onclick={() => goToPage(currentPage - 1)}
+													disabled={currentPage === 0}
+													class="px-3 py-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+												>
+													Previous
+												</button>
+												<button
+													onclick={() => goToPage(currentPage + 1)}
+													disabled={!paginatedItems.has_more}
+													class="px-3 py-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+												>
+													Next
+												</button>
+											</div>
+										</div>
+									{/if}
+								{/if}
+							</div>
+						{:else if tabId === 'transforms'}
+							<div id="transforms-panel" role="tabpanel" class="animate-fadeIn">
+								<div>
+									{#if transformsLoading}
+										<div class="flex items-center justify-center py-8">
+											<div
+												class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"
+											></div>
+										</div>
+									{:else if collectionTransforms.length === 0 && datasetTransforms.length === 0}
+										<div
+											class="text-center py-8 bg-gray-50 dark:bg-gray-900/30 rounded-lg border border-dashed border-gray-300 dark:border-gray-700"
+										>
+											<p class="text-gray-500 dark:text-gray-400 mb-2">
+												No transforms reference this dataset yet.
+											</p>
+											<p class="text-sm text-gray-400 dark:text-gray-500">
+												Create transforms to process collections into this dataset or embed items
+												from this dataset.
+											</p>
+										</div>
+									{:else}
+										<div class="space-y-6">
+											<!-- Collection Transforms: Collection → This Dataset -->
+											{#if collectionTransforms.length > 0}
+												<div>
+													<h3
+														class="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3 flex items-center gap-2"
+													>
+														<span
+															class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 text-xs font-bold"
+														>
+															{collectionTransforms.length}
+														</span>
+														Collection Transforms (Collection → Dataset)
+													</h3>
+													<p class="text-sm text-gray-600 dark:text-gray-400 mb-3">
+														Transforms that process collections and output to this dataset
+													</p>
+													<TransformsList
+														transforms={collectionTransforms}
+														type="collection"
+														loading={transformsLoading}
+													/>
+												</div>
+											{/if}
+
+											<!-- Dataset Transforms: This Dataset → Embedded Datasets -->
+											{#if datasetTransforms.length > 0}
+												<div>
+													<h3
+														class="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3 flex items-center gap-2"
+													>
+														<span
+															class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 text-xs font-bold"
+														>
+															{datasetTransforms.length}
+														</span>
+														Dataset Transforms (Dataset → Embedded Datasets)
+													</h3>
+													<p class="text-sm text-gray-600 dark:text-gray-400 mb-3">
+														Transforms that embed items from this dataset
+													</p>
+													<TransformsList
+														transforms={datasetTransforms}
+														type="dataset"
+														loading={transformsLoading}
+													/>
+												</div>
+											{/if}
+										</div>
+									{/if}
+								</div>
+							</div>
+						{:else if tabId === 'embeddings'}
+							<div id="embeddings-panel" role="tabpanel" class="animate-fadeIn">
+								<div>
+									{#if transformsLoading}
+										<div class="flex items-center justify-center py-8">
+											<div
+												class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"
+											></div>
+										</div>
+									{:else if embeddedDatasets.length === 0}
+										<div
+											class="text-center py-8 bg-gray-50 dark:bg-gray-900/30 rounded-lg border border-dashed border-gray-300 dark:border-gray-700"
+										>
+											<p class="text-gray-500 dark:text-gray-400 mb-2">No embedded datasets yet.</p>
+											<p class="text-sm text-gray-400 dark:text-gray-500">
+												Create dataset transforms to embed items from this dataset.
+											</p>
+										</div>
+									{:else}
+										<div>
+											<h3
+												class="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3 flex items-center gap-2"
+											>
+												<span
+													class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-xs font-bold"
+												>
+													{embeddedDatasets.length}
+												</span>
+												Embedded Datasets (Vector Embeddings)
+											</h3>
+											<p class="text-sm text-gray-600 dark:text-gray-400 mb-3">
+												Vector embeddings created from this dataset
+											</p>
+											<div class="space-y-2">
+												{#each embeddedDatasets as embedded (embedded.embedded_dataset_id)}
+													<div
+														class="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-3 hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors"
+													>
+														<div
+															class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"
+														>
+															<div>
+																<button
+																	onclick={() => {
+																		if (typeof window !== 'undefined') {
+																			window.location.hash = '/embedded-datasets';
+																		}
+																	}}
+																	class="text-sm font-semibold text-blue-700 dark:text-blue-300 hover:underline text-left"
+																	type="button"
+																>
+																	{embedded.title}
+																</button>
+																<p class="text-xs text-gray-600 dark:text-gray-400">
+																	Collection: {embedded.collection_name}
+																</p>
+															</div>
+															<div class="text-xs text-gray-500 dark:text-gray-400">
+																Updated {formatTimestamp(embedded.updated_at)}
+															</div>
 														</div>
 													</div>
-													{#if item.metadata && Object.keys(item.metadata).length > 0}
-														<div>
-															<h4
-																class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2"
-															>
-																Metadata
-															</h4>
-															<pre
-																class="bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700 text-xs overflow-x-auto"><code
-																	>{JSON.stringify(item.metadata, null, 2)}</code
-																></pre>
-														</div>
-													{/if}
-												</div>
-											</td>
-										</tr>
+												{/each}
+											</div>
+										</div>
 									{/if}
-								{/each}
-							</tbody>
-						</table>
-					</div>
-
-					{#if paginatedItems.total_count > 0}
-						<div
-							class="px-6 py-4 bg-gray-50 dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between"
-						>
-							<div class="text-sm text-gray-700 dark:text-gray-300">
-								Showing {currentPage * pageSize + 1} to {Math.min(
-									(currentPage + 1) * pageSize,
-									paginatedItems.total_count
-								)} of {paginatedItems.total_count} items
+								</div>
 							</div>
-							<div class="flex gap-2">
-								<button
-									onclick={() => goToPage(currentPage - 1)}
-									disabled={currentPage === 0}
-									class="px-3 py-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
-								>
-									Previous
-								</button>
-								<button
-									onclick={() => goToPage(currentPage + 1)}
-									disabled={!paginatedItems.has_more}
-									class="px-3 py-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
-								>
-									Next
-								</button>
-							</div>
-						</div>
-					{/if}
-				{/if}
+						{/if}
+					{/snippet}
+				</TabPanel>
 			</div>
 
-			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
 				<h2 class="text-2xl font-bold text-gray-900 dark:text-white mb-4">API Integration</h2>
-				<p class="text-sm text-gray-600 dark:text-gray-400 mb-6">
+				<p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
 					Use these examples to upload data to this dataset programmatically.
 				</p>
 
-				<div class="mb-6">
+				<div class="mb-4">
 					<h3 class="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-2">
 						Upload dataset items
 					</h3>

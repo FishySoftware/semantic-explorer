@@ -218,7 +218,7 @@
 		</div>
 	{:else}
 		<!-- Search Query Section at Top -->
-		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-4">
 			<h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-4">Search Query</h2>
 
 			<!-- Query Input -->
@@ -238,17 +238,17 @@
 				<div class="flex gap-2">
 					<button
 						onclick={() => (searchMode = 'documents')}
-						class="px-4 py-2 rounded-lg transition-colors {searchMode === 'documents'
-							? 'bg-blue-600 text-white'
-							: 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'}"
+						class={searchMode === 'documents'
+							? 'btn-primary'
+							: 'btn-secondary hover:bg-gray-300 dark:hover:bg-gray-600'}
 					>
 						📄 Documents
 					</button>
 					<button
 						onclick={() => (searchMode = 'chunks')}
-						class="px-4 py-2 rounded-lg transition-colors {searchMode === 'chunks'
-							? 'bg-blue-600 text-white'
-							: 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'}"
+						class={searchMode === 'chunks'
+							? 'btn-primary'
+							: 'btn-secondary hover:bg-gray-300 dark:hover:bg-gray-600'}
 					>
 						📁 Chunks
 					</button>
@@ -427,7 +427,7 @@
 			<button
 				onclick={performSearch}
 				disabled={!canSearch || searching}
-				class="w-full px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
+				class="w-full btn-primary disabled:opacity-50 disabled:cursor-not-allowed font-medium"
 			>
 				{searching ? 'Searching...' : 'Search'}
 			</button>
@@ -450,9 +450,9 @@
 				<!-- Results display: side-by-side columns per embedded dataset -->
 				{#if searchResults.search_mode === 'documents'}
 					<div class="overflow-x-auto pb-4">
-						<div class="flex justify-center gap-6 min-w-max">
+						<div class="flex justify-center gap-4 min-w-max">
 							{#each searchResults.results as result (result.embedded_dataset_id)}
-								<div class="w-96 shrink-0 bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+								<div class="w-96 shrink-0 bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
 									<div class="flex items-start justify-between mb-4">
 										<div>
 											<h3 class="text-lg font-semibold text-gray-900 dark:text-white">
@@ -526,9 +526,9 @@
 				{:else}
 					<!-- Chunks Mode: Show side-by-side embedded dataset results -->
 					<div class="overflow-x-auto pb-4">
-						<div class="flex justify-center gap-6 min-w-max">
+						<div class="flex justify-center gap-4 min-w-max">
 							{#each searchResults.results as result (result.embedded_dataset_id)}
-								<div class="w-96 shrink-0 bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+								<div class="w-96 shrink-0 bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
 									<div class="flex items-start justify-between mb-4">
 										<div>
 											<h3 class="text-lg font-semibold text-gray-900 dark:text-white">

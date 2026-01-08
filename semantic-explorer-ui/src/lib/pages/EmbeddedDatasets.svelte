@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import PageHeader from '../components/PageHeader.svelte';
+	import ActionMenu from '../components/ActionMenu.svelte';
+	import { Table, TableBody, TableHead, TableHeadCell, TableBodyCell } from 'flowbite-svelte';
 	import { formatError, toastStore } from '../utils/notifications';
 
 	let { onNavigate, onViewDataset } = $props<{
@@ -277,7 +279,7 @@
 			<p class="text-red-600 dark:text-red-400">{error}</p>
 		</div>
 	{:else if filteredDatasets.length === 0}
-		<div class="bg-gray-50 dark:bg-gray-800 rounded-lg p-8 text-center">
+		<div class="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 text-center">
 			<p class="text-gray-600 dark:text-gray-400">
 				{searchQuery
 					? 'No embedded datasets found matching your search.'
@@ -285,121 +287,99 @@
 			</p>
 		</div>
 	{:else}
-		<div class="grid gap-4">
-			{#each filteredDatasets as dataset (dataset.embedded_dataset_id)}
-				{@const stats = statsMap.get(dataset.embedded_dataset_id)}
-				<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
-					<div class="flex justify-between items-start mb-4">
-						<div class="flex-1">
-							<h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">
-								{dataset.title}
-							</h3>
-							<div class="text-sm text-gray-600 dark:text-gray-400 space-y-1">
-								<p>
-									<strong>Source Dataset:</strong>
-									{#if dataset.source_dataset_title}
-										<button
-											onclick={() => onViewDataset(dataset.source_dataset_id)}
-											class="text-blue-600 dark:text-blue-400 hover:underline font-semibold"
-										>
-											{dataset.source_dataset_title}
-										</button>
-									{:else}
-										<span class="text-gray-500 dark:text-gray-400">Loading...</span>
-									{/if}
-								</p>
-								<p>
-									<strong>Embedder:</strong>
-									{#if dataset.embedder_name}
-										<button
-											onclick={() =>
-												onNavigate(
-													`/embedders?search=${encodeURIComponent(dataset.embedder_name ?? '')}`
-												)}
-											class="text-blue-600 dark:text-blue-400 hover:underline font-semibold"
-										>
-											{dataset.embedder_name}
-										</button>
-									{:else}
-										<span class="text-gray-500 dark:text-gray-400">Loading...</span>
-									{/if}
-								</p>
-								<p><strong>Owner:</strong> {dataset.owner}</p>
-								<p>
-									<strong>Created:</strong>
-									{new Date(dataset.created_at).toLocaleString()}
-								</p>
-								<p>
-									<strong>Last Updated:</strong>
-									{new Date(dataset.updated_at).toLocaleString()}
-								</p>
-							</div>
-						</div>
-						<div class="flex flex-col gap-2">
-							<button
-								onclick={() => deleteEmbeddedDataset(dataset)}
-								class="px-3 py-1 text-sm bg-red-100 text-red-700 rounded-lg dark:bg-red-900/20 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/40 transition-colors"
-								title="Delete embedded dataset and Qdrant collection"
-							>
-								Delete
-							</button>
-						</div>
-					</div>
-
-					{#if stats}
-						<div
-							class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 grid grid-cols-3 gap-4"
-						>
-							<div>
-								<p class="text-sm text-gray-600 dark:text-gray-400">Batches Processed</p>
-								<p class="text-lg font-semibold text-gray-900 dark:text-white">
-									{stats.total_batches_processed}
-								</p>
-							</div>
-							<div>
-								<p class="text-sm text-gray-600 dark:text-gray-400">Successful</p>
-								<p class="text-lg font-semibold text-green-600 dark:text-green-400">
-									{stats.successful_batches}
-								</p>
-							</div>
-							<div>
-								<p class="text-sm text-gray-600 dark:text-gray-400">Failed</p>
-								{#if stats.failed_batches > 0}
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
+			<Table hoverable striped>
+				<TableHead>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Title</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Source Dataset</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Embedder</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center"
+						>Success Rate</TableHeadCell
+					>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Chunks</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Actions</TableHeadCell>
+				</TableHead>
+				<TableBody>
+					{#each filteredDatasets as dataset (dataset.embedded_dataset_id)}
+						{@const stats = statsMap.get(dataset.embedded_dataset_id)}
+						<tr class="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50">
+							<TableBodyCell class="px-4 py-3">
+								<span class="font-semibold text-gray-900 dark:text-white">
+									{dataset.title}
+								</span>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3">
+								{#if dataset.source_dataset_title}
 									<button
-										onclick={() => openFailedBatchesModal(dataset)}
-										class="text-lg font-semibold text-red-600 dark:text-red-400 hover:underline cursor-pointer"
-										title="Click to view failed batches"
+										onclick={() => onViewDataset(dataset.source_dataset_id)}
+										class="text-blue-600 dark:text-blue-400 hover:underline font-semibold"
 									>
-										{stats.failed_batches}
+										{dataset.source_dataset_title}
 									</button>
 								{:else}
-									<p class="text-lg font-semibold text-green-600 dark:text-green-400">0</p>
+									<span class="text-gray-500 dark:text-gray-400">Loading...</span>
 								{/if}
-							</div>
-							<div>
-								<p class="text-sm text-gray-600 dark:text-gray-400">Chunks Embedded</p>
-								<p class="text-lg font-semibold text-blue-600 dark:text-blue-400">
-									{stats.total_chunks_embedded}
-								</p>
-							</div>
-							<div>
-								<p class="text-sm text-gray-600 dark:text-gray-400">Chunks Failed</p>
-								<p class="text-lg font-semibold text-red-600 dark:text-red-400">
-									{stats.total_chunks_failed}
-								</p>
-							</div>
-							<div>
-								<p class="text-sm text-gray-600 dark:text-gray-400">Success Rate</p>
-								<p class="text-lg font-semibold text-purple-600 dark:text-purple-400">
-									{stats.total_batches_processed > 0
-										? Math.round((stats.successful_batches / stats.total_batches_processed) * 100)
-										: 0}%
-								</p>
-							</div>
-						</div>
-					{/if}
-				</div>
-			{/each}
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3">
+								{#if dataset.embedder_name}
+									<button
+										onclick={() =>
+											onNavigate(
+												`/embedders?search=${encodeURIComponent(dataset.embedder_name ?? '')}`
+											)}
+										class="text-blue-600 dark:text-blue-400 hover:underline font-semibold text-sm"
+									>
+										{dataset.embedder_name}
+									</button>
+								{:else}
+									<span class="text-gray-500 dark:text-gray-400 text-sm">Loading...</span>
+								{/if}
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3 text-center">
+								{#if stats}
+									<span
+										class="inline-block px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded text-sm font-medium"
+									>
+										{stats.total_batches_processed > 0
+											? Math.round((stats.successful_batches / stats.total_batches_processed) * 100)
+											: 0}%
+									</span>
+								{:else}
+									<span class="text-gray-500 dark:text-gray-400">—</span>
+								{/if}
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3 text-center">
+								{#if stats}
+									<span class="text-gray-700 dark:text-gray-300 text-sm">
+										{stats.total_chunks_embedded}
+									</span>
+								{:else}
+									<span class="text-gray-500 dark:text-gray-400">—</span>
+								{/if}
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3 text-center">
+								<ActionMenu
+									actions={[
+										...(stats && stats.failed_batches > 0
+											? [
+													{
+														label: 'View Failed',
+														handler: () => openFailedBatchesModal(dataset),
+													},
+												]
+											: []),
+										{
+											label: 'Delete',
+											handler: () => deleteEmbeddedDataset(dataset),
+											isDangerous: true,
+										},
+									]}
+								/>
+							</TableBodyCell>
+						</tr>
+					{/each}
+				</TableBody>
+			</Table>
 		</div>
 	{/if}
 </div>
@@ -432,7 +412,7 @@
 				</button>
 			</div>
 
-			<div class="p-6 overflow-y-auto flex-1">
+			<div class="p-4 overflow-y-auto flex-1">
 				{#if loadingFailedBatches}
 					<div class="flex justify-center py-8">
 						<div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
@@ -472,12 +452,7 @@
 			</div>
 
 			<div class="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex justify-end">
-				<button
-					onclick={closeFailedBatchesModal}
-					class="px-4 py-2 bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-lg dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-				>
-					Close
-				</button>
+				<button onclick={closeFailedBatchesModal} class="btn-secondary"> Close </button>
 			</div>
 		</div>
 	</div>

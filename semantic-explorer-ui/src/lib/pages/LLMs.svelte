@@ -1,6 +1,8 @@
 <script lang="ts">
+	import ActionMenu from '$lib/components/ActionMenu.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
+	import { Table, TableBody, TableBodyCell, TableHead, TableHeadCell } from 'flowbite-svelte';
 	import { onMount } from 'svelte';
 
 	interface LLM {
@@ -355,7 +357,7 @@
 		description="Manage Large Language Model configurations. Define OpenAI, Anthropic, Cohere, or custom LLM providers that can be used for chat, completions, and AI-powered features."
 	/>
 
-	<div class="flex justify-between items-center mb-6">
+	<div class="flex justify-between items-center mb-4">
 		<h1 class="text-3xl font-bold text-gray-900 dark:text-white">LLMs</h1>
 		<button
 			onclick={() => {
@@ -368,14 +370,14 @@
 					openCreateForm();
 				}
 			}}
-			class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+			class="btn-primary"
 		>
 			{showCreateForm ? 'Cancel' : 'Create LLM'}
 		</button>
 	</div>
 
 	{#if showCreateForm}
-		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-4">
 			<h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-4">
 				{editingLLM ? 'Edit LLM' : 'Create New LLM'}
 			</h2>
@@ -544,7 +546,7 @@
 						</div>
 					</div>
 
-					<div class="mt-6 flex flex-col gap-2">
+					<div class="mt-4 flex flex-col gap-2">
 						{#if testStatus === 'success'}
 							<div
 								class="p-2 bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300 rounded text-sm"
@@ -565,16 +567,13 @@
 							</div>
 						{/if}
 						<div class="flex gap-3">
-							<button
-								type="submit"
-								class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-							>
+							<button type="submit" class="btn-primary">
 								{editingLLM ? 'Update' : 'Create'}
 							</button>
 							<button
 								type="button"
 								onclick={testLLMConnection}
-								class="px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 transition-colors"
+								class="px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
 								disabled={testStatus === 'testing'}
 							>
 								Test Connection
@@ -587,7 +586,7 @@
 									testStatus = 'idle';
 									testMessage = '';
 								}}
-								class="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+								class="btn-secondary"
 							>
 								Cancel
 							</button>
@@ -661,126 +660,72 @@
 			</button>
 		</div>
 	{:else}
-		<div class="grid gap-4">
-			{#each filteredLLMs as llm (llm.llm_id)}
-				<div
-					class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 hover:shadow-lg transition-shadow"
-				>
-					<div class="flex justify-between items-start">
-						<div class="flex-1">
-							<div class="flex items-baseline gap-3 mb-2">
-								<h3 class="text-xl font-semibold text-gray-900 dark:text-white">
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
+			<Table hoverable striped>
+				<TableHead>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Name</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Provider</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Model</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Public</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Owner</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Actions</TableHeadCell>
+				</TableHead>
+				<TableBody>
+					{#each filteredLLMs as llm (llm.llm_id)}
+						<tr class="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50">
+							<TableBodyCell class="px-4 py-3">
+								<button
+									onclick={() => openEditForm(llm)}
+									class="font-semibold text-blue-600 dark:text-blue-400 hover:underline"
+								>
 									{llm.name}
-								</h3>
-								<span class="text-sm text-gray-500 dark:text-gray-400">
-									#{llm.llm_id}
-								</span>
-							</div>
-							<div class="flex items-center gap-2 flex-wrap mb-3">
+								</button>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3">
 								<span
-									class="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full text-sm font-medium"
+									class="inline-block px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-sm font-medium"
 								>
 									{llm.provider}
 								</span>
-								<span
-									class="inline-flex items-center gap-1.5 px-3 py-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full text-sm"
-								>
-									<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width="2"
-											d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-										></path>
-									</svg>
-									{llm.owner}
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3">
+								<span class="text-gray-700 dark:text-gray-300 text-sm">
+									{llm.config?.model ?? 'N/A'}
 								</span>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3">
 								{#if llm.is_public}
 									<span
-										class="inline-flex items-center gap-1.5 px-3 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-full text-sm"
+										class="inline-block px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded text-sm font-medium"
 									>
-										<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-											<path
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												stroke-width="2"
-												d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-											></path>
-										</svg>
-										Public
+										Yes
 									</span>
+								{:else}
+									<span class="text-gray-500 dark:text-gray-400 text-sm">No</span>
 								{/if}
-							</div>
-							<div class="space-y-2 text-sm">
-								<div>
-									<span class="text-gray-500 dark:text-gray-400">URL:</span>
-									<span class="ml-2 text-gray-900 dark:text-gray-100 break-all">{llm.base_url}</span
-									>
-								</div>
-								<div>
-									<span class="text-gray-500 dark:text-gray-400">API Key:</span>
-									<span class="ml-2 text-gray-900 dark:text-gray-100">
-										{llm.api_key ? '••••••••' : 'Not set'}
-									</span>
-								</div>
-								<div>
-									<span class="text-gray-500 dark:text-gray-400">Model:</span>
-									<span class="ml-2 text-gray-900 dark:text-gray-100">
-										{llm.config?.model || 'Not specified'}
-									</span>
-								</div>
-								<div>
-									<span class="text-gray-500 dark:text-gray-400">Config:</span>
-									<pre
-										class="mt-1 p-2 bg-gray-100 dark:bg-gray-900 rounded text-xs overflow-auto">{JSON.stringify(
-											llm.config,
-											null,
-											2
-										)}</pre>
-								</div>
-							</div>
-						</div>
-						<div class="ml-4 flex flex-col gap-2">
-							<button
-								onclick={() => openEditForm(llm)}
-								class="px-3 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors flex items-center gap-2 dark:bg-gray-500 dark:hover:bg-gray-600"
-								title="Edit LLM"
-							>
-								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width="2"
-										d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-									/>
-								</svg>
-								Edit
-							</button>
-							<button
-								onclick={() => requestDeleteLLM(llm)}
-								class="px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2"
-								title="Delete LLM"
-							>
-								<svg
-									class="w-4 h-4"
-									fill="none"
-									stroke="currentColor"
-									viewBox="0 0 24 24"
-									aria-hidden="true"
-								>
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width="2"
-										d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-									/>
-								</svg>
-								Delete
-							</button>
-						</div>
-					</div>
-				</div>
-			{/each}
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3">
+								<span class="text-gray-700 dark:text-gray-300">{llm.owner}</span>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3 text-center">
+								<ActionMenu
+									actions={[
+										{
+											label: 'Edit',
+											handler: () => openEditForm(llm),
+										},
+										{
+											label: 'Delete',
+											handler: () => requestDeleteLLM(llm),
+											isDangerous: true,
+										},
+									]}
+								/>
+							</TableBodyCell>
+						</tr>
+					{/each}
+				</TableBody>
+			</Table>
 		</div>
 	{/if}
 </div>

@@ -7,7 +7,6 @@
 		ChartPieSolid,
 		ChevronDownOutline,
 		ChevronRightOutline,
-		CubeSolid,
 		DatabaseSolid,
 		FolderSolid,
 		GridSolid,
@@ -19,7 +18,7 @@
 	import type { Props } from 'flowbite-svelte-icons/types';
 	import type { Component } from 'svelte';
 
-	let { activeUrl = $bindable('/dashboard') } = $props();
+	let { activeUrl = $bindable('/datasets') } = $props();
 
 	type MenuItem = {
 		name: string;
@@ -30,11 +29,18 @@
 
 	const menuItems: MenuItem[] = [
 		{ name: 'Dashboard', icon: GridSolid, url: '/dashboard' },
-		{ name: 'Documentation', icon: BookOpenSolid, url: '/documentation' },
-		{ name: 'Marketplace', icon: CartSolid, url: '/marketplace' },
 		{ name: 'Collections', icon: FolderSolid, url: '/collections' },
 		{ name: 'Datasets', icon: DatabaseSolid, url: '/datasets' },
-		{ name: 'Embedded Datasets', icon: CubeSolid, url: '/embedded-datasets' },
+
+		{ name: 'Search', icon: SearchOutline, url: '/search' },
+		{ name: 'Chat', icon: PaperClipOutline, url: '/chat' },
+		{ name: 'Visualizations', icon: ChartPieSolid, url: '/visualizations' },
+
+		{ name: 'Marketplace', icon: CartSolid, url: '/marketplace' },
+
+		{ name: 'Embedders', icon: BrainSolid, url: '/embedders' },
+		{ name: 'LLMs', icon: MessageDotsOutline, url: '/llms' },
+		
 		{
 			name: 'Transforms',
 			icon: ArrowsRepeatOutline,
@@ -52,11 +58,7 @@
 				},
 			],
 		},
-		{ name: 'Embedders', icon: BrainSolid, url: '/embedders' },
-		{ name: 'LLMs', icon: MessageDotsOutline, url: '/llms' },
-		{ name: 'Search', icon: SearchOutline, url: '/search' },
-		{ name: 'Visualizations', icon: ChartPieSolid, url: '/visualizations' },
-		{ name: 'Chat', icon: PaperClipOutline, url: '/chat' },
+		{ name: 'Documentation', icon: BookOpenSolid, url: '/documentation' },
 	];
 	let expandedFolders = $state<string[]>(['Transforms']);
 

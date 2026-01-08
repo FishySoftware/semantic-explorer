@@ -130,17 +130,17 @@
 </script>
 
 <div class="max-w-7xl mx-auto">
-	<div class="mb-8">
+	<div class="mb-6">
 		<h1 class="text-3xl font-bold text-gray-900 dark:text-white mb-2">Dashboard</h1>
 		<p class="text-gray-600 dark:text-gray-400">
 			Welcome to Semantic Explorer - Your document processing and embedding platform
 		</p>
 	</div>
 
-	<div class="mt-6 mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
+	<div class="mt-4 mb-4 grid grid-cols-1 md:grid-cols-4 gap-4">
 		<a
 			href="#/collections"
-			class="p-6 bg-linear-to-br from-blue-500 to-blue-600 text-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
+			class="p-4 bg-linear-to-br from-blue-500 to-blue-600 text-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
 		>
 			<svg class="w-8 h-8 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path
@@ -156,7 +156,7 @@
 
 		<a
 			href="#/datasets"
-			class="p-6 bg-linear-to-br from-green-500 to-green-600 text-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
+			class="p-4 bg-linear-to-br from-green-500 to-green-600 text-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
 		>
 			<svg class="w-8 h-8 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path
@@ -172,7 +172,7 @@
 
 		<a
 			href="#/collection-transforms"
-			class="p-6 bg-linear-to-br from-purple-500 to-purple-600 text-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
+			class="p-4 bg-linear-to-br from-purple-500 to-purple-600 text-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
 		>
 			<svg class="w-8 h-8 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path
@@ -194,7 +194,7 @@
 
 		<a
 			href="#/visualization-transforms"
-			class="p-6 bg-linear-to-br from-orange-500 to-orange-600 text-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
+			class="p-4 bg-linear-to-br from-orange-500 to-orange-600 text-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
 		>
 			<svg class="w-8 h-8 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path
@@ -220,9 +220,9 @@
 			<p class="text-red-700 dark:text-red-400">{error}</p>
 		</div>
 	{:else}
-		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
-				<div class="flex justify-between items-center mb-4">
+		<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
+				<div class="flex justify-between items-center mb-3">
 					<h2 class="text-xl font-semibold text-gray-900 dark:text-white">Recent Collections</h2>
 					<a href="#/collections" class="text-blue-600 dark:text-blue-400 hover:underline text-sm">
 						View all
@@ -235,7 +235,7 @@
 						{#each collections as collection (collection.collection_id)}
 							<a
 								href={`#/collections/${collection.collection_id}/details`}
-								class="block p-3 bg-gray-50 dark:bg-gray-900 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-750 transition-colors"
+								class="block p-3 bg-gray-50 dark:bg-gray-900 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
 							>
 								<div class="flex justify-between items-start">
 									<div class="flex-1">
@@ -267,8 +267,8 @@
 				{/if}
 			</div>
 
-			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
-				<div class="flex justify-between items-center mb-4">
+			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
+				<div class="flex justify-between items-center mb-3">
 					<h2 class="text-xl font-semibold text-gray-900 dark:text-white">Recent Datasets</h2>
 					<a href="#/datasets" class="text-blue-600 dark:text-blue-400 hover:underline text-sm">
 						View all
@@ -281,7 +281,7 @@
 						{#each datasets as dataset (dataset.dataset_id)}
 							<a
 								href={`#/datasets/${dataset.dataset_id}/details`}
-								class="block p-3 bg-gray-50 dark:bg-gray-900 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-750 transition-colors"
+								class="block p-3 bg-gray-50 dark:bg-gray-900 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
 							>
 								<div class="flex justify-between items-start">
 									<div class="flex-1">
@@ -315,7 +315,7 @@
 		</div>
 
 		<!-- Recent Public Collections Section -->
-		<div class="mt-6 bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+		<div class="mt-4 bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
 			<div class="flex justify-between items-center mb-4">
 				<h2 class="text-xl font-semibold text-gray-900 dark:text-white">
 					Recent Public Collections
@@ -330,7 +330,7 @@
 				<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 					{#each publicCollections as collection (collection.collection_id)}
 						<div
-							class="p-4 bg-gray-50 dark:bg-gray-900 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-750 transition-colors"
+							class="p-4 bg-gray-50 dark:bg-gray-900 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
 						>
 							<h3 class="font-medium text-gray-900 dark:text-white mb-2">
 								{collection.title}
@@ -367,7 +367,7 @@
 		</div>
 
 		<!-- Recent Public Datasets Section -->
-		<div class="mt-6 bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+		<div class="mt-4 bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
 			<div class="flex justify-between items-center mb-4">
 				<h2 class="text-xl font-semibold text-gray-900 dark:text-white">Recent Public Datasets</h2>
 				<a href="#/marketplace" class="text-blue-600 dark:text-blue-400 hover:underline text-sm">
@@ -380,7 +380,7 @@
 				<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 					{#each publicDatasets as dataset (dataset.dataset_id)}
 						<div
-							class="p-4 bg-gray-50 dark:bg-gray-900 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-750 transition-colors"
+							class="p-4 bg-gray-50 dark:bg-gray-900 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
 						>
 							<h3 class="font-medium text-gray-900 dark:text-white mb-2">
 								{dataset.title}
@@ -417,7 +417,7 @@
 		</div>
 
 		<!-- Recent Public Embedders Section -->
-		<div class="mt-6 bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+		<div class="mt-4 bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
 			<div class="flex justify-between items-center mb-4">
 				<h2 class="text-xl font-semibold text-gray-900 dark:text-white">Recent Public Embedders</h2>
 				<a href="#/marketplace" class="text-blue-600 dark:text-blue-400 hover:underline text-sm">
@@ -430,7 +430,7 @@
 				<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 					{#each publicEmbedders as embedder (embedder.embedder_id)}
 						<div
-							class="p-4 bg-gray-50 dark:bg-gray-900 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-750 transition-colors"
+							class="p-4 bg-gray-50 dark:bg-gray-900 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
 						>
 							<h3 class="font-medium text-gray-900 dark:text-white mb-2">
 								{embedder.name}
@@ -456,7 +456,7 @@
 		</div>
 
 		<!-- Recent Public LLMs Section -->
-		<div class="mt-6 bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+		<div class="mt-4 bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
 			<div class="flex justify-between items-center mb-4">
 				<h2 class="text-xl font-semibold text-gray-900 dark:text-white">Recent Public LLMs</h2>
 				<a href="#/marketplace" class="text-blue-600 dark:text-blue-400 hover:underline text-sm">
@@ -469,7 +469,7 @@
 				<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 					{#each publicLLMs as llm (llm.llm_id)}
 						<div
-							class="p-4 bg-gray-50 dark:bg-gray-900 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-750 transition-colors"
+							class="p-4 bg-gray-50 dark:bg-gray-900 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
 						>
 							<h3 class="font-medium text-gray-900 dark:text-white mb-2">
 								{llm.name}
