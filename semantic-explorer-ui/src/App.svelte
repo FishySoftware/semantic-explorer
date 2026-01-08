@@ -15,6 +15,7 @@
 	import Documentation from './lib/pages/Documentation.svelte';
 	import EmbeddedDatasets from './lib/pages/EmbeddedDatasets.svelte';
 	import Embedders from './lib/pages/Embedders.svelte';
+	import LLMs from './lib/pages/LLMs.svelte';
 	import Marketplace from './lib/pages/Marketplace.svelte';
 	import Search from './lib/pages/Search.svelte';
 	import VisualizationTransforms from './lib/pages/VisualizationTransforms.svelte';
@@ -147,6 +148,8 @@
 				{/if}
 			{:else if activeUrl === '/embedders'}
 				<Embedders />
+			{:else if activeUrl === '/llms'}
+				<LLMs />
 			{:else if activeUrl === '/collection-transforms'}
 				<CollectionTransforms />
 			{:else if activeUrl === '/dataset-transforms'}

@@ -101,7 +101,7 @@ pub(crate) async fn list_files(
 
     // Build the paginator request
     let mut request = s3_client.list_objects_v2().bucket(bucket);
-    
+
     // If we have a continuation token, use it as start_after
     if let Some(token) = continuation_token {
         request = request.start_after(token);
@@ -125,7 +125,7 @@ pub(crate) async fn list_files(
 
         for obj in output.contents() {
             let key = obj.key().unwrap_or_default();
-            
+
             // Skip chunk files
             if key.starts_with("chunks/") {
                 continue;

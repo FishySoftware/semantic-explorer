@@ -12,6 +12,7 @@
 		FolderSolid,
 		GridSolid,
 		LayersSolid,
+		MessageDotsOutline,
 		PaperClipOutline,
 		SearchOutline,
 	} from 'flowbite-svelte-icons';
@@ -52,6 +53,7 @@
 			],
 		},
 		{ name: 'Embedders', icon: BrainSolid, url: '/embedders' },
+		{ name: 'LLMs', icon: MessageDotsOutline, url: '/llms' },
 		{ name: 'Search', icon: SearchOutline, url: '/search' },
 		{ name: 'Visualizations', icon: ChartPieSolid, url: '/visualizations' },
 		{ name: 'Chat', icon: PaperClipOutline, url: '/chat' },

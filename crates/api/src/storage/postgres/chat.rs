@@ -6,6 +6,12 @@ use uuid::Uuid;
 use crate::chat::models::{ChatMessage, ChatSession, CreateChatSessionRequest};
 use semantic_explorer_core::observability::record_database_query;
 
+const ENSURE_USER_QUERY: &str = r#"
+    INSERT INTO users (username, created_at)
+    VALUES ($1, NOW())
+    ON CONFLICT (username) DO NOTHING
+"#;
+
 const CREATE_SESSION_QUERY: &str = r#"
     INSERT INTO chat_sessions (session_id, owner, embedded_dataset_id, llm_id, title, created_at, updated_at)
     VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
@@ -42,6 +48,12 @@ const GET_MESSAGES_QUERY: &str = r#"
     ORDER BY created_at ASC
 "#;
 
+const GET_LLM_DETAILS_QUERY: &str = r#"
+    SELECT name, provider, base_url, config->>'model' as model, api_key
+    FROM llms
+    WHERE llm_id = $1
+"#;
+
 #[tracing::instrument(name = "database.create_chat_session", skip(pool), fields(database.system = "postgresql", database.operation = "INSERT", owner = %owner))]
 pub(crate) async fn create_chat_session(
     pool: &Pool<Postgres>,
@@ -50,6 +62,12 @@ pub(crate) async fn create_chat_session(
 ) -> Result<ChatSession> {
     let start = Instant::now();
     let session_id = Uuid::new_v4().to_string();
+
+    // Ensure user exists in users table (required by foreign key constraint)
+    sqlx::query(ENSURE_USER_QUERY)
+        .bind(owner)
+        .execute(pool)
+        .await?;
 
     let result = sqlx::query_as::<_, ChatSession>(CREATE_SESSION_QUERY)
         .bind(&session_id)
@@ -166,4 +184,24 @@ pub(crate) async fn get_chat_messages(
     record_database_query("SELECT", "chat_messages", duration, success);
 
     Ok(result?)
+}
+
+#[tracing::instrument(name = "database.get_llm_details", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT"))]
+pub(crate) async fn get_llm_details(
+    pool: &Pool<Postgres>,
+    llm_id: i32,
+) -> Result<(String, String, String, String, Option<String>)> {
+    let start = Instant::now();
+    let result = sqlx::query_as::<_, (String, String, String, String, Option<String>)>(
+        GET_LLM_DETAILS_QUERY,
+    )
+    .bind(llm_id)
+    .fetch_optional(pool)
+    .await;
+
+    let duration = start.elapsed().as_secs_f64();
+    let success = result.is_ok();
+    record_database_query("SELECT", "llms", duration, success);
+
+    result?.ok_or_else(|| anyhow::anyhow!("LLM not found"))
 }

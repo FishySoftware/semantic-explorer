@@ -63,7 +63,7 @@
 		'text-embedding-3-small': 1536,
 		'text-embedding-3-large': 3072,
 		'text-embedding-ada-002': 1536,
-		'embed-v4.0': 1024,
+		'embed-v4.0': 1536 ,
 		'embed-english-v3.0': 1024,
 		'embed-multilingual-v3.0': 1024,
 		'embed-english-light-v3.0': 384,

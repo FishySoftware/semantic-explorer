@@ -62,7 +62,8 @@
 			if (!response.ok) {
 				throw new Error(`Failed to fetch chat sessions: ${response.statusText}`);
 			}
-			sessions = await response.json();
+			const data = await response.json();
+			sessions = data.sessions;
 		} catch (e) {
 			const message = formatError(e, 'Failed to fetch chat sessions');
 			messageError = message;
@@ -149,7 +150,8 @@
 			if (!response.ok) {
 				throw new Error(`Failed to fetch messages: ${response.statusText}`);
 			}
-			currentMessages = await response.json();
+			const data = await response.json();
+			currentMessages = data.messages;
 		} catch (e) {
 			const message = formatError(e, 'Failed to load chat messages');
 			toastStore.error(message);
@@ -412,7 +414,7 @@
 		{:else}
 			<!-- Chat header -->
 			<div
-				class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4"
+				class="flex-shrink-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4"
 			>
 				<div class="flex items-center justify-between">
 					<div>
@@ -434,7 +436,7 @@
 			</div>
 
 			<!-- Messages area -->
-			<div class="flex-1 overflow-y-auto p-6 space-y-4">
+			<div class="flex-1 min-h-0 overflow-y-auto p-6 space-y-4">
 				{#if messagesLoading}
 					<div class="flex justify-center">
 						<div class="text-gray-500 dark:text-gray-400">Loading messages...</div>
@@ -469,7 +471,7 @@
 			</div>
 
 			<!-- Input area -->
-			<div class="bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 p-6">
+			<div class="flex-shrink-0 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 p-6">
 				{#if messageError}
 					<div
 						class="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg"

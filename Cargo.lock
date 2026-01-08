@@ -1480,6 +1480,8 @@ dependencies = [
 [[package]]
 name = "cuml-wrapper-rs"
 version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f9444bfd8eb2e3f08358f4478bbba17d0d7b6de663e4500ac3fa6d7a14f0dab"
 dependencies = [
  "bindgen",
  "cmake",

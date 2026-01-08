@@ -4,12 +4,14 @@ use actix_web::{
 };
 use actix_web_openidconnect::openid_middleware::Authenticated;
 use qdrant_client::Qdrant;
+use sqlx::Pool;
+use sqlx::Postgres;
 use sqlx::types::chrono::Utc;
-use sqlx::{Pool, Postgres};
 
 use crate::{
     auth::extract_username,
     chat::{
+        llm,
         models::{
             ChatMessageResponse, ChatMessagesResponse, ChatResponse, ChatSessionResponse,
             ChatSessionsResponse, CreateChatMessageRequest, CreateChatSessionRequest, RAGConfig,
@@ -295,7 +297,7 @@ pub(crate) async fn send_chat_message(
 
     // Generate response using LLM with RAG context
     let response_content =
-        match generate_llm_response(&postgres_pool, session.llm_id, &request.content, &context)
+        match llm::generate_response(&postgres_pool, session.llm_id, &request.content, &context)
             .await
         {
             Ok(response) => response,
@@ -328,154 +330,4 @@ pub(crate) async fn send_chat_message(
     };
 
     HttpResponse::Ok().json(response)
-}
-
-/// Generate an LLM response with RAG context
-#[tracing::instrument(name = "generate_llm_response", skip(postgres_pool, query, context))]
-async fn generate_llm_response(
-    postgres_pool: &Pool<Postgres>,
-    llm_id: i32,
-    query: &str,
-    context: &str,
-) -> Result<String, String> {
-    // Fetch LLM details from database using dynamic query
-    let row = sqlx::query_as::<_, (String, String, String, String, String)>(
-        r#"
-        SELECT name, provider, api_base, model, api_key_env
-        FROM llms
-        WHERE llm_id = $1
-        "#,
-    )
-    .bind(llm_id)
-    .fetch_optional(postgres_pool)
-    .await
-    .map_err(|e| format!("database error: {e}"))?
-    .ok_or_else(|| "LLM not found".to_string())?;
-
-    let (name, provider, api_base, model, api_key_env) = row;
-
-    // Build the prompt with RAG context
-    const SYSTEM_PROMPT: &str = "You are a helpful assistant that answers questions based on the provided context. Always cite the source of your information when possible.";
-
-    let user_prompt = format!(
-        "{}\n\nQuestion: {}\n\nPlease provide a helpful answer based on the context above.",
-        context, query
-    );
-
-    // Call the appropriate LLM API
-    let response_text = match provider.to_lowercase().as_str() {
-        "openai" => {
-            call_openai_api(&api_base, &api_key_env, &model, SYSTEM_PROMPT, &user_prompt).await?
-        }
-        "cohere" => call_cohere_api(&api_base, &api_key_env, &model, &user_prompt).await?,
-        _ => {
-            return Err(format!("unsupported LLM provider: {}", provider));
-        }
-    };
-
-    tracing::debug!(llm_name = %name, "generated LLM response");
-    Ok(response_text)
-}
-
-/// Call OpenAI API for chat completion
-async fn call_openai_api(
-    api_base: &str,
-    api_key_env: &str,
-    model: &str,
-    system_prompt: &str,
-    user_prompt: &str,
-) -> Result<String, String> {
-    // Get API key from environment
-    let api_key = std::env::var(api_key_env)
-        .map_err(|_| format!("API key environment variable not set: {}", api_key_env))?;
-
-    let client = reqwest::Client::new();
-
-    let request_body = serde_json::json!({
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        "temperature": 0.7,
-        "max_tokens": 2000,
-    });
-
-    let response = client
-        .post(format!("{}/v1/chat/completions", api_base))
-        .header("Authorization", format!("Bearer {}", api_key))
-        .json(&request_body)
-        .send()
-        .await
-        .map_err(|e| format!("OpenAI API request failed: {e}"))?;
-
-    if !response.status().is_success() {
-        let error_text = response.text().await.unwrap_or_default();
-        return Err(format!("OpenAI API error: {}", error_text));
-    }
-
-    let response_json: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| format!("failed to parse OpenAI response: {e}"))?;
-
-    let response_text = response_json
-        .get("choices")
-        .and_then(|c| c.get(0))
-        .and_then(|c| c.get("message"))
-        .and_then(|m| m.get("content"))
-        .and_then(|c| c.as_str())
-        .ok_or_else(|| "unexpected OpenAI response format".to_string())?
-        .to_string();
-
-    Ok(response_text)
-}
-
-/// Call Cohere API for text generation
-async fn call_cohere_api(
-    api_base: &str,
-    api_key_env: &str,
-    model: &str,
-    prompt: &str,
-) -> Result<String, String> {
-    // Get API key from environment
-    let api_key = std::env::var(api_key_env)
-        .map_err(|_| format!("API key environment variable not set: {}", api_key_env))?;
-
-    let client = reqwest::Client::new();
-
-    let request_body = serde_json::json!({
-        "model": model,
-        "prompt": prompt,
-        "max_tokens": 2000,
-        "temperature": 0.7,
-    });
-
-    let response = client
-        .post(format!("{}/generate", api_base))
-        .header("Authorization", format!("Bearer {}", api_key))
-        .json(&request_body)
-        .send()
-        .await
-        .map_err(|e| format!("Cohere API request failed: {e}"))?;
-
-    if !response.status().is_success() {
-        let error_text = response.text().await.unwrap_or_default();
-        return Err(format!("Cohere API error: {}", error_text));
-    }
-
-    let response_json: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| format!("failed to parse Cohere response: {e}"))?;
-
-    let response_text = response_json
-        .get("generations")
-        .and_then(|g| g.get(0))
-        .and_then(|g| g.get("text"))
-        .and_then(|t| t.as_str())
-        .ok_or_else(|| "unexpected Cohere response format".to_string())?
-        .to_string();
-
-    Ok(response_text)
 }

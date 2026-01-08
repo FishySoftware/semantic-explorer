@@ -39,7 +39,7 @@ pub async fn retrieve_documents(
     debug!(collection = %collection_name, "collection found");
 
     let embedder = sqlx::query_as::<_, (String, String, String, i32)>(
-        r#"SELECT provider, base_url, api_key, embedding_dimension FROM embedders WHERE embedder_id = $1"#
+        r#"SELECT provider, base_url, api_key, dimensions FROM embedders WHERE embedder_id = $1"#,
     )
     .bind(embedder_id)
     .fetch_optional(postgres_pool)
@@ -50,9 +50,9 @@ pub async fn retrieve_documents(
     })?
     .ok_or_else(|| "embedder not found".to_string())?;
 
-    let (_embedder_provider, _embedder_base_url, _embedder_api_key, embedding_dimension) = embedder;
+    let (_embedder_provider, _embedder_base_url, _embedder_api_key, dimensions) = embedder;
 
-    let query_embedding = generate_simple_embedding(query, embedding_dimension as usize);
+    let query_embedding = generate_simple_embedding(query, dimensions as usize);
 
     let search_builder = SearchPointsBuilder::new(
         &collection_name,
