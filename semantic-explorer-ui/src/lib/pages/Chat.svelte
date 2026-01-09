@@ -147,6 +147,20 @@
 			creatingSession = true;
 			createSessionError = null;
 
+			// Generate default title if not provided
+			const title =
+				newSessionTitle.trim() ||
+				(() => {
+					const now = new Date();
+					const year = now.getFullYear();
+					const month = String(now.getMonth() + 1).padStart(2, '0');
+					const day = String(now.getDate()).padStart(2, '0');
+					const hours = String(now.getHours()).padStart(2, '0');
+					const minutes = String(now.getMinutes()).padStart(2, '0');
+					const seconds = String(now.getSeconds()).padStart(2, '0');
+					return `chat-session-${year}${month}${day}-${hours}${minutes}${seconds}`;
+				})();
+
 			const response = await fetch('/api/chat/sessions', {
 				method: 'POST',
 				headers: {
@@ -155,7 +169,7 @@
 				body: JSON.stringify({
 					embedded_dataset_id: newSessionEmbeddedDatasetId,
 					llm_id: newSessionLLMId,
-					title: newSessionTitle || null,
+					title: title,
 				}),
 			});
 
@@ -387,7 +401,7 @@
 						for="session-title"
 						class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
 					>
-						Session Title (Optional)
+						Session Title
 					</label>
 					<input
 						id="session-title"

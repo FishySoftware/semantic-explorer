@@ -92,6 +92,7 @@ pub struct RetrievedDocument {
 pub(crate) struct CreateChatSessionRequest {
     pub embedded_dataset_id: i32,
     pub llm_id: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
 }
 

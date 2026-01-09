@@ -7,6 +7,7 @@
 	interface Props {
 		open?: boolean;
 		collectionId?: number | null;
+		collectionTitle?: string | null;
 		onSuccess?: () => void;
 	}
 
@@ -27,7 +28,12 @@
 		provider: string;
 	}
 
-	let { open = $bindable(false), collectionId = null, onSuccess }: Props = $props();
+	let {
+		open = $bindable(false),
+		collectionId = null,
+		collectionTitle = null,
+		onSuccess,
+	}: Props = $props();
 
 	let collections = $state<Collection[]>([]);
 	let datasets = $state<Dataset[]>([]);
@@ -46,17 +52,18 @@
 	$effect(() => {
 		if (open && collectionId !== null) {
 			selectedCollectionId = collectionId;
-			// Set default dataset name and transform title based on collection
-			const collection = collections.find((c) => c.collection_id === collectionId);
-			if (collection) {
-				newDatasetName = `${collection.title}-dataset`;
-				transformTitle = `${collection.title}-transform`;
+			// Use provided collectionTitle if available, otherwise look it up
+			const title =
+				collectionTitle || collections.find((c) => c.collection_id === collectionId)?.title;
+			if (title) {
+				newDatasetName = `${title}-dataset`;
+				transformTitle = `${title}-transform`;
 			}
 		}
 	});
 
 	$effect(() => {
-		if (selectedCollectionId) {
+		if (selectedCollectionId !== null) {
 			const collection = collections.find((c) => c.collection_id === selectedCollectionId);
 			if (collection) {
 				transformTitle = `${collection.title}-transform`;

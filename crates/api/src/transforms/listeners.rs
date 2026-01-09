@@ -237,11 +237,31 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
         "chunk_count": chunk_count,
     });
 
-    info!("Creating dataset item for: {}", result.source_file_key);
+    // Validate that the file key (title) is not empty or whitespace-only
+    let title = result.source_file_key.trim();
+    if title.is_empty() {
+        error!("File key is empty or contains only whitespace, cannot create dataset item");
+        if let Err(e) = collection_transforms::record_processed_file(
+            &ctx.postgres_pool,
+            result.collection_transform_id,
+            &result.source_file_key,
+            0,
+            "failed",
+            Some("File title cannot be empty or contain only whitespace"),
+            result.processing_duration_ms,
+        )
+        .await
+        {
+            error!("Failed to record file processing failure: {}", e);
+        }
+        return;
+    }
+
+    info!("Creating dataset item for: {}", title);
     if let Err(e) = datasets::create_dataset_item(
         &ctx.postgres_pool,
         transform.dataset_id,
-        &result.source_file_key,
+        title,
         &chunks,
         metadata,
     )

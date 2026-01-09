@@ -313,7 +313,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
     owner TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
     embedded_dataset_id INTEGER NOT NULL REFERENCES embedded_datasets(embedded_dataset_id) ON DELETE CASCADE,
     llm_id INTEGER NOT NULL REFERENCES llms(llm_id) ON DELETE CASCADE,
-    title TEXT,
+    title TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );

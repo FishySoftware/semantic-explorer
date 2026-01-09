@@ -951,6 +951,7 @@
 <CreateCollectionTransformModal
 	bind:open={transformModalOpen}
 	{collectionId}
+	collectionTitle={collection?.title}
 	onSuccess={() => {
 		transformModalOpen = false;
 		toastStore.success('Transform created successfully');

@@ -19,8 +19,24 @@ where
     }
 }
 
+fn non_empty_string<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: String = String::deserialize(deserializer)?;
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        Err(serde::de::Error::custom(
+            "must not be empty or contain only whitespace",
+        ))
+    } else {
+        Ok(trimmed.to_string())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub(crate) struct ChunkWithMetadata {
+    #[serde(deserialize_with = "non_empty_string")]
     pub(crate) content: String,
     #[schema(value_type = Object)]
     pub(crate) metadata: serde_json::Value,
@@ -77,6 +93,7 @@ pub(crate) struct CreateDatasetItems {
 
 #[derive(Serialize, Deserialize, ToSchema)]
 pub(crate) struct CreateDatasetItem {
+    #[serde(deserialize_with = "non_empty_string")]
     pub(crate) title: String,
     #[serde(deserialize_with = "non_empty")]
     pub(crate) chunks: Vec<ChunkWithMetadata>,

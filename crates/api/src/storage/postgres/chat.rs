@@ -1,4 +1,5 @@
 use anyhow::Result;
+use sqlx::types::chrono::Utc;
 use sqlx::{Pool, Postgres};
 use std::time::Instant;
 use uuid::Uuid;
@@ -75,6 +76,12 @@ pub(crate) async fn create_chat_session(
     let start = Instant::now();
     let session_id = Uuid::new_v4().to_string();
 
+    // Generate default title if not provided
+    let title = request.title.clone().unwrap_or_else(|| {
+        let now = Utc::now();
+        format!("chat-session-{}", now.format("%Y%m%d-%H%M%S"))
+    });
+
     // Ensure user exists in users table (required by foreign key constraint)
     sqlx::query(ENSURE_USER_QUERY)
         .bind(owner)
@@ -86,7 +93,7 @@ pub(crate) async fn create_chat_session(
         .bind(owner)
         .bind(request.embedded_dataset_id)
         .bind(request.llm_id)
-        .bind(&request.title)
+        .bind(&title)
         .fetch_one(pool)
         .await;
 
