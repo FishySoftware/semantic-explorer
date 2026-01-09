@@ -98,6 +98,12 @@ pub(crate) struct DatasetItem {
     pub(crate) chunks: Vec<ChunkWithMetadata>,
     #[schema(value_type = Object)]
     pub(crate) metadata: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub(crate) created_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub(crate) updated_at: Option<DateTime<Utc>>,
 }
 
 impl sqlx::FromRow<'_, PgRow> for DatasetItem {
@@ -117,6 +123,8 @@ impl sqlx::FromRow<'_, PgRow> for DatasetItem {
             title: row.try_get("title")?,
             chunks,
             metadata: row.try_get("metadata")?,
+            created_at: row.try_get("created_at")?,
+            updated_at: row.try_get("updated_at")?,
         })
     }
 }

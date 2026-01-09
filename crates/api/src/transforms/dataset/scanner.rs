@@ -152,8 +152,10 @@ async fn process_dataset_transform_scan(
         let processed_batches =
             embedded_datasets::get_processed_batches(pool, embedded_dataset.embedded_dataset_id)
                 .await?;
-        let processed_keys: HashSet<String> =
-            processed_batches.into_iter().map(|b| b.file_key).collect();
+        let processed_keys: HashSet<String> = processed_batches
+            .iter()
+            .map(|b| b.file_key.clone())
+            .collect();
 
         // List existing batch files in S3
         let mut existing_batch_files = HashSet::new();
@@ -249,7 +251,6 @@ async fn process_dataset_transform_scan(
                 &embedder_config,
                 &vector_db_config,
                 &bucket,
-                &processed_keys,
                 embedding_batch_size,
                 wipe_collection,
             )
@@ -277,92 +278,73 @@ async fn create_batches_from_dataset_items(
     embedder_config: &EmbedderConfig,
     vector_db_config: &VectorDatabaseConfig,
     bucket: &str,
-    processed_keys: &HashSet<String>,
     embedding_batch_size: usize,
     wipe_collection: bool,
 ) -> Result<usize> {
-    // Get the total count of items in the source dataset
-    let total_items = datasets::count_dataset_items(pool, transform.source_dataset_id).await?;
-
-    if total_items == 0 {
-        info!(
-            "No items in source dataset {} for embedded dataset {}",
-            transform.source_dataset_id, embedded_dataset.embedded_dataset_id
-        );
-        return Ok(0);
-    }
-
-    // Count already processed chunks (from processed batch file names)
-    // We track progress by counting processed batches
-    let batches_processed = processed_keys.len();
-
-    // If we've processed some batches, assume we're done unless new items were added
-    // This is a simple approach - in production you might want more sophisticated tracking
-    if batches_processed > 0 {
-        info!(
-            "Embedded dataset {} already has {} processed batches, skipping batch creation",
-            embedded_dataset.embedded_dataset_id, batches_processed
-        );
-        return Ok(0);
-    }
+    // Use timestamp-based tracking to identify new items that need processing
+    let last_processed_at = embedded_dataset.last_processed_at;
 
     info!(
-        "Creating batches for embedded dataset {} from {} dataset items",
-        embedded_dataset.embedded_dataset_id, total_items
+        "Embedded dataset {} last processed at: {:?}",
+        embedded_dataset.embedded_dataset_id, last_processed_at
     );
 
-    // Fetch all dataset items and create batches
-    let mut all_batch_items: Vec<serde_json::Value> = Vec::new();
-    let page_size = 100i64;
-    let mut page = 0i64;
+    // Fetch only items that were modified since the last processing
+    let items = datasets::get_dataset_items_modified_since(
+        pool,
+        transform.source_dataset_id,
+        last_processed_at,
+    )
+    .await?;
 
-    loop {
-        let items =
-            datasets::get_dataset_items(pool, transform.source_dataset_id, page, page_size).await?;
-
-        if items.is_empty() {
-            break;
-        }
-
-        // Convert dataset items to batch items (one per chunk)
-        for item in &items {
-            for (chunk_idx, chunk) in item.chunks.iter().enumerate() {
-                // Generate a unique UUID for each chunk
-                // Note: This is not deterministic, but Qdrant requires valid UUIDs as point IDs
-                let chunk_uuid = Uuid::new_v4();
-                let batch_item = serde_json::json!({
-                    "id": chunk_uuid.to_string(),
-                    "text": chunk.content,
-                    "payload": {
-                        "item_id": item.item_id,
-                        "item_title": item.title,
-                        "chunk_index": chunk_idx,
-                        "chunk_metadata": chunk.metadata,
-                        "item_metadata": item.metadata
-                    }
-                });
-                all_batch_items.push(batch_item);
-            }
-        }
-
-        page += 1;
-        if items.len() < page_size as usize {
-            break;
-        }
-    }
-
-    if all_batch_items.is_empty() {
+    if items.is_empty() {
         info!(
-            "No chunks found in dataset items for embedded dataset {}",
+            "Embedded dataset {} has no new items since last processing. Skipping.",
             embedded_dataset.embedded_dataset_id
         );
         return Ok(0);
     }
 
     info!(
-        "Found {} total chunks to embed for embedded dataset {}",
+        "Embedded dataset {} found {} items with new/modified chunks",
+        embedded_dataset.embedded_dataset_id,
+        items.len()
+    );
+
+    // Convert dataset items to batch items (one per chunk)
+    let mut all_batch_items: Vec<serde_json::Value> = Vec::new();
+    for item in &items {
+        for (chunk_idx, chunk) in item.chunks.iter().enumerate() {
+            // Generate a unique UUID for each chunk
+            // Note: This is not deterministic, but Qdrant requires valid UUIDs as point IDs
+            let chunk_uuid = Uuid::new_v4();
+            let batch_item = serde_json::json!({
+                "id": chunk_uuid.to_string(),
+                "text": chunk.content,
+                "payload": {
+                    "item_id": item.item_id,
+                    "item_title": item.title,
+                    "chunk_index": chunk_idx,
+                    "chunk_metadata": chunk.metadata,
+                    "item_metadata": item.metadata
+                }
+            });
+            all_batch_items.push(batch_item);
+        }
+    }
+
+    if all_batch_items.is_empty() {
+        info!(
+            "No chunks found in modified items for embedded dataset {}",
+            embedded_dataset.embedded_dataset_id
+        );
+        return Ok(0);
+    }
+
+    info!(
+        "Created {} batch items from {} modified dataset items",
         all_batch_items.len(),
-        embedded_dataset.embedded_dataset_id
+        items.len()
     );
 
     // Split into batches and upload to S3, then dispatch jobs
@@ -436,6 +418,15 @@ async fn create_batches_from_dataset_items(
         "Created {} batch jobs for embedded dataset {}",
         jobs_created, embedded_dataset.embedded_dataset_id
     );
+
+    // Update the last_processed_at timestamp now that we've processed these items
+    if jobs_created > 0 {
+        embedded_datasets::update_embedded_dataset_last_processed_at(
+            pool,
+            embedded_dataset.embedded_dataset_id,
+        )
+        .await?;
+    }
 
     Ok(jobs_created)
 }

@@ -28,11 +28,11 @@ const DELETE_DATASET_QUERY: &str = r#"
 const INSERT_DATASET_ITEM_QUERY: &str = r#"
     INSERT INTO dataset_items (dataset_id, title, chunks, metadata)
     VALUES ($1, $2, $3, $4)
-    RETURNING item_id, dataset_id, title, chunks, metadata
+    RETURNING item_id, dataset_id, title, chunks, metadata, created_at, updated_at
 "#;
 
 const GET_DATASET_ITEMS_QUERY: &str = r#"
-    SELECT item_id, dataset_id, title, chunks, metadata
+    SELECT item_id, dataset_id, title, chunks, metadata, created_at, updated_at
     FROM dataset_items
     WHERE dataset_id = $1
     ORDER BY item_id DESC
@@ -53,7 +53,7 @@ const UPDATE_DATASET_QUERY: &str = r#"
 const DELETE_DATASET_ITEM_QUERY: &str = r#"
     DELETE FROM dataset_items
     WHERE item_id = $1 AND dataset_id = $2
-    RETURNING item_id, dataset_id, title, chunks, metadata
+    RETURNING item_id, dataset_id, title, chunks, metadata, created_at, updated_at
 "#;
 
 const GET_DATASET_STATS_QUERY: &str = r#"
@@ -251,6 +251,37 @@ pub(crate) async fn count_dataset_items(pool: &Pool<Postgres>, dataset_id: i32) 
         .fetch_one(pool)
         .await?;
     Ok(count.0)
+}
+
+#[tracing::instrument(name = "database.get_dataset_items_modified_since", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", dataset_id = %dataset_id))]
+pub(crate) async fn get_dataset_items_modified_since(
+    pool: &Pool<Postgres>,
+    dataset_id: i32,
+    since_timestamp: Option<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>>,
+) -> Result<Vec<DatasetItem>> {
+    let query = if let Some(timestamp) = since_timestamp {
+        sqlx::query_as::<_, DatasetItem>(
+            r#"
+            SELECT item_id, dataset_id, title, chunks, metadata, created_at, updated_at
+            FROM dataset_items
+            WHERE dataset_id = $1 AND updated_at > $2
+            ORDER BY updated_at DESC
+            "#,
+        )
+        .bind(dataset_id)
+        .bind(timestamp)
+        .fetch_all(pool)
+        .await?
+    } else {
+        // If no timestamp provided, return all items
+        sqlx::query_as::<_, DatasetItem>(GET_DATASET_ITEMS_QUERY)
+            .bind(dataset_id)
+            .bind(i64::MAX)
+            .bind(0)
+            .fetch_all(pool)
+            .await?
+    };
+    Ok(query)
 }
 
 #[tracing::instrument(name = "database.update_dataset", skip(pool), fields(database.system = "postgresql", database.operation = "UPDATE", dataset_id = %dataset_id, owner = %owner))]

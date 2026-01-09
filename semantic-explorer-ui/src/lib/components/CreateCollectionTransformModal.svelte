@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Button, Modal, Tooltip } from 'flowbite-svelte';
-	import { ChevronDownOutline, QuestionCircleSolid } from 'flowbite-svelte-icons';
+	import { QuestionCircleSolid } from 'flowbite-svelte-icons';
 	import { onMount } from 'svelte';
 	import { formatError, toastStore } from '../utils/notifications';
 
@@ -16,16 +16,51 @@
 		file_count?: number;
 	}
 
+	interface Dataset {
+		dataset_id: number;
+		title: string;
+	}
+
+	interface Embedder {
+		embedder_id: number;
+		name: string;
+		provider: string;
+	}
+
 	let { open = $bindable(false), collectionId = null, onSuccess }: Props = $props();
 
 	let collections = $state<Collection[]>([]);
+	let datasets = $state<Dataset[]>([]);
+	let embedders = $state<Embedder[]>([]);
 
 	let selectedCollectionId = $state<number | null>(null);
 	let transformTitle = $state('');
+	let datasetOption = $state<'new' | number>('new');
+	let newDatasetName = $state('');
+	let selectedEmbedderId = $state<number | null>(null);
+	let autoCreateDatasetTransform = $state(false);
+	let selectedDatasetTransformEmbedderIds = $state<number[]>([]);
+	let datasetTransformBatchSize = $state<number | null>(null);
+	let datasetTransformWipeCollection = $state(false);
 
 	$effect(() => {
 		if (open && collectionId !== null) {
 			selectedCollectionId = collectionId;
+			// Set default dataset name and transform title based on collection
+			const collection = collections.find((c) => c.collection_id === collectionId);
+			if (collection) {
+				newDatasetName = `${collection.title}-dataset`;
+				transformTitle = `${collection.title}-transform`;
+			}
+		}
+	});
+
+	$effect(() => {
+		if (selectedCollectionId) {
+			const collection = collections.find((c) => c.collection_id === selectedCollectionId);
+			if (collection) {
+				transformTitle = `${collection.title}-transform`;
+			}
 		}
 	});
 
@@ -33,9 +68,22 @@
 	let extractionStrategy = $state('plain_text');
 	let preserveFormatting = $state(false);
 	let extractTables = $state(true);
+	let tableFormat = $state('plain_text');
 	let preserveHeadings = $state(false);
+	let headingFormat = $state('plain_text');
 	let preserveLists = $state(false);
 	let preserveCodeBlocks = $state(false);
+
+	// Update table and heading format when extraction strategy changes
+	$effect(() => {
+		if (extractionStrategy === 'markdown') {
+			tableFormat = 'markdown';
+			headingFormat = 'markdown';
+		} else if (extractionStrategy === 'plain_text') {
+			tableFormat = 'plain_text';
+			headingFormat = 'plain_text';
+		}
+	});
 
 	// Chunking strategy
 	let chunkingStrategy = $state('sentence');
@@ -45,13 +93,15 @@
 	let preserveSentenceBoundaries = $state(true);
 
 	let loadingCollections = $state(true);
+	let loadingDatasets = $state(true);
+	let loadingEmbedders = $state(true);
 	let isCreating = $state(false);
 	let error = $state<string | null>(null);
-	let showAdvancedExtraction = $state(false);
-	let showAdvancedChunking = $state(false);
 
 	onMount(() => {
 		fetchCollections();
+		fetchDatasets();
+		fetchEmbedders();
 	});
 
 	async function fetchCollections() {
@@ -69,6 +119,46 @@
 		}
 	}
 
+	async function fetchDatasets() {
+		try {
+			loadingDatasets = true;
+			const response = await fetch('/api/datasets');
+			if (!response.ok) throw new Error('Failed to fetch datasets');
+			datasets = await response.json();
+			// Default to first dataset if available, otherwise 'new'
+			if (datasets.length > 0 && datasetOption === 'new') {
+				// Keep 'new' as default, but first dataset is available as secondary option
+			}
+		} catch (e) {
+			console.error('Failed to fetch datasets:', e);
+		} finally {
+			loadingDatasets = false;
+		}
+	}
+
+	async function fetchEmbedders() {
+		try {
+			loadingEmbedders = true;
+			const response = await fetch('/api/embedders');
+			if (!response.ok) throw new Error('Failed to fetch embedders');
+			embedders = await response.json();
+		} catch (e) {
+			console.error('Failed to fetch embedders:', e);
+		} finally {
+			loadingEmbedders = false;
+		}
+	}
+
+	function toggleDatasetTransformEmbedder(embedderId: number) {
+		if (selectedDatasetTransformEmbedderIds.includes(embedderId)) {
+			selectedDatasetTransformEmbedderIds = selectedDatasetTransformEmbedderIds.filter(
+				(id) => id !== embedderId
+			);
+		} else {
+			selectedDatasetTransformEmbedderIds = [...selectedDatasetTransformEmbedderIds, embedderId];
+		}
+	}
+
 	async function createTransform() {
 		error = null;
 
@@ -82,22 +172,69 @@
 			return;
 		}
 
+		if (chunkingStrategy === 'semantic' && !selectedEmbedderId) {
+			error = 'Embedder is required for semantic chunking';
+			return;
+		}
+
+		if (autoCreateDatasetTransform && selectedDatasetTransformEmbedderIds.length === 0) {
+			error = 'At least one embedder is required for dataset transform';
+			return;
+		}
+
 		try {
 			isCreating = true;
 
+			// Create dataset if needed
+			let targetDatasetId: number;
+			if (datasetOption === 'new') {
+				const datasetName = newDatasetName.trim() || `${transformTitle}-dataset`;
+				const datasetResponse = await fetch('/api/datasets', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						title: datasetName,
+						details: null,
+						tags: [],
+						is_public: false,
+					}),
+				});
+
+				if (!datasetResponse.ok) {
+					const errorText = await datasetResponse.text();
+					throw new Error(`Failed to create dataset: ${datasetResponse.statusText} - ${errorText}`);
+				}
+
+				const newDataset = await datasetResponse.json();
+				targetDatasetId = newDataset.dataset_id;
+			} else {
+				targetDatasetId = datasetOption as number;
+			}
+
 			const jobConfig: any = {
-				extraction_options: {
-					preserve_formatting: preserveFormatting,
-					extract_tables: extractTables,
-					preserve_headings: preserveHeadings,
-					preserve_lists: preserveLists,
-					preserve_code_blocks: preserveCodeBlocks,
+				extraction: {
+					strategy: extractionStrategy,
+					options: {
+						preserve_formatting: preserveFormatting,
+						extract_tables: extractTables,
+						table_format: tableFormat,
+						preserve_headings: preserveHeadings,
+						heading_format: headingFormat,
+						preserve_lists: preserveLists,
+						preserve_code_blocks: preserveCodeBlocks,
+					},
 				},
-				chunking_options: {
+				chunking: {
+					strategy: chunkingStrategy,
 					chunk_size: chunkSize,
 					chunk_overlap: chunkOverlap,
-					min_chunk_size: minChunkSize,
-					preserve_sentence_boundaries: preserveSentenceBoundaries,
+					options: {
+						preserve_sentence_boundaries: preserveSentenceBoundaries,
+						min_chunk_size: minChunkSize,
+						...(chunkingStrategy === 'semantic' && selectedEmbedderId
+							? { semantic: { embedder_id: selectedEmbedderId } }
+							: {}),
+					},
 				},
 			};
 
@@ -107,15 +244,36 @@
 				body: JSON.stringify({
 					title: transformTitle.trim(),
 					collection_id: selectedCollectionId,
-					dataset_id: 0, // Created by transform
-					extraction_strategy: extractionStrategy,
-					chunking_strategy: chunkingStrategy,
+					dataset_id: targetDatasetId,
+					chunk_size: chunkSize,
 					job_config: jobConfig,
 				}),
 			});
 
 			if (!response.ok) {
-				throw new Error(`Failed to create transform: ${response.statusText}`);
+				const errorText = await response.text();
+				throw new Error(`Failed to create transform: ${response.statusText} - ${errorText}`);
+			}
+
+			// Create dataset transform if auto-create is enabled
+			if (autoCreateDatasetTransform && selectedDatasetTransformEmbedderIds.length > 0) {
+				const datasetTransformResponse = await fetch('/api/dataset-transforms', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						title: `${transformTitle}-embeddings`,
+						source_dataset_id: targetDatasetId,
+						embedder_ids: selectedDatasetTransformEmbedderIds,
+						embedding_batch_size: datasetTransformBatchSize,
+						wipe_collection: datasetTransformWipeCollection,
+					}),
+				});
+
+				if (!datasetTransformResponse.ok) {
+					const errorText = await datasetTransformResponse.text();
+					console.error('Failed to create dataset transform:', errorText);
+					// Don't fail the whole operation, just log it
+				}
 			}
 
 			toastStore.success('Transform created successfully');
@@ -129,13 +287,24 @@
 			isCreating = false;
 		}
 	}
-
 	function resetForm() {
 		transformTitle = '';
 		selectedCollectionId = collectionId ?? null;
+		datasetOption = 'new';
+		newDatasetName = '';
+		selectedEmbedderId = null;
+		autoCreateDatasetTransform = false;
+		selectedDatasetTransformEmbedderIds = [];
+		datasetTransformBatchSize = null;
+		datasetTransformWipeCollection = false;
 		extractionStrategy = 'plain_text';
 		preserveFormatting = false;
 		extractTables = true;
+		tableFormat = 'plain_text';
+		preserveHeadings = false;
+		headingFormat = 'plain_text';
+		preserveLists = false;
+		preserveCodeBlocks = false;
 		chunkingStrategy = 'sentence';
 		chunkSize = 200;
 		chunkOverlap = 0;
@@ -217,6 +386,49 @@
 				{/if}
 			</div>
 
+			<!-- Dataset Selection/Creation -->
+			<div>
+				<label
+					for="dataset-option"
+					class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+				>
+					Target Dataset <span class="text-red-500">*</span>
+				</label>
+				{#if loadingDatasets}
+					<div class="text-sm text-gray-500">Loading datasets...</div>
+				{:else}
+					<select
+						id="dataset-option"
+						bind:value={datasetOption}
+						class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
+					>
+						<option value="new">Create new dataset</option>
+						{#each datasets as dataset (dataset.dataset_id)}
+							<option value={dataset.dataset_id}>{dataset.title}</option>
+						{/each}
+					</select>
+				{/if}
+			</div>
+
+			<!-- New Dataset Name (shown when creating new) -->
+			{#if datasetOption === 'new'}
+				<div>
+					<label
+						for="new-dataset-name"
+						class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+					>
+						New Dataset Name
+					</label>
+					<input
+						id="new-dataset-name"
+						type="text"
+						bind:value={newDatasetName}
+						placeholder="e.g., my-collection-dataset"
+						class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
+					/>
+				</div>
+			{/if}
+
 			<!-- Extraction Strategy -->
 			<div>
 				<div class="flex items-center gap-2">
@@ -238,7 +450,8 @@
 						placement="right"
 						class="max-w-xs text-center bg-gray-900 dark:bg-white text-white dark:text-gray-900 border-0"
 					>
-						Method for extracting text: Plain Text is fastest, Structure Preserving keeps formatting
+						Method for extracting text: Plain Text is fastest, Structure Preserving keeps
+						formatting, Markdown converts to markdown
 					</Tooltip>
 				</div>
 				<select
@@ -252,67 +465,92 @@
 				</select>
 			</div>
 
-			<!-- Advanced Extraction (Collapsible) -->
-			<button
-				onclick={() => (showAdvancedExtraction = !showAdvancedExtraction)}
-				class="w-full flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white"
-			>
-				<ChevronDownOutline
-					class={`w-4 h-4 transition-transform ${showAdvancedExtraction ? 'rotate-180' : ''}`}
-				/>
-				Advanced Extraction Options
-			</button>
+			<!-- Extraction Options -->
+			<div class="space-y-3">
+				<label class="flex items-center gap-2 cursor-pointer">
+					<input
+						type="checkbox"
+						bind:checked={preserveFormatting}
+						class="w-4 h-4 text-blue-600 rounded focus:ring-2"
+					/>
+					<span class="text-sm text-gray-700 dark:text-gray-300">Preserve Formatting</span>
+				</label>
 
-			{#if showAdvancedExtraction}
-				<div
-					class="bg-gray-50 dark:bg-gray-700/30 rounded-lg p-3 space-y-3 border border-gray-200 dark:border-gray-600"
-				>
-					<label class="flex items-center gap-2 cursor-pointer">
-						<input
-							type="checkbox"
-							bind:checked={preserveFormatting}
-							class="w-4 h-4 text-blue-600 rounded focus:ring-2"
-						/>
-						<span class="text-sm text-gray-700 dark:text-gray-300">Preserve Formatting</span>
-					</label>
+				<label class="flex items-center gap-2 cursor-pointer">
+					<input
+						type="checkbox"
+						bind:checked={extractTables}
+						class="w-4 h-4 text-blue-600 rounded focus:ring-2"
+					/>
+					<span class="text-sm text-gray-700 dark:text-gray-300">Extract Tables</span>
+				</label>
 
-					<label class="flex items-center gap-2 cursor-pointer">
-						<input
-							type="checkbox"
-							bind:checked={extractTables}
-							class="w-4 h-4 text-blue-600 rounded focus:ring-2"
-						/>
-						<span class="text-sm text-gray-700 dark:text-gray-300">Extract Tables</span>
-					</label>
+				{#if extractTables}
+					<div class="ml-6">
+						<label
+							for="table-format"
+							class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+						>
+							Table Format
+						</label>
+						<select
+							id="table-format"
+							bind:value={tableFormat}
+							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
+						>
+							<option value="plain_text">Plain Text</option>
+							<option value="markdown">Markdown</option>
+							<option value="csv">CSV</option>
+						</select>
+					</div>
+				{/if}
 
-					<label class="flex items-center gap-2 cursor-pointer">
-						<input
-							type="checkbox"
-							bind:checked={preserveHeadings}
-							class="w-4 h-4 text-blue-600 rounded focus:ring-2"
-						/>
-						<span class="text-sm text-gray-700 dark:text-gray-300">Preserve Headings</span>
-					</label>
+				<label class="flex items-center gap-2 cursor-pointer">
+					<input
+						type="checkbox"
+						bind:checked={preserveHeadings}
+						class="w-4 h-4 text-blue-600 rounded focus:ring-2"
+					/>
+					<span class="text-sm text-gray-700 dark:text-gray-300">Preserve Headings</span>
+				</label>
 
-					<label class="flex items-center gap-2 cursor-pointer">
-						<input
-							type="checkbox"
-							bind:checked={preserveLists}
-							class="w-4 h-4 text-blue-600 rounded focus:ring-2"
-						/>
-						<span class="text-sm text-gray-700 dark:text-gray-300">Preserve Lists</span>
-					</label>
+				{#if preserveHeadings}
+					<div class="ml-6">
+						<label
+							for="heading-format"
+							class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+						>
+							Heading Format
+						</label>
+						<select
+							id="heading-format"
+							bind:value={headingFormat}
+							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
+						>
+							<option value="plain_text">Plain Text</option>
+							<option value="markdown">Markdown</option>
+						</select>
+					</div>
+				{/if}
 
-					<label class="flex items-center gap-2 cursor-pointer">
-						<input
-							type="checkbox"
-							bind:checked={preserveCodeBlocks}
-							class="w-4 h-4 text-blue-600 rounded focus:ring-2"
-						/>
-						<span class="text-sm text-gray-700 dark:text-gray-300">Preserve Code Blocks</span>
-					</label>
-				</div>
-			{/if}
+				<label class="flex items-center gap-2 cursor-pointer">
+					<input
+						type="checkbox"
+						bind:checked={preserveLists}
+						class="w-4 h-4 text-blue-600 rounded focus:ring-2"
+					/>
+					<span class="text-sm text-gray-700 dark:text-gray-300">Preserve Lists</span>
+				</label>
+
+				<label class="flex items-center gap-2 cursor-pointer">
+					<input
+						type="checkbox"
+						bind:checked={preserveCodeBlocks}
+						class="w-4 h-4 text-blue-600 rounded focus:ring-2"
+					/>
+					<span class="text-sm text-gray-700 dark:text-gray-300">Preserve Code Blocks</span>
+				</label>
+			</div>
 
 			<!-- Chunking Strategy -->
 			<div>
@@ -352,7 +590,37 @@
 				</select>
 			</div>
 
-			<!-- Basic Chunking Options -->
+			<!-- Embedders (shown only for semantic chunking) -->
+			{#if chunkingStrategy === 'semantic'}
+				<div>
+					<label
+						for="embedder-select"
+						class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+					>
+						Embedder <span class="text-red-500">*</span>
+					</label>
+					{#if loadingEmbedders}
+						<div class="text-sm text-gray-500">Loading embedders...</div>
+					{:else if embedders.length === 0}
+						<div class="text-sm text-gray-500">No embedders available</div>
+					{:else}
+						<select
+							id="embedder-select"
+							bind:value={selectedEmbedderId}
+							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
+						>
+							<option value={null}>Select an embedder</option>
+							{#each embedders as embedder (embedder.embedder_id)}
+								<option value={embedder.embedder_id}>
+									{embedder.name} ({embedder.provider})
+								</option>
+							{/each}
+						</select>
+					{/if}
+				</div>
+			{/if}
+
+			<!-- Chunking Options -->
 			<div class="grid grid-cols-2 gap-3">
 				<div>
 					<label
@@ -389,50 +657,122 @@
 				</div>
 			</div>
 
-			<!-- Advanced Chunking (Collapsible) -->
-			<button
-				onclick={() => (showAdvancedChunking = !showAdvancedChunking)}
-				class="w-full flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white"
-			>
-				<ChevronDownOutline
-					class={`w-4 h-4 transition-transform ${showAdvancedChunking ? 'rotate-180' : ''}`}
-				/>
-				Advanced Chunking Options
-			</button>
-
-			{#if showAdvancedChunking}
-				<div
-					class="bg-gray-50 dark:bg-gray-700/30 rounded-lg p-3 space-y-3 border border-gray-200 dark:border-gray-600"
+			<div>
+				<label
+					for="min-chunk-size"
+					class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1"
 				>
-					<div>
-						<label
-							for="min-chunk-size"
-							class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1"
-						>
-							Min Chunk Size
-						</label>
-						<input
-							id="min-chunk-size"
-							type="number"
-							min="1"
-							max="1000"
-							bind:value={minChunkSize}
-							class="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
-						/>
-					</div>
+					Min Chunk Size
+				</label>
+				<input
+					id="min-chunk-size"
+					type="number"
+					min="1"
+					max="1000"
+					bind:value={minChunkSize}
+					class="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
+				/>
+			</div>
 
-					<label class="flex items-center gap-2 cursor-pointer">
-						<input
-							type="checkbox"
-							bind:checked={preserveSentenceBoundaries}
-							class="w-4 h-4 text-blue-600 rounded focus:ring-2"
-						/>
-						<span class="text-sm text-gray-700 dark:text-gray-300"
-							>Preserve Sentence Boundaries</span
-						>
-					</label>
-				</div>
-			{/if}
+			<label class="flex items-center gap-2 cursor-pointer">
+				<input
+					type="checkbox"
+					bind:checked={preserveSentenceBoundaries}
+					class="w-4 h-4 text-blue-600 rounded focus:ring-2"
+				/>
+				<span class="text-sm text-gray-700 dark:text-gray-300">Preserve Sentence Boundaries</span>
+			</label>
+
+			<!-- Dataset Transform Configuration -->
+			<div class="border-t border-gray-300 dark:border-gray-600 pt-4 mt-4">
+				<label class="flex items-center gap-2 cursor-pointer">
+					<input
+						type="checkbox"
+						bind:checked={autoCreateDatasetTransform}
+						class="w-4 h-4 text-blue-600 rounded focus:ring-2"
+					/>
+					<span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+						Auto-create Dataset Transform (Embeddings)
+					</span>
+				</label>
+
+				{#if autoCreateDatasetTransform}
+					<div class="mt-4 space-y-4 bg-gray-50 dark:bg-gray-900/20 p-4 rounded-lg">
+						<!-- Embedders Selection -->
+						<div>
+							<div class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+								Embedders <span class="text-red-500">*</span>
+							</div>
+							{#if loadingEmbedders}
+								<div class="text-sm text-gray-500">Loading embedders...</div>
+							{:else if embedders.length === 0}
+								<div class="text-sm text-gray-500">No embedders available</div>
+							{:else}
+								<div
+									class="space-y-2 border border-gray-300 dark:border-gray-600 rounded-lg p-3 dark:bg-gray-700"
+								>
+									{#each embedders as embedder (embedder.embedder_id)}
+										<label class="flex items-center gap-2 cursor-pointer">
+											<input
+												type="checkbox"
+												checked={selectedDatasetTransformEmbedderIds.includes(embedder.embedder_id)}
+												onchange={() => toggleDatasetTransformEmbedder(embedder.embedder_id)}
+												class="w-4 h-4 text-blue-600 rounded focus:ring-2"
+											/>
+											<span class="text-sm text-gray-700 dark:text-gray-300">
+												{embedder.name}
+												<span class="text-xs text-gray-500 dark:text-gray-400"
+													>({embedder.provider})</span
+												>
+											</span>
+										</label>
+									{/each}
+								</div>
+							{/if}
+						</div>
+
+						<!-- Embedding Batch Size -->
+						<div>
+							<label
+								for="dataset-transform-batch-size"
+								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+							>
+								Embedding Batch Size <span class="text-xs text-gray-500 dark:text-gray-400"
+									>(optional)</span
+								>
+							</label>
+							<input
+								id="dataset-transform-batch-size"
+								type="number"
+								bind:value={datasetTransformBatchSize}
+								min="1"
+								max="1000"
+								placeholder="Leave empty for default"
+								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
+							/>
+							<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+								Number of embeddings to process per batch. Lower values use less memory, higher
+								values process faster.
+							</p>
+						</div>
+
+						<!-- Wipe Collection Checkbox -->
+						<label class="flex items-center gap-2 cursor-pointer">
+							<input
+								type="checkbox"
+								bind:checked={datasetTransformWipeCollection}
+								class="w-4 h-4 text-blue-600 rounded focus:ring-2"
+							/>
+							<span class="text-sm text-gray-700 dark:text-gray-300">
+								Wipe existing Qdrant collection
+								<span class="text-xs text-gray-500 dark:text-gray-400"
+									>(Warning: This deletes all existing data)</span
+								>
+							</span>
+						</label>
+					</div>
+				{/if}
+			</div>
 		</div>
 
 		<!-- Actions -->

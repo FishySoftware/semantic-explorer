@@ -14,14 +14,14 @@ pub struct EmbeddedDatasetInfo {
 
 const GET_EMBEDDED_DATASET_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner, collection_name, created_at, updated_at
+           owner, collection_name, created_at, updated_at, last_processed_at
     FROM embedded_datasets
     WHERE owner = $1 AND embedded_dataset_id = $2
 "#;
 
 const GET_EMBEDDED_DATASETS_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner, collection_name, created_at, updated_at
+           owner, collection_name, created_at, updated_at, last_processed_at
     FROM embedded_datasets
     WHERE owner = $1
     ORDER BY created_at DESC
@@ -29,7 +29,7 @@ const GET_EMBEDDED_DATASETS_QUERY: &str = r#"
 
 const GET_EMBEDDED_DATASETS_FOR_DATASET_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner, collection_name, created_at, updated_at
+           owner, collection_name, created_at, updated_at, last_processed_at
     FROM embedded_datasets
     WHERE owner = $1 AND source_dataset_id = $2
     ORDER BY created_at DESC
@@ -37,7 +37,7 @@ const GET_EMBEDDED_DATASETS_FOR_DATASET_QUERY: &str = r#"
 
 const GET_EMBEDDED_DATASETS_FOR_TRANSFORM_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner, collection_name, created_at, updated_at
+           owner, collection_name, created_at, updated_at, last_processed_at
     FROM embedded_datasets
     WHERE dataset_transform_id = $1
     ORDER BY created_at DESC
@@ -66,7 +66,7 @@ const CREATE_EMBEDDED_DATASET_QUERY: &str = r#"
     INSERT INTO embedded_datasets (title, dataset_transform_id, source_dataset_id, embedder_id, owner, collection_name)
     VALUES ($1, $2, $3, $4, $5, $6)
     RETURNING embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-              owner, collection_name, created_at, updated_at
+              owner, collection_name, created_at, updated_at, last_processed_at
 "#;
 
 const UPDATE_EMBEDDED_DATASET_COLLECTION_NAME_QUERY: &str = r#"
@@ -75,7 +75,7 @@ const UPDATE_EMBEDDED_DATASET_COLLECTION_NAME_QUERY: &str = r#"
         updated_at = NOW()
     WHERE embedded_dataset_id = $1
     RETURNING embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-              owner, collection_name, created_at, updated_at
+              owner, collection_name, created_at, updated_at, last_processed_at
 "#;
 
 const UPDATE_EMBEDDED_DATASET_TITLE_QUERY: &str = r#"
@@ -84,7 +84,7 @@ const UPDATE_EMBEDDED_DATASET_TITLE_QUERY: &str = r#"
         updated_at = NOW()
     WHERE embedded_dataset_id = $1 AND owner = $3
     RETURNING embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-              owner, collection_name, created_at, updated_at
+              owner, collection_name, created_at, updated_at, last_processed_at
 "#;
 
 const DELETE_EMBEDDED_DATASET_QUERY: &str = r#"
@@ -276,6 +276,23 @@ pub async fn record_processed_batch(
         .bind(processing_duration_ms)
         .execute(pool)
         .await?;
+    Ok(())
+}
+
+pub async fn update_embedded_dataset_last_processed_at(
+    pool: &Pool<Postgres>,
+    embedded_dataset_id: i32,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        UPDATE embedded_datasets
+        SET last_processed_at = NOW()
+        WHERE embedded_dataset_id = $1
+        "#,
+    )
+    .bind(embedded_dataset_id)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
