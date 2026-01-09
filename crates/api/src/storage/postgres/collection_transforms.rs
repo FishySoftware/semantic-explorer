@@ -10,13 +10,6 @@ const GET_COLLECTION_TRANSFORM_QUERY: &str = r#"
     WHERE owner = $1 AND collection_transform_id = $2
 "#;
 
-const GET_COLLECTION_TRANSFORM_BY_ID_QUERY: &str = r#"
-    SELECT collection_transform_id, title, collection_id, dataset_id, owner, is_enabled,
-           chunk_size, job_config, created_at, updated_at
-    FROM collection_transforms
-    WHERE collection_transform_id = $1
-"#;
-
 const GET_COLLECTION_TRANSFORMS_QUERY: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner, is_enabled,
            chunk_size, job_config, created_at, updated_at
@@ -71,7 +64,8 @@ const GET_COLLECTION_TRANSFORM_STATS_QUERY: &str = r#"
         COUNT(*) as total_files_processed,
         COUNT(*) FILTER (WHERE process_status = 'completed') as successful_files,
         COUNT(*) FILTER (WHERE process_status = 'failed') as failed_files,
-        COALESCE(SUM(item_count) FILTER (WHERE process_status = 'completed'), 0) as total_items_created
+        COALESCE(SUM(item_count) FILTER (WHERE process_status = 'completed'), 0) as total_items_created,
+        MAX(processed_at) as last_run_at
     FROM transform_processed_files
     WHERE transform_type = 'collection' AND transform_id = $1
 "#;
@@ -97,18 +91,14 @@ const RECORD_PROCESSED_FILE_QUERY: &str = r#"
         processed_at = NOW()
 "#;
 
-// CRUD operations
+const CHECK_FILE_PROCESSED_QUERY: &str = r#"
+    SELECT process_status
+    FROM transform_processed_files
+    WHERE transform_type = 'collection' AND transform_id = $1 AND file_key = $2
+    LIMIT 1
+"#;
 
-pub(crate) async fn get_collection_transform_by_id(
-    pool: &Pool<Postgres>,
-    collection_transform_id: i32,
-) -> Result<CollectionTransform> {
-    let transform = sqlx::query_as::<_, CollectionTransform>(GET_COLLECTION_TRANSFORM_BY_ID_QUERY)
-        .bind(collection_transform_id)
-        .fetch_one(pool)
-        .await?;
-    Ok(transform)
-}
+// CRUD operations
 
 pub async fn get_collection_transform(
     pool: &Pool<Postgres>,
@@ -254,4 +244,22 @@ pub async fn record_processed_file(
         .execute(pool)
         .await?;
     Ok(())
+}
+
+/// Check if a file was already successfully processed for this collection transform
+/// Returns true if the file was processed with status 'completed'
+pub async fn is_file_already_processed(
+    pool: &Pool<Postgres>,
+    collection_transform_id: i32,
+    file_key: &str,
+) -> Result<bool> {
+    let result: Option<(String,)> = sqlx::query_as(CHECK_FILE_PROCESSED_QUERY)
+        .bind(collection_transform_id)
+        .bind(file_key)
+        .fetch_optional(pool)
+        .await?;
+
+    Ok(result
+        .map(|(status,)| status == "completed")
+        .unwrap_or(false))
 }

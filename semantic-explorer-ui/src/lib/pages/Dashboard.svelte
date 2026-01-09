@@ -40,6 +40,7 @@
 	let publicLLMs = $state<LLM[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+	let grabbingId = $state<number | null>(null);
 
 	onMount(async () => {
 		await fetchData();
@@ -127,6 +128,94 @@
 			return 'Invalid date';
 		}
 	}
+
+	async function grabCollection(id: number) {
+		try {
+			grabbingId = id;
+			const response = await fetch(`/api/marketplace/collections/${id}/grab`, {
+				method: 'POST',
+			});
+
+			if (!response.ok) {
+				throw new Error(`Failed to grab collection: ${response.statusText}`);
+			}
+
+			const newCollection = await response.json();
+			toastStore.success('Collection grabbed successfully!');
+			window.location.hash = `#/collections/${newCollection.collection_id}/details`;
+		} catch (e) {
+			const message = formatError(e, 'Failed to grab collection');
+			toastStore.error(message);
+		} finally {
+			grabbingId = null;
+		}
+	}
+
+	async function grabDataset(id: number) {
+		try {
+			grabbingId = id;
+			const response = await fetch(`/api/marketplace/datasets/${id}/grab`, {
+				method: 'POST',
+			});
+
+			if (!response.ok) {
+				throw new Error(`Failed to grab dataset: ${response.statusText}`);
+			}
+
+			const newDataset = await response.json();
+			toastStore.success('Dataset grabbed successfully!');
+			window.location.hash = `#/datasets/${newDataset.dataset_id}/details`;
+		} catch (e) {
+			const message = formatError(e, 'Failed to grab dataset');
+			toastStore.error(message);
+		} finally {
+			grabbingId = null;
+		}
+	}
+
+	async function grabEmbedder(id: number) {
+		try {
+			grabbingId = id;
+			const response = await fetch(`/api/marketplace/embedders/${id}/grab`, {
+				method: 'POST',
+			});
+
+			if (!response.ok) {
+				throw new Error(`Failed to grab embedder: ${response.statusText}`);
+			}
+
+			const newEmbedder = await response.json();
+			toastStore.success('Embedder grabbed successfully!');
+			window.location.hash = `#/embedders?name=${encodeURIComponent(newEmbedder.name)}`;
+		} catch (e) {
+			const message = formatError(e, 'Failed to grab embedder');
+			toastStore.error(message);
+		} finally {
+			grabbingId = null;
+		}
+	}
+
+	async function grabLLM(id: number) {
+		try {
+			grabbingId = id;
+			const response = await fetch(`/api/marketplace/llms/${id}/grab`, {
+				method: 'POST',
+			});
+
+			if (!response.ok) {
+				throw new Error(`Failed to grab LLM: ${response.statusText}`);
+			}
+
+			const newLLM = await response.json();
+			toastStore.success('LLM grabbed successfully!');
+			window.location.hash = `#/llms?name=${encodeURIComponent(newLLM.name)}`;
+		} catch (e) {
+			const message = formatError(e, 'Failed to grab LLM');
+			toastStore.error(message);
+		} finally {
+			grabbingId = null;
+		}
+	}
 </script>
 
 <div class="max-w-7xl mx-auto">
@@ -171,7 +260,7 @@
 		</a>
 
 		<a
-			href="#/collection-transforms"
+			href="#/embedded-datasets"
 			class="p-4 bg-linear-to-br from-purple-500 to-purple-600 text-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
 		>
 			<svg class="w-8 h-8 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -179,17 +268,13 @@
 					stroke-linecap="round"
 					stroke-linejoin="round"
 					stroke-width="2"
-					d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+					d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"
 				></path>
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width="2"
-					d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6M9 16h6"
 				></path>
 			</svg>
-			<h3 class="text-lg font-semibold">Collection Transforms</h3>
-			<p class="text-sm text-purple-100 mt-1">Extract data from collections</p>
+			<h3 class="text-lg font-semibold">Embedded Datasets</h3>
+			<p class="text-sm text-purple-100 mt-1">Manage embedded datasets</p>
 		</a>
 
 		<a
@@ -353,12 +438,13 @@
 								class="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400"
 							>
 								<span>{formatDate(collection.updated_at)}</span>
-								<a
-									href={`#/marketplace/collections/${collection.collection_id}/grab`}
-									class="text-blue-600 dark:text-blue-400 hover:underline"
+								<button
+									disabled={grabbingId === collection.collection_id}
+									onclick={() => grabCollection(collection.collection_id)}
+									class="text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
 								>
-									Grab →
-								</a>
+									{grabbingId === collection.collection_id ? 'Grabbing...' : 'Grab →'}
+								</button>
 							</div>
 						</div>
 					{/each}
@@ -403,12 +489,13 @@
 								class="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400"
 							>
 								<span>{formatDate(dataset.updated_at)}</span>
-								<a
-									href={`#/marketplace/datasets/${dataset.dataset_id}/grab`}
-									class="text-blue-600 dark:text-blue-400 hover:underline"
+								<button
+									disabled={grabbingId === dataset.dataset_id}
+									onclick={() => grabDataset(dataset.dataset_id)}
+									class="text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
 								>
-									Grab →
-								</a>
+									{grabbingId === dataset.dataset_id ? 'Grabbing...' : 'Grab →'}
+								</button>
 							</div>
 						</div>
 					{/each}
@@ -442,12 +529,13 @@
 								class="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400"
 							>
 								<span>{formatDate(embedder.updated_at)}</span>
-								<a
-									href={`#/marketplace/embedders/${embedder.embedder_id}/grab`}
-									class="text-blue-600 dark:text-blue-400 hover:underline"
+								<button
+									disabled={grabbingId === embedder.embedder_id}
+									onclick={() => grabEmbedder(embedder.embedder_id)}
+									class="text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
 								>
-									Grab →
-								</a>
+									{grabbingId === embedder.embedder_id ? 'Grabbing...' : 'Grab →'}
+								</button>
 							</div>
 						</div>
 					{/each}
@@ -481,12 +569,13 @@
 								class="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400"
 							>
 								<span>{formatDate(llm.updated_at)}</span>
-								<a
-									href={`#/marketplace/llms/${llm.llm_id}/grab`}
-									class="text-blue-600 dark:text-blue-400 hover:underline"
+								<button
+									disabled={grabbingId === llm.llm_id}
+									onclick={() => grabLLM(llm.llm_id)}
+									class="text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
 								>
-									Grab →
-								</a>
+									{grabbingId === llm.llm_id ? 'Grabbing...' : 'Grab →'}
+								</button>
 							</div>
 						</div>
 					{/each}

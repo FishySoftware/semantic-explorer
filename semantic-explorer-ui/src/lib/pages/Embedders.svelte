@@ -55,6 +55,7 @@
 	let formDimensions = $state(1536);
 	let formMaxInputTokens = $state(8191);
 	let formTruncateStrategy = $state('NONE');
+	let formIsPublic = $state(false);
 
 	let testStatus = $state<'idle' | 'testing' | 'success' | 'error'>('idle');
 	let testMessage = $state('');
@@ -68,6 +69,7 @@
 	let customInputType = $state('');
 	let customEmbeddingTypes = $state('');
 	let customTruncate = $state('');
+	let userEditedName = $state(false);
 
 	const modelDimensions: Record<string, number> = {
 		'text-embedding-3-small': 1536,
@@ -212,10 +214,7 @@
 		}
 	}
 
-	onMount(() => {
-		fetchEmbedders();
-
-		// Check for name parameter in URL to pre-filter search
+	function extractSearchParamFromHash() {
 		const hashParts = window.location.hash.split('?');
 		if (hashParts.length > 1) {
 			const urlParams = new URLSearchParams(hashParts[1]);
@@ -232,6 +231,17 @@
 				);
 			}
 		}
+	}
+
+	onMount(() => {
+		fetchEmbedders();
+		extractSearchParamFromHash();
+	});
+
+	$effect(() => {
+		// Re-check for search param when hash changes (e.g., after redirect from create)
+		window.location.hash;
+		extractSearchParamFromHash();
 	});
 
 	async function fetchEmbedders() {
@@ -258,25 +268,18 @@
 		formName = '';
 		formProvider = 'cohere';
 		formApiKey = '';
+		formIsPublic = false;
 		updateProviderDefaults();
 
 		testStatus = 'idle';
 		testMessage = '';
+		userEditedName = false; // Reset the flag
 		showCreateForm = true;
 	}
 
 	$effect(() => {
-		if (showCreateForm && !editingEmbedder && !formName) {
-			const model = localModel === '__custom__' ? customModel : localModel;
-			if (model) {
-				const cleanModel = model.split('/').pop()?.toLowerCase() || model.toLowerCase();
-				formName = `embedders-${formProvider}-${cleanModel}`;
-			}
-		}
-	});
-
-	$effect(() => {
-		if (showCreateForm && !editingEmbedder && formName.startsWith('embedders-')) {
+		// Only auto-generate name on initial load when creating (not editing)
+		if (showCreateForm && !editingEmbedder && !userEditedName && !formName) {
 			const model = localModel === '__custom__' ? customModel : localModel;
 			if (model) {
 				const cleanModel = model.split('/').pop()?.toLowerCase() || model.toLowerCase();
@@ -296,6 +299,7 @@
 		formDimensions = embedder.dimensions ?? 1536;
 		formMaxInputTokens = (embedder as any).max_input_tokens ?? 8191;
 		formTruncateStrategy = (embedder as any).truncate_strategy ?? 'NONE';
+		formIsPublic = embedder.is_public ?? false;
 		try {
 			const cfg = embedder.config || {};
 			const defaults = providerDefaults[formProvider] || {};
@@ -379,6 +383,7 @@
 				dimensions: formDimensions,
 				max_input_tokens: formMaxInputTokens,
 				truncate_strategy: formTruncateStrategy,
+				is_public: formIsPublic,
 			};
 
 			const url = editingEmbedder
@@ -398,8 +403,16 @@
 				throw new Error(`Failed to save embedder: ${response.status}`);
 			}
 
+			const newEmbedder = await response.json();
 			showCreateForm = false;
-			await fetchEmbedders();
+
+			if (!editingEmbedder) {
+				// Fetch updated list and then redirect to show the new embedder
+				await fetchEmbedders();
+				window.location.hash = `#/embedders?name=${encodeURIComponent(newEmbedder.name)}`;
+			} else {
+				await fetchEmbedders();
+			}
 		} catch (e: any) {
 			console.error('Error saving embedder:', e);
 			error = e.message || 'Failed to save embedder';
@@ -493,6 +506,9 @@
 							id="embedder-name"
 							type="text"
 							bind:value={formName}
+							oninput={() => {
+								userEditedName = true;
+							}}
 							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 							placeholder="My Embedder"
 						/>
@@ -857,6 +873,19 @@
 									model: providerDefaults[formProvider]?.models?.[0] || '',
 								})}
 							></textarea>
+						</div>
+
+						<div>
+							<label class="flex items-center gap-2 cursor-pointer">
+								<input
+									type="checkbox"
+									bind:checked={formIsPublic}
+									class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+								/>
+								<span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+									Make this embedder public (visible in marketplace)
+								</span>
+							</label>
 						</div>
 					</div>
 

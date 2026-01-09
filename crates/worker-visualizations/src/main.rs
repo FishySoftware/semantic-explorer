@@ -53,8 +53,8 @@ fn init_tracing() -> Result<Tracer, Box<dyn std::error::Error + Send + Sync>> {
     let format_layer = if use_json {
         tracing_subscriber::fmt::layer()
             .json()
-            .with_current_span(true)
-            .with_span_list(true)
+            .with_current_span(false)
+            .with_span_list(false)
             .with_target(true)
             .with_file(true)
             .flatten_event(true)
@@ -152,6 +152,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let result_msg = semantic_explorer_core::models::VisualizationTransformResult {
                     job_id: job.job_id,
                     visualization_transform_id: job.visualization_transform_id,
+                    owner: job.owner.clone(),
                     status: "failed".to_string(),
                     error: Some(e.to_string()),
                     processing_duration_ms: Some(duration_ms),

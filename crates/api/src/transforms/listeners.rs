@@ -8,14 +8,15 @@ use tracing::{error, info};
 use semantic_explorer_core::models::{
     CollectionTransformResult, DatasetTransformResult, VisualizationTransformResult,
 };
-use semantic_explorer_core::storage::get_file;
+use semantic_explorer_core::storage::get_file_with_size_check;
 
 use crate::datasets::models::ChunkWithMetadata;
 use crate::storage::postgres::collection_transforms;
 use crate::storage::postgres::datasets;
 use crate::storage::postgres::embedded_datasets;
 use crate::storage::postgres::visualization_transforms::{
-    update_visualization_transform_status_completed, update_visualization_transform_status_failed,
+    get_visualization_transform, update_visualization_transform_status_completed,
+    update_visualization_transform_status_failed,
 };
 
 #[derive(Clone)]
@@ -114,6 +115,34 @@ fn start_visualization_result_listener(context: TransformContext, nats_client: N
 #[tracing::instrument(name = "handle_file_result", skip(ctx))]
 async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformContext) {
     info!("Handling file result for: {}", result.source_file_key);
+
+    // Check if this file was already successfully processed to avoid duplicates
+    match collection_transforms::is_file_already_processed(
+        &ctx.postgres_pool,
+        result.collection_transform_id,
+        &result.source_file_key,
+    )
+    .await
+    {
+        Ok(true) => {
+            info!(
+                "File {} was already successfully processed, skipping to avoid duplicates",
+                result.source_file_key
+            );
+            return;
+        }
+        Ok(false) => {
+            // File not yet processed, continue
+        }
+        Err(e) => {
+            error!(
+                "Failed to check if file {} was already processed: {}. Proceeding with caution.",
+                result.source_file_key, e
+            );
+            // Continue anyway - better to risk a duplicate than lose data
+        }
+    }
+
     if result.status != "success" {
         error!(
             "File transform failed for {}: {:?}",
@@ -137,7 +166,9 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
 
     info!("Downloading chunks for: {}", result.source_file_key);
     let chunks_content =
-        match get_file(&ctx.s3_client, &result.bucket, &result.chunks_file_key).await {
+        match get_file_with_size_check(&ctx.s3_client, &result.bucket, &result.chunks_file_key)
+            .await
+        {
             Ok(c) => c,
             Err(e) => {
                 error!(
@@ -159,8 +190,9 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
         }
     };
 
-    let transform = match collection_transforms::get_collection_transform_by_id(
+    let transform = match collection_transforms::get_collection_transform(
         &ctx.postgres_pool,
+        &result.owner,
         result.collection_transform_id,
     )
     .await
@@ -168,8 +200,8 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
         Ok(t) => t,
         Err(e) => {
             error!(
-                "Failed to get collection transform {}: {}",
-                result.collection_transform_id, e
+                "Failed to get collection transform {} for owner {}: {}",
+                result.collection_transform_id, result.owner, e
             );
             return;
         }
@@ -205,11 +237,31 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
         "chunk_count": chunk_count,
     });
 
-    info!("Creating dataset item for: {}", result.source_file_key);
+    // Validate that the file key (title) is not empty or whitespace-only
+    let title = result.source_file_key.trim();
+    if title.is_empty() {
+        error!("File key is empty or contains only whitespace, cannot create dataset item");
+        if let Err(e) = collection_transforms::record_processed_file(
+            &ctx.postgres_pool,
+            result.collection_transform_id,
+            &result.source_file_key,
+            0,
+            "failed",
+            Some("File title cannot be empty or contain only whitespace"),
+            result.processing_duration_ms,
+        )
+        .await
+        {
+            error!("Failed to record file processing failure: {}", e);
+        }
+        return;
+    }
+
+    info!("Creating dataset item for: {}", title);
     if let Err(e) = datasets::create_dataset_item(
         &ctx.postgres_pool,
         transform.dataset_id,
-        &result.source_file_key,
+        title,
         &chunks,
         metadata,
     )
@@ -263,6 +315,21 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
         result.batch_file_key
     );
 
+    // Validate ownership by fetching the embedded dataset
+    if let Err(e) = embedded_datasets::get_embedded_dataset(
+        &ctx.postgres_pool,
+        &result.owner,
+        result.embedded_dataset_id,
+    )
+    .await
+    {
+        error!(
+            "Embedded dataset {} not found or access denied for owner {}: {}",
+            result.embedded_dataset_id, result.owner, e
+        );
+        return;
+    }
+
     if result.status != "success" {
         error!(
             "Vector batch failed for {}: {:?}",
@@ -315,6 +382,21 @@ async fn handle_visualization_result(result: VisualizationTransformResult, ctx: 
         "Handling visualization result for transform {}",
         result.visualization_transform_id
     );
+
+    // Validate ownership by fetching the visualization transform
+    if let Err(e) = get_visualization_transform(
+        &ctx.postgres_pool,
+        &result.owner,
+        result.visualization_transform_id,
+    )
+    .await
+    {
+        error!(
+            "Visualization transform {} not found or access denied for owner {}: {}",
+            result.visualization_transform_id, result.owner, e
+        );
+        return;
+    }
 
     if result.status != "completed" {
         error!(

@@ -19,6 +19,9 @@ pub struct EmbeddedDataset {
     pub created_at: DateTime<Utc>,
     #[schema(value_type = String, format = DateTime)]
     pub updated_at: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub last_processed_at: Option<DateTime<Utc>>,
 }
 
 /// Embedded Dataset with enriched information (joins)

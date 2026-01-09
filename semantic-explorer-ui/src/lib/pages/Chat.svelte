@@ -1,8 +1,31 @@
 <!-- eslint-disable svelte/no-at-html-tags -->
 <script lang="ts">
+	import { marked } from 'marked';
 	import { onMount } from 'svelte';
 	import PageHeader from '../components/PageHeader.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
+
+	// Lazy load highlight.js
+	let hljsModule: typeof import('highlight.js').default | null = null;
+	let hljsLoaded = false;
+
+	async function loadHighlightJS() {
+		if (!hljsLoaded) {
+			const [hljs] = await Promise.all([
+				import('highlight.js'),
+				import('highlight.js/styles/github-dark.css'),
+			]);
+			hljsModule = hljs.default;
+			hljsLoaded = true;
+		}
+		return hljsModule!;
+	}
+
+	// Configure marked options
+	marked.setOptions({
+		breaks: true,
+		gfm: true,
+	});
 
 	interface ChatSession {
 		session_id: string;
@@ -17,7 +40,7 @@
 		document_id: string | null;
 		text: string;
 		similarity_score: number;
-		source: string | null;
+		item_title: string | null;
 	}
 
 	interface ChatMessage {
@@ -63,7 +86,12 @@
 	let sendingMessage = $state(false);
 	let messageError = $state<string | null>(null);
 
-	// Track expanded state of retrieved documents per message
+	// RAG Configuration
+	let maxChunks = $state(20);
+	let minSimilarityScore = $state(0.2);
+	let showRagSettings = $state(false);
+
+	// Track expanded state of retrieved documents per message (collapsed by default)
 	let expandedDocs = $state<Record<number, boolean>>({});
 
 	async function fetchSessions() {
@@ -119,6 +147,20 @@
 			creatingSession = true;
 			createSessionError = null;
 
+			// Generate default title if not provided
+			const title =
+				newSessionTitle.trim() ||
+				(() => {
+					const now = new Date();
+					const year = now.getFullYear();
+					const month = String(now.getMonth() + 1).padStart(2, '0');
+					const day = String(now.getDate()).padStart(2, '0');
+					const hours = String(now.getHours()).padStart(2, '0');
+					const minutes = String(now.getMinutes()).padStart(2, '0');
+					const seconds = String(now.getSeconds()).padStart(2, '0');
+					return `chat-session-${year}${month}${day}-${hours}${minutes}${seconds}`;
+				})();
+
 			const response = await fetch('/api/chat/sessions', {
 				method: 'POST',
 				headers: {
@@ -127,7 +169,7 @@
 				body: JSON.stringify({
 					embedded_dataset_id: newSessionEmbeddedDatasetId,
 					llm_id: newSessionLLMId,
-					title: newSessionTitle || null,
+					title: title,
 				}),
 			});
 
@@ -188,6 +230,8 @@
 				},
 				body: JSON.stringify({
 					content: messageInput,
+					max_context_documents: maxChunks,
+					min_similarity_score: minSimilarityScore,
 				}),
 			});
 
@@ -278,14 +322,46 @@
 		return dataset ? `${dataset.title} (${dataset.embedder_name})` : `Dataset ${id}`;
 	}
 
-	function getSourceDatasetId(embeddedDatasetId: number): number | null {
-		const dataset = embeddedDatasets.find((d) => d.embedded_dataset_id === embeddedDatasetId);
-		return dataset ? dataset.source_dataset_id : null;
-	}
-
 	function getLLMTitle(id: number): string {
 		const llm = llms.find((l) => l.llm_id === id);
 		return llm ? `${llm.name} (${llm.provider})` : `LLM ${id}`;
+	}
+
+	async function renderMarkdown(
+		content: string,
+		retrievedDocs?: RetrievedDocument[]
+	): Promise<string> {
+		let processedContent = content;
+
+		// Replace chunk references with actual filenames
+		if (retrievedDocs && retrievedDocs.length > 0) {
+			// Create a map of chunk index to item title
+			const chunkToTitle: Record<number, string> = {};
+			retrievedDocs.forEach((doc, idx) => {
+				chunkToTitle[idx + 1] = doc.item_title || `Chunk ${idx + 1}`;
+			});
+
+			// Replace Chunk X references with actual item titles
+			processedContent = processedContent.replace(/Chunk (\d+)/g, (match, chunkNum) => {
+				const num = parseInt(chunkNum);
+				return chunkToTitle[num] || match;
+			});
+		}
+
+		const html = marked.parse(processedContent) as string;
+		// Apply syntax highlighting to code blocks after rendering
+		const div = document.createElement('div');
+		div.innerHTML = html;
+
+		const codeBlocks = div.querySelectorAll('pre code');
+		if (codeBlocks.length > 0) {
+			const hljs = await loadHighlightJS();
+			codeBlocks.forEach((block) => {
+				hljs.highlightElement(block as HTMLElement);
+			});
+		}
+
+		return div.innerHTML;
 	}
 
 	onMount(() => {
@@ -325,7 +401,7 @@
 						for="session-title"
 						class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
 					>
-						Session Title (Optional)
+						Session Title
 					</label>
 					<input
 						id="session-title"
@@ -473,7 +549,15 @@
 										? 'bg-blue-600 text-white'
 										: 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white'} rounded-lg px-4 py-2"
 								>
-									<p class="text-sm">{message.content}</p>
+									{#if message.role === 'user'}
+										<p class="text-sm">{message.content}</p>
+									{:else}
+										<div class="prose prose-sm dark:prose-invert max-w-none">
+											{#await renderMarkdown(message.content, message.retrieved_documents) then html}
+												{@html html}
+											{/await}
+										</div>
+									{/if}
 									{#if message.role === 'assistant' && message.retrieved_documents && message.retrieved_documents.length > 0}
 										<div class="mt-3 pt-3 border-t border-current opacity-75">
 											<button
@@ -489,33 +573,22 @@
 														: ''}
 												</span>
 												<span class="ml-2">
-													{expandedDocs[message.message_id] ? '▼' : '▶'}
+													{expandedDocs[message.message_id] === true ? '▼' : '▶'}
 												</span>
 											</button>
-											{#if expandedDocs[message.message_id]}
+											{#if expandedDocs[message.message_id] === true}
 												<div class="space-y-2 mt-2">
 													{#each message.retrieved_documents as doc, idx (doc.document_id || idx)}
 														<div class="text-xs p-2 rounded bg-gray-300 dark:bg-gray-600">
 															<div class="flex items-start justify-between mb-1">
 																<span class="font-semibold text-[10px] opacity-70">
-																	Chunk {idx + 1}
+																	{doc.item_title || `Chunk ${idx + 1}`}
 																</span>
 																<span class="font-mono text-[10px] opacity-70">
 																	Score: {doc.similarity_score.toFixed(3)}
 																</span>
 															</div>
 															<p class="mb-1 leading-relaxed">{doc.text}</p>
-															{#if doc.source}
-																<a
-																	href="ui#/datasets/{getSourceDatasetId(
-																		currentSession?.embedded_dataset_id || 0
-																	)}/details?q={encodeURIComponent(doc.source)}"
-																	class="text-[10px] underline hover:font-semibold transition-all opacity-70 hover:opacity-100"
-																	target="_blank"
-																>
-																	Source: {doc.source}
-																</a>
-															{/if}
 														</div>
 													{/each}
 												</div>
@@ -540,6 +613,73 @@
 						<p class="text-sm text-red-600 dark:text-red-400">{messageError}</p>
 					</div>
 				{/if}
+
+				<!-- RAG Settings -->
+				<div class="mb-4">
+					<button
+						onclick={() => {
+							showRagSettings = !showRagSettings;
+						}}
+						class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors"
+					>
+						<span>{showRagSettings ? '▼' : '▶'}</span>
+						<span>RAG Settings</span>
+					</button>
+
+					{#if showRagSettings}
+						<div
+							class="mt-3 p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-600"
+						>
+							<div class="grid grid-cols-2 gap-4">
+								<div>
+									<label
+										for="max-chunks"
+										class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+									>
+										Max Chunks: <span class="font-bold">{maxChunks}</span>
+									</label>
+									<input
+										id="max-chunks"
+										type="range"
+										min="1"
+										max="100"
+										step="1"
+										bind:value={maxChunks}
+										class="slider w-full"
+									/>
+									<div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-1">
+										<span>1</span>
+										<span>100</span>
+									</div>
+								</div>
+								<div>
+									<label
+										for="min-score"
+										class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+									>
+										Min Similarity: <span class="font-bold">{minSimilarityScore.toFixed(2)}</span>
+									</label>
+									<input
+										id="min-score"
+										type="range"
+										min="0"
+										max="1"
+										step="0.05"
+										bind:value={minSimilarityScore}
+										class="slider w-full"
+									/>
+									<div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-1">
+										<span>0.00</span>
+										<span>1.00</span>
+									</div>
+								</div>
+							</div>
+							<p class="text-xs text-gray-500 dark:text-gray-400 mt-3">
+								Control how many chunks are retrieved and the minimum similarity score threshold.
+							</p>
+						</div>
+					{/if}
+				</div>
 
 				<div class="flex gap-3">
 					<input
@@ -573,5 +713,176 @@
 		margin: 0;
 		padding: 0;
 		overflow: hidden;
+	}
+
+	/* Style the markdown content in messages */
+	:global(.prose code) {
+		padding: 0.125rem 0.25rem;
+		border-radius: 0.25rem;
+		background-color: rgb(55 65 81);
+		color: rgb(243 244 246);
+		font-size: 0.875em;
+	}
+
+	:global(.prose pre) {
+		border-radius: 0.5rem;
+		background-color: rgb(31 41 55);
+		padding: 1rem;
+		overflow-x: auto;
+		margin: 0.5rem 0;
+	}
+
+	:global(.prose pre code) {
+		background-color: transparent;
+		padding: 0;
+		color: inherit;
+		font-size: 0.875rem;
+	}
+
+	:global(.prose p) {
+		margin: 0.5rem 0;
+		line-height: 1.625;
+	}
+
+	:global(.prose ul),
+	:global(.prose ol) {
+		margin: 0.5rem 0;
+		margin-left: 1rem;
+		padding-left: 0.5rem;
+	}
+
+	:global(.prose li) {
+		margin: 0.25rem 0;
+	}
+
+	:global(.prose h1),
+	:global(.prose h2),
+	:global(.prose h3),
+	:global(.prose h4),
+	:global(.prose h5),
+	:global(.prose h6) {
+		margin-top: 1rem;
+		margin-bottom: 0.5rem;
+		font-weight: 600;
+		line-height: 1.25;
+	}
+
+	:global(.prose h1) {
+		font-size: 1.5rem;
+	}
+
+	:global(.prose h2) {
+		font-size: 1.25rem;
+	}
+
+	:global(.prose h3) {
+		font-size: 1.125rem;
+	}
+
+	:global(.prose blockquote) {
+		border-left: 4px solid rgb(156 163 175);
+		padding-left: 1rem;
+		font-style: italic;
+		margin: 0.5rem 0;
+		color: rgb(156 163 175);
+	}
+
+	:global(.prose a) {
+		color: rgb(96 165 250);
+		text-decoration: underline;
+	}
+
+	:global(.prose a:hover) {
+		color: rgb(147 197 253);
+	}
+
+	:global(.prose table) {
+		border-collapse: collapse;
+		width: 100%;
+		margin: 0.5rem 0;
+		border: 1px solid rgb(75 85 99);
+	}
+
+	:global(.prose th),
+	:global(.prose td) {
+		border: 1px solid rgb(75 85 99);
+		padding: 0.5rem 0.75rem;
+		text-align: left;
+	}
+
+	:global(.prose th) {
+		background-color: rgb(55 65 81);
+		font-weight: 600;
+	}
+
+	:global(.prose strong) {
+		font-weight: 600;
+	}
+
+	:global(.prose em) {
+		font-style: italic;
+	}
+
+	:global(.prose hr) {
+		border: none;
+		border-top: 1px solid rgb(75 85 99);
+		margin: 1rem 0;
+	}
+
+	:global(.slider) {
+		-webkit-appearance: none;
+		appearance: none;
+		width: 100%;
+		height: 0.5rem;
+		border-radius: 0.5rem;
+		background: linear-gradient(to right, rgb(229 231 235), rgb(229 231 235));
+		outline: none;
+		cursor: pointer;
+	}
+
+	:global(.dark .slider) {
+		background: linear-gradient(to right, rgb(75 85 99), rgb(75 85 99));
+	}
+
+	:global(.slider::-webkit-slider-thumb) {
+		-webkit-appearance: none;
+		appearance: none;
+		width: 1.25rem;
+		height: 1.25rem;
+		border-radius: 50%;
+		background: rgb(37 99 235);
+		cursor: pointer;
+		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+	}
+
+	:global(.slider::-moz-range-thumb) {
+		width: 1.25rem;
+		height: 1.25rem;
+		border-radius: 50%;
+		background: rgb(37 99 235);
+		cursor: pointer;
+		border: none;
+		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+	}
+
+	:global(.slider::-webkit-slider-runnable-track) {
+		background: linear-gradient(to right, rgb(229 231 235), rgb(229 231 235));
+		height: 0.5rem;
+		border-radius: 0.5rem;
+	}
+
+	:global(.dark .slider::-webkit-slider-runnable-track) {
+		background: linear-gradient(to right, rgb(75 85 99), rgb(75 85 99));
+	}
+
+	:global(.slider::-moz-range-track) {
+		background: transparent;
+		border: none;
+	}
+
+	:global(.slider::-moz-range-progress) {
+		background: rgb(37 99 235);
+		height: 0.5rem;
+		border-radius: 0.5rem;
 	}
 </style>

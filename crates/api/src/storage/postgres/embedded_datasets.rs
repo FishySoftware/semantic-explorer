@@ -14,14 +14,14 @@ pub struct EmbeddedDatasetInfo {
 
 const GET_EMBEDDED_DATASET_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner, collection_name, created_at, updated_at
+           owner, collection_name, created_at, updated_at, last_processed_at
     FROM embedded_datasets
     WHERE owner = $1 AND embedded_dataset_id = $2
 "#;
 
 const GET_EMBEDDED_DATASETS_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner, collection_name, created_at, updated_at
+           owner, collection_name, created_at, updated_at, last_processed_at
     FROM embedded_datasets
     WHERE owner = $1
     ORDER BY created_at DESC
@@ -29,7 +29,7 @@ const GET_EMBEDDED_DATASETS_QUERY: &str = r#"
 
 const GET_EMBEDDED_DATASETS_FOR_DATASET_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner, collection_name, created_at, updated_at
+           owner, collection_name, created_at, updated_at, last_processed_at
     FROM embedded_datasets
     WHERE owner = $1 AND source_dataset_id = $2
     ORDER BY created_at DESC
@@ -37,7 +37,7 @@ const GET_EMBEDDED_DATASETS_FOR_DATASET_QUERY: &str = r#"
 
 const GET_EMBEDDED_DATASETS_FOR_TRANSFORM_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner, collection_name, created_at, updated_at
+           owner, collection_name, created_at, updated_at, last_processed_at
     FROM embedded_datasets
     WHERE dataset_transform_id = $1
     ORDER BY created_at DESC
@@ -66,7 +66,7 @@ const CREATE_EMBEDDED_DATASET_QUERY: &str = r#"
     INSERT INTO embedded_datasets (title, dataset_transform_id, source_dataset_id, embedder_id, owner, collection_name)
     VALUES ($1, $2, $3, $4, $5, $6)
     RETURNING embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-              owner, collection_name, created_at, updated_at
+              owner, collection_name, created_at, updated_at, last_processed_at
 "#;
 
 const UPDATE_EMBEDDED_DATASET_COLLECTION_NAME_QUERY: &str = r#"
@@ -75,7 +75,16 @@ const UPDATE_EMBEDDED_DATASET_COLLECTION_NAME_QUERY: &str = r#"
         updated_at = NOW()
     WHERE embedded_dataset_id = $1
     RETURNING embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-              owner, collection_name, created_at, updated_at
+              owner, collection_name, created_at, updated_at, last_processed_at
+"#;
+
+const UPDATE_EMBEDDED_DATASET_TITLE_QUERY: &str = r#"
+    UPDATE embedded_datasets
+    SET title = $2,
+        updated_at = NOW()
+    WHERE embedded_dataset_id = $1 AND owner = $3
+    RETURNING embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
+              owner, collection_name, created_at, updated_at, last_processed_at
 "#;
 
 const DELETE_EMBEDDED_DATASET_QUERY: &str = r#"
@@ -127,6 +136,26 @@ const RECORD_PROCESSED_BATCH_QUERY: &str = r#"
 const GET_EMBEDDED_DATASET_INFO_QUERY: &str = r#"
     SELECT collection_name, embedder_id FROM embedded_datasets WHERE embedded_dataset_id = $1
 "#;
+
+const GET_EMBEDDED_DATASET_WITH_DETAILS_BATCH: &str = r#"
+        SELECT
+            ed.embedded_dataset_id,
+            ed.title,
+            ed.dataset_transform_id,
+            ed.source_dataset_id,
+            d.title as source_dataset_title,
+            ed.embedder_id,
+            e.name as embedder_name,
+            ed.owner,
+            ed.collection_name,
+            ed.created_at,
+            ed.updated_at
+        FROM embedded_datasets ed
+        INNER JOIN datasets d ON d.dataset_id = ed.source_dataset_id
+        INNER JOIN embedders e ON e.embedder_id = ed.embedder_id
+        WHERE ed.owner = $1 AND ed.embedded_dataset_id = ANY($2)
+        ORDER BY ed.embedded_dataset_id
+        "#;
 
 pub async fn get_embedded_dataset(
     pool: &Pool<Postgres>,
@@ -192,6 +221,26 @@ pub async fn get_embedded_dataset_with_details(
     Ok(embedded_dataset)
 }
 
+/// Batch fetch embedded datasets with details (avoids N+1 queries)
+pub async fn get_embedded_datasets_with_details_batch(
+    pool: &Pool<Postgres>,
+    owner: &str,
+    embedded_dataset_ids: &[i32],
+) -> Result<Vec<EmbeddedDatasetWithDetails>> {
+    if embedded_dataset_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let embedded_datasets =
+        sqlx::query_as::<_, EmbeddedDatasetWithDetails>(GET_EMBEDDED_DATASET_WITH_DETAILS_BATCH)
+            .bind(owner)
+            .bind(embedded_dataset_ids.to_vec())
+            .fetch_all(pool)
+            .await?;
+
+    Ok(embedded_datasets)
+}
+
 pub async fn delete_embedded_dataset(
     pool: &Pool<Postgres>,
     owner: &str,
@@ -203,6 +252,28 @@ pub async fn delete_embedded_dataset(
         .execute(pool)
         .await?;
     Ok(())
+}
+
+pub async fn update_embedded_dataset_title(
+    pool: &Pool<Postgres>,
+    owner: &str,
+    embedded_dataset_id: i32,
+    title: &str,
+) -> Result<EmbeddedDataset> {
+    let embedded_dataset =
+        sqlx::query_as::<_, EmbeddedDataset>(UPDATE_EMBEDDED_DATASET_TITLE_QUERY)
+            .bind(embedded_dataset_id)
+            .bind(title)
+            .bind(owner)
+            .fetch_optional(pool)
+            .await?;
+
+    match embedded_dataset {
+        Some(dataset) => Ok(dataset),
+        None => Err(anyhow::anyhow!(
+            "Embedded dataset not found or not owned by this user"
+        )),
+    }
 }
 
 pub async fn get_embedded_dataset_stats(
@@ -245,6 +316,23 @@ pub async fn record_processed_batch(
         .bind(processing_duration_ms)
         .execute(pool)
         .await?;
+    Ok(())
+}
+
+pub async fn update_embedded_dataset_last_processed_at(
+    pool: &Pool<Postgres>,
+    embedded_dataset_id: i32,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        UPDATE embedded_datasets
+        SET last_processed_at = NOW()
+        WHERE embedded_dataset_id = $1
+        "#,
+    )
+    .bind(embedded_dataset_id)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 

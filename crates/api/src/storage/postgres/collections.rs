@@ -1,6 +1,8 @@
 use anyhow::Result;
+use aws_sdk_s3::Client;
 use sqlx::{Pool, Postgres};
 use std::time::Instant;
+use uuid::Uuid;
 
 use crate::collections::models::Collection;
 use semantic_explorer_core::observability::record_database_query;
@@ -71,6 +73,12 @@ const GRAB_PUBLIC_COLLECTION_QUERY: &str = r#"
     FROM collections
     WHERE collection_id = $3 AND is_public = TRUE
     RETURNING collection_id, title, details, owner, bucket, tags, is_public, created_at, updated_at
+"#;
+
+const GET_PUBLIC_COLLECTION_QUERY: &str = r#"
+    SELECT collection_id, title, details, owner, bucket, tags, is_public, created_at, updated_at
+    FROM collections
+    WHERE collection_id = $1 AND is_public = TRUE
 "#;
 
 const UPDATE_COLLECTION_QUERY: &str = r#"
@@ -268,24 +276,23 @@ pub(crate) async fn get_recent_public_collections(
     Ok(result?)
 }
 
-#[tracing::instrument(name = "database.grab_public_collection", skip(pool), fields(database.system = "postgresql", database.operation = "INSERT", owner = %owner, collection_id = %collection_id))]
+#[tracing::instrument(name = "database.grab_public_collection", skip(pool, s3_client), fields(database.system = "postgresql", database.operation = "INSERT", owner = %owner, collection_id = %collection_id))]
 pub(crate) async fn grab_public_collection(
     pool: &Pool<Postgres>,
+    s3_client: &Client,
     owner: &str,
     collection_id: i32,
 ) -> Result<Collection> {
     let start = Instant::now();
 
     // First, get the source collection to find its bucket
-    let source_collection = sqlx::query_as::<_, Collection>(
-        "SELECT * FROM collections WHERE collection_id = $1 AND is_public = TRUE",
-    )
-    .bind(collection_id)
-    .fetch_one(pool)
-    .await?;
+    let source_collection = sqlx::query_as::<_, Collection>(GET_PUBLIC_COLLECTION_QUERY)
+        .bind(collection_id)
+        .fetch_one(pool)
+        .await?;
 
     // Generate a unique bucket name for the new collection
-    let new_bucket = format!("{}_{}", owner, uuid::Uuid::new_v4());
+    let new_bucket = Uuid::new_v4().to_string();
 
     // Insert the new collection
     let result = sqlx::query_as::<_, Collection>(GRAB_PUBLIC_COLLECTION_QUERY)
@@ -302,9 +309,8 @@ pub(crate) async fn grab_public_collection(
     let new_collection = result?;
 
     // Copy S3 files from source bucket to new bucket
-    let s3_client = crate::storage::rustfs::initialize_client().await?;
     match crate::storage::rustfs::copy_bucket_files(
-        &s3_client,
+        s3_client,
         &source_collection.bucket,
         &new_bucket,
     )
@@ -325,8 +331,7 @@ pub(crate) async fn grab_public_collection(
                 error = %e,
                 "Failed to copy S3 files for grabbed collection"
             );
-            // Note: We don't fail the whole operation if S3 copy fails
-            // The collection record is already created
+            return Err(e);
         }
     }
 

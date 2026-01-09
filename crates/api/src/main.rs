@@ -6,6 +6,7 @@ mod datasets;
 mod embedded_datasets;
 mod embedders;
 mod embedding;
+mod errors;
 mod llms;
 mod observability;
 mod search;
@@ -120,6 +121,8 @@ async fn main() -> Result<()> {
             .service(api::datasets::update_dataset)
             .service(api::datasets::delete_dataset)
             .service(api::datasets::get_dataset_items)
+            .service(api::datasets::get_dataset_items_summary)
+            .service(api::datasets::get_dataset_item_chunks)
             .service(api::datasets::upload_to_dataset)
             .service(api::datasets::delete_dataset_item)
             .service(api::embedders::get_embedders)
@@ -166,6 +169,7 @@ async fn main() -> Result<()> {
             .service(api::embedded_datasets::get_embedded_datasets)
             .service(api::embedded_datasets::get_embedded_dataset)
             .service(api::embedded_datasets::delete_embedded_dataset)
+            .service(api::embedded_datasets::update_embedded_dataset)
             .service(api::embedded_datasets::get_embedded_dataset_stats)
             .service(api::embedded_datasets::get_processed_batches)
             .service(api::embedded_datasets::get_embedded_datasets_for_dataset)

@@ -119,16 +119,21 @@
 					d.dataset_id === savedDataset.dataset_id ? savedDataset : d
 				);
 				toastStore.success('Dataset updated successfully');
+				newTitle = '';
+				newDetails = '';
+				newTags = '';
+				showCreateForm = false;
+				editingDataset = null;
 			} else {
 				datasets = [...datasets, savedDataset];
 				toastStore.success('Dataset created successfully');
+				newTitle = '';
+				newDetails = '';
+				newTags = '';
+				showCreateForm = false;
+				editingDataset = null;
+				handleViewDataset(savedDataset.dataset_id);
 			}
-
-			newTitle = '';
-			newDetails = '';
-			newTags = '';
-			showCreateForm = false;
-			editingDataset = null;
 		} catch (e) {
 			const message = formatError(e, `Failed to ${editingDataset ? 'update' : 'create'} dataset`);
 			createError = message;

@@ -32,6 +32,24 @@ pub struct Metrics {
     pub visualization_transform_clusters_created: Counter<u64>,
     pub visualization_transform_duration: Histogram<f64>,
     pub embedded_datasets_active: Gauge<f64>,
+    // NATS queue depth metrics
+    pub nats_stream_messages: Gauge<f64>,
+    pub nats_consumer_pending: Gauge<f64>,
+    pub nats_consumer_ack_pending: Gauge<f64>,
+    pub nats_stream_bytes: Gauge<f64>,
+    // Search performance metrics
+    pub search_request_total: Counter<u64>,
+    pub search_request_duration: Histogram<f64>,
+    pub search_embedder_call_duration: Histogram<f64>,
+    pub search_qdrant_query_duration: Histogram<f64>,
+    pub search_results_returned: Histogram<f64>,
+    // HTTP request metrics
+    pub http_requests_total: Counter<u64>,
+    pub http_request_duration: Histogram<f64>,
+    pub http_requests_in_flight: Gauge<f64>,
+    // Worker job failure tracking
+    pub worker_job_failures_total: Counter<u64>,
+    pub worker_job_retries_total: Counter<u64>,
 }
 
 impl Metrics {
@@ -165,6 +183,80 @@ impl Metrics {
             .with_description("Number of active embedded datasets")
             .build();
 
+        // NATS queue depth metrics
+        let nats_stream_messages = meter
+            .f64_gauge("nats_stream_messages")
+            .with_description("Number of messages in NATS stream")
+            .build();
+
+        let nats_consumer_pending = meter
+            .f64_gauge("nats_consumer_pending")
+            .with_description("Number of pending messages for NATS consumer")
+            .build();
+
+        let nats_consumer_ack_pending = meter
+            .f64_gauge("nats_consumer_ack_pending")
+            .with_description("Number of messages pending acknowledgement")
+            .build();
+
+        let nats_stream_bytes = meter
+            .f64_gauge("nats_stream_bytes")
+            .with_description("Size of NATS stream in bytes")
+            .build();
+
+        // Search performance metrics
+        let search_request_total = meter
+            .u64_counter("search_request_total")
+            .with_description("Total number of search requests")
+            .build();
+
+        let search_request_duration = meter
+            .f64_histogram("search_request_duration_seconds")
+            .with_description("Total duration of search requests in seconds")
+            .build();
+
+        let search_embedder_call_duration = meter
+            .f64_histogram("search_embedder_call_duration_seconds")
+            .with_description("Duration of embedder calls during search")
+            .build();
+
+        let search_qdrant_query_duration = meter
+            .f64_histogram("search_qdrant_query_duration_seconds")
+            .with_description("Duration of Qdrant queries during search")
+            .build();
+
+        let search_results_returned = meter
+            .f64_histogram("search_results_returned")
+            .with_description("Number of results returned per search")
+            .build();
+
+        // HTTP request metrics
+        let http_requests_total = meter
+            .u64_counter("http_requests_total")
+            .with_description("Total number of HTTP requests")
+            .build();
+
+        let http_request_duration = meter
+            .f64_histogram("http_request_duration_seconds")
+            .with_description("Duration of HTTP requests in seconds")
+            .build();
+
+        let http_requests_in_flight = meter
+            .f64_gauge("http_requests_in_flight")
+            .with_description("Number of HTTP requests currently being processed")
+            .build();
+
+        // Worker job failure tracking
+        let worker_job_failures_total = meter
+            .u64_counter("worker_job_failures_total")
+            .with_description("Total number of worker job failures")
+            .build();
+
+        let worker_job_retries_total = meter
+            .u64_counter("worker_job_retries_total")
+            .with_description("Total number of worker job retries")
+            .build();
+
         Self {
             database_query_total,
             database_query_duration,
@@ -191,6 +283,20 @@ impl Metrics {
             visualization_transform_clusters_created,
             visualization_transform_duration,
             embedded_datasets_active,
+            nats_stream_messages,
+            nats_consumer_pending,
+            nats_consumer_ack_pending,
+            nats_stream_bytes,
+            search_request_total,
+            search_request_duration,
+            search_embedder_call_duration,
+            search_qdrant_query_duration,
+            search_results_returned,
+            http_requests_total,
+            http_request_duration,
+            http_requests_in_flight,
+            worker_job_failures_total,
+            worker_job_retries_total,
         }
     }
 }
@@ -476,4 +582,146 @@ pub fn record_visualization_transform_job(
 pub fn update_embedded_datasets_count(count: u64) {
     let metrics = get_metrics();
     metrics.embedded_datasets_active.record(count as f64, &[]);
+}
+
+// NATS queue metrics
+pub fn update_nats_stream_stats(stream_name: &str, messages: u64, bytes: u64) {
+    let metrics = get_metrics();
+    metrics.nats_stream_messages.record(
+        messages as f64,
+        &[KeyValue::new("stream", stream_name.to_string())],
+    );
+    metrics.nats_stream_bytes.record(
+        bytes as f64,
+        &[KeyValue::new("stream", stream_name.to_string())],
+    );
+}
+
+pub fn update_nats_consumer_stats(
+    stream_name: &str,
+    consumer_name: &str,
+    pending: u64,
+    ack_pending: u64,
+) {
+    let metrics = get_metrics();
+    metrics.nats_consumer_pending.record(
+        pending as f64,
+        &[
+            KeyValue::new("stream", stream_name.to_string()),
+            KeyValue::new("consumer", consumer_name.to_string()),
+        ],
+    );
+    metrics.nats_consumer_ack_pending.record(
+        ack_pending as f64,
+        &[
+            KeyValue::new("stream", stream_name.to_string()),
+            KeyValue::new("consumer", consumer_name.to_string()),
+        ],
+    );
+}
+
+// Search metrics
+pub fn record_search_request(
+    duration_secs: f64,
+    embedder_duration_secs: f64,
+    qdrant_duration_secs: f64,
+    results_count: usize,
+    embedded_datasets_count: usize,
+    status: &str,
+) {
+    let metrics = get_metrics();
+
+    metrics.search_request_total.add(
+        1,
+        &[
+            KeyValue::new("status", status.to_string()),
+            KeyValue::new("embedded_datasets", embedded_datasets_count.to_string()),
+        ],
+    );
+
+    metrics.search_request_duration.record(
+        duration_secs,
+        &[
+            KeyValue::new("status", status.to_string()),
+            KeyValue::new("embedded_datasets", embedded_datasets_count.to_string()),
+        ],
+    );
+
+    metrics.search_embedder_call_duration.record(
+        embedder_duration_secs,
+        &[KeyValue::new("status", status.to_string())],
+    );
+
+    metrics.search_qdrant_query_duration.record(
+        qdrant_duration_secs,
+        &[KeyValue::new("status", status.to_string())],
+    );
+
+    metrics.search_results_returned.record(
+        results_count as f64,
+        &[
+            KeyValue::new("status", status.to_string()),
+            KeyValue::new("embedded_datasets", embedded_datasets_count.to_string()),
+        ],
+    );
+}
+
+// HTTP request metrics
+pub fn record_http_request(method: &str, path: &str, status_code: u16, duration_secs: f64) {
+    let metrics = get_metrics();
+
+    metrics.http_requests_total.add(
+        1,
+        &[
+            KeyValue::new("method", method.to_string()),
+            KeyValue::new("path", path.to_string()),
+            KeyValue::new("status", status_code.to_string()),
+        ],
+    );
+
+    metrics.http_request_duration.record(
+        duration_secs,
+        &[
+            KeyValue::new("method", method.to_string()),
+            KeyValue::new("path", path.to_string()),
+            KeyValue::new("status", status_code.to_string()),
+        ],
+    );
+}
+
+pub fn increment_http_requests_in_flight(path: &str) {
+    let metrics = get_metrics();
+    metrics
+        .http_requests_in_flight
+        .record(1.0, &[KeyValue::new("path", path.to_string())]);
+}
+
+pub fn decrement_http_requests_in_flight(path: &str) {
+    let metrics = get_metrics();
+    metrics
+        .http_requests_in_flight
+        .record(-1.0, &[KeyValue::new("path", path.to_string())]);
+}
+
+// Worker failure tracking
+pub fn record_worker_job_failure(worker: &str, error_type: &str) {
+    let metrics = get_metrics();
+    metrics.worker_job_failures_total.add(
+        1,
+        &[
+            KeyValue::new("worker", worker.to_string()),
+            KeyValue::new("error_type", error_type.to_string()),
+        ],
+    );
+}
+
+pub fn record_worker_job_retry(worker: &str, attempt: u32) {
+    let metrics = get_metrics();
+    metrics.worker_job_retries_total.add(
+        1,
+        &[
+            KeyValue::new("worker", worker.to_string()),
+            KeyValue::new("attempt", attempt.to_string()),
+        ],
+    );
 }

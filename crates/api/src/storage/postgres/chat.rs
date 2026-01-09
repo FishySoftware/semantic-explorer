@@ -1,4 +1,5 @@
 use anyhow::Result;
+use sqlx::types::chrono::Utc;
 use sqlx::{Pool, Postgres};
 use std::time::Instant;
 use uuid::Uuid;
@@ -54,13 +55,13 @@ const GET_LLM_DETAILS_QUERY: &str = r#"
     WHERE llm_id = $1
 "#;
 
-const INSERT_RETRIEVED_DOCUMENT_QUERY: &str = r#"
-    INSERT INTO chat_message_retrieved_documents (message_id, document_id, text, similarity_score, source, created_at)
-    VALUES ($1, $2, $3, $4, $5, NOW())
+const BATCH_INSERT_RETRIEVED_DOCUMENTS_QUERY: &str = r#"
+    INSERT INTO chat_message_retrieved_documents (message_id, document_id, text, similarity_score, item_title, created_at)
+    SELECT $1, unnest($2::text[]), unnest($3::text[]), unnest($4::float4[]), unnest($5::text[]), NOW()
 "#;
 
 const GET_RETRIEVED_DOCUMENTS_QUERY: &str = r#"
-    SELECT document_id, text, similarity_score, source
+    SELECT document_id, text, similarity_score, item_title
     FROM chat_message_retrieved_documents
     WHERE message_id = $1
     ORDER BY similarity_score DESC
@@ -75,6 +76,12 @@ pub(crate) async fn create_chat_session(
     let start = Instant::now();
     let session_id = Uuid::new_v4().to_string();
 
+    // Generate default title if not provided
+    let title = request.title.clone().unwrap_or_else(|| {
+        let now = Utc::now();
+        format!("chat-session-{}", now.format("%Y%m%d-%H%M%S"))
+    });
+
     // Ensure user exists in users table (required by foreign key constraint)
     sqlx::query(ENSURE_USER_QUERY)
         .bind(owner)
@@ -86,7 +93,7 @@ pub(crate) async fn create_chat_session(
         .bind(owner)
         .bind(request.embedded_dataset_id)
         .bind(request.llm_id)
-        .bind(&request.title)
+        .bind(&title)
         .fetch_one(pool)
         .await;
 
@@ -218,7 +225,7 @@ pub(crate) async fn get_llm_details(
     result?.ok_or_else(|| anyhow::anyhow!("LLM not found"))
 }
 
-#[tracing::instrument(name = "database.store_retrieved_documents", skip(pool, documents), fields(database.system = "postgresql", database.operation = "INSERT"))]
+#[tracing::instrument(name = "database.store_retrieved_documents", skip(pool, documents), fields(database.system = "postgresql", database.operation = "INSERT", count = documents.len()))]
 pub(crate) async fn store_retrieved_documents(
     pool: &Pool<Postgres>,
     message_id: i32,
@@ -226,13 +233,35 @@ pub(crate) async fn store_retrieved_documents(
 ) -> Result<()> {
     let start = Instant::now();
 
-    for doc in documents {
-        sqlx::query(INSERT_RETRIEVED_DOCUMENT_QUERY)
+    if documents.is_empty() {
+        return Ok(());
+    }
+
+    // Batch insert using UNNEST for better performance
+    // Process in chunks to avoid parameter limits
+    //TODO: make chunk size configurable if needed
+    const BATCH_SIZE: usize = 500;
+
+    for chunk in documents.chunks(BATCH_SIZE) {
+        let mut document_ids: Vec<Option<String>> = Vec::with_capacity(chunk.len());
+        let mut texts: Vec<String> = Vec::with_capacity(chunk.len());
+        let mut scores: Vec<f32> = Vec::with_capacity(chunk.len());
+        let mut item_titles: Vec<Option<String>> = Vec::with_capacity(chunk.len());
+
+        for doc in chunk {
+            document_ids.push(doc.document_id.clone());
+            texts.push(doc.text.clone());
+            scores.push(doc.similarity_score);
+            item_titles.push(doc.item_title.clone());
+        }
+
+        // Use UNNEST for efficient batch insert
+        sqlx::query(BATCH_INSERT_RETRIEVED_DOCUMENTS_QUERY)
             .bind(message_id)
-            .bind(&doc.document_id)
-            .bind(&doc.text)
-            .bind(doc.similarity_score)
-            .bind(&doc.source)
+            .bind(&document_ids)
+            .bind(&texts)
+            .bind(&scores)
+            .bind(&item_titles)
             .execute(pool)
             .await?;
     }
@@ -260,11 +289,11 @@ pub(crate) async fn get_retrieved_documents(
     let documents: Vec<RetrievedDocument> = result
         .into_iter()
         .map(
-            |(document_id, text, similarity_score, source)| RetrievedDocument {
+            |(document_id, text, similarity_score, item_title)| RetrievedDocument {
                 document_id,
                 text,
                 similarity_score,
-                source,
+                item_title,
             },
         )
         .collect();

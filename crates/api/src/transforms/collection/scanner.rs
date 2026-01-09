@@ -199,6 +199,7 @@ async fn process_collection_transform_scan(
                     source_file_key: file.key.clone(),
                     bucket: collection.bucket.clone(),
                     collection_transform_id: transform.collection_transform_id,
+                    owner: transform.owner.clone(),
                     extraction_config: extraction_config.clone(),
                     chunking_config: chunking_config.clone(),
                     embedder_config: embedder_config.clone(),

@@ -3,6 +3,8 @@ use actix_web_openidconnect::openid_middleware::Authenticated;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::errors::unauthorized;
+
 pub(crate) mod oidc;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -26,16 +28,14 @@ pub(crate) fn extract_user(auth: &Authenticated) -> Result<User, HttpResponse> {
 pub(crate) fn extract_username(auth: &Authenticated) -> Result<String, HttpResponse> {
     match auth.access.preferred_username() {
         Some(user) => Ok(user.to_string()),
-        None => {
-            Err(HttpResponse::Unauthorized().body("user has no username in the user info claim."))
-        }
+        None => Err(unauthorized("user has no username in the user info claim.")),
     }
 }
 
 pub(crate) fn extract_email(auth: &Authenticated) -> Result<String, HttpResponse> {
     match auth.access.email() {
         Some(email) => Ok(email.to_string()),
-        None => Err(HttpResponse::Unauthorized().body("user has no email in the user info claim.")),
+        None => Err(unauthorized("user has no email in the user info claim.")),
     }
 }
 

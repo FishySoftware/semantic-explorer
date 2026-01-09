@@ -3,6 +3,7 @@
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import ApiExamples from '../ApiExamples.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
+	import CreateCollectionTransformModal from '../components/CreateCollectionTransformModal.svelte';
 	import TabPanel from '../components/TabPanel.svelte';
 	import TransformsList from '../components/TransformsList.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
@@ -68,6 +69,9 @@
 
 	let collectionTransforms = $state<CollectionTransform[]>([]);
 	let transformsLoading = $state(false);
+	let collectionTransformStatsMap = $state<Map<number, any>>(new Map());
+
+	let transformModalOpen = $state(false);
 	let activeTab = $state('files');
 
 	const tabs = [
@@ -104,11 +108,29 @@
 				collectionTransforms = allTransforms
 					.filter((t) => t.collection_id === collectionId)
 					.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+
+				// Fetch stats for each collection transform
+				for (const transform of collectionTransforms) {
+					fetchCollectionTransformStats(transform.collection_transform_id);
+				}
 			}
 		} catch (e) {
 			toastStore.error(formatError(e, 'Failed to load transforms'));
 		} finally {
 			transformsLoading = false;
+		}
+	}
+
+	async function fetchCollectionTransformStats(transformId: number) {
+		try {
+			const response = await fetch(`/api/collection-transforms/${transformId}/stats`);
+			if (response.ok) {
+				const stats = await response.json();
+				collectionTransformStatsMap.set(transformId, stats);
+				collectionTransformStatsMap = collectionTransformStatsMap; // Trigger reactivity
+			}
+		} catch (e) {
+			console.error(e);
 		}
 	}
 
@@ -478,25 +500,6 @@
 							</label>
 						</div>
 					</div>
-					{#if paginatedFiles?.total_count && paginatedFiles.total_count > 0}
-						<div class="ml-4">
-							<a
-								href={`#/collection-transforms?action=create&collection_id=${collection.collection_id}`}
-								class="inline-flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
-								title="Process files from this collection into a dataset"
-							>
-								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width="2"
-										d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
-									></path>
-								</svg>
-								Create Transform
-							</a>
-						</div>
-					{/if}
 				</div>
 			</div>
 		{/if}
@@ -818,14 +821,49 @@
 									<p class="text-sm text-gray-400 dark:text-gray-500">
 										Create a transform to process files from this collection into a dataset.
 									</p>
+									<div class="mt-4">
+										<button
+											onclick={() => (transformModalOpen = true)}
+											class="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
+											title="Process files from this collection into a dataset"
+										>
+											<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+												<path
+													stroke-linecap="round"
+													stroke-linejoin="round"
+													stroke-width="2"
+													d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
+												></path>
+											</svg>
+											Create Collection Transform
+										</button>
+									</div>
 								</div>
 							{:else}
+								<div class="flex justify-between items-center mb-6">
+									<h2 class="text-2xl font-bold text-gray-900 dark:text-white">Transforms</h2>
+									<button
+										onclick={() => (transformModalOpen = true)}
+										class="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
+										title="Process files from this collection into a dataset"
+									>
+										<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+											<path
+												stroke-linecap="round"
+												stroke-linejoin="round"
+												stroke-width="2"
+												d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
+											></path>
+										</svg>
+										Create Collection Transform
+									</button>
+								</div>
 								<div>
 									<h3
 										class="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3 flex items-center gap-2"
 									>
 										<span
-											class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 text-xs font-bold"
+											class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 text-xs font-bold"
 										>
 											{collectionTransforms.length}
 										</span>
@@ -835,7 +873,10 @@
 										Transforms that process files from this collection
 									</p>
 									<TransformsList
-										transforms={collectionTransforms}
+										transforms={collectionTransforms.map((t) => ({
+											...t,
+											last_run_stats: collectionTransformStatsMap.get(t.collection_transform_id),
+										}))}
 										type="collection"
 										loading={transformsLoading}
 									/>
@@ -905,4 +946,15 @@
 	cancelLabel="Cancel"
 	on:confirm={confirmDeleteFile}
 	on:cancel={cancelDeleteFile}
+/>
+
+<CreateCollectionTransformModal
+	bind:open={transformModalOpen}
+	{collectionId}
+	collectionTitle={collection?.title}
+	onSuccess={() => {
+		transformModalOpen = false;
+		toastStore.success('Transform created successfully');
+		fetchCollectionTransforms();
+	}}
 />

@@ -2,7 +2,7 @@ use sqlx::{Pool, Postgres};
 
 use crate::storage::postgres::chat as chat_storage;
 
-const SYSTEM_PROMPT: &str = "You are a helpful assistant that answers questions based on the provided context. Always cite the source of your information when possible.";
+const SYSTEM_PROMPT: &str = "You are a helpful assistant that answers questions based on the provided context. When answering, always cite the specific chunk number (e.g., 'According to Chunk 1' or 'As mentioned in Chunk 2 and Chunk 3') to reference where your information comes from. If the context doesn't contain relevant information to answer the question, say so explicitly.";
 
 /// Generate an LLM response with RAG context
 #[tracing::instrument(name = "generate_llm_response", skip(postgres_pool, query, context))]
@@ -20,7 +20,7 @@ pub(crate) async fn generate_response(
 
     // Build the prompt with RAG context
     let user_prompt = format!(
-        "{}\n\nQuestion: {}\n\nPlease provide a helpful answer based on the context above.",
+        "{}\n---\n\nQuestion: {}\n\nPlease provide a helpful answer based on the context above. Remember to cite specific chunk numbers when referencing information.",
         context, query
     );
 

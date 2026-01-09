@@ -30,12 +30,14 @@ pub(crate) fn init_observability() -> Result<PrometheusMetrics> {
         otlp_endpoint.clone()
     };
 
+    // Build span exporter with proper timeout configuration
     let trace_exporter = SpanExporter::builder()
         .with_tonic()
         .with_endpoint(grpc_endpoint.clone())
         .with_timeout(Duration::from_secs(10))
         .build()?;
 
+    // Configure batch exporter to not exceed max message size
     let tracer_provider = SdkTracerProvider::builder()
         .with_batch_exporter(trace_exporter)
         .with_resource(resource.clone())
@@ -95,8 +97,8 @@ pub(crate) fn init_observability() -> Result<PrometheusMetrics> {
     let format_layer = if use_json {
         tracing_subscriber::fmt::layer()
             .json()
-            .with_current_span(true)
-            .with_span_list(true)
+            .with_current_span(false)
+            .with_span_list(false)
             .with_target(true)
             .with_file(true)
             .flatten_event(true)

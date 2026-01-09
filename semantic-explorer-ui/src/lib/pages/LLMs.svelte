@@ -160,9 +160,7 @@
 		}
 	}
 
-	onMount(() => {
-		fetchLLMs();
-
+	function extractSearchParamFromHash() {
 		const hashParts = window.location.hash.split('?');
 		if (hashParts.length > 1) {
 			const urlParams = new URLSearchParams(hashParts[1]);
@@ -178,6 +176,17 @@
 				);
 			}
 		}
+	}
+
+	onMount(() => {
+		fetchLLMs();
+		extractSearchParamFromHash();
+	});
+
+	$effect(() => {
+		// Re-check for search param when hash changes (e.g., after redirect from create)
+		window.location.hash;
+		extractSearchParamFromHash();
 	});
 
 	async function fetchLLMs() {
@@ -304,8 +313,16 @@
 				throw new Error(`Failed to save LLM: ${response.status}`);
 			}
 
+			const newLLM = await response.json();
 			showCreateForm = false;
-			await fetchLLMs();
+
+			if (!editingLLM) {
+				// Fetch updated list and then redirect to show the new LLM
+				await fetchLLMs();
+				window.location.hash = `#/llms?name=${encodeURIComponent(newLLM.name)}`;
+			} else {
+				await fetchLLMs();
+			}
 		} catch (e: any) {
 			console.error('Error saving LLM:', e);
 			error = e.message || 'Failed to save LLM';

@@ -58,7 +58,26 @@ pub async fn initialize_jetstream(client: &Client) -> Result<()> {
     )
     .await?;
 
-    info!("JetStream streams initialized successfully");
+    // Dead Letter Queue streams for failed jobs
+    ensure_stream(
+        &jetstream,
+        "DLQ_TRANSFORMS",
+        StreamConfig {
+            name: "DLQ_TRANSFORMS".to_string(),
+            subjects: vec![
+                "dlq.collection-transforms".to_string(),
+                "dlq.dataset-transforms".to_string(),
+                "dlq.visualization-transforms".to_string(),
+            ],
+            retention: RetentionPolicy::Limits, // Keep for investigation
+            max_age: Duration::from_secs(30 * 24 * 60 * 60), // 30 days
+            num_replicas: 1,
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    info!("JetStream streams and DLQ initialized successfully");
     Ok(())
 }
 
@@ -114,6 +133,12 @@ pub fn create_transform_file_consumer_config() -> ConsumerConfig {
         ack_wait: Duration::from_secs(10 * 60), // 10 minutes to process
         max_deliver: 5,                         // Retry up to 5 times
         max_ack_pending: 100,                   // Backpressure limit
+        backoff: vec![
+            Duration::from_secs(30),
+            Duration::from_secs(60),
+            Duration::from_secs(120),
+            Duration::from_secs(300),
+        ],
         ..Default::default()
     }
 }
@@ -126,6 +151,12 @@ pub fn create_vector_embed_consumer_config() -> ConsumerConfig {
         ack_wait: Duration::from_secs(10 * 60), // 10 minutes to process
         max_deliver: 5,                         // Retry up to 5 times
         max_ack_pending: 100,                   // Backpressure limit
+        backoff: vec![
+            Duration::from_secs(30),
+            Duration::from_secs(60),
+            Duration::from_secs(120),
+            Duration::from_secs(300),
+        ],
         ..Default::default()
     }
 }
@@ -181,6 +212,68 @@ pub async fn ensure_consumer(
             Ok(consumer)
         }
     }
+}
+
+/// Start a background task to collect and export NATS metrics
+pub async fn start_metrics_collector(client: Client) -> Result<()> {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(15));
+        loop {
+            interval.tick().await;
+            if let Err(e) = collect_nats_metrics(&client).await {
+                tracing::warn!("Failed to collect NATS metrics: {}", e);
+            }
+        }
+    });
+    Ok(())
+}
+
+async fn collect_nats_metrics(client: &Client) -> Result<()> {
+    let jetstream = jetstream::new(client.clone());
+
+    // Collect metrics for each stream
+    let streams = vec![
+        "COLLECTION_TRANSFORMS",
+        "DATASET_TRANSFORMS",
+        "VISUALIZATION_TRANSFORMS",
+        "DLQ_TRANSFORMS",
+    ];
+
+    for stream_name in streams {
+        if let Ok(mut stream) = jetstream.get_stream(stream_name).await
+            && let Ok(info) = stream.info().await
+        {
+            crate::observability::update_nats_stream_stats(
+                stream_name,
+                info.state.messages,
+                info.state.bytes,
+            );
+
+            // Collect consumer metrics
+            let consumers = vec![
+                ("collection-transforms", "COLLECTION_TRANSFORMS"),
+                ("dataset-workers", "DATASET_TRANSFORMS"),
+                ("visualization-workers", "VISUALIZATION_TRANSFORMS"),
+            ];
+
+            for (consumer_name, expected_stream) in consumers {
+                if stream_name == expected_stream
+                    && let Ok(mut consumer) =
+                        stream.get_consumer::<ConsumerConfig>(consumer_name).await
+                    && let Ok(consumer_info) = consumer.info().await
+                {
+                    crate::observability::update_nats_consumer_stats(
+                        stream_name,
+                        consumer_name,
+                        consumer_info.num_pending,
+                        consumer_info.num_ack_pending as u64,
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

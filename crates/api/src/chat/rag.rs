@@ -114,24 +114,20 @@ pub async fn retrieve_documents(
                 })
                 .unwrap_or_default();
 
-            let source = point
-                .payload
-                .get("source")
-                .and_then(|v| {
-                    if let Some(qdrant_client::qdrant::value::Kind::StringValue(s)) = &v.kind {
-                        Some(s.clone())
-                    } else {
-                        None
-                    }
-                })
-                .or_else(|| Some(collection_name.clone()));
+            let item_title = point.payload.get("item_title").and_then(|v| {
+                if let Some(qdrant_client::qdrant::value::Kind::StringValue(s)) = &v.kind {
+                    Some(s.clone())
+                } else {
+                    None
+                }
+            });
 
             if !text.is_empty() {
                 Some(RetrievedDocument {
                     document_id,
                     text,
                     similarity_score: point.score,
-                    source,
+                    item_title,
                 })
             } else {
                 None
@@ -179,18 +175,19 @@ pub fn build_context(documents: &[RetrievedDocument]) -> String {
 
     // Pre-allocate with reasonable capacity to avoid reallocations
     let mut context = String::with_capacity(documents.len() * 200 + 50);
-    context.push_str("Retrieved context:\n\n");
+    context.push_str("Below are the relevant document chunks retrieved for this query. Reference them by their chunk number (e.g., \"According to Chunk 1\" or \"As stated in Chunk 2\") when answering.\n\n");
 
     for (idx, doc) in documents.iter().enumerate() {
-        let source = doc.source.as_deref().unwrap_or("unknown");
+        let chunk_num = idx + 1;
+        let item_title = doc.item_title.as_deref().unwrap_or("unknown");
         // Use push_str with pre-formatted strings instead of format! to reduce allocations
-        context.push('[');
-        context.push_str(&(idx + 1).to_string());
-        context.push_str("] (Score: ");
+        context.push_str("[Chunk ");
+        context.push_str(&chunk_num.to_string());
+        context.push_str("] - ");
+        context.push_str(item_title);
+        context.push_str("\nSimilarity Score: ");
         context.push_str(&format!("{:.2}", doc.similarity_score));
-        context.push_str(", Source: ");
-        context.push_str(source);
-        context.push_str(")\n");
+        context.push_str("\nContent: ");
         context.push_str(&doc.text);
         context.push_str("\n\n");
     }
@@ -215,13 +212,13 @@ mod tests {
             document_id: Some("doc1".to_string()),
             text: "This is a test document".to_string(),
             similarity_score: 0.95,
-            source: Some("test_source".to_string()),
+            item_title: Some("test_item".to_string()),
         }];
 
         let context = build_context(&docs);
-        assert!(context.contains("Retrieved context:"));
+        assert!(context.contains("Chunk 1"));
         assert!(context.contains("Score: 0.95"));
-        assert!(context.contains("test_source"));
+        assert!(context.contains("test_item"));
         assert!(context.contains("This is a test document"));
     }
 

@@ -1,6 +1,6 @@
 <script lang="ts">
+	import { Button, Modal } from 'flowbite-svelte';
 	import { onMount } from 'svelte';
-	import { Modal, Button } from 'flowbite-svelte';
 	import { formatError, toastStore } from '../utils/notifications';
 
 	interface Props {
@@ -17,12 +17,26 @@
 		collection_name: string;
 	}
 
-	let { open = false, embeddedDatasetId = null, onSuccess }: Props = $props();
+	let { open = $bindable(false), embeddedDatasetId = null, onSuccess }: Props = $props();
 
 	let embeddedDatasets = $state<EmbeddedDataset[]>([]);
 
 	let selectedEmbeddedDatasetId = $state<number | null>(null);
 	let transformTitle = $state('');
+
+	// Topic naming fields
+	let topicNamingMode = $state('tfidf');
+	let topicNamingLlmId = $state<number | null>(null);
+
+	// Auto-generate title when opening the modal for new transforms
+	$effect(() => {
+		if (open && !transformTitle.startsWith('visualization-')) {
+			const now = new Date();
+			const date = now.toISOString().split('T')[0];
+			const time = now.toTimeString().split(' ')[0].replace(/:/g, '').slice(0, 4);
+			transformTitle = `visualization-${date}-${time}`;
+		}
+	});
 
 	$effect(() => {
 		if (open && embeddedDatasetId !== null) {
@@ -77,7 +91,7 @@
 		try {
 			isCreating = true;
 
-			const jobConfig = {
+			const visualizationConfig = {
 				umap_config: {
 					n_neighbors: umapNNeighbors,
 					n_components: umapNComponents,
@@ -88,6 +102,8 @@
 					min_cluster_size: hdbscanMinClusterSize,
 					min_samples: hdbscanMinSamples,
 				},
+				topic_naming_mode: topicNamingMode,
+				topic_naming_llm_id: topicNamingLlmId,
 			};
 
 			const response = await fetch('/api/visualization-transforms', {
@@ -96,7 +112,7 @@
 				body: JSON.stringify({
 					title: transformTitle.trim(),
 					embedded_dataset_id: selectedEmbeddedDatasetId,
-					job_config: jobConfig,
+					visualization_config: visualizationConfig,
 				}),
 			});
 
@@ -104,7 +120,6 @@
 				throw new Error(`Failed to create visualization: ${response.statusText}`);
 			}
 
-			toastStore.success('Visualization transform created successfully');
 			resetForm();
 			onSuccess?.();
 		} catch (e) {
@@ -125,6 +140,8 @@
 		umapMetric = 'cosine';
 		hdbscanMinClusterSize = 5;
 		hdbscanMinSamples = 1;
+		topicNamingMode = 'tfidf';
+		topicNamingLlmId = null;
 		error = null;
 		open = false;
 	}
@@ -142,7 +159,7 @@
 </script>
 
 <Modal bind:open onclose={handleClose}>
-	<div class="p-4">
+	<div class="w-full max-w-4xl mx-auto px-4 py-4">
 		<h2 class="text-xl font-bold text-gray-900 dark:text-white mb-4">
 			Create Visualization Transform
 		</h2>
@@ -198,6 +215,45 @@
 					</select>
 				{/if}
 			</div>
+
+			<!-- Topic Naming Mode -->
+			<div>
+				<label
+					for="topic-naming-mode"
+					class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+				>
+					Topic Naming Mode
+				</label>
+				<select
+					id="topic-naming-mode"
+					bind:value={topicNamingMode}
+					class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
+				>
+					<option value="tfidf">TF-IDF</option>
+					<option value="llm">LLM</option>
+				</select>
+			</div>
+
+			<!-- Topic Naming LLM ID (shown when mode is LLM) -->
+			{#if topicNamingMode === 'llm'}
+				<div>
+					<label
+						for="topic-naming-llm"
+						class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+					>
+						LLM for Topic Naming <span class="text-xs text-gray-500 dark:text-gray-400"
+							>(optional)</span
+						>
+					</label>
+					<input
+						id="topic-naming-llm"
+						type="number"
+						bind:value={topicNamingLlmId}
+						placeholder="LLM ID"
+						class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
+					/>
+				</div>
+			{/if}
 
 			<!-- UMAP Configuration Section -->
 			<div class="border-t border-gray-200 dark:border-gray-700 pt-4">

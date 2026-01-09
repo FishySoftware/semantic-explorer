@@ -1,5 +1,6 @@
 use crate::auth::extract_username;
-use crate::storage::postgres::dataset_transforms;
+use crate::errors::{bad_request, not_found};
+use crate::storage::postgres::{dataset_transforms, embedded_datasets};
 use crate::transforms::dataset::{
     CreateDatasetTransform, DatasetTransform, DatasetTransformStats, UpdateDatasetTransform,
     trigger_dataset_transform_scan,
@@ -10,6 +11,7 @@ use actix_web::{HttpResponse, Responder, delete, get, patch, post};
 use actix_web_openidconnect::openid_middleware::Authenticated;
 use async_nats::Client as NatsClient;
 use aws_sdk_s3::Client as S3Client;
+use qdrant_client::Qdrant;
 use sqlx::{Pool, Postgres};
 use tracing::error;
 
@@ -73,9 +75,7 @@ pub async fn get_dataset_transform(
         Ok(transform) => HttpResponse::Ok().json(transform),
         Err(e) => {
             error!("Dataset transform not found: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Dataset transform not found: {}", e)
-            }))
+            not_found(format!("Dataset transform not found: {}", e))
         }
     }
 }
@@ -106,9 +106,7 @@ pub async fn create_dataset_transform(
     };
 
     if body.embedder_ids.is_empty() {
-        return HttpResponse::BadRequest().json(serde_json::json!({
-            "error": "At least one embedder must be specified"
-        }));
+        return bad_request("At least one embedder must be specified");
     }
 
     let job_config = serde_json::json!({
@@ -152,9 +150,7 @@ pub async fn create_dataset_transform(
         }
         Err(e) => {
             error!("Failed to create dataset transform: {}", e);
-            HttpResponse::BadRequest().json(serde_json::json!({
-                "error": format!("Failed to create dataset transform: {}", e)
-            }))
+            bad_request(format!("Failed to create dataset transform: {}", e))
         }
     }
 }
@@ -189,9 +185,7 @@ pub async fn update_dataset_transform(
     if let Some(ref embedder_ids) = body.embedder_ids
         && embedder_ids.is_empty()
     {
-        return HttpResponse::BadRequest().json(serde_json::json!({
-            "error": "At least one embedder must be specified"
-        }));
+        return bad_request("At least one embedder must be specified");
     }
 
     match dataset_transforms::update_dataset_transform(
@@ -214,9 +208,7 @@ pub async fn update_dataset_transform(
         }
         Err(e) => {
             error!("Failed to update dataset transform: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Failed to update dataset transform: {}", e)
-            }))
+            not_found(format!("Failed to update dataset transform: {}", e))
         }
     }
 }
@@ -235,10 +227,11 @@ pub async fn update_dataset_transform(
     ),
 )]
 #[delete("/api/dataset-transforms/{id}")]
-#[tracing::instrument(name = "delete_dataset_transform", skip(auth, postgres_pool), fields(dataset_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "delete_dataset_transform", skip(auth, postgres_pool, qdrant_client), fields(dataset_transform_id = %path.as_ref()))]
 pub async fn delete_dataset_transform(
     auth: Authenticated,
     postgres_pool: Data<Pool<Postgres>>,
+    qdrant_client: Data<Qdrant>,
     path: Path<i32>,
 ) -> impl Responder {
     let username = match extract_username(&auth) {
@@ -246,15 +239,47 @@ pub async fn delete_dataset_transform(
         Err(e) => return e,
     };
 
-    match dataset_transforms::delete_dataset_transform(&postgres_pool, &username, path.into_inner())
-        .await
+    let dataset_transform_id = path.into_inner();
+
+    // Get all embedded datasets for this transform so we can delete their Qdrant collections
+    let embedded_datasets_list = match embedded_datasets::get_embedded_datasets_for_transform(
+        &postgres_pool,
+        dataset_transform_id,
+    )
+    .await
+    {
+        Ok(datasets) => datasets,
+        Err(e) => {
+            error!("Failed to fetch embedded datasets for deletion: {}", e);
+            return not_found(format!("Failed to fetch embedded datasets: {}", e));
+        }
+    };
+
+    // Delete Qdrant collections for all embedded datasets
+    for embedded_dataset in embedded_datasets_list {
+        if let Err(e) = qdrant_client
+            .delete_collection(&embedded_dataset.collection_name)
+            .await
+        {
+            error!(
+                "Failed to delete Qdrant collection {} for embedded dataset {}: {}",
+                embedded_dataset.collection_name, embedded_dataset.embedded_dataset_id, e
+            );
+            // Continue with other collections even if one fails
+        }
+    }
+
+    match dataset_transforms::delete_dataset_transform(
+        &postgres_pool,
+        &username,
+        dataset_transform_id,
+    )
+    .await
     {
         Ok(_) => HttpResponse::NoContent().finish(),
         Err(e) => {
             error!("Failed to delete dataset transform: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Failed to delete dataset transform: {}", e)
-            }))
+            not_found(format!("Failed to delete dataset transform: {}", e))
         }
     }
 }
@@ -296,9 +321,7 @@ pub async fn trigger_dataset_transform(
         })),
         Err(e) => {
             error!("Dataset transform not found: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Dataset transform not found: {}", e)
-            }))
+            not_found(format!("Dataset transform not found: {}", e))
         }
     }
 }

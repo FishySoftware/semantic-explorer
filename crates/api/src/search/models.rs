@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Deserialize, ToSchema)]
 pub(crate) struct SearchRequest {
     pub query: String,
     pub embedded_dataset_ids: Vec<i32>,
@@ -25,7 +25,7 @@ pub(crate) enum SearchMode {
     Chunks,
 }
 
-#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub(crate) struct SearchParams {
     #[serde(default)]
     pub exact: bool,

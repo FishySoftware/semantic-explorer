@@ -1,8 +1,8 @@
 <script lang="ts">
+	import { Table, TableBody, TableBodyCell, TableHead, TableHeadCell } from 'flowbite-svelte';
 	import { onMount } from 'svelte';
-	import PageHeader from '../components/PageHeader.svelte';
 	import ActionMenu from '../components/ActionMenu.svelte';
-	import { Table, TableBody, TableHead, TableHeadCell, TableBodyCell } from 'flowbite-svelte';
+	import PageHeader from '../components/PageHeader.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
 
 	let { onNavigate, onViewDataset } = $props<{
@@ -84,6 +84,12 @@
 	let failedBatchesDatasetTitle = $state('');
 	let failedBatches = $state<ProcessedBatch[]>([]);
 	let loadingFailedBatches = $state(false);
+
+	// Rename modal state
+	let showRenameModal = $state(false);
+	let renamingDatasetId = $state<number | null>(null);
+	let newTitle = $state('');
+	let renaming = $state(false);
 
 	async function fetchDataset(datasetId: number): Promise<Dataset | null> {
 		if (datasetsCache.has(datasetId)) {
@@ -234,6 +240,58 @@
 		}
 	}
 
+	async function renameEmbeddedDataset() {
+		if (!renamingDatasetId) return;
+
+		if (!newTitle.trim()) {
+			toastStore.error('Title cannot be empty');
+			return;
+		}
+
+		const dataset = embeddedDatasets.find((d) => d.embedded_dataset_id === renamingDatasetId);
+		if (!dataset) return;
+
+		try {
+			renaming = true;
+			const response = await fetch(`/api/embedded-datasets/${renamingDatasetId}`, {
+				method: 'PATCH',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({ title: newTitle.trim() }),
+			});
+
+			if (!response.ok) {
+				const errorData = await response.json();
+				throw new Error(errorData.error || `Failed to rename: ${response.statusText}`);
+			}
+
+			const updatedDataset = await response.json();
+			// Update in local list
+			const index = embeddedDatasets.findIndex((d) => d.embedded_dataset_id === renamingDatasetId);
+			if (index !== -1) {
+				embeddedDatasets[index].title = updatedDataset.title;
+				embeddedDatasets = embeddedDatasets;
+			}
+
+			toastStore.success(`Successfully renamed to "${newTitle}"`);
+			showRenameModal = false;
+			renamingDatasetId = null;
+			newTitle = '';
+		} catch (e) {
+			const message = formatError(e, 'Failed to rename embedded dataset');
+			toastStore.error(message);
+		} finally {
+			renaming = false;
+		}
+	}
+
+	function openRenameModal(dataset: EmbeddedDataset) {
+		renamingDatasetId = dataset.embedded_dataset_id;
+		newTitle = dataset.title;
+		showRenameModal = true;
+	}
+
 	onMount(() => {
 		fetchEmbeddedDatasets();
 	});
@@ -369,6 +427,10 @@
 												]
 											: []),
 										{
+											label: 'Rename',
+											handler: () => openRenameModal(dataset),
+										},
+										{
 											label: 'Delete',
 											handler: () => deleteEmbeddedDataset(dataset),
 											isDangerous: true,
@@ -453,6 +515,51 @@
 
 			<div class="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex justify-end">
 				<button onclick={closeFailedBatchesModal} class="btn-secondary"> Close </button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+<!-- Rename Modal -->
+{#if showRenameModal}
+	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-lg max-w-md w-full mx-4">
+			<div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+				<h2 class="text-lg font-semibold text-gray-900 dark:text-white">Rename Embedded Dataset</h2>
+			</div>
+
+			<div class="px-6 py-4">
+				<label
+					for="rename-title"
+					class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+				>
+					Title
+				</label>
+				<input
+					id="rename-title"
+					type="text"
+					bind:value={newTitle}
+					placeholder="Enter new title"
+					class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+					disabled={renaming}
+				/>
+			</div>
+
+			<div class="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-3">
+				<button
+					onclick={() => {
+						showRenameModal = false;
+						renamingDatasetId = null;
+						newTitle = '';
+					}}
+					class="btn-secondary"
+					disabled={renaming}
+				>
+					Cancel
+				</button>
+				<button onclick={renameEmbeddedDataset} class="btn-primary" disabled={renaming}>
+					{renaming ? 'Renaming...' : 'Rename'}
+				</button>
 			</div>
 		</div>
 	</div>

@@ -247,6 +247,7 @@ async fn send_result(
         job_id: job.job_id,
         dataset_transform_id: job.dataset_transform_id,
         embedded_dataset_id: job.embedded_dataset_id,
+        owner: job.owner.clone(),
         batch_file_key: job.batch_file_key.clone(),
         chunk_count,
         status,

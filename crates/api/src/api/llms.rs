@@ -7,6 +7,7 @@ use sqlx::{Pool, Postgres};
 
 use crate::{
     auth::extract_username,
+    errors::not_found,
     llms::models::{CreateLLM, LargeLanguageModel, UpdateLargeLanguageModel},
     storage::postgres::llms,
 };
@@ -63,7 +64,7 @@ pub(crate) async fn get_llm(
         Ok(llm) => HttpResponse::Ok().json(llm),
         Err(e) => {
             tracing::error!(error = %e, llm_id = %llm_id, "failed to fetch LLM");
-            HttpResponse::NotFound().body(format!("LLM not found: {e:?}"))
+            not_found(format!("LLM not found: {e:?}"))
         }
     }
 }

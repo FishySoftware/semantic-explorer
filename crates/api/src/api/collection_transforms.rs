@@ -1,4 +1,5 @@
 use crate::auth::extract_username;
+use crate::errors::{bad_request, not_found};
 use crate::storage::postgres::collection_transforms;
 use crate::transforms::collection::{
     CollectionTransform, CollectionTransformStats, CreateCollectionTransform, ProcessedFile,
@@ -77,9 +78,7 @@ pub async fn get_collection_transform(
         Ok(transform) => HttpResponse::Ok().json(transform),
         Err(e) => {
             error!("Collection transform not found: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Collection transform not found: {}", e)
-            }))
+            not_found(format!("Collection transform not found: {}", e))
         }
     }
 }
@@ -142,9 +141,7 @@ pub async fn create_collection_transform(
         }
         Err(e) => {
             error!("Failed to create collection transform: {}", e);
-            HttpResponse::BadRequest().json(serde_json::json!({
-                "error": format!("Failed to create collection transform: {}", e)
-            }))
+            bad_request(format!("Failed to create collection transform: {}", e))
         }
     }
 }
@@ -190,9 +187,7 @@ pub async fn update_collection_transform(
         Ok(transform) => HttpResponse::Ok().json(transform),
         Err(e) => {
             error!("Failed to update collection transform: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Failed to update collection transform: {}", e)
-            }))
+            not_found(format!("Failed to update collection transform: {}", e))
         }
     }
 }
@@ -232,9 +227,7 @@ pub async fn delete_collection_transform(
         Ok(_) => HttpResponse::NoContent().finish(),
         Err(e) => {
             error!("Failed to delete collection transform: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Failed to delete collection transform: {}", e)
-            }))
+            not_found(format!("Failed to delete collection transform: {}", e))
         }
     }
 }
@@ -279,9 +272,7 @@ pub async fn trigger_collection_transform(
         })),
         Err(e) => {
             error!("Collection transform not found: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Collection transform not found: {}", e)
-            }))
+            not_found(format!("Collection transform not found: {}", e))
         }
     }
 }
@@ -338,9 +329,7 @@ pub async fn get_collection_transform_stats(
         }
         Err(e) => {
             error!("Collection transform not found: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Collection transform not found: {}", e)
-            }))
+            not_found(format!("Collection transform not found: {}", e))
         }
     }
 }
@@ -397,9 +386,7 @@ pub async fn get_processed_files(
         }
         Err(e) => {
             error!("Collection transform not found: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Collection transform not found: {}", e)
-            }))
+            not_found(format!("Collection transform not found: {}", e))
         }
     }
 }

@@ -8,6 +8,7 @@ use sqlx::{Pool, Postgres};
 use crate::{
     auth::extract_username,
     embedders::models::{CreateEmbedder, Embedder, UpdateEmbedder},
+    errors::not_found,
     storage::postgres::embedders,
 };
 
@@ -70,7 +71,7 @@ pub(crate) async fn get_embedder(
         Ok(embedder) => HttpResponse::Ok().json(embedder),
         Err(e) => {
             tracing::error!(error = %e, embedder_id = %embedder_id, "failed to fetch embedder");
-            HttpResponse::NotFound().body(format!("embedder not found: {e:?}"))
+            not_found(format!("embedder not found: {e:?}"))
         }
     }
 }
@@ -209,9 +210,7 @@ pub(crate) async fn test_embedder(
         match embedders::get_embedder(&postgres_pool.into_inner(), &username, embedder_id).await {
             Ok(e) => e,
             Err(e) => {
-                return HttpResponse::NotFound().json(serde_json::json!({
-                    "error": format!("embedder not found: {}", e)
-                }));
+                return not_found(format!("embedder not found: {}", e));
             }
         };
 

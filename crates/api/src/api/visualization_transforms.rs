@@ -1,4 +1,5 @@
 use crate::auth::extract_username;
+use crate::errors::{bad_request, not_found};
 use crate::storage::postgres::visualization_transforms;
 use crate::transforms::visualization::{
     CreateVisualizationTransform, UpdateVisualizationTransform, VisualizationTransform,
@@ -76,9 +77,7 @@ pub async fn get_visualization_transform(
         Ok(transform) => HttpResponse::Ok().json(transform),
         Err(e) => {
             error!("Visualization transform not found: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Visualization transform not found: {}", e)
-            }))
+            not_found(format!("Visualization transform not found: {}", e))
         }
     }
 }
@@ -139,9 +138,7 @@ pub async fn create_visualization_transform(
         }
         Err(e) => {
             error!("Failed to create visualization transform: {}", e);
-            HttpResponse::BadRequest().json(serde_json::json!({
-                "error": format!("Failed to create visualization transform: {}", e)
-            }))
+            bad_request(format!("Failed to create visualization transform: {}", e))
         }
     }
 }
@@ -191,9 +188,7 @@ pub async fn update_visualization_transform(
         Ok(transform) => HttpResponse::Ok().json(transform),
         Err(e) => {
             error!("Failed to update visualization transform: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Failed to update visualization transform: {}", e)
-            }))
+            not_found(format!("Failed to update visualization transform: {}", e))
         }
     }
 }
@@ -233,9 +228,7 @@ pub async fn delete_visualization_transform(
         Ok(_) => HttpResponse::NoContent().finish(),
         Err(e) => {
             error!("Failed to delete visualization transform: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Failed to delete visualization transform: {}", e)
-            }))
+            not_found(format!("Failed to delete visualization transform: {}", e))
         }
     }
 }
@@ -389,9 +382,7 @@ pub async fn get_visualization_points(
         }
         Err(e) => {
             error!("Visualization transform not found: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Visualization transform not found: {}", e)
-            }))
+            not_found(format!("Visualization transform not found: {}", e))
         }
     }
 }
@@ -437,9 +428,7 @@ pub async fn get_visualization_topics(
         }
         Err(e) => {
             error!("Visualization transform not found: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Visualization transform not found: {}", e)
-            }))
+            not_found(format!("Visualization transform not found: {}", e))
         }
     }
 }

@@ -3,14 +3,17 @@ use crate::embedded_datasets::{
     EmbeddedDataset, EmbeddedDatasetProcessedBatch, EmbeddedDatasetStats,
     EmbeddedDatasetWithDetails,
 };
+use crate::errors::{bad_request, not_found};
 use crate::storage::postgres::embedded_datasets;
 
-use actix_web::web::{Data, Path};
-use actix_web::{HttpResponse, Responder, delete, get};
+use actix_web::web::{Data, Json, Path};
+use actix_web::{HttpResponse, Responder, delete, get, patch};
 use actix_web_openidconnect::openid_middleware::Authenticated;
 use qdrant_client::Qdrant;
+use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres};
 use tracing::{error, info};
+use utoipa::ToSchema;
 
 #[utoipa::path(
     get,
@@ -76,9 +79,7 @@ pub async fn get_embedded_dataset(
         Ok(dataset) => HttpResponse::Ok().json(dataset),
         Err(e) => {
             error!("Embedded dataset not found: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Embedded dataset not found: {}", e)
-            }))
+            not_found(format!("Embedded dataset not found: {}", e))
         }
     }
 }
@@ -122,9 +123,7 @@ pub async fn delete_embedded_dataset(
         Ok(dataset) => dataset,
         Err(e) => {
             error!("Failed to find embedded dataset: {}", e);
-            return HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Embedded dataset not found: {}", e)
-            }));
+            return not_found(format!("Embedded dataset not found: {}", e));
         }
     };
 
@@ -210,9 +209,7 @@ pub async fn get_embedded_dataset_stats(
         }
         Err(e) => {
             error!("Embedded dataset not found: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Embedded dataset not found: {}", e)
-            }))
+            not_found(format!("Embedded dataset not found: {}", e))
         }
     }
 }
@@ -262,9 +259,7 @@ pub async fn get_processed_batches(
         }
         Err(e) => {
             error!("Embedded dataset not found: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Embedded dataset not found: {}", e)
-            }))
+            not_found(format!("Embedded dataset not found: {}", e))
         }
     }
 }
@@ -306,6 +301,68 @@ pub async fn get_embedded_datasets_for_dataset(
             HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": format!("Failed to fetch embedded datasets: {}", e)
             }))
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UpdateEmbeddedDatasetRequest {
+    pub title: String,
+}
+
+#[utoipa::path(
+    patch,
+    path = "/api/embedded-datasets/{id}",
+    tag = "Embedded Datasets",
+    params(
+        ("id" = i32, Path, description = "Embedded Dataset ID")
+    ),
+    request_body = UpdateEmbeddedDatasetRequest,
+    responses(
+        (status = 200, description = "Embedded dataset updated", body = EmbeddedDataset),
+        (status = 400, description = "Bad request - invalid input"),
+        (status = 404, description = "Embedded dataset not found"),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[patch("/api/embedded-datasets/{id}")]
+#[tracing::instrument(name = "update_embedded_dataset", skip(auth, postgres_pool), fields(embedded_dataset_id = %path.as_ref()))]
+pub async fn update_embedded_dataset(
+    auth: Authenticated,
+    postgres_pool: Data<Pool<Postgres>>,
+    path: Path<i32>,
+    body: Json<UpdateEmbeddedDatasetRequest>,
+) -> impl Responder {
+    let username = match extract_username(&auth) {
+        Ok(username) => username,
+        Err(e) => return e,
+    };
+
+    let embedded_dataset_id = path.into_inner();
+
+    // Validate title
+    if body.title.trim().is_empty() {
+        return bad_request("Title cannot be empty");
+    }
+
+    match embedded_datasets::update_embedded_dataset_title(
+        &postgres_pool,
+        &username,
+        embedded_dataset_id,
+        body.title.trim(),
+    )
+    .await
+    {
+        Ok(dataset) => {
+            info!(
+                "Updated embedded dataset {} with new title",
+                embedded_dataset_id
+            );
+            HttpResponse::Ok().json(dataset)
+        }
+        Err(e) => {
+            error!("Failed to update embedded dataset: {}", e);
+            not_found("Embedded dataset not found or not owned by this user")
         }
     }
 }

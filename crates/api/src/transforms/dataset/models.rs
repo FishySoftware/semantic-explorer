@@ -61,6 +61,8 @@ pub struct DatasetTransformStats {
     pub failed_batches: i64,
     pub total_chunks_embedded: i64,
     pub total_chunks_failed: i64,
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub last_run_at: Option<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>>,
 }
 
 /// Processed batch record for dataset transforms
