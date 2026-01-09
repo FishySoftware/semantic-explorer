@@ -58,6 +58,8 @@ pub struct CollectionTransformStats {
     pub successful_files: i64,
     pub failed_files: i64,
     pub total_items_created: i64,
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub last_run_at: Option<DateTime<Utc>>,
 }
 
 /// Statistics with total file count from collection

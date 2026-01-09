@@ -1,6 +1,6 @@
 <script lang="ts">
+	import { Button, Modal } from 'flowbite-svelte';
 	import { onMount } from 'svelte';
-	import { Modal, Button } from 'flowbite-svelte';
 	import { formatError, toastStore } from '../utils/notifications';
 
 	interface Props {
@@ -20,7 +20,7 @@
 		provider: string;
 	}
 
-	let { open = false, datasetId = null, onSuccess }: Props = $props();
+	let { open = $bindable(false), datasetId = null, onSuccess }: Props = $props();
 
 	let datasets = $state<Dataset[]>([]);
 	let embedders = $state<Embedder[]>([]);
@@ -29,6 +29,17 @@
 	let selectedEmbedderIds = $state<number[]>([]);
 	let transformTitle = $state('');
 	let wipeCollection = $state(false);
+	let embeddingBatchSize = $state<number | null>(null);
+
+	// Auto-generate title when opening the modal for new transforms
+	$effect(() => {
+		if (open && !transformTitle.startsWith('dataset-transform-')) {
+			const now = new Date();
+			const date = now.toISOString().split('T')[0];
+			const time = now.toTimeString().split(' ')[0].replace(/:/g, '').slice(0, 4);
+			transformTitle = `dataset-transform-${date}-${time}`;
+		}
+	});
 
 	$effect(() => {
 		if (open && datasetId !== null) {
@@ -108,6 +119,7 @@
 					title: transformTitle.trim(),
 					source_dataset_id: selectedDatasetId,
 					embedder_ids: selectedEmbedderIds,
+					embedding_batch_size: embeddingBatchSize,
 					wipe_collection: wipeCollection,
 				}),
 			});
@@ -116,7 +128,6 @@
 				throw new Error(`Failed to create transform: ${response.statusText}`);
 			}
 
-			toastStore.success('Transform created successfully');
 			resetForm();
 			onSuccess?.();
 		} catch (e) {
@@ -133,6 +144,7 @@
 		selectedDatasetId = datasetId ?? null;
 		selectedEmbedderIds = [];
 		wipeCollection = false;
+		embeddingBatchSize = null;
 		error = null;
 		open = false;
 	}
@@ -150,7 +162,7 @@
 </script>
 
 <Modal bind:open onclose={handleClose}>
-	<div class="p-4">
+	<div class="w-full max-w-4xl mx-auto px-4 py-4">
 		<h2 class="text-xl font-bold text-gray-900 dark:text-white mb-4">Create Dataset Transform</h2>
 
 		{#if error}
@@ -233,6 +245,31 @@
 						{/each}
 					</div>
 				{/if}
+			</div>
+
+			<!-- Embedding Batch Size -->
+			<div>
+				<label
+					for="embedding-batch-size"
+					class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+				>
+					Embedding Batch Size <span class="text-xs text-gray-500 dark:text-gray-400"
+						>(optional)</span
+					>
+				</label>
+				<input
+					id="embedding-batch-size"
+					type="number"
+					bind:value={embeddingBatchSize}
+					min="1"
+					max="1000"
+					placeholder="Leave empty for default"
+					class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
+				/>
+				<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+					Number of embeddings to process per batch. Lower values use less memory, higher values
+					process faster.
+				</p>
 			</div>
 
 			<!-- Wipe Collection Checkbox -->

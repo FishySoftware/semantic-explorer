@@ -71,7 +71,8 @@ const GET_COLLECTION_TRANSFORM_STATS_QUERY: &str = r#"
         COUNT(*) as total_files_processed,
         COUNT(*) FILTER (WHERE process_status = 'completed') as successful_files,
         COUNT(*) FILTER (WHERE process_status = 'failed') as failed_files,
-        COALESCE(SUM(item_count) FILTER (WHERE process_status = 'completed'), 0) as total_items_created
+        COALESCE(SUM(item_count) FILTER (WHERE process_status = 'completed'), 0) as total_items_created,
+        MAX(processed_at) as last_run_at
     FROM transform_processed_files
     WHERE transform_type = 'collection' AND transform_id = $1
 "#;

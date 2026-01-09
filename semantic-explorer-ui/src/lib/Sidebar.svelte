@@ -12,6 +12,8 @@
 		GridSolid,
 		LayersSolid,
 		MessageDotsOutline,
+		PaperClipOutline,
+		SearchOutline,
 	} from 'flowbite-svelte-icons';
 	import type { Props } from 'flowbite-svelte-icons/types';
 	import type { Component } from 'svelte';
@@ -35,14 +37,19 @@
 		{ name: 'Collections', icon: FolderSolid, url: '/collections' },
 		{ name: 'Datasets', icon: DatabaseSolid, url: '/datasets' },
 		{ name: 'Embedded Datasets', icon: LayersSolid, url: '/embedded-datasets' },
-		{ name: 'Visualizations', icon: ChartPieSolid, url: '/visualizations' },
 
 		{ name: 'divider-2', icon: GridSolid, isDivider: true },
+
+		{ name: 'Search', icon: SearchOutline, url: '/search' },
+		{ name: 'Chat', icon: PaperClipOutline, url: '/chat' },
+		{ name: 'Visualizations', icon: ChartPieSolid, url: '/visualizations' },
+
+		{ name: 'divider-3', icon: GridSolid, isDivider: true },
 
 		{ name: 'Embedders', icon: BrainSolid, url: '/embedders' },
 		{ name: 'LLMs', icon: MessageDotsOutline, url: '/llms' },
 
-		{ name: 'divider-3', icon: GridSolid, isDivider: true },
+		{ name: 'divider-4', icon: GridSolid, isDivider: true },
 
 		{
 			name: 'Transforms',

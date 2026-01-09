@@ -270,8 +270,8 @@
 						{getStats(transform)}
 					</TableBodyCell>
 					<TableBodyCell class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
-						{#if transform.last_run_at}
-							{formatDate(transform.last_run_at)}
+						{#if transform.last_run_stats?.last_run_at}
+							{formatDate(transform.last_run_stats.last_run_at)}
 						{:else}
 							Never
 						{/if}

@@ -1,7 +1,7 @@
 <script lang="ts">
+	import { Button, Modal, Tooltip } from 'flowbite-svelte';
+	import { ChevronDownOutline, QuestionCircleSolid } from 'flowbite-svelte-icons';
 	import { onMount } from 'svelte';
-	import { Modal, Button } from 'flowbite-svelte';
-	import { ChevronDownOutline } from 'flowbite-svelte-icons';
 	import { formatError, toastStore } from '../utils/notifications';
 
 	interface Props {
@@ -16,7 +16,7 @@
 		file_count?: number;
 	}
 
-	let { open = false, collectionId = null, onSuccess }: Props = $props();
+	let { open = $bindable(false), collectionId = null, onSuccess }: Props = $props();
 
 	let collections = $state<Collection[]>([]);
 
@@ -219,16 +219,32 @@
 
 			<!-- Extraction Strategy -->
 			<div>
-				<label
-					for="extraction-strategy"
-					class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-				>
-					Extraction Strategy
-				</label>
+				<div class="flex items-center gap-2">
+					<label
+						for="extraction-strategy"
+						class="text-sm font-medium text-gray-700 dark:text-gray-300"
+					>
+						Extraction Strategy
+					</label>
+					<button
+						type="button"
+						id="extract-help"
+						class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 focus:outline-none"
+					>
+						<QuestionCircleSolid class="w-4 h-4" />
+					</button>
+					<Tooltip
+						triggeredBy="#extract-help"
+						placement="right"
+						class="max-w-xs text-center bg-gray-900 dark:bg-white text-white dark:text-gray-900 border-0"
+					>
+						Method for extracting text: Plain Text is fastest, Structure Preserving keeps formatting
+					</Tooltip>
+				</div>
 				<select
 					id="extraction-strategy"
 					bind:value={extractionStrategy}
-					class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
+					class="w-full mt-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
 				>
 					<option value="plain_text">Plain Text</option>
 					<option value="structure_preserving">Structure Preserving</option>
@@ -300,16 +316,33 @@
 
 			<!-- Chunking Strategy -->
 			<div>
-				<label
-					for="chunking-strategy"
-					class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-				>
-					Chunking Strategy
-				</label>
+				<div class="flex items-center gap-2">
+					<label
+						for="chunking-strategy"
+						class="text-sm font-medium text-gray-700 dark:text-gray-300"
+					>
+						Chunking Strategy
+					</label>
+					<button
+						type="button"
+						id="chunk-help"
+						class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 focus:outline-none"
+					>
+						<QuestionCircleSolid class="w-4 h-4" />
+					</button>
+					<Tooltip
+						triggeredBy="#chunk-help"
+						placement="right"
+						class="max-w-xs text-center bg-gray-900 dark:bg-white text-white dark:text-gray-900 border-0"
+					>
+						How to break text: Sentence keeps natural boundaries, Fixed Size uses chunks, Semantic
+						groups related content
+					</Tooltip>
+				</div>
 				<select
 					id="chunking-strategy"
 					bind:value={chunkingStrategy}
-					class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
+					class="w-full mt-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
 				>
 					<option value="sentence">Sentence</option>
 					<option value="fixed_size">Fixed Size</option>

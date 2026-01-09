@@ -78,6 +78,15 @@ const UPDATE_EMBEDDED_DATASET_COLLECTION_NAME_QUERY: &str = r#"
               owner, collection_name, created_at, updated_at
 "#;
 
+const UPDATE_EMBEDDED_DATASET_TITLE_QUERY: &str = r#"
+    UPDATE embedded_datasets
+    SET title = $2,
+        updated_at = NOW()
+    WHERE embedded_dataset_id = $1 AND owner = $3
+    RETURNING embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
+              owner, collection_name, created_at, updated_at
+"#;
+
 const DELETE_EMBEDDED_DATASET_QUERY: &str = r#"
     DELETE FROM embedded_datasets
     WHERE embedded_dataset_id = $1
@@ -203,6 +212,28 @@ pub async fn delete_embedded_dataset(
         .execute(pool)
         .await?;
     Ok(())
+}
+
+pub async fn update_embedded_dataset_title(
+    pool: &Pool<Postgres>,
+    owner: &str,
+    embedded_dataset_id: i32,
+    title: &str,
+) -> Result<EmbeddedDataset> {
+    let embedded_dataset =
+        sqlx::query_as::<_, EmbeddedDataset>(UPDATE_EMBEDDED_DATASET_TITLE_QUERY)
+            .bind(embedded_dataset_id)
+            .bind(title)
+            .bind(owner)
+            .fetch_optional(pool)
+            .await?;
+
+    match embedded_dataset {
+        Some(dataset) => Ok(dataset),
+        None => Err(anyhow::anyhow!(
+            "Embedded dataset not found or not owned by this user"
+        )),
+    }
 }
 
 pub async fn get_embedded_dataset_stats(

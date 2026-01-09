@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import ApiExamples from '../ApiExamples.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
+	import CreateDatasetTransformModal from '../components/CreateDatasetTransformModal.svelte';
 	import TabPanel from '../components/TabPanel.svelte';
 	import TransformsList from '../components/TransformsList.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
@@ -127,6 +128,9 @@
 	let deletingItem = $state<number | null>(null);
 	let itemPendingDelete = $state<DatasetItem | null>(null);
 	let updatingPublic = $state(false);
+
+	// Dataset Transform Modal state
+	let datasetTransformModalOpen = $state(false);
 
 	const examplePayload = {
 		items: [
@@ -462,47 +466,70 @@
 			</div>
 		{:else if dataset}
 			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-4">
-				<div class="flex items-baseline gap-3 mb-2">
-					<h1 class="text-3xl font-bold text-gray-900 dark:text-white">
-						{dataset.title}
-					</h1>
-					<span class="text-sm text-gray-500 dark:text-gray-400">
-						#{dataset.dataset_id}
-					</span>
-				</div>
-				{#if dataset.details}
-					<p class="text-gray-600 dark:text-gray-400 mb-3">
-						{dataset.details}
-					</p>
-				{/if}
-				<div class="flex items-center gap-2 flex-wrap">
-					{#each dataset.tags as tag (tag)}
-						<span
-							class="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs font-medium"
-						>
-							#{tag}
-						</span>
-					{/each}
-				</div>
-				<div class="mt-3">
-					<label class="inline-flex items-center gap-2 cursor-pointer">
-						<input
-							type="checkbox"
-							checked={dataset.is_public}
-							onchange={togglePublic}
-							disabled={updatingPublic}
-							class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
-						/>
-						<span class="text-sm text-gray-700 dark:text-gray-300">
-							{#if dataset.is_public}
-								<span class="font-semibold text-green-600 dark:text-green-400">Public</span> - visible
-								in marketplace
-							{:else}
-								<span class="font-semibold text-gray-600 dark:text-gray-400">Private</span> - only visible
-								to you
-							{/if}
-						</span>
-					</label>
+				<div class="flex justify-between items-start mb-2">
+					<div class="flex-1">
+						<div class="flex items-baseline gap-3 mb-2">
+							<h1 class="text-3xl font-bold text-gray-900 dark:text-white">
+								{dataset.title}
+							</h1>
+							<span class="text-sm text-gray-500 dark:text-gray-400">
+								#{dataset.dataset_id}
+							</span>
+						</div>
+						{#if dataset.details}
+							<p class="text-gray-600 dark:text-gray-400 mb-3">
+								{dataset.details}
+							</p>
+						{/if}
+						<div class="flex items-center gap-2 flex-wrap">
+							{#each dataset.tags as tag (tag)}
+								<span
+									class="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs font-medium"
+								>
+									#{tag}
+								</span>
+							{/each}
+						</div>
+						<div class="mt-3">
+							<label class="inline-flex items-center gap-2 cursor-pointer">
+								<input
+									type="checkbox"
+									checked={dataset.is_public}
+									onchange={togglePublic}
+									disabled={updatingPublic}
+									class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+								/>
+								<span class="text-sm text-gray-700 dark:text-gray-300">
+									{#if dataset.is_public}
+										<span class="font-semibold text-green-600 dark:text-green-400">Public</span> - visible
+										in marketplace
+									{:else}
+										<span class="font-semibold text-gray-600 dark:text-gray-400">Private</span> - only
+										visible to you
+									{/if}
+								</span>
+							</label>
+						</div>
+					</div>
+					{#if paginatedItems && paginatedItems.total_count > 0}
+						<div class="ml-4">
+							<button
+								onclick={() => (datasetTransformModalOpen = true)}
+								class="inline-flex items-center gap-2 px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
+								title="Create a transform to embed items from this dataset"
+							>
+								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
+									></path>
+								</svg>
+								Create Transform
+							</button>
+						</div>
+					{/if}
 				</div>
 			</div>
 
@@ -848,8 +875,48 @@
 												Create transforms to process collections into this dataset or embed items
 												from this dataset.
 											</p>
+											<div class="mt-4">
+												<button
+													onclick={() => (datasetTransformModalOpen = true)}
+													class="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
+													title="Create a transform to embed items from this dataset"
+												>
+													<svg
+														class="w-5 h-5"
+														fill="none"
+														stroke="currentColor"
+														viewBox="0 0 24 24"
+													>
+														<path
+															stroke-linecap="round"
+															stroke-linejoin="round"
+															stroke-width="2"
+															d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
+														></path>
+													</svg>
+													Create Dataset Transform
+												</button>
+											</div>
 										</div>
 									{:else}
+										<div class="flex justify-between items-center mb-6">
+											<h2 class="text-2xl font-bold text-gray-900 dark:text-white">Transforms</h2>
+											<button
+												onclick={() => (datasetTransformModalOpen = true)}
+												class="inline-flex items-center gap-2 px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
+												title="Create a transform to embed items from this dataset"
+											>
+												<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+													<path
+														stroke-linecap="round"
+														stroke-linejoin="round"
+														stroke-width="2"
+														d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
+													></path>
+												</svg>
+												Create Dataset Transform
+											</button>
+										</div>
 										<div class="space-y-6">
 											<!-- Collection Transforms: Collection → This Dataset -->
 											{#if collectionTransforms.length > 0}
@@ -1029,7 +1096,6 @@
 </div>
 
 <ConfirmDialog
-	open={itemPendingDelete !== null}
 	title="Delete dataset item"
 	message={itemPendingDelete
 		? `Are you sure you want to delete "${itemPendingDelete.title}"? This will also remove all associated chunks from embedded dataset. This action cannot be undone.`
@@ -1038,4 +1104,14 @@
 	variant="danger"
 	on:confirm={confirmDeleteItem}
 	on:cancel={() => (itemPendingDelete = null)}
+/>
+
+<CreateDatasetTransformModal
+	bind:open={datasetTransformModalOpen}
+	{datasetId}
+	onSuccess={() => {
+		datasetTransformModalOpen = false;
+		toastStore.success('Transform created successfully');
+		fetchDatasetTransforms();
+	}}
 />

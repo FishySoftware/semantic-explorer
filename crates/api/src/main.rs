@@ -166,6 +166,7 @@ async fn main() -> Result<()> {
             .service(api::embedded_datasets::get_embedded_datasets)
             .service(api::embedded_datasets::get_embedded_dataset)
             .service(api::embedded_datasets::delete_embedded_dataset)
+            .service(api::embedded_datasets::update_embedded_dataset)
             .service(api::embedded_datasets::get_embedded_dataset_stats)
             .service(api::embedded_datasets::get_processed_batches)
             .service(api::embedded_datasets::get_embedded_datasets_for_dataset)
