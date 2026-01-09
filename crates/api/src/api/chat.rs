@@ -297,7 +297,14 @@ pub(crate) async fn send_chat_message(
     }
 
     // Retrieve relevant documents using RAG
-    let rag_config = RAGConfig::default();
+    let mut rag_config = RAGConfig::default();
+    if let Some(max_docs) = request.max_context_documents {
+        rag_config.max_context_documents = max_docs.max(1) as usize;
+    }
+    if let Some(min_score) = request.min_similarity_score {
+        rag_config.min_similarity_score = min_score.clamp(0.0, 1.0);
+    }
+
     let retrieved_documents = match rag::retrieve_documents(
         &postgres_pool,
         qdrant_client.as_ref(),

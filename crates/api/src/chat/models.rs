@@ -66,6 +66,8 @@ pub(crate) struct CreateChatMessageRequest {
     pub content: String,
     #[serde(default)]
     pub max_context_documents: Option<i32>,
+    #[serde(default)]
+    pub min_similarity_score: Option<f32>,
 }
 
 #[derive(Serialize, Deserialize, ToSchema, Debug)]
@@ -83,7 +85,7 @@ pub struct RetrievedDocument {
     pub document_id: Option<String>,
     pub text: String,
     pub similarity_score: f32,
-    pub source: Option<String>,
+    pub item_title: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, ToSchema, Debug)]
@@ -103,9 +105,9 @@ pub struct RAGConfig {
 impl Default for RAGConfig {
     fn default() -> Self {
         Self {
-            max_context_documents: 5,
-            min_similarity_score: 0.5,
-            max_tokens_context: 3000,
+            max_context_documents: 20,
+            min_similarity_score: 0.2,
+            max_tokens_context: 5000,
         }
     }
 }

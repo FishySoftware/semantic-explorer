@@ -232,10 +232,11 @@ pub(crate) async fn update_dataset(
     tag = "Datasets",
 )]
 #[delete("/api/datasets/{datasets_id}")]
-#[tracing::instrument(name = "delete_dataset", skip(auth, postgres_pool), fields(dataset_id = %dataset_id.as_ref()))]
+#[tracing::instrument(name = "delete_dataset", skip(auth, postgres_pool, qdrant_client), fields(dataset_id = %dataset_id.as_ref()))]
 pub(crate) async fn delete_dataset(
     auth: Authenticated,
     postgres_pool: Data<Pool<Postgres>>,
+    qdrant_client: Data<Qdrant>,
     dataset_id: Path<i32>,
 ) -> impl Responder {
     let username = match extract_username(&auth) {
@@ -251,6 +252,36 @@ pub(crate) async fn delete_dataset(
     {
         return not_found("Dataset not found");
     };
+
+    // Get all embedded datasets for this dataset so we can delete their Qdrant collections
+    let embedded_datasets = match embedded_datasets::get_embedded_datasets_for_dataset(
+        &postgres_pool,
+        &username,
+        dataset_id,
+    )
+    .await
+    {
+        Ok(datasets) => datasets,
+        Err(e) => {
+            error!("Failed to fetch embedded datasets for deletion: {}", e);
+            return HttpResponse::InternalServerError()
+                .body(format!("error fetching embedded datasets due to: {e:?}"));
+        }
+    };
+
+    // Delete Qdrant collections for all embedded datasets
+    for embedded_dataset in embedded_datasets {
+        if let Err(e) = qdrant_client
+            .delete_collection(&embedded_dataset.collection_name)
+            .await
+        {
+            error!(
+                "Failed to delete Qdrant collection {} for embedded dataset {}: {}",
+                embedded_dataset.collection_name, embedded_dataset.embedded_dataset_id, e
+            );
+            // Continue with other collections even if one fails
+        }
+    }
 
     match datasets::delete_dataset(&postgres_pool, dataset_id, &username).await {
         Ok(_) => HttpResponse::Ok().finish(),

@@ -1,6 +1,6 @@
 use crate::auth::extract_username;
 use crate::errors::{bad_request, not_found};
-use crate::storage::postgres::dataset_transforms;
+use crate::storage::postgres::{dataset_transforms, embedded_datasets};
 use crate::transforms::dataset::{
     CreateDatasetTransform, DatasetTransform, DatasetTransformStats, UpdateDatasetTransform,
     trigger_dataset_transform_scan,
@@ -11,6 +11,7 @@ use actix_web::{HttpResponse, Responder, delete, get, patch, post};
 use actix_web_openidconnect::openid_middleware::Authenticated;
 use async_nats::Client as NatsClient;
 use aws_sdk_s3::Client as S3Client;
+use qdrant_client::Qdrant;
 use sqlx::{Pool, Postgres};
 use tracing::error;
 
@@ -226,10 +227,11 @@ pub async fn update_dataset_transform(
     ),
 )]
 #[delete("/api/dataset-transforms/{id}")]
-#[tracing::instrument(name = "delete_dataset_transform", skip(auth, postgres_pool), fields(dataset_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "delete_dataset_transform", skip(auth, postgres_pool, qdrant_client), fields(dataset_transform_id = %path.as_ref()))]
 pub async fn delete_dataset_transform(
     auth: Authenticated,
     postgres_pool: Data<Pool<Postgres>>,
+    qdrant_client: Data<Qdrant>,
     path: Path<i32>,
 ) -> impl Responder {
     let username = match extract_username(&auth) {
@@ -237,8 +239,42 @@ pub async fn delete_dataset_transform(
         Err(e) => return e,
     };
 
-    match dataset_transforms::delete_dataset_transform(&postgres_pool, &username, path.into_inner())
-        .await
+    let dataset_transform_id = path.into_inner();
+
+    // Get all embedded datasets for this transform so we can delete their Qdrant collections
+    let embedded_datasets_list = match embedded_datasets::get_embedded_datasets_for_transform(
+        &postgres_pool,
+        dataset_transform_id,
+    )
+    .await
+    {
+        Ok(datasets) => datasets,
+        Err(e) => {
+            error!("Failed to fetch embedded datasets for deletion: {}", e);
+            return not_found(format!("Failed to fetch embedded datasets: {}", e));
+        }
+    };
+
+    // Delete Qdrant collections for all embedded datasets
+    for embedded_dataset in embedded_datasets_list {
+        if let Err(e) = qdrant_client
+            .delete_collection(&embedded_dataset.collection_name)
+            .await
+        {
+            error!(
+                "Failed to delete Qdrant collection {} for embedded dataset {}: {}",
+                embedded_dataset.collection_name, embedded_dataset.embedded_dataset_id, e
+            );
+            // Continue with other collections even if one fails
+        }
+    }
+
+    match dataset_transforms::delete_dataset_transform(
+        &postgres_pool,
+        &username,
+        dataset_transform_id,
+    )
+    .await
     {
         Ok(_) => HttpResponse::NoContent().finish(),
         Err(e) => {

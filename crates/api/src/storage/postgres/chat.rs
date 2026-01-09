@@ -55,12 +55,12 @@ const GET_LLM_DETAILS_QUERY: &str = r#"
 "#;
 
 const BATCH_INSERT_RETRIEVED_DOCUMENTS_QUERY: &str = r#"
-    INSERT INTO chat_message_retrieved_documents (message_id, document_id, text, similarity_score, source, created_at)
+    INSERT INTO chat_message_retrieved_documents (message_id, document_id, text, similarity_score, item_title, created_at)
     SELECT $1, unnest($2::text[]), unnest($3::text[]), unnest($4::float4[]), unnest($5::text[]), NOW()
 "#;
 
 const GET_RETRIEVED_DOCUMENTS_QUERY: &str = r#"
-    SELECT document_id, text, similarity_score, source
+    SELECT document_id, text, similarity_score, item_title
     FROM chat_message_retrieved_documents
     WHERE message_id = $1
     ORDER BY similarity_score DESC
@@ -239,13 +239,13 @@ pub(crate) async fn store_retrieved_documents(
         let mut document_ids: Vec<Option<String>> = Vec::with_capacity(chunk.len());
         let mut texts: Vec<String> = Vec::with_capacity(chunk.len());
         let mut scores: Vec<f32> = Vec::with_capacity(chunk.len());
-        let mut sources: Vec<Option<String>> = Vec::with_capacity(chunk.len());
+        let mut item_titles: Vec<Option<String>> = Vec::with_capacity(chunk.len());
 
         for doc in chunk {
             document_ids.push(doc.document_id.clone());
             texts.push(doc.text.clone());
             scores.push(doc.similarity_score);
-            sources.push(doc.source.clone());
+            item_titles.push(doc.item_title.clone());
         }
 
         // Use UNNEST for efficient batch insert
@@ -254,7 +254,7 @@ pub(crate) async fn store_retrieved_documents(
             .bind(&document_ids)
             .bind(&texts)
             .bind(&scores)
-            .bind(&sources)
+            .bind(&item_titles)
             .execute(pool)
             .await?;
     }
@@ -282,11 +282,11 @@ pub(crate) async fn get_retrieved_documents(
     let documents: Vec<RetrievedDocument> = result
         .into_iter()
         .map(
-            |(document_id, text, similarity_score, source)| RetrievedDocument {
+            |(document_id, text, similarity_score, item_title)| RetrievedDocument {
                 document_id,
                 text,
                 similarity_score,
-                source,
+                item_title,
             },
         )
         .collect();
