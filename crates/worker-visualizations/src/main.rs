@@ -53,8 +53,8 @@ fn init_tracing() -> Result<Tracer, Box<dyn std::error::Error + Send + Sync>> {
     let format_layer = if use_json {
         tracing_subscriber::fmt::layer()
             .json()
-            .with_current_span(true)
-            .with_span_list(true)
+            .with_current_span(false)
+            .with_span_list(false)
             .with_target(true)
             .with_file(true)
             .flatten_event(true)

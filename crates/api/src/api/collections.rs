@@ -15,12 +15,12 @@ use crate::{
         Collection, CollectionSearchQuery, CollectionUpload, CollectionUploadResponse,
         CreateCollection, FileListQuery, PaginatedCollections, UpdateCollection,
     },
-    errors,
+    errors::{self, bad_request, not_found},
     storage::{
         self,
         postgres::collections,
         rustfs::{
-            delete_file,
+            delete_file, empty_bucket,
             models::{DocumentUpload, PaginatedFiles},
             upload_document,
         },
@@ -199,9 +199,14 @@ pub(crate) async fn delete_collections(
         match collections::get_collection(&postgres_pool, &username, collection_id).await {
             Ok(collection) => collection,
             Err(_) => {
-                return HttpResponse::NotFound().finish();
+                return not_found("Collection not found");
             }
         };
+
+    if let Err(e) = empty_bucket(s3_client.as_ref(), &collection.bucket).await {
+        error!("error emptying collection bucket '{collection_id}' due to: {e:?}");
+        return errors::internal_error(format!("error emptying collection bucket due to: {e:?}"));
+    }
 
     if let Err(e) = s3_client
         .into_inner()
@@ -217,8 +222,7 @@ pub(crate) async fn delete_collections(
         Ok(_) => HttpResponse::Ok().finish(),
         Err(e) => {
             tracing::error!(error = %e, "failed to delete collection");
-            HttpResponse::InternalServerError()
-                .body(format!("error deleting collection due to: {e:?}"))
+            errors::internal_error(format!("error deleting collection due to: {e:?}"))
         }
     }
 }
@@ -260,7 +264,7 @@ pub(crate) async fn update_collections(
     {
         Ok(collection) => HttpResponse::Ok().json(collection),
         Err(_) => {
-            return HttpResponse::NotFound().finish();
+            return not_found("Collection not found");
         }
     }
 }
@@ -307,8 +311,7 @@ pub(crate) async fn upload_to_collection(
                     error = %e,
                     "Collection not found or access denied"
                 );
-                return HttpResponse::BadRequest()
-                    .body(format!("collection '{collection_id}' does not exists"));
+                return bad_request(format!("collection '{collection_id}' does not exists"));
             }
         };
 
@@ -380,8 +383,7 @@ pub(crate) async fn list_collection_files(
         {
             Ok(collection) => collection,
             Err(_) => {
-                return HttpResponse::NotFound()
-                    .body(format!("collection '{collection_id}' not found"));
+                return not_found(format!("collection '{collection_id}' not found"));
             }
         };
 
@@ -440,12 +442,17 @@ pub(crate) async fn download_collection_file(
         {
             Ok(collection) => collection,
             Err(_) => {
-                return HttpResponse::NotFound()
-                    .body(format!("collection '{collection_id}' not found"));
+                return not_found(format!("collection '{collection_id}' not found"));
             }
         };
 
-    match storage::rustfs::get_file(&s3_client.into_inner(), &collection.bucket, &file_key).await {
+    match storage::rustfs::get_file_with_size_check(
+        &s3_client.into_inner(),
+        &collection.bucket,
+        &file_key,
+    )
+    .await
+    {
         Ok(file_data) => {
             let mime_type = mime_guess::from_path(&file_key)
                 .first_or_octet_stream()
@@ -460,7 +467,12 @@ pub(crate) async fn download_collection_file(
                 .body(file_data)
         }
         Err(e) => {
-            HttpResponse::InternalServerError().body(format!("error downloading file: {e:?}"))
+            let error_msg = e.to_string();
+            if error_msg.contains("exceeds maximum download limit") {
+                bad_request(error_msg)
+            } else {
+                HttpResponse::InternalServerError().body(format!("error downloading file: {e:?}"))
+            }
         }
     }
 }
@@ -497,8 +509,7 @@ pub(crate) async fn delete_collection_file(
         {
             Ok(collection) => collection,
             Err(_) => {
-                return HttpResponse::NotFound()
-                    .body(format!("collection '{collection_id}' not found"));
+                return not_found(format!("collection '{collection_id}' not found"));
             }
         };
 

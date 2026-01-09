@@ -1,4 +1,5 @@
 use crate::auth::extract_username;
+use crate::errors::{bad_request, not_found};
 use crate::storage::postgres::dataset_transforms;
 use crate::transforms::dataset::{
     CreateDatasetTransform, DatasetTransform, DatasetTransformStats, UpdateDatasetTransform,
@@ -73,9 +74,7 @@ pub async fn get_dataset_transform(
         Ok(transform) => HttpResponse::Ok().json(transform),
         Err(e) => {
             error!("Dataset transform not found: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Dataset transform not found: {}", e)
-            }))
+            not_found(format!("Dataset transform not found: {}", e))
         }
     }
 }
@@ -106,9 +105,7 @@ pub async fn create_dataset_transform(
     };
 
     if body.embedder_ids.is_empty() {
-        return HttpResponse::BadRequest().json(serde_json::json!({
-            "error": "At least one embedder must be specified"
-        }));
+        return bad_request("At least one embedder must be specified");
     }
 
     let job_config = serde_json::json!({
@@ -152,9 +149,7 @@ pub async fn create_dataset_transform(
         }
         Err(e) => {
             error!("Failed to create dataset transform: {}", e);
-            HttpResponse::BadRequest().json(serde_json::json!({
-                "error": format!("Failed to create dataset transform: {}", e)
-            }))
+            bad_request(format!("Failed to create dataset transform: {}", e))
         }
     }
 }
@@ -189,9 +184,7 @@ pub async fn update_dataset_transform(
     if let Some(ref embedder_ids) = body.embedder_ids
         && embedder_ids.is_empty()
     {
-        return HttpResponse::BadRequest().json(serde_json::json!({
-            "error": "At least one embedder must be specified"
-        }));
+        return bad_request("At least one embedder must be specified");
     }
 
     match dataset_transforms::update_dataset_transform(
@@ -214,9 +207,7 @@ pub async fn update_dataset_transform(
         }
         Err(e) => {
             error!("Failed to update dataset transform: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Failed to update dataset transform: {}", e)
-            }))
+            not_found(format!("Failed to update dataset transform: {}", e))
         }
     }
 }
@@ -252,9 +243,7 @@ pub async fn delete_dataset_transform(
         Ok(_) => HttpResponse::NoContent().finish(),
         Err(e) => {
             error!("Failed to delete dataset transform: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Failed to delete dataset transform: {}", e)
-            }))
+            not_found(format!("Failed to delete dataset transform: {}", e))
         }
     }
 }
@@ -296,9 +285,7 @@ pub async fn trigger_dataset_transform(
         })),
         Err(e) => {
             error!("Dataset transform not found: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Dataset transform not found: {}", e)
-            }))
+            not_found(format!("Dataset transform not found: {}", e))
         }
     }
 }

@@ -16,7 +16,15 @@
 		is_public: boolean;
 	}
 
-	interface DatasetItem {
+	interface DatasetItemSummary {
+		item_id: number;
+		dataset_id: number;
+		title: string;
+		chunk_count: number;
+		metadata: Record<string, any>;
+	}
+
+	interface DatasetItemChunks {
 		item_id: number;
 		dataset_id: number;
 		title: string;
@@ -62,7 +70,7 @@
 	}
 
 	interface PaginatedItems {
-		items: DatasetItem[];
+		items: DatasetItemSummary[];
 		page: number;
 		page_size: number;
 		total_count: number;
@@ -93,6 +101,10 @@
 	let currentPage = $state(0);
 	let pageSize = $state(10);
 	let expandedItemId = $state<number | null>(null);
+
+	// Cache for loaded chunks keyed by item_id
+	let chunksCache = $state<Record<number, DatasetItemChunks>>({});
+	let loadingChunksItemId = $state<number | null>(null);
 
 	// Chunk pagination state
 	let chunkPageSize = $state(5);
@@ -126,7 +138,7 @@
 
 	// Delete state
 	let deletingItem = $state<number | null>(null);
-	let itemPendingDelete = $state<DatasetItem | null>(null);
+	let itemPendingDelete = $state<DatasetItemSummary | null>(null);
 	let updatingPublic = $state(false);
 
 	// Dataset Transform Modal state
@@ -293,7 +305,7 @@
 			itemsLoading = true;
 			itemsError = null;
 			const response = await fetch(
-				`/api/datasets/${datasetId}/items?page=${currentPage}&page_size=${pageSize}`
+				`/api/datasets/${datasetId}/items-summary?page=${currentPage}&page_size=${pageSize}`
 			);
 			if (!response.ok) {
 				throw new Error(`Failed to fetch items: ${response.statusText}`);
@@ -303,6 +315,29 @@
 			itemsError = e instanceof Error ? e.message : 'Failed to fetch items';
 		} finally {
 			itemsLoading = false;
+		}
+	}
+
+	async function fetchItemChunks(itemId: number) {
+		// Return cached chunks if available
+		if (chunksCache[itemId]) {
+			return chunksCache[itemId];
+		}
+
+		try {
+			loadingChunksItemId = itemId;
+			const response = await fetch(`/api/datasets/${datasetId}/items/${itemId}/chunks`);
+			if (!response.ok) {
+				throw new Error(`Failed to fetch chunks: ${response.statusText}`);
+			}
+			const chunks: DatasetItemChunks = await response.json();
+			chunksCache[itemId] = chunks;
+			return chunks;
+		} catch (e) {
+			toastStore.error(formatError(e, 'Failed to load chunks'));
+			return null;
+		} finally {
+			loadingChunksItemId = null;
 		}
 	}
 
@@ -318,10 +353,16 @@
 	}
 
 	function toggleItem(itemId: number) {
-		expandedItemId = expandedItemId === itemId ? null : itemId;
-		// Reset chunk pagination when toggling items
-		if (expandedItemId !== itemId) {
+		if (expandedItemId === itemId) {
+			// Closing the item
+			expandedItemId = null;
 			delete chunkCurrentPages[itemId];
+		} else {
+			// Opening the item - fetch chunks if not cached
+			expandedItemId = itemId;
+			if (!chunksCache[itemId]) {
+				fetchItemChunks(itemId);
+			}
 		}
 	}
 
@@ -393,7 +434,7 @@
 		}
 	});
 
-	function requestDeleteItem(item: DatasetItem) {
+	function requestDeleteItem(item: DatasetItemSummary) {
 		itemPendingDelete = item;
 	}
 
@@ -511,25 +552,6 @@
 							</label>
 						</div>
 					</div>
-					{#if paginatedItems && paginatedItems.total_count > 0}
-						<div class="ml-4">
-							<button
-								onclick={() => (datasetTransformModalOpen = true)}
-								class="inline-flex items-center gap-2 px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
-								title="Create a transform to embed items from this dataset"
-							>
-								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width="2"
-										d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
-									></path>
-								</svg>
-								Create Transform
-							</button>
-						</div>
-					{/if}
 				</div>
 			</div>
 
@@ -680,7 +702,7 @@
 														<td
 															class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400"
 														>
-															{item.chunks.length} chunk{item.chunks.length !== 1 ? 's' : ''}
+															{item.chunk_count} chunk{item.chunk_count !== 1 ? 's' : ''}
 														</td>
 														<td class="px-6 py-4 whitespace-nowrap text-sm">
 															<div class="flex items-center gap-2">
@@ -709,112 +731,122 @@
 														<tr>
 															<td colspan="4" class="px-6 py-4 bg-gray-50 dark:bg-gray-900">
 																<div class="space-y-4">
-																	<div>
-																		<div class="flex items-center justify-between mb-2">
-																			<h4
-																				class="text-sm font-semibold text-gray-700 dark:text-gray-300"
-																			>
-																				Chunks ({item.chunks.length})
-																			</h4>
-																			<label
-																				class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400"
-																			>
-																				<span>Per page:</span>
-																				<select
-																					bind:value={chunkPageSize}
-																					onchange={() => {}}
-																					class="pl-2 pr-6 py-1 border border-gray-300 dark:border-gray-600 rounded text-xs dark:bg-gray-700 dark:text-white"
-																				>
-																					<option value={5}>5</option>
-																					<option value={10}>10</option>
-																					<option value={20}>20</option>
-																				</select>
-																			</label>
+																	{#if loadingChunksItemId === item.item_id}
+																		<div class="flex items-center justify-center py-4">
+																			<div
+																				class="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"
+																			></div>
 																		</div>
-
-																		{#if item.chunks.length > 0}
-																			<div class="space-y-2 mb-3">
-																				{#each getPaginatedChunks(item.item_id, item.chunks) as chunk, idx (idx)}
-																					{@const chunkPageInfo = getChunkPageInfo(
-																						item.item_id,
-																						item.chunks.length
-																					)}
-																					{@const actualChunkNumber = chunkPageInfo.startIdx + idx}
-																					<div
-																						class="bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700"
+																	{:else if chunksCache[item.item_id]}
+																		{@const cachedData = chunksCache[item.item_id]}
+																		<div>
+																			<div class="flex items-center justify-between mb-2">
+																				<h4
+																					class="text-sm font-semibold text-gray-700 dark:text-gray-300"
+																				>
+																					Chunks ({cachedData.chunks.length})
+																				</h4>
+																				<label
+																					class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400"
+																				>
+																					<span>Per page:</span>
+																					<select
+																						bind:value={chunkPageSize}
+																						onchange={() => {}}
+																						class="pl-2 pr-6 py-1 border border-gray-300 dark:border-gray-600 rounded text-xs dark:bg-gray-700 dark:text-white"
 																					>
-																						<div
-																							class="text-xs text-gray-500 dark:text-gray-400 mb-1"
-																						>
-																							Chunk {actualChunkNumber}
-																						</div>
-																						<p
-																							class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap"
-																						>
-																							{chunk.content}
-																						</p>
-																					</div>
-																				{/each}
+																						<option value={5}>5</option>
+																						<option value={10}>10</option>
+																						<option value={20}>20</option>
+																					</select>
+																				</label>
 																			</div>
 
-																			{#if item.chunks.length > chunkPageSize}
-																				{@const chunkPageInfo = getChunkPageInfo(
-																					item.item_id,
-																					item.chunks.length
-																				)}
-																				<div
-																					class="flex items-center justify-between border-t border-gray-200 dark:border-gray-700 pt-3"
-																				>
-																					<div class="text-xs text-gray-600 dark:text-gray-400">
-																						Showing {chunkPageInfo.startIdx} to {chunkPageInfo.endIdx}
-																						of {chunkPageInfo.totalChunks}
-																					</div>
-																					<div class="flex gap-2">
-																						<button
-																							onclick={() =>
-																								goToChunkPage(
-																									item.item_id,
-																									getChunkPage(item.item_id) - 1
-																								)}
-																							disabled={!chunkPageInfo.hasPrevious}
-																							class="px-2 py-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+																			{#if cachedData.chunks.length > 0}
+																				<div class="space-y-2 mb-3">
+																					{#each getPaginatedChunks(item.item_id, cachedData.chunks) as chunk, idx (idx)}
+																						{@const chunkPageInfo = getChunkPageInfo(
+																							item.item_id,
+																							cachedData.chunks.length
+																						)}
+																						{@const actualChunkNumber =
+																							chunkPageInfo.startIdx + idx}
+																						<div
+																							class="bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700"
 																						>
-																							Previous
-																						</button>
-																						<span
-																							class="px-2 py-1 text-xs text-gray-600 dark:text-gray-400"
-																						>
-																							Page {chunkPageInfo.currentPage + 1} of {chunkPageInfo.totalPages}
-																						</span>
-																						<button
-																							onclick={() =>
-																								goToChunkPage(
-																									item.item_id,
-																									getChunkPage(item.item_id) + 1
-																								)}
-																							disabled={!chunkPageInfo.hasMore}
-																							class="px-2 py-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
-																						>
-																							Next
-																						</button>
-																					</div>
+																							<div
+																								class="text-xs text-gray-500 dark:text-gray-400 mb-1"
+																							>
+																								Chunk {actualChunkNumber}
+																							</div>
+																							<p
+																								class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap"
+																							>
+																								{chunk.content}
+																							</p>
+																						</div>
+																					{/each}
 																				</div>
+
+																				{#if cachedData.chunks.length > chunkPageSize}
+																					{@const chunkPageInfo = getChunkPageInfo(
+																						item.item_id,
+																						cachedData.chunks.length
+																					)}
+																					<div
+																						class="flex items-center justify-between border-t border-gray-200 dark:border-gray-700 pt-3"
+																					>
+																						<div class="text-xs text-gray-600 dark:text-gray-400">
+																							Showing {chunkPageInfo.startIdx} to {chunkPageInfo.endIdx}
+																							of {chunkPageInfo.totalChunks}
+																						</div>
+																						<div class="flex gap-2">
+																							<button
+																								onclick={() =>
+																									goToChunkPage(
+																										item.item_id,
+																										getChunkPage(item.item_id) - 1
+																									)}
+																								disabled={!chunkPageInfo.hasPrevious}
+																								class="px-2 py-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+																							>
+																								Previous
+																							</button>
+																							<span
+																								class="px-2 py-1 text-xs text-gray-600 dark:text-gray-400"
+																							>
+																								Page {chunkPageInfo.currentPage + 1} of {chunkPageInfo.totalPages}
+																							</span>
+																							<button
+																								onclick={() =>
+																									goToChunkPage(
+																										item.item_id,
+																										getChunkPage(item.item_id) + 1
+																									)}
+																								disabled={!chunkPageInfo.hasMore}
+																								class="px-2 py-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+																							>
+																								Next
+																							</button>
+																						</div>
+																					</div>
+																				{/if}
 																			{/if}
-																		{/if}
-																	</div>
-																	{#if item.metadata && Object.keys(item.metadata).length > 0}
-																		<div>
-																			<h4
-																				class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2"
-																			>
-																				Metadata
-																			</h4>
-																			<pre
-																				class="bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700 text-xs overflow-x-auto"><code
-																					class="text-gray-900 dark:text-gray-300"
-																					>{JSON.stringify(item.metadata, null, 2)}</code
-																				></pre>
 																		</div>
+																		{#if cachedData.metadata && Object.keys(cachedData.metadata).length > 0}
+																			<div>
+																				<h4
+																					class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2"
+																				>
+																					Metadata
+																				</h4>
+																				<pre
+																					class="bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700 text-xs overflow-x-auto"><code
+																						class="text-gray-900 dark:text-gray-300"
+																						>{JSON.stringify(cachedData.metadata, null, 2)}</code
+																					></pre>
+																			</div>
+																		{/if}
 																	{/if}
 																</div>
 															</td>

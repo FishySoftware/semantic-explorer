@@ -121,6 +121,8 @@ async fn main() -> Result<()> {
             .service(api::datasets::update_dataset)
             .service(api::datasets::delete_dataset)
             .service(api::datasets::get_dataset_items)
+            .service(api::datasets::get_dataset_items_summary)
+            .service(api::datasets::get_dataset_item_chunks)
             .service(api::datasets::upload_to_dataset)
             .service(api::datasets::delete_dataset_item)
             .service(api::embedders::get_embedders)

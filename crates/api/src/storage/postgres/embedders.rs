@@ -128,7 +128,7 @@ pub(crate) async fn get_embedders_batch(
 
     let result = sqlx::query_as::<_, Embedder>(GET_EMBEDDERS_BATCH)
         .bind(owner)
-        .bind(embedder_ids)
+        .bind(embedder_ids.to_vec())
         .fetch_all(pool)
         .await;
 

@@ -12,6 +12,7 @@ use sqlx::{Pool, Postgres};
 
 use crate::{
     auth::extract_username,
+    errors::bad_request,
     search::{
         aggregate_matches_to_documents,
         models::{EmbeddedDatasetSearchResults, SearchMode, SearchRequest, SearchResponse},
@@ -40,17 +41,19 @@ pub(crate) async fn search(
     postgres_pool: Data<Pool<Postgres>>,
     Json(search_request): Json<SearchRequest>,
 ) -> impl Responder {
+    let start_time = std::time::Instant::now();
+
     let username = match extract_username(&auth) {
         Ok(username) => username,
         Err(e) => return e,
     };
 
     if search_request.embedded_dataset_ids.is_empty() {
-        return HttpResponse::BadRequest().body("At least one embedded dataset must be selected");
+        return bad_request("At least one embedded dataset must be selected");
     }
 
     if search_request.query.trim().is_empty() {
-        return HttpResponse::BadRequest().body("Query cannot be empty");
+        return bad_request("Query cannot be empty");
     }
 
     // Batch fetch all embedded datasets and embedders upfront to avoid N+1 queries
@@ -259,6 +262,20 @@ pub(crate) async fn search(
 
     // Execute all searches in parallel
     let results = future::join_all(search_tasks).await;
+
+    let duration = start_time.elapsed().as_secs_f64();
+    let total_results: usize = results.iter().map(|r| r.matches.len()).sum();
+    let embedded_datasets_count = search_request.embedded_dataset_ids.len();
+
+    // Record search metrics
+    semantic_explorer_core::observability::record_search_request(
+        duration,
+        0.0, // embedder_duration_secs - would need to track separately
+        0.0, // qdrant_duration_secs - would need to track separately
+        total_results,
+        embedded_datasets_count,
+        "success",
+    );
 
     HttpResponse::Ok().json(SearchResponse {
         results,

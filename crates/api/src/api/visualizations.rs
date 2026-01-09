@@ -9,6 +9,7 @@ use tracing::error;
 
 use crate::{
     auth::extract_username,
+    errors::not_found,
     storage::postgres::visualization_transforms,
     visualizations::models::{
         VisualizationPoint, VisualizationPointsQuery, VisualizationPointsResponse,
@@ -52,9 +53,7 @@ pub(crate) async fn get_visualization_points(
         {
             Ok(t) => t,
             Err(_) => {
-                return HttpResponse::NotFound().json(serde_json::json!({
-                    "error": "visualization transform not found or access denied"
-                }));
+                return not_found("visualization transform not found or access denied");
             }
         };
 
@@ -199,9 +198,7 @@ pub(crate) async fn get_visualization_topics(
         {
             Ok(t) => t,
             Err(_) => {
-                return HttpResponse::NotFound().json(serde_json::json!({
-                    "error": "visualization transform not found or access denied"
-                }));
+                return not_found("visualization transform not found or access denied");
             }
         };
 

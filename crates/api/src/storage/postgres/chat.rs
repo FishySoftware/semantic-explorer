@@ -54,9 +54,9 @@ const GET_LLM_DETAILS_QUERY: &str = r#"
     WHERE llm_id = $1
 "#;
 
-const INSERT_RETRIEVED_DOCUMENT_QUERY: &str = r#"
+const BATCH_INSERT_RETRIEVED_DOCUMENTS_QUERY: &str = r#"
     INSERT INTO chat_message_retrieved_documents (message_id, document_id, text, similarity_score, source, created_at)
-    VALUES ($1, $2, $3, $4, $5, NOW())
+    SELECT $1, unnest($2::text[]), unnest($3::text[]), unnest($4::float4[]), unnest($5::text[]), NOW()
 "#;
 
 const GET_RETRIEVED_DOCUMENTS_QUERY: &str = r#"
@@ -218,7 +218,7 @@ pub(crate) async fn get_llm_details(
     result?.ok_or_else(|| anyhow::anyhow!("LLM not found"))
 }
 
-#[tracing::instrument(name = "database.store_retrieved_documents", skip(pool, documents), fields(database.system = "postgresql", database.operation = "INSERT"))]
+#[tracing::instrument(name = "database.store_retrieved_documents", skip(pool, documents), fields(database.system = "postgresql", database.operation = "INSERT", count = documents.len()))]
 pub(crate) async fn store_retrieved_documents(
     pool: &Pool<Postgres>,
     message_id: i32,
@@ -226,13 +226,35 @@ pub(crate) async fn store_retrieved_documents(
 ) -> Result<()> {
     let start = Instant::now();
 
-    for doc in documents {
-        sqlx::query(INSERT_RETRIEVED_DOCUMENT_QUERY)
+    if documents.is_empty() {
+        return Ok(());
+    }
+
+    // Batch insert using UNNEST for better performance
+    // Process in chunks to avoid parameter limits
+    //TODO: make chunk size configurable if needed
+    const BATCH_SIZE: usize = 500;
+
+    for chunk in documents.chunks(BATCH_SIZE) {
+        let mut document_ids: Vec<Option<String>> = Vec::with_capacity(chunk.len());
+        let mut texts: Vec<String> = Vec::with_capacity(chunk.len());
+        let mut scores: Vec<f32> = Vec::with_capacity(chunk.len());
+        let mut sources: Vec<Option<String>> = Vec::with_capacity(chunk.len());
+
+        for doc in chunk {
+            document_ids.push(doc.document_id.clone());
+            texts.push(doc.text.clone());
+            scores.push(doc.similarity_score);
+            sources.push(doc.source.clone());
+        }
+
+        // Use UNNEST for efficient batch insert
+        sqlx::query(BATCH_INSERT_RETRIEVED_DOCUMENTS_QUERY)
             .bind(message_id)
-            .bind(&doc.document_id)
-            .bind(&doc.text)
-            .bind(doc.similarity_score)
-            .bind(&doc.source)
+            .bind(&document_ids)
+            .bind(&texts)
+            .bind(&scores)
+            .bind(&sources)
             .execute(pool)
             .await?;
     }

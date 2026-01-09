@@ -1,4 +1,3 @@
-pub mod caching;
 pub mod llm;
 pub mod load_test;
 pub mod models;

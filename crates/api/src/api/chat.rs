@@ -17,6 +17,7 @@ use crate::{
         },
         rag::{self},
     },
+    errors::not_found,
     storage::postgres::chat,
 };
 
@@ -132,7 +133,7 @@ pub(crate) async fn get_chat_session(
         }),
         Err(e) => {
             tracing::error!(error = %e, session_id = %session_id, "failed to fetch chat session");
-            HttpResponse::NotFound().body(format!("session not found: {e:?}"))
+            not_found(format!("session not found: {e:?}"))
         }
     }
 }
@@ -244,7 +245,7 @@ pub(crate) async fn get_chat_messages(
         }
         Err(e) => {
             tracing::error!(error = %e, session_id = %session_id, "session not found");
-            HttpResponse::NotFound().body(format!("session not found: {e:?}"))
+            not_found(format!("session not found: {e:?}"))
         }
     }
 }
@@ -283,7 +284,7 @@ pub(crate) async fn send_chat_message(
         Ok(s) => s,
         Err(e) => {
             tracing::error!(error = %e, session_id = %session_id, "session not found");
-            return HttpResponse::NotFound().body(format!("session not found: {e:?}"));
+            return not_found(format!("session not found: {e:?}"));
         }
     };
 

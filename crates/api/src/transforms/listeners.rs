@@ -8,7 +8,7 @@ use tracing::{error, info};
 use semantic_explorer_core::models::{
     CollectionTransformResult, DatasetTransformResult, VisualizationTransformResult,
 };
-use semantic_explorer_core::storage::get_file;
+use semantic_explorer_core::storage::get_file_with_size_check;
 
 use crate::datasets::models::ChunkWithMetadata;
 use crate::storage::postgres::collection_transforms;
@@ -115,6 +115,34 @@ fn start_visualization_result_listener(context: TransformContext, nats_client: N
 #[tracing::instrument(name = "handle_file_result", skip(ctx))]
 async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformContext) {
     info!("Handling file result for: {}", result.source_file_key);
+
+    // Check if this file was already successfully processed to avoid duplicates
+    match collection_transforms::is_file_already_processed(
+        &ctx.postgres_pool,
+        result.collection_transform_id,
+        &result.source_file_key,
+    )
+    .await
+    {
+        Ok(true) => {
+            info!(
+                "File {} was already successfully processed, skipping to avoid duplicates",
+                result.source_file_key
+            );
+            return;
+        }
+        Ok(false) => {
+            // File not yet processed, continue
+        }
+        Err(e) => {
+            error!(
+                "Failed to check if file {} was already processed: {}. Proceeding with caution.",
+                result.source_file_key, e
+            );
+            // Continue anyway - better to risk a duplicate than lose data
+        }
+    }
+
     if result.status != "success" {
         error!(
             "File transform failed for {}: {:?}",
@@ -138,7 +166,9 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
 
     info!("Downloading chunks for: {}", result.source_file_key);
     let chunks_content =
-        match get_file(&ctx.s3_client, &result.bucket, &result.chunks_file_key).await {
+        match get_file_with_size_check(&ctx.s3_client, &result.bucket, &result.chunks_file_key)
+            .await
+        {
             Ok(c) => c,
             Err(e) => {
                 error!(

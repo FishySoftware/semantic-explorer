@@ -18,10 +18,11 @@ use tracing::error;
 use crate::{
     auth::extract_username,
     datasets::models::{
-        CreateDataset, CreateDatasetItems, CreateDatasetItemsResponse, Dataset, DatasetWithStats,
-        PaginatedDatasetItems, PaginationParams,
+        CreateDataset, CreateDatasetItems, CreateDatasetItemsResponse, Dataset, DatasetItemChunks,
+        DatasetWithStats, PaginatedDatasetItemSummaries, PaginatedDatasetItems, PaginationParams,
     },
     embedders::models::Embedder,
+    errors::{bad_request, not_found},
     storage::postgres::{datasets, embedded_datasets, embedders},
 };
 
@@ -123,9 +124,7 @@ pub(crate) async fn get_dataset(
         Ok(dataset) => HttpResponse::Ok().json(dataset),
         Err(e) => {
             error!("Failed to fetch dataset {}: {}", dataset_id, e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Dataset not found: {}", e)
-            }))
+            not_found(format!("Dataset not found: {}", e))
         }
     }
 }
@@ -250,7 +249,7 @@ pub(crate) async fn delete_dataset(
         .await
         .is_err()
     {
-        return HttpResponse::NotFound().finish();
+        return not_found("Dataset not found");
     };
 
     match datasets::delete_dataset(&postgres_pool, dataset_id, &username).await {
@@ -291,8 +290,7 @@ pub(crate) async fn upload_to_dataset(
     let dataset = match datasets::get_dataset(&postgres_pool, &username, dataset_id).await {
         Ok(dataset) => dataset,
         Err(_) => {
-            return HttpResponse::BadRequest()
-                .body(format!("dataset '{dataset_id}' does not exists"));
+            return bad_request(format!("dataset '{dataset_id}' does not exists"));
         }
     };
 
@@ -354,7 +352,7 @@ pub(crate) async fn get_dataset_items(
         .await
         .is_err()
     {
-        return HttpResponse::BadRequest().body(format!(
+        return bad_request(format!(
             "dataset '{dataset_id}' does not exist or access denied"
         ));
     }
@@ -393,13 +391,135 @@ pub(crate) async fn get_dataset_items(
 
 #[utoipa::path(
     params(
-        ("dataset_id", description = "Dataset ID"),
-        ("item_id", description = "Item ID"),
-     ),
+        ("dataset_id" = i32, Path, description = "The dataset ID"),
+        ("page" = i64, Query, description = "Page number (0-indexed)"),
+        ("page_size" = i64, Query, description = "Number of items per page"),
+    ),
+    responses(
+        (status = 200, description = "OK", body = PaginatedDatasetItemSummaries),
+        (status = 401, description = "Unauthorized"),
+        (status = 400, description = "Bad Request (dataset does not exist)"),
+        (status = 500, description = "Internal Server Error"),
+    ),
+    tag = "Datasets",
+)]
+#[get("/api/datasets/{dataset_id}/items-summary")]
+#[tracing::instrument(name = "get_dataset_items_summary", skip(auth, postgres_pool, params), fields(dataset_id = %dataset_id.as_ref()))]
+pub(crate) async fn get_dataset_items_summary(
+    auth: Authenticated,
+    postgres_pool: Data<Pool<Postgres>>,
+    dataset_id: Path<i32>,
+    Query(params): Query<PaginationParams>,
+) -> impl Responder {
+    use crate::datasets::models::PaginatedDatasetItemSummaries;
+
+    let username = match extract_username(&auth) {
+        Ok(username) => username,
+        Err(e) => return e,
+    };
+    let postgres_pool = postgres_pool.into_inner();
+    let dataset_id = dataset_id.into_inner();
+
+    if datasets::get_dataset(&postgres_pool, &username, dataset_id)
+        .await
+        .is_err()
+    {
+        return bad_request(format!(
+            "dataset '{dataset_id}' does not exist or access denied"
+        ));
+    }
+
+    let page = params.page.max(0);
+    let page_size = params.page_size.clamp(1, 100);
+
+    let items = match datasets::get_dataset_items_summary(
+        &postgres_pool,
+        dataset_id,
+        page,
+        page_size,
+    )
+    .await
+    {
+        Ok(items) => items,
+        Err(e) => {
+            return HttpResponse::InternalServerError()
+                .body(format!("error fetching dataset items: {e:?}"));
+        }
+    };
+
+    let total_count = match datasets::count_dataset_items(&postgres_pool, dataset_id).await {
+        Ok(count) => count,
+        Err(e) => {
+            error!("error counting dataset items: {e:?}");
+            return HttpResponse::InternalServerError()
+                .body(format!("error counting dataset items: {e:?}"));
+        }
+    };
+
+    let has_more = (page + 1) * page_size < total_count;
+
+    HttpResponse::Ok().json(PaginatedDatasetItemSummaries {
+        items,
+        page,
+        page_size,
+        total_count,
+        has_more,
+    })
+}
+
+#[utoipa::path(
+    params(
+        ("dataset_id" = i32, Path, description = "The dataset ID"),
+        ("item_id" = i32, Path, description = "The item ID"),
+    ),
+    responses(
+        (status = 200, description = "OK", body = DatasetItemChunks),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Not Found"),
+        (status = 500, description = "Internal Server Error"),
+    ),
+    tag = "Datasets",
+)]
+#[get("/api/datasets/{dataset_id}/items/{item_id}/chunks")]
+#[tracing::instrument(name = "get_dataset_item_chunks", skip(auth, postgres_pool, path))]
+pub(crate) async fn get_dataset_item_chunks(
+    auth: Authenticated,
+    postgres_pool: Data<Pool<Postgres>>,
+    path: Path<(i32, i32)>,
+) -> impl Responder {
+    let username = match extract_username(&auth) {
+        Ok(username) => username,
+        Err(e) => return e,
+    };
+    let postgres_pool = postgres_pool.into_inner();
+    let (dataset_id, item_id) = path.into_inner();
+
+    if datasets::get_dataset(&postgres_pool, &username, dataset_id)
+        .await
+        .is_err()
+    {
+        return not_found("Dataset not found or access denied");
+    }
+
+    match datasets::get_dataset_item_chunks(&postgres_pool, dataset_id, item_id).await {
+        Ok(Some(chunks)) => HttpResponse::Ok().json(chunks),
+        Ok(None) => not_found("Item not found"),
+        Err(e) => {
+            error!("error fetching dataset item chunks: {e:?}");
+            HttpResponse::InternalServerError()
+                .body(format!("error fetching dataset item chunks: {e:?}"))
+        }
+    }
+}
+
+#[utoipa::path(
+    params(
+        ("dataset_id" = i32, Path, description = "The dataset ID"),
+    ),
     responses(
         (status = 200, description = "OK"),
         (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Not Found"),
+        (status = 400, description = "Bad Request (dataset does not exist)"),
         (status = 500, description = "Internal Server Error"),
     ),
     tag = "Datasets",
@@ -423,7 +543,7 @@ pub(crate) async fn delete_dataset_item(
         .await
         .is_err()
     {
-        return HttpResponse::NotFound().body("Dataset not found or access denied");
+        return not_found("Dataset not found or access denied");
     }
 
     let deleted_item =

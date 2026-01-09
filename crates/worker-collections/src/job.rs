@@ -1,7 +1,7 @@
 use anyhow::Result;
 use semantic_explorer_core::models::{CollectionTransformJob, CollectionTransformResult};
 use semantic_explorer_core::observability::record_worker_job;
-use semantic_explorer_core::storage::{DocumentUpload, get_file, upload_document};
+use semantic_explorer_core::storage::{DocumentUpload, get_file_with_size_check, upload_document};
 use std::time::Instant;
 use tracing::{error, info, instrument};
 
@@ -23,22 +23,32 @@ pub(crate) async fn process_file_job(
     info!("Processing file job");
 
     info!(bucket = %job.bucket, "Downloading file");
-    let file_content = match get_file(&ctx.s3_client, &job.bucket, &job.source_file_key).await {
-        Ok(content) => content,
-        Err(e) => {
-            let duration = start_time.elapsed().as_secs_f64();
-            record_worker_job("transform-file", duration, "failed_download");
-            error!(error = %e, "Failed to download file");
-            send_result(
-                &ctx.nats_client,
-                &job,
-                Err(format!("Download failed: {}", e)),
-                Some((duration * 1000.0) as i64),
-            )
-            .await?;
-            return Ok(());
-        }
-    };
+    let file_content =
+        match get_file_with_size_check(&ctx.s3_client, &job.bucket, &job.source_file_key).await {
+            Ok(content) => content,
+            Err(e) => {
+                let duration = start_time.elapsed().as_secs_f64();
+                let error_msg = e.to_string();
+
+                // Check if this is a file size error
+                if error_msg.contains("exceeds maximum limit") {
+                    record_worker_job("transform-file", duration, "failed_file_too_large");
+                    error!(error = %e, "File exceeds size limit");
+                } else {
+                    record_worker_job("transform-file", duration, "failed_download");
+                    error!(error = %e, "Failed to download file");
+                }
+
+                send_result(
+                    &ctx.nats_client,
+                    &job,
+                    Err(error_msg),
+                    Some((duration * 1000.0) as i64),
+                )
+                .await?;
+                return Ok(());
+            }
+        };
     info!(
         file_size_bytes = file_content.len(),
         "Downloaded file successfully"

@@ -91,6 +91,13 @@ const RECORD_PROCESSED_FILE_QUERY: &str = r#"
         processed_at = NOW()
 "#;
 
+const CHECK_FILE_PROCESSED_QUERY: &str = r#"
+    SELECT process_status
+    FROM transform_processed_files
+    WHERE transform_type = 'collection' AND transform_id = $1 AND file_key = $2
+    LIMIT 1
+"#;
+
 // CRUD operations
 
 pub async fn get_collection_transform(
@@ -237,4 +244,22 @@ pub async fn record_processed_file(
         .execute(pool)
         .await?;
     Ok(())
+}
+
+/// Check if a file was already successfully processed for this collection transform
+/// Returns true if the file was processed with status 'completed'
+pub async fn is_file_already_processed(
+    pool: &Pool<Postgres>,
+    collection_transform_id: i32,
+    file_key: &str,
+) -> Result<bool> {
+    let result: Option<(String,)> = sqlx::query_as(CHECK_FILE_PROCESSED_QUERY)
+        .bind(collection_transform_id)
+        .bind(file_key)
+        .fetch_optional(pool)
+        .await?;
+
+    Ok(result
+        .map(|(status,)| status == "completed")
+        .unwrap_or(false))
 }

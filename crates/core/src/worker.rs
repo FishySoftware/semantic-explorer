@@ -110,8 +110,8 @@ pub fn initialize_opentelemetry(service_name: &str) -> Result<()> {
     let format_layer = if use_json {
         tracing_subscriber::fmt::layer()
             .json()
-            .with_current_span(true)
-            .with_span_list(true)
+            .with_current_span(false)
+            .with_span_list(false)
             .with_target(true)
             .with_file(true)
             .flatten_event(true)
@@ -169,6 +169,9 @@ where
     info!("Using JetStream mode for reliable message delivery");
 
     crate::nats::initialize_jetstream(&nats_client).await?;
+
+    // Start NATS metrics collector
+    crate::nats::start_metrics_collector(nats_client.clone()).await?;
 
     let jetstream = async_nats::jetstream::new(nats_client.clone());
     let consumer =
@@ -234,6 +237,7 @@ where
 
         let ctx = context.clone();
         let process_job = Arc::clone(&process_job);
+        let stream_name = consumer.cached_info().name.clone();
 
         tokio::spawn(async move {
             let _permit = permit; // Hold permit until task completes
@@ -246,6 +250,13 @@ where
                     }
                 }
                 Err(e) => {
+                    let error_type = format!("{:?}", e)
+                        .split(':')
+                        .next()
+                        .unwrap_or("Unknown")
+                        .to_string();
+                    crate::observability::record_worker_job_failure(&stream_name, &error_type);
+
                     error!("Job failed: {}", e);
                     // Negative acknowledgment for retry (30s delay)
                     if let Err(ack_err) = msg
@@ -255,6 +266,9 @@ where
                         .await
                     {
                         error!("Failed to negatively acknowledge failed job: {}", ack_err);
+                    } else {
+                        // Track retry
+                        crate::observability::record_worker_job_retry(&stream_name, 1);
                     }
                 }
             }

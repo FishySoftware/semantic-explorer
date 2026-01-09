@@ -234,7 +234,7 @@ pub async fn get_embedded_datasets_with_details_batch(
     let embedded_datasets =
         sqlx::query_as::<_, EmbeddedDatasetWithDetails>(GET_EMBEDDED_DATASET_WITH_DETAILS_BATCH)
             .bind(owner)
-            .bind(embedded_dataset_ids)
+            .bind(embedded_dataset_ids.to_vec())
             .fetch_all(pool)
             .await?;
 

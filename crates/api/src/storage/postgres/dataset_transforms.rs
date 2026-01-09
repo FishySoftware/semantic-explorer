@@ -135,7 +135,7 @@ pub async fn create_dataset_transform(
     let transform = sqlx::query_as::<_, DatasetTransform>(CREATE_DATASET_TRANSFORM_QUERY)
         .bind(title)
         .bind(source_dataset_id)
-        .bind(embedder_ids)
+        .bind(embedder_ids.to_vec())
         .bind(owner)
         .bind(job_config)
         .fetch_one(&mut *tx)
@@ -190,7 +190,7 @@ pub async fn update_dataset_transform(
         .bind(dataset_transform_id)
         .bind(title)
         .bind(is_enabled)
-        .bind(embedder_ids)
+        .bind(embedder_ids.map(|ids| ids.to_vec()))
         .bind(job_config)
         .fetch_one(&mut *tx)
         .await?;

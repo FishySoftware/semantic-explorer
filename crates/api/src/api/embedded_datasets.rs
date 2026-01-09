@@ -3,6 +3,7 @@ use crate::embedded_datasets::{
     EmbeddedDataset, EmbeddedDatasetProcessedBatch, EmbeddedDatasetStats,
     EmbeddedDatasetWithDetails,
 };
+use crate::errors::{bad_request, not_found};
 use crate::storage::postgres::embedded_datasets;
 
 use actix_web::web::{Data, Json, Path};
@@ -78,9 +79,7 @@ pub async fn get_embedded_dataset(
         Ok(dataset) => HttpResponse::Ok().json(dataset),
         Err(e) => {
             error!("Embedded dataset not found: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Embedded dataset not found: {}", e)
-            }))
+            not_found(format!("Embedded dataset not found: {}", e))
         }
     }
 }
@@ -124,9 +123,7 @@ pub async fn delete_embedded_dataset(
         Ok(dataset) => dataset,
         Err(e) => {
             error!("Failed to find embedded dataset: {}", e);
-            return HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Embedded dataset not found: {}", e)
-            }));
+            return not_found(format!("Embedded dataset not found: {}", e));
         }
     };
 
@@ -212,9 +209,7 @@ pub async fn get_embedded_dataset_stats(
         }
         Err(e) => {
             error!("Embedded dataset not found: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Embedded dataset not found: {}", e)
-            }))
+            not_found(format!("Embedded dataset not found: {}", e))
         }
     }
 }
@@ -264,9 +259,7 @@ pub async fn get_processed_batches(
         }
         Err(e) => {
             error!("Embedded dataset not found: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Embedded dataset not found: {}", e)
-            }))
+            not_found(format!("Embedded dataset not found: {}", e))
         }
     }
 }
@@ -349,9 +342,7 @@ pub async fn update_embedded_dataset(
 
     // Validate title
     if body.title.trim().is_empty() {
-        return HttpResponse::BadRequest().json(serde_json::json!({
-            "error": "Title cannot be empty"
-        }));
+        return bad_request("Title cannot be empty");
     }
 
     match embedded_datasets::update_embedded_dataset_title(
@@ -371,9 +362,7 @@ pub async fn update_embedded_dataset(
         }
         Err(e) => {
             error!("Failed to update embedded dataset: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": "Embedded dataset not found or not owned by this user"
-            }))
+            not_found("Embedded dataset not found or not owned by this user")
         }
     }
 }

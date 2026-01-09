@@ -1,13 +1,18 @@
 pub(crate) mod models;
 
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use aws_config::{BehaviorVersion, Region};
 use aws_sdk_s3::{Client, config::Credentials};
 use semantic_explorer_core::observability::record_storage_operation;
 
 use std::{env, time::Instant};
+use tracing::warn;
 
 use crate::storage::rustfs::models::{CollectionFile, DocumentUpload, PaginatedFiles};
+
+// Maximum file size for API downloads: 100MB
+// TODO: Make this configurable if needed
+const MAX_DOWNLOAD_SIZE_BYTES: i64 = 100 * 1024 * 1024;
 
 pub(crate) async fn initialize_client() -> Result<aws_sdk_s3::Client> {
     let aws_region = env::var("AWS_REGION")?;
@@ -233,6 +238,54 @@ pub(crate) async fn get_file(client: &Client, bucket: &str, key: &str) -> Result
     }
 }
 
+/// Get file with size validation to prevent OOM on large downloads
+/// Returns error if file exceeds MAX_DOWNLOAD_SIZE_BYTES (100MB)
+#[tracing::instrument(name = "s3.get_file_with_size_check", skip(client), fields(storage.system = "s3", bucket = %bucket, key = %key))]
+pub(crate) async fn get_file_with_size_check(
+    client: &Client,
+    bucket: &str,
+    key: &str,
+) -> Result<Vec<u8>> {
+    let start = Instant::now();
+
+    tracing::debug!(
+        bucket = %bucket,
+        key = %key,
+        "Checking file size before download"
+    );
+
+    // First, check file size using head_object
+    let head_result = client
+        .head_object()
+        .bucket(bucket)
+        .key(key)
+        .send()
+        .await
+        .context("Failed to get file metadata")?;
+
+    let file_size = head_result.content_length().unwrap_or(0);
+
+    if file_size > MAX_DOWNLOAD_SIZE_BYTES {
+        let duration = start.elapsed().as_secs_f64();
+        record_storage_operation("download", duration, None, false);
+        warn!(
+            bucket = %bucket,
+            key = %key,
+            file_size_mb = file_size / (1024 * 1024),
+            max_size_mb = MAX_DOWNLOAD_SIZE_BYTES / (1024 * 1024),
+            "File exceeds maximum download size limit"
+        );
+        bail!(
+            "File size ({} MB) exceeds maximum download limit of {} MB",
+            file_size / (1024 * 1024),
+            MAX_DOWNLOAD_SIZE_BYTES / (1024 * 1024)
+        );
+    }
+
+    // Size is acceptable, proceed with download
+    get_file(client, bucket, key).await
+}
+
 #[tracing::instrument(name = "s3.delete_file", skip(client), fields(storage.system = "s3", bucket = %bucket, key = %key))]
 pub(crate) async fn delete_file(client: &Client, bucket: &str, key: &str) -> Result<()> {
     let start = Instant::now();
@@ -422,4 +475,114 @@ pub(crate) async fn copy_bucket_files(
     );
 
     Ok(copied_count)
+}
+#[tracing::instrument(name = "s3.empty_bucket", skip(client), fields(storage.system = "s3", bucket = %bucket))]
+pub(crate) async fn empty_bucket(client: &Client, bucket: &str) -> Result<()> {
+    let start = Instant::now();
+
+    tracing::debug!(bucket = %bucket, "Emptying S3 bucket");
+
+    let mut paginator = client
+        .list_objects_v2()
+        .bucket(bucket)
+        .into_paginator()
+        .send();
+
+    let mut deleted_count = 0;
+    const BATCH_SIZE: usize = 1000; // AWS S3 max batch delete size
+
+    while let Some(result) = paginator.next().await {
+        let output = match result {
+            Ok(output) => output,
+            Err(e) => {
+                tracing::error!(
+                    bucket = %bucket,
+                    error = %e,
+                    "Failed to list objects in bucket"
+                );
+                return Err(e.into());
+            }
+        };
+
+        // Collect object keys for batch deletion
+        let contents = output.contents();
+        let keys: Vec<_> = contents
+            .iter()
+            .filter_map(|obj| obj.key().map(|k| k.to_string()))
+            .collect();
+
+        if keys.is_empty() {
+            continue;
+        }
+
+        // Delete objects in batches
+        for batch in keys.chunks(BATCH_SIZE) {
+            let delete_objects: Vec<_> = batch
+                .iter()
+                .map(|key| {
+                    aws_sdk_s3::types::ObjectIdentifier::builder()
+                        .key(key)
+                        .build()
+                        .expect("Failed to build ObjectIdentifier")
+                })
+                .collect();
+
+            match client
+                .delete_objects()
+                .bucket(bucket)
+                .delete(
+                    aws_sdk_s3::types::Delete::builder()
+                        .set_objects(Some(delete_objects))
+                        .build()
+                        .expect("Failed to build Delete request"),
+                )
+                .send()
+                .await
+            {
+                Ok(response) => {
+                    let deleted = response.deleted();
+                    deleted_count += deleted.len();
+                    if !deleted.is_empty() {
+                        tracing::debug!(
+                            bucket = %bucket,
+                            count = deleted.len(),
+                            "Batch deleted objects"
+                        );
+                    }
+                    let errors = response.errors();
+                    if !errors.is_empty() {
+                        for error in errors {
+                            tracing::warn!(
+                                bucket = %bucket,
+                                key = %error.key().unwrap_or("unknown"),
+                                code = %error.code().unwrap_or("unknown"),
+                                message = %error.message().unwrap_or("unknown"),
+                                "Failed to delete object in batch"
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(
+                        bucket = %bucket,
+                        error = %e,
+                        "Failed to batch delete objects"
+                    );
+                    return Err(e.into());
+                }
+            }
+        }
+    }
+
+    let duration = start.elapsed().as_secs_f64();
+    record_storage_operation("empty_bucket", duration, None, true);
+
+    tracing::info!(
+        bucket = %bucket,
+        deleted_count = deleted_count,
+        duration_ms = duration * 1000.0,
+        "Successfully emptied bucket"
+    );
+
+    Ok(())
 }

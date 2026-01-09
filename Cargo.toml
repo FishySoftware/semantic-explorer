@@ -20,7 +20,7 @@ futures-util = { version = "0.3.31" }
 aws-sdk-s3 = {version = "1.119.0", features = ["behavior-version-latest"] }
 aws-config = { version = "1.8.12", features = ["rustls", "behavior-version-latest"] }
 qdrant-client = { version = "1.16.0"}
-sqlx = { version = "0.8.6", features = ["runtime-tokio-rustls", "postgres", "chrono", "time", "migrate", "macros"], default-features = false }
+sqlx = { version = "0.8.6", features = ["runtime-tokio-rustls", "postgres", "chrono", "time", "migrate", "macros", "json"], default-features = false }
 utoipa = { version = "5.4.0", features = ["actix_extras", "auto_into_responses"] }
 utoipa-swagger-ui = { version = "9.0.2", features = ["actix-web", "reqwest", "vendored"]}
 utoipa-actix-web = { version = "0.1.2"}

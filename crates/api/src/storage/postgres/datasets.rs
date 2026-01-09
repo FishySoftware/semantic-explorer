@@ -31,15 +31,34 @@ const DELETE_DATASET_QUERY: &str = r#"
 const INSERT_DATASET_ITEM_QUERY: &str = r#"
     INSERT INTO dataset_items (dataset_id, title, chunks, metadata)
     VALUES ($1, $2, $3, $4)
+    ON CONFLICT (dataset_id, title)
+    DO UPDATE SET
+        chunks = EXCLUDED.chunks,
+        metadata = EXCLUDED.metadata,
+        updated_at = NOW()
     RETURNING item_id, dataset_id, title, chunks, metadata, created_at, updated_at
 "#;
 
 const GET_DATASET_ITEMS_QUERY: &str = r#"
-    SELECT item_id, dataset_id, title, chunks, metadata, created_at, updated_at
+    SELECT item_id, dataset_id, title, chunks, metadata, created_at, COALESCE(updated_at, created_at) as updated_at
     FROM dataset_items
     WHERE dataset_id = $1
     ORDER BY item_id DESC
     LIMIT $2 OFFSET $3
+"#;
+
+const GET_DATASET_ITEMS_SUMMARY_QUERY: &str = r#"
+    SELECT item_id, dataset_id, title, jsonb_array_length(chunks) as chunk_count, metadata, created_at, COALESCE(updated_at, created_at) as updated_at
+    FROM dataset_items
+    WHERE dataset_id = $1
+    ORDER BY item_id DESC
+    LIMIT $2 OFFSET $3
+"#;
+
+const GET_DATASET_ITEM_CHUNKS_QUERY: &str = r#"
+    SELECT item_id, dataset_id, title, chunks, metadata
+    FROM dataset_items
+    WHERE dataset_id = $1 AND item_id = $2
 "#;
 
 const COUNT_DATASET_ITEMS_QUERY: &str = r#"
@@ -47,10 +66,10 @@ const COUNT_DATASET_ITEMS_QUERY: &str = r#"
 "#;
 
 const GET_DATASET_ITEMS_MODIFIED_SINCE_QUERY: &str = r#"
-    SELECT item_id, dataset_id, title, chunks, metadata, created_at, updated_at
+    SELECT item_id, dataset_id, title, chunks, metadata, created_at, COALESCE(updated_at, created_at) as updated_at
     FROM dataset_items
-    WHERE dataset_id = $1 AND updated_at > $2
-    ORDER BY updated_at DESC
+    WHERE dataset_id = $1 AND COALESCE(updated_at, created_at) > $2
+    ORDER BY COALESCE(updated_at, created_at) DESC
 "#;
 
 const UPDATE_DATASET_QUERY: &str = r#"
@@ -63,7 +82,7 @@ const UPDATE_DATASET_QUERY: &str = r#"
 const DELETE_DATASET_ITEM_QUERY: &str = r#"
     DELETE FROM dataset_items
     WHERE item_id = $1 AND dataset_id = $2
-    RETURNING item_id, dataset_id, title, chunks, metadata, created_at, updated_at
+    RETURNING item_id, dataset_id, title, chunks, metadata, created_at, COALESCE(updated_at, created_at) as updated_at
 "#;
 
 const GET_DATASET_STATS_QUERY: &str = r#"
@@ -101,6 +120,17 @@ const GRAB_PUBLIC_DATASET_QUERY: &str = r#"
         RETURNING dataset_id, title, details, owner, tags, is_public, created_at, updated_at
     )
     SELECT * FROM new_dataset
+"#;
+
+const CREATE_DATASET_ITEMS_BATCH: &str = r#"
+    INSERT INTO dataset_items (dataset_id, title, chunks, metadata)
+    SELECT $1, unnest($2::text[]), unnest($3::jsonb[]), unnest($4::jsonb[])
+    ON CONFLICT (dataset_id, title)
+    DO UPDATE SET
+        chunks = EXCLUDED.chunks,
+        metadata = EXCLUDED.metadata,
+        updated_at = NOW()
+    RETURNING item_id, dataset_id, title, chunks, metadata, created_at, updated_at
 "#;
 
 #[tracing::instrument(name = "database.get_dataset", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner = %owner, dataset_id = %dataset_id))]
@@ -204,7 +234,7 @@ pub(crate) async fn create_dataset_item(
     Ok(item)
 }
 
-/// Batch insert dataset items for efficient bulk upload
+/// Batch insert dataset items for efficient bulk upload using a single multi-row INSERT
 /// Returns a tuple of (successfully inserted items, failed titles)
 pub(crate) async fn create_dataset_items_batch(
     pool: &Pool<Postgres>,
@@ -214,17 +244,69 @@ pub(crate) async fn create_dataset_items_batch(
     use std::time::Instant;
     let start = Instant::now();
 
+    if items.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+
     let mut successful = Vec::new();
     let mut failed = Vec::new();
 
-    // Process items in batches of 1000 for efficiency
-    for chunk in items.chunks(1000) {
+    // Process in chunks of 500 items to avoid parameter limits
+    // PostgreSQL has a limit of ~65535 parameters per query
+    const BATCH_SIZE: usize = 500;
+
+    for chunk in items.chunks(BATCH_SIZE) {
+        // Prepare arrays for UNNEST
+        let mut titles: Vec<String> = Vec::with_capacity(chunk.len());
+        let mut chunks_array: Vec<serde_json::Value> = Vec::with_capacity(chunk.len());
+        let mut metadata_array: Vec<serde_json::Value> = Vec::with_capacity(chunk.len());
+
         for (title, chunks, metadata) in chunk {
-            match create_dataset_item(pool, dataset_id, title, chunks, metadata.clone()).await {
-                Ok(item) => successful.push(item),
+            match serde_json::to_value(chunks) {
+                Ok(chunks_json) => {
+                    titles.push(title.clone());
+                    chunks_array.push(chunks_json);
+                    metadata_array.push(metadata.clone());
+                }
                 Err(e) => {
                     failed.push(title.clone());
-                    tracing::warn!("Failed to insert dataset item '{}': {}", title, e);
+                    tracing::warn!("Failed to serialize chunks for '{}': {}", title, e);
+                }
+            }
+        }
+
+        if titles.is_empty() {
+            continue;
+        }
+
+        match sqlx::query_as::<_, DatasetItem>(CREATE_DATASET_ITEMS_BATCH)
+            .bind(dataset_id)
+            .bind(&titles)
+            .bind(&chunks_array)
+            .bind(&metadata_array)
+            .fetch_all(pool)
+            .await
+        {
+            Ok(items) => {
+                successful.extend(items);
+            }
+            Err(e) => {
+                // If bulk insert fails, fall back to individual inserts for this chunk
+                tracing::warn!(
+                    "Bulk insert failed for {} items, falling back to individual inserts: {}",
+                    titles.len(),
+                    e
+                );
+                for (title, chunks, metadata) in chunk {
+                    match create_dataset_item(pool, dataset_id, title, chunks, metadata.clone())
+                        .await
+                    {
+                        Ok(item) => successful.push(item),
+                        Err(e) => {
+                            failed.push(title.clone());
+                            tracing::warn!("Failed to insert dataset item '{}': {}", title, e);
+                        }
+                    }
                 }
             }
         }
@@ -252,6 +334,58 @@ pub(crate) async fn get_dataset_items(
         .fetch_all(pool)
         .await?;
     Ok(items)
+}
+
+#[tracing::instrument(name = "database.get_dataset_items_summary", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", dataset_id = %dataset_id, page = %page, page_size = %page_size))]
+pub(crate) async fn get_dataset_items_summary(
+    pool: &Pool<Postgres>,
+    dataset_id: i32,
+    page: i64,
+    page_size: i64,
+) -> Result<Vec<crate::datasets::models::DatasetItemSummary>> {
+    use crate::datasets::models::DatasetItemSummary;
+    let offset = page * page_size;
+    let items: Vec<DatasetItemSummary> =
+        sqlx::query_as::<_, DatasetItemSummary>(GET_DATASET_ITEMS_SUMMARY_QUERY)
+            .bind(dataset_id)
+            .bind(page_size as i32)
+            .bind(offset as i32)
+            .fetch_all(pool)
+            .await?;
+    Ok(items)
+}
+
+#[tracing::instrument(name = "database.get_dataset_item_chunks", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", dataset_id = %dataset_id, item_id = %item_id))]
+pub(crate) async fn get_dataset_item_chunks(
+    pool: &Pool<Postgres>,
+    dataset_id: i32,
+    item_id: i32,
+) -> Result<Option<crate::datasets::models::DatasetItemChunks>> {
+    use crate::datasets::models::{ChunkWithMetadata, DatasetItemChunks};
+
+    let row = sqlx::query(GET_DATASET_ITEM_CHUNKS_QUERY)
+        .bind(dataset_id)
+        .bind(item_id)
+        .fetch_optional(pool)
+        .await?;
+
+    if let Some(row) = row {
+        use sqlx::Row;
+
+        let chunks_json: serde_json::Value = row.try_get("chunks")?;
+        let chunks: Vec<ChunkWithMetadata> = serde_json::from_value(chunks_json)
+            .map_err(|e| anyhow::anyhow!("Failed to parse chunks: {}", e))?;
+
+        Ok(Some(DatasetItemChunks {
+            item_id: row.try_get("item_id")?,
+            dataset_id: row.try_get("dataset_id")?,
+            title: row.try_get("title")?,
+            chunks,
+            metadata: row.try_get("metadata")?,
+        }))
+    } else {
+        Ok(None)
+    }
 }
 
 #[tracing::instrument(name = "database.count_dataset_items", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", dataset_id = %dataset_id))]

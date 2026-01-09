@@ -500,25 +500,6 @@
 							</label>
 						</div>
 					</div>
-					{#if paginatedFiles?.total_count && paginatedFiles.total_count > 0}
-						<div class="ml-4">
-							<a
-								href={`#/collection-transforms?action=create&collection_id=${collection.collection_id}`}
-								class="inline-flex items-center gap-2 px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
-								title="Process files from this collection into a dataset"
-							>
-								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width="2"
-										d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
-									></path>
-								</svg>
-								Create Transform
-							</a>
-						</div>
-					{/if}
 				</div>
 			</div>
 		{/if}
