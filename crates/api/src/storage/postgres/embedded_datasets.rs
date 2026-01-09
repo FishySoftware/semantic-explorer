@@ -137,6 +137,26 @@ const GET_EMBEDDED_DATASET_INFO_QUERY: &str = r#"
     SELECT collection_name, embedder_id FROM embedded_datasets WHERE embedded_dataset_id = $1
 "#;
 
+const GET_EMBEDDED_DATASET_WITH_DETAILS_BATCH: &str = r#"
+        SELECT
+            ed.embedded_dataset_id,
+            ed.title,
+            ed.dataset_transform_id,
+            ed.source_dataset_id,
+            d.title as source_dataset_title,
+            ed.embedder_id,
+            e.name as embedder_name,
+            ed.owner,
+            ed.collection_name,
+            ed.created_at,
+            ed.updated_at
+        FROM embedded_datasets ed
+        INNER JOIN datasets d ON d.dataset_id = ed.source_dataset_id
+        INNER JOIN embedders e ON e.embedder_id = ed.embedder_id
+        WHERE ed.owner = $1 AND ed.embedded_dataset_id = ANY($2)
+        ORDER BY ed.embedded_dataset_id
+        "#;
+
 pub async fn get_embedded_dataset(
     pool: &Pool<Postgres>,
     owner: &str,
@@ -199,6 +219,26 @@ pub async fn get_embedded_dataset_with_details(
             .fetch_one(pool)
             .await?;
     Ok(embedded_dataset)
+}
+
+/// Batch fetch embedded datasets with details (avoids N+1 queries)
+pub async fn get_embedded_datasets_with_details_batch(
+    pool: &Pool<Postgres>,
+    owner: &str,
+    embedded_dataset_ids: &[i32],
+) -> Result<Vec<EmbeddedDatasetWithDetails>> {
+    if embedded_dataset_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let embedded_datasets =
+        sqlx::query_as::<_, EmbeddedDatasetWithDetails>(GET_EMBEDDED_DATASET_WITH_DETAILS_BATCH)
+            .bind(owner)
+            .bind(embedded_dataset_ids)
+            .fetch_all(pool)
+            .await?;
+
+    Ok(embedded_datasets)
 }
 
 pub async fn delete_embedded_dataset(

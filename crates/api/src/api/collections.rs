@@ -15,6 +15,7 @@ use crate::{
         Collection, CollectionSearchQuery, CollectionUpload, CollectionUploadResponse,
         CreateCollection, FileListQuery, PaginatedCollections, UpdateCollection,
     },
+    errors,
     storage::{
         self,
         postgres::collections,
@@ -56,7 +57,7 @@ pub(crate) async fn get_collections(
         }
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch collections");
-            HttpResponse::InternalServerError().body(format!("error fetching collections: {e:?}"))
+            errors::internal_error(format!("Failed to fetch collections: {}", e))
         }
     }
 }
@@ -113,7 +114,7 @@ pub(crate) async fn search_collections(
         }
         Err(e) => {
             tracing::error!(error = %e, "failed to search collections");
-            HttpResponse::InternalServerError().body(format!("error searching collections: {e:?}"))
+            errors::internal_error(format!("Failed to search collections: {}", e))
         }
     }
 }

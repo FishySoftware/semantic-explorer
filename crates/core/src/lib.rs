@@ -6,3 +6,4 @@ pub mod nats;
 pub mod observability;
 pub mod profiling;
 pub mod storage;
+pub mod worker;

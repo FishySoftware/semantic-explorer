@@ -84,6 +84,15 @@ const GET_EMBEDDER_BY_ID_QUERY: &str = r#"
     WHERE embedder_id = $1
 "#;
 
+const GET_EMBEDDERS_BATCH: &str = r#"
+        SELECT embedder_id, name, owner, provider, base_url, api_key, config, batch_size, 
+               max_batch_size, dimensions, max_input_tokens, truncate_strategy, collection_name, 
+               is_public, created_at, updated_at
+        FROM embedders
+        WHERE owner = $1 AND embedder_id = ANY($2)
+        ORDER BY embedder_id
+    "#;
+
 #[tracing::instrument(name = "database.get_embedder", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner = %owner, embedder_id = %embedder_id))]
 pub(crate) async fn get_embedder(
     pool: &Pool<Postgres>,
@@ -95,6 +104,32 @@ pub(crate) async fn get_embedder(
         .bind(owner)
         .bind(embedder_id)
         .fetch_one(pool)
+        .await;
+
+    let duration = start.elapsed().as_secs_f64();
+    let success = result.is_ok();
+    record_database_query("SELECT", "embedders", duration, success);
+
+    Ok(result?)
+}
+
+/// Batch fetch embedders (avoids N+1 queries)
+#[tracing::instrument(name = "database.get_embedders_batch", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner = %owner))]
+pub(crate) async fn get_embedders_batch(
+    pool: &Pool<Postgres>,
+    owner: &str,
+    embedder_ids: &[i32],
+) -> Result<Vec<Embedder>> {
+    if embedder_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let start = Instant::now();
+
+    let result = sqlx::query_as::<_, Embedder>(GET_EMBEDDERS_BATCH)
+        .bind(owner)
+        .bind(embedder_ids)
+        .fetch_all(pool)
         .await;
 
     let duration = start.elapsed().as_secs_f64();

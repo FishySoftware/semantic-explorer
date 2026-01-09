@@ -6,6 +6,7 @@ mod datasets;
 mod embedded_datasets;
 mod embedders;
 mod embedding;
+mod errors;
 mod llms;
 mod observability;
 mod search;

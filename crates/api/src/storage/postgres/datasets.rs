@@ -237,8 +237,8 @@ pub(crate) async fn get_dataset_items(
     let offset = page * page_size;
     let items: Vec<DatasetItem> = sqlx::query_as::<_, DatasetItem>(GET_DATASET_ITEMS_QUERY)
         .bind(dataset_id)
-        .bind(page_size)
-        .bind(offset)
+        .bind(page_size as i32)
+        .bind(offset as i32)
         .fetch_all(pool)
         .await?;
     Ok(items)
