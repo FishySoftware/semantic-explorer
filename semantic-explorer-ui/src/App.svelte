@@ -4,25 +4,27 @@
 	import Sidebar from './lib/Sidebar.svelte';
 	import TopBanner from './lib/TopBanner.svelte';
 	import ToastHost from './lib/components/ToastHost.svelte';
-	import Chat from './lib/pages/Chat.svelte';
-	import CollectionDetail from './lib/pages/CollectionDetail.svelte';
-	import CollectionTransforms from './lib/pages/CollectionTransforms.svelte';
-	import Collections from './lib/pages/Collections.svelte';
-	import Dashboard from './lib/pages/Dashboard.svelte';
-	import DatasetDetail from './lib/pages/DatasetDetail.svelte';
-	import DatasetTransforms from './lib/pages/DatasetTransforms.svelte';
-	import Datasets from './lib/pages/Datasets.svelte';
-	import Documentation from './lib/pages/Documentation.svelte';
-	import EmbeddedDatasets from './lib/pages/EmbeddedDatasets.svelte';
-	import EmbedderDetail from './lib/pages/EmbedderDetail.svelte';
-	import Embedders from './lib/pages/Embedders.svelte';
-	import GrabResource from './lib/pages/GrabResource.svelte';
-	import LLMs from './lib/pages/LLMs.svelte';
-	import Marketplace from './lib/pages/Marketplace.svelte';
-	import Search from './lib/pages/Search.svelte';
-	import VisualizationTransforms from './lib/pages/VisualizationTransforms.svelte';
-	import Visualizations from './lib/pages/Visualizations.svelte';
 	import { initializeTheme } from './lib/utils/theme';
+
+	// Dynamic imports for code-splitting
+	const Chat = () => import('./lib/pages/Chat.svelte');
+	const CollectionDetail = () => import('./lib/pages/CollectionDetail.svelte');
+	const CollectionTransforms = () => import('./lib/pages/CollectionTransforms.svelte');
+	const Collections = () => import('./lib/pages/Collections.svelte');
+	const Dashboard = () => import('./lib/pages/Dashboard.svelte');
+	const DatasetDetail = () => import('./lib/pages/DatasetDetail.svelte');
+	const DatasetTransforms = () => import('./lib/pages/DatasetTransforms.svelte');
+	const Datasets = () => import('./lib/pages/Datasets.svelte');
+	const Documentation = () => import('./lib/pages/Documentation.svelte');
+	const EmbeddedDatasets = () => import('./lib/pages/EmbeddedDatasets.svelte');
+	const EmbedderDetail = () => import('./lib/pages/EmbedderDetail.svelte');
+	const Embedders = () => import('./lib/pages/Embedders.svelte');
+	const GrabResource = () => import('./lib/pages/GrabResource.svelte');
+	const LLMs = () => import('./lib/pages/LLMs.svelte');
+	const Marketplace = () => import('./lib/pages/Marketplace.svelte');
+	const Search = () => import('./lib/pages/Search.svelte');
+	const VisualizationTransforms = () => import('./lib/pages/VisualizationTransforms.svelte');
+	const Visualizations = () => import('./lib/pages/Visualizations.svelte');
 
 	let activeUrl = $state('/dashboard');
 	let selectedCollectionId = $state<number | null>(null);
@@ -185,41 +187,74 @@
 
 		<main class="flex-1 overflow-y-auto {activeUrl === '/chat' ? 'p-0' : 'p-6'}">
 			{#if activeUrl === '/dashboard'}
-				<Dashboard />
+				{#await Dashboard() then { default: DashboardComponent }}
+					<DashboardComponent />
+				{/await}
 			{:else if activeUrl === '/chat'}
-				<Chat />
+				{#await Chat() then { default: ChatComponent }}
+					<ChatComponent />
+				{/await}
 			{:else if activeUrl === '/documentation'}
-				<Documentation />
+				{#await Documentation() then { default: DocumentationComponent }}
+					<DocumentationComponent />
+				{/await}
 			{:else if activeUrl === '/collections'}
-				<Collections onViewCollection={viewCollection} />
+				{#await Collections() then { default: CollectionsComponent }}
+					<CollectionsComponent onViewCollection={viewCollection} />
+				{/await}
 			{:else if activeUrl === '/collections/detail'}
 				{#if selectedCollectionId !== null}
-					<CollectionDetail collectionId={selectedCollectionId} onBack={backToCollections} />
+					{#await CollectionDetail() then { default: CollectionDetailComponent }}
+						<CollectionDetailComponent
+							collectionId={selectedCollectionId}
+							onBack={backToCollections}
+						/>
+					{/await}
 				{/if}
 			{:else if activeUrl === '/datasets'}
-				<Datasets onViewDataset={viewDataset} />
+				{#await Datasets() then { default: DatasetsComponent }}
+					<DatasetsComponent onViewDataset={viewDataset} />
+				{/await}
 			{:else if activeUrl === '/datasets/detail'}
 				{#if selectedDatasetId !== null}
-					<DatasetDetail datasetId={selectedDatasetId} onBack={backToDatasets} />
+					{#await DatasetDetail() then { default: DatasetDetailComponent }}
+						<DatasetDetailComponent datasetId={selectedDatasetId} onBack={backToDatasets} />
+					{/await}
 				{/if}
 			{:else if activeUrl === '/embedders'}
-				<Embedders onViewEmbedder={viewEmbedder} />
+				{#await Embedders() then { default: EmbeddersComponent }}
+					<EmbeddersComponent onViewEmbedder={viewEmbedder} />
+				{/await}
 			{:else if activeUrl === '/embedders/detail'}
 				{#if selectedEmbedderId !== null}
-					<EmbedderDetail embedderId={selectedEmbedderId} onBack={backToEmbedders} />
+					{#await EmbedderDetail() then { default: EmbedderDetailComponent }}
+						<EmbedderDetailComponent embedderId={selectedEmbedderId} onBack={backToEmbedders} />
+					{/await}
 				{/if}
 			{:else if activeUrl === '/llms'}
-				<LLMs />
+				{#await LLMs() then { default: LLMsComponent }}
+					<LLMsComponent />
+				{/await}
 			{:else if activeUrl === '/collection-transforms'}
-				<CollectionTransforms />
+				{#await CollectionTransforms() then { default: CollectionTransformsComponent }}
+					<CollectionTransformsComponent />
+				{/await}
 			{:else if activeUrl === '/dataset-transforms'}
-				<DatasetTransforms />
+				{#await DatasetTransforms() then { default: DatasetTransformsComponent }}
+					<DatasetTransformsComponent />
+				{/await}
 			{:else if activeUrl === '/embedded-datasets'}
-				<EmbeddedDatasets onViewDataset={viewDataset} onNavigate={navigate} />
+				{#await EmbeddedDatasets() then { default: EmbeddedDatasetsComponent }}
+					<EmbeddedDatasetsComponent onViewDataset={viewDataset} onNavigate={navigate} />
+				{/await}
 			{:else if activeUrl === '/visualization-transforms'}
-				<VisualizationTransforms />
+				{#await VisualizationTransforms() then { default: VisualizationTransformsComponent }}
+					<VisualizationTransformsComponent />
+				{/await}
 			{:else if activeUrl === '/visualizations'}
-				<Visualizations onViewVisualization={viewVisualization} />
+				{#await Visualizations() then { default: VisualizationsComponent }}
+					<VisualizationsComponent onViewVisualization={viewVisualization} />
+				{/await}
 			{:else if activeUrl === '/visualizations/detail'}
 				{#if selectedVisualizationId !== null}
 					{#await import('./lib/pages/VisualizationDetail.svelte') then { default: VisualizationDetail }}
@@ -230,12 +265,18 @@
 					{/await}
 				{/if}
 			{:else if activeUrl === '/search'}
-				<Search onViewDataset={viewDataset} onViewEmbedder={viewEmbedder} />
+				{#await Search() then { default: SearchComponent }}
+					<SearchComponent onViewDataset={viewDataset} onViewEmbedder={viewEmbedder} />
+				{/await}
 			{:else if activeUrl === '/marketplace'}
-				<Marketplace />
+				{#await Marketplace() then { default: MarketplaceComponent }}
+					<MarketplaceComponent />
+				{/await}
 			{:else if activeUrl.includes('/marketplace/') && activeUrl.includes('/grab')}
 				{#if grabResourceType && grabResourceId !== null}
-					<GrabResource resourceType={grabResourceType} resourceId={grabResourceId} />
+					{#await GrabResource() then { default: GrabResourceComponent }}
+						<GrabResourceComponent resourceType={grabResourceType} resourceId={grabResourceId} />
+					{/await}
 				{/if}
 			{/if}
 		</main>

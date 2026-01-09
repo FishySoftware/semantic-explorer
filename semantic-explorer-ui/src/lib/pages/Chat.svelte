@@ -1,8 +1,31 @@
 <!-- eslint-disable svelte/no-at-html-tags -->
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { marked } from 'marked';
 	import PageHeader from '../components/PageHeader.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
+
+	// Lazy load highlight.js
+	let hljsModule: typeof import('highlight.js').default | null = null;
+	let hljsLoaded = false;
+
+	async function loadHighlightJS() {
+		if (!hljsLoaded) {
+			const [hljs] = await Promise.all([
+				import('highlight.js'),
+				import('highlight.js/styles/github-dark.css'),
+			]);
+			hljsModule = hljs.default;
+			hljsLoaded = true;
+		}
+		return hljsModule!;
+	}
+
+	// Configure marked options
+	marked.setOptions({
+		breaks: true,
+		gfm: true,
+	});
 
 	interface ChatSession {
 		session_id: string;
@@ -288,6 +311,23 @@
 		return llm ? `${llm.name} (${llm.provider})` : `LLM ${id}`;
 	}
 
+	async function renderMarkdown(content: string): Promise<string> {
+		const html = marked.parse(content) as string;
+		// Apply syntax highlighting to code blocks after rendering
+		const div = document.createElement('div');
+		div.innerHTML = html;
+
+		const codeBlocks = div.querySelectorAll('pre code');
+		if (codeBlocks.length > 0) {
+			const hljs = await loadHighlightJS();
+			codeBlocks.forEach((block) => {
+				hljs.highlightElement(block as HTMLElement);
+			});
+		}
+
+		return div.innerHTML;
+	}
+
 	onMount(() => {
 		fetchSessions();
 		fetchEmbeddedDatasets();
@@ -473,7 +513,15 @@
 										? 'bg-blue-600 text-white'
 										: 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white'} rounded-lg px-4 py-2"
 								>
-									<p class="text-sm">{message.content}</p>
+									{#if message.role === 'user'}
+										<p class="text-sm">{message.content}</p>
+									{:else}
+										<div class="prose prose-sm dark:prose-invert max-w-none">
+											{#await renderMarkdown(message.content) then html}
+												{@html html}
+											{/await}
+										</div>
+									{/if}
 									{#if message.role === 'assistant' && message.retrieved_documents && message.retrieved_documents.length > 0}
 										<div class="mt-3 pt-3 border-t border-current opacity-75">
 											<button
@@ -573,5 +621,119 @@
 		margin: 0;
 		padding: 0;
 		overflow: hidden;
+	}
+
+	/* Style the markdown content in messages */
+	:global(.prose code) {
+		padding: 0.125rem 0.25rem;
+		border-radius: 0.25rem;
+		background-color: rgb(55 65 81);
+		color: rgb(243 244 246);
+		font-size: 0.875em;
+	}
+
+	:global(.prose pre) {
+		border-radius: 0.5rem;
+		background-color: rgb(31 41 55);
+		padding: 1rem;
+		overflow-x: auto;
+		margin: 0.5rem 0;
+	}
+
+	:global(.prose pre code) {
+		background-color: transparent;
+		padding: 0;
+		color: inherit;
+		font-size: 0.875rem;
+	}
+
+	:global(.prose p) {
+		margin: 0.5rem 0;
+		line-height: 1.625;
+	}
+
+	:global(.prose ul),
+	:global(.prose ol) {
+		margin: 0.5rem 0;
+		margin-left: 1rem;
+		padding-left: 0.5rem;
+	}
+
+	:global(.prose li) {
+		margin: 0.25rem 0;
+	}
+
+	:global(.prose h1),
+	:global(.prose h2),
+	:global(.prose h3),
+	:global(.prose h4),
+	:global(.prose h5),
+	:global(.prose h6) {
+		margin-top: 1rem;
+		margin-bottom: 0.5rem;
+		font-weight: 600;
+		line-height: 1.25;
+	}
+
+	:global(.prose h1) {
+		font-size: 1.5rem;
+	}
+
+	:global(.prose h2) {
+		font-size: 1.25rem;
+	}
+
+	:global(.prose h3) {
+		font-size: 1.125rem;
+	}
+
+	:global(.prose blockquote) {
+		border-left: 4px solid rgb(156 163 175);
+		padding-left: 1rem;
+		font-style: italic;
+		margin: 0.5rem 0;
+		color: rgb(156 163 175);
+	}
+
+	:global(.prose a) {
+		color: rgb(96 165 250);
+		text-decoration: underline;
+	}
+
+	:global(.prose a:hover) {
+		color: rgb(147 197 253);
+	}
+
+	:global(.prose table) {
+		border-collapse: collapse;
+		width: 100%;
+		margin: 0.5rem 0;
+		border: 1px solid rgb(75 85 99);
+	}
+
+	:global(.prose th),
+	:global(.prose td) {
+		border: 1px solid rgb(75 85 99);
+		padding: 0.5rem 0.75rem;
+		text-align: left;
+	}
+
+	:global(.prose th) {
+		background-color: rgb(55 65 81);
+		font-weight: 600;
+	}
+
+	:global(.prose strong) {
+		font-weight: 600;
+	}
+
+	:global(.prose em) {
+		font-style: italic;
+	}
+
+	:global(.prose hr) {
+		border: none;
+		border-top: 1px solid rgb(75 85 99);
+		margin: 1rem 0;
 	}
 </style>

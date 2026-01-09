@@ -11,8 +11,9 @@ export default defineConfig({
 		},
 	},
 	build: {
-		// Increase chunk size warning limit for large visualization libraries
-		chunkSizeWarningLimit: 750,
+		// Increase chunk size warning limit for large visualization and syntax highlighting libraries
+		// These are lazy-loaded so the large size is acceptable
+		chunkSizeWarningLimit: 1024,
 		rollupOptions: {
 			output: {
 				assetFileNames: 'assets/[name]-[hash][extname]',
@@ -30,6 +31,18 @@ export default defineConfig({
 					// Split flowbite into a separate chunk
 					if (id.includes('flowbite')) {
 						return 'flowbite';
+					}
+					// Split highlight.js into a separate chunk
+					if (id.includes('highlight.js')) {
+						return 'highlight';
+					}
+					// Split marked into a separate chunk
+					if (id.includes('marked')) {
+						return 'marked';
+					}
+					// Split node_modules into vendor chunk (excluding the above)
+					if (id.includes('node_modules')) {
+						return 'vendor';
 					}
 				},
 			},

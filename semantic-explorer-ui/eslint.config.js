@@ -70,6 +70,12 @@ export default [
 			'svelte/prefer-svelte-reactivity': 'off',
 		},
 	},
+	{
+		files: ['**/Chat.svelte'],
+		rules: {
+			'svelte/no-at-html-tags': 'off',
+		},
+	},
 	prettier,
 	{
 		ignores: ['dist/', 'node_modules/', 'build/'],
