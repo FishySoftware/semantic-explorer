@@ -58,7 +58,26 @@ pub async fn initialize_jetstream(client: &Client) -> Result<()> {
     )
     .await?;
 
-    info!("JetStream streams initialized successfully");
+    // Dead Letter Queue streams for failed jobs
+    ensure_stream(
+        &jetstream,
+        "DLQ_TRANSFORMS",
+        StreamConfig {
+            name: "DLQ_TRANSFORMS".to_string(),
+            subjects: vec![
+                "dlq.collection-transforms".to_string(),
+                "dlq.dataset-transforms".to_string(),
+                "dlq.visualization-transforms".to_string(),
+            ],
+            retention: RetentionPolicy::Limits, // Keep for investigation
+            max_age: Duration::from_secs(30 * 24 * 60 * 60), // 30 days
+            num_replicas: 1,
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    info!("JetStream streams and DLQ initialized successfully");
     Ok(())
 }
 
@@ -114,6 +133,12 @@ pub fn create_transform_file_consumer_config() -> ConsumerConfig {
         ack_wait: Duration::from_secs(10 * 60), // 10 minutes to process
         max_deliver: 5,                         // Retry up to 5 times
         max_ack_pending: 100,                   // Backpressure limit
+        backoff: vec![
+            Duration::from_secs(30),
+            Duration::from_secs(60),
+            Duration::from_secs(120),
+            Duration::from_secs(300),
+        ],
         ..Default::default()
     }
 }
@@ -126,6 +151,12 @@ pub fn create_vector_embed_consumer_config() -> ConsumerConfig {
         ack_wait: Duration::from_secs(10 * 60), // 10 minutes to process
         max_deliver: 5,                         // Retry up to 5 times
         max_ack_pending: 100,                   // Backpressure limit
+        backoff: vec![
+            Duration::from_secs(30),
+            Duration::from_secs(60),
+            Duration::from_secs(120),
+            Duration::from_secs(300),
+        ],
         ..Default::default()
     }
 }

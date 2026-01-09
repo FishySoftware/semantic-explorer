@@ -113,6 +113,7 @@ async fn process_visualization_transform_scan(
     let job = VisualizationTransformJob {
         job_id: Uuid::new_v4(),
         visualization_transform_id: transform.visualization_transform_id,
+        owner: transform.owner.clone(),
         source_collection: embedded_dataset.collection_name.clone(),
         output_collection_reduced: output_collection_reduced.clone(),
         output_collection_topics: output_collection_topics.clone(),
@@ -230,6 +231,7 @@ pub async fn trigger_visualization_transform_job(
     let job = VisualizationTransformJob {
         job_id: Uuid::new_v4(),
         visualization_transform_id: transform.visualization_transform_id,
+        owner: transform.owner.clone(),
         source_collection: embedded_dataset.collection_name.clone(),
         output_collection_reduced: output_collection_reduced.clone(),
         output_collection_topics: output_collection_topics.clone(),

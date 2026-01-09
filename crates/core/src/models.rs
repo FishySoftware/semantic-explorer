@@ -7,6 +7,7 @@ pub struct CollectionTransformJob {
     pub source_file_key: String,
     pub bucket: String,
     pub collection_transform_id: i32,
+    pub owner: String,
     pub extraction_config: serde_json::Value,
     pub chunking_config: serde_json::Value,
     /// Optional embedder config for semantic chunking
@@ -18,6 +19,7 @@ pub struct CollectionTransformJob {
 pub struct CollectionTransformResult {
     pub job_id: Uuid,
     pub collection_transform_id: i32,
+    pub owner: String,
     pub source_file_key: String,
     pub bucket: String,
     pub chunks_file_key: String,
@@ -34,6 +36,7 @@ pub struct DatasetTransformJob {
     pub bucket: String,
     pub dataset_transform_id: i32,
     pub embedded_dataset_id: i32, // NEW: Identifies which embedded dataset this job is for
+    pub owner: String,
     pub embedder_config: EmbedderConfig,
     pub vector_database_config: VectorDatabaseConfig,
     pub collection_name: String,
@@ -48,6 +51,7 @@ pub struct DatasetTransformResult {
     pub job_id: Uuid,
     pub dataset_transform_id: i32,
     pub embedded_dataset_id: i32, // NEW: Identifies which embedded dataset this result is for
+    pub owner: String,
     pub batch_file_key: String,
     pub chunk_count: usize,
     pub status: String,
@@ -86,6 +90,7 @@ fn default_topic_naming_mode() -> String {
 pub struct VisualizationTransformJob {
     pub job_id: Uuid,
     pub visualization_transform_id: i32,
+    pub owner: String,
     pub source_collection: String,
     pub output_collection_reduced: String,
     pub output_collection_topics: String,
@@ -114,6 +119,7 @@ pub struct VisualizationConfig {
 pub struct VisualizationTransformResult {
     pub job_id: Uuid,
     pub visualization_transform_id: i32,
+    pub owner: String,
     pub status: String,
     pub error: Option<String>,
     pub processing_duration_ms: Option<i64>,

@@ -15,7 +15,8 @@ use crate::storage::postgres::collection_transforms;
 use crate::storage::postgres::datasets;
 use crate::storage::postgres::embedded_datasets;
 use crate::storage::postgres::visualization_transforms::{
-    update_visualization_transform_status_completed, update_visualization_transform_status_failed,
+    get_visualization_transform, update_visualization_transform_status_completed,
+    update_visualization_transform_status_failed,
 };
 
 #[derive(Clone)]
@@ -159,8 +160,9 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
         }
     };
 
-    let transform = match collection_transforms::get_collection_transform_by_id(
+    let transform = match collection_transforms::get_collection_transform(
         &ctx.postgres_pool,
+        &result.owner,
         result.collection_transform_id,
     )
     .await
@@ -168,8 +170,8 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
         Ok(t) => t,
         Err(e) => {
             error!(
-                "Failed to get collection transform {}: {}",
-                result.collection_transform_id, e
+                "Failed to get collection transform {} for owner {}: {}",
+                result.collection_transform_id, result.owner, e
             );
             return;
         }
@@ -263,6 +265,21 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
         result.batch_file_key
     );
 
+    // Validate ownership by fetching the embedded dataset
+    if let Err(e) = embedded_datasets::get_embedded_dataset(
+        &ctx.postgres_pool,
+        &result.owner,
+        result.embedded_dataset_id,
+    )
+    .await
+    {
+        error!(
+            "Embedded dataset {} not found or access denied for owner {}: {}",
+            result.embedded_dataset_id, result.owner, e
+        );
+        return;
+    }
+
     if result.status != "success" {
         error!(
             "Vector batch failed for {}: {:?}",
@@ -315,6 +332,21 @@ async fn handle_visualization_result(result: VisualizationTransformResult, ctx: 
         "Handling visualization result for transform {}",
         result.visualization_transform_id
     );
+
+    // Validate ownership by fetching the visualization transform
+    if let Err(e) = get_visualization_transform(
+        &ctx.postgres_pool,
+        &result.owner,
+        result.visualization_transform_id,
+    )
+    .await
+    {
+        error!(
+            "Visualization transform {} not found or access denied for owner {}: {}",
+            result.visualization_transform_id, result.owner, e
+        );
+        return;
+    }
 
     if result.status != "completed" {
         error!(

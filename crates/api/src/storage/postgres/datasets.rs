@@ -1,5 +1,8 @@
 use anyhow::Result;
-use sqlx::{Pool, Postgres};
+use sqlx::{
+    Pool, Postgres,
+    types::chrono::{DateTime, Utc},
+};
 use std::time::Instant;
 
 use crate::datasets::models::{ChunkWithMetadata, Dataset, DatasetItem};
@@ -41,6 +44,13 @@ const GET_DATASET_ITEMS_QUERY: &str = r#"
 
 const COUNT_DATASET_ITEMS_QUERY: &str = r#"
     SELECT COUNT(*) as count FROM dataset_items WHERE dataset_id = $1
+"#;
+
+const GET_DATASET_ITEMS_MODIFIED_SINCE_QUERY: &str = r#"
+    SELECT item_id, dataset_id, title, chunks, metadata, created_at, updated_at
+    FROM dataset_items
+    WHERE dataset_id = $1 AND updated_at > $2
+    ORDER BY updated_at DESC
 "#;
 
 const UPDATE_DATASET_QUERY: &str = r#"
@@ -257,21 +267,14 @@ pub(crate) async fn count_dataset_items(pool: &Pool<Postgres>, dataset_id: i32) 
 pub(crate) async fn get_dataset_items_modified_since(
     pool: &Pool<Postgres>,
     dataset_id: i32,
-    since_timestamp: Option<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>>,
+    since_timestamp: Option<DateTime<Utc>>,
 ) -> Result<Vec<DatasetItem>> {
     let query = if let Some(timestamp) = since_timestamp {
-        sqlx::query_as::<_, DatasetItem>(
-            r#"
-            SELECT item_id, dataset_id, title, chunks, metadata, created_at, updated_at
-            FROM dataset_items
-            WHERE dataset_id = $1 AND updated_at > $2
-            ORDER BY updated_at DESC
-            "#,
-        )
-        .bind(dataset_id)
-        .bind(timestamp)
-        .fetch_all(pool)
-        .await?
+        sqlx::query_as::<_, DatasetItem>(GET_DATASET_ITEMS_MODIFIED_SINCE_QUERY)
+            .bind(dataset_id)
+            .bind(timestamp)
+            .fetch_all(pool)
+            .await?
     } else {
         // If no timestamp provided, return all items
         sqlx::query_as::<_, DatasetItem>(GET_DATASET_ITEMS_QUERY)

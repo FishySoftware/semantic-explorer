@@ -10,13 +10,6 @@ const GET_COLLECTION_TRANSFORM_QUERY: &str = r#"
     WHERE owner = $1 AND collection_transform_id = $2
 "#;
 
-const GET_COLLECTION_TRANSFORM_BY_ID_QUERY: &str = r#"
-    SELECT collection_transform_id, title, collection_id, dataset_id, owner, is_enabled,
-           chunk_size, job_config, created_at, updated_at
-    FROM collection_transforms
-    WHERE collection_transform_id = $1
-"#;
-
 const GET_COLLECTION_TRANSFORMS_QUERY: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner, is_enabled,
            chunk_size, job_config, created_at, updated_at
@@ -99,17 +92,6 @@ const RECORD_PROCESSED_FILE_QUERY: &str = r#"
 "#;
 
 // CRUD operations
-
-pub(crate) async fn get_collection_transform_by_id(
-    pool: &Pool<Postgres>,
-    collection_transform_id: i32,
-) -> Result<CollectionTransform> {
-    let transform = sqlx::query_as::<_, CollectionTransform>(GET_COLLECTION_TRANSFORM_BY_ID_QUERY)
-        .bind(collection_transform_id)
-        .fetch_one(pool)
-        .await?;
-    Ok(transform)
-}
 
 pub async fn get_collection_transform(
     pool: &Pool<Postgres>,

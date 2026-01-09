@@ -231,6 +231,7 @@ async fn send_result(
     let result_msg = VisualizationTransformResult {
         job_id: job.job_id,
         visualization_transform_id: job.visualization_transform_id,
+        owner: job.owner.clone(),
         status,
         error,
         processing_duration_ms,

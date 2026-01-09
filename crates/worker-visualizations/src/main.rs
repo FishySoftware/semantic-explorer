@@ -152,6 +152,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let result_msg = semantic_explorer_core::models::VisualizationTransformResult {
                     job_id: job.job_id,
                     visualization_transform_id: job.visualization_transform_id,
+                    owner: job.owner.clone(),
                     status: "failed".to_string(),
                     error: Some(e.to_string()),
                     processing_duration_ms: Some(duration_ms),
