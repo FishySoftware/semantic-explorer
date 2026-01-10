@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { Button, Spinner } from 'flowbite-svelte';
 	import { onMount } from 'svelte';
-	import CreateVisualizationTransformModal from '../components/CreateVisualizationTransformModal.svelte';
 	import TabPanel from '../components/TabPanel.svelte';
 	import TransformsList from '../components/TransformsList.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
+	import type { VisualizationTransform } from '../types/visualizations';
 
 	interface EmbeddedDataset {
 		embedded_dataset_id: number;
@@ -42,18 +42,6 @@
 			model?: string;
 			[key: string]: any;
 		};
-	}
-
-	interface VisualizationTransform {
-		visualization_transform_id: number;
-		title: string;
-		embedded_dataset_id: number;
-		owner: string;
-		is_enabled: boolean;
-		last_run_status?: string;
-		last_run_at?: string;
-		created_at: string;
-		updated_at: string;
 	}
 
 	interface QdrantPoint {
@@ -102,8 +90,6 @@
 		{ id: 'points', label: 'Points', icon: '📍' },
 		{ id: 'transforms', label: 'Visualizations', icon: '🎨' },
 	];
-
-	let createVizModalOpen = $state(false);
 
 	async function fetchEmbeddedDataset() {
 		try {
@@ -262,13 +248,8 @@
 	}
 
 	function handleCreateVisualizationTransform() {
-		createVizModalOpen = true;
-	}
-
-	function handleVisualizationCreated() {
-		createVizModalOpen = false;
-		fetchVisualizationTransforms();
-		toastStore.success('Visualization transform created successfully');
+		// Redirect to visualization-transforms page with embedded dataset ID
+		window.location.hash = `#/visualization-transforms?embedded_dataset_id=${embeddedDatasetId}&create=true`;
 	}
 
 	function handleViewVisualizationTransform(transform: any) {
@@ -677,12 +658,3 @@
 		</TabPanel>
 	{/if}
 </div>
-
-{#if createVizModalOpen && embeddedDataset}
-	<CreateVisualizationTransformModal
-		isOpen={createVizModalOpen}
-		presetEmbeddedDatasetId={embeddedDataset.embedded_dataset_id}
-		onClose={() => (createVizModalOpen = false)}
-		onSuccess={handleVisualizationCreated}
-	/>
-{/if}

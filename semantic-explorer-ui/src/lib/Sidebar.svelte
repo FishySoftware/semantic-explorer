@@ -57,10 +57,14 @@
 			children: [
 				{
 					name: 'Collection Transforms',
-					icon: ArrowsRepeatOutline,
+					icon: FolderSolid,
 					url: '/collection-transforms',
 				},
-				{ name: 'Dataset Transforms', icon: LayersSolid, url: '/dataset-transforms' },
+				{ 
+					name: 'Dataset Transforms', 
+					icon: DatabaseSolid, 
+					url: '/dataset-transforms' 
+				},
 				{
 					name: 'Visualization Transforms',
 					icon: ChartPieSolid,

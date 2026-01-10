@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { formatError, toastStore } from '../utils/notifications';
+	import type { VisualizationTransform } from '../types/visualizations';
 
 	interface Collection {
 		collection_id: number;
@@ -37,15 +38,6 @@
 		title: string;
 		source_dataset_title?: string;
 		embedder_name?: string;
-		updated_at: string;
-	}
-
-	interface VisualizationTransform {
-		visualization_transform_id: number;
-		title: string;
-		embedded_dataset_id: number;
-		is_enabled: boolean;
-		last_run_status?: string;
 		updated_at: string;
 	}
 

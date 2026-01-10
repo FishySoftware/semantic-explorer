@@ -4,6 +4,7 @@
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
+	import type { VisualizationConfig, VisualizationTransform } from '../types/visualizations';
 
 	// Helper function for tooltip display with hover persistence
 	function showTooltip(event: MouseEvent, text: string) {
@@ -38,83 +39,6 @@
 		return `<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"></path></svg>`;
 	}
 
-	interface VisualizationTransform {
-		visualization_transform_id: number;
-		title: string;
-		embedded_dataset_id: number;
-		owner: string;
-		is_enabled: boolean;
-		reduced_collection_name: string | null;
-		topics_collection_name: string | null;
-		visualization_config: VisualizationConfig;
-		last_run_status: string | null;
-		last_run_at: string | null;
-		last_error: string | null;
-		last_run_stats: {
-			n_points?: number;
-			n_clusters?: number;
-			processing_duration_ms?: number;
-		} | null;
-		created_at: string;
-		updated_at: string;
-	}
-
-	interface VisualizationConfig {
-		n_neighbors: number;
-		min_dist: number;
-		metric: string;
-		min_cluster_size: number;
-		min_samples: number | null;
-		topic_naming_llm_id: number | null;
-		// Datamapplot create_interactive_plot parameters
-		inline_data: boolean;
-		noise_label: string;
-		noise_color: string;
-		color_label_text: boolean;
-		label_wrap_width: number;
-		width: string;
-		height: number;
-		darkmode: boolean;
-		palette_hue_shift: number;
-		palette_hue_radius_dependence: number;
-		palette_theta_range: number;
-		use_medoids: boolean;
-		cluster_boundary_polygons: boolean;
-		polygon_alpha: number;
-		cvd_safer: boolean;
-		enable_topic_tree: boolean;
-		// Datamapplot render_html parameters
-		title: string | null;
-		sub_title: string | null;
-		title_font_size: number;
-		sub_title_font_size: number;
-		text_collision_size_scale: number;
-		text_min_pixel_size: number;
-		text_max_pixel_size: number;
-		font_family: string;
-		font_weight: number;
-		tooltip_font_family: string;
-		tooltip_font_weight: number;
-		logo: string | null;
-		logo_width: number;
-		line_spacing: number;
-		min_fontsize: number;
-		max_fontsize: number;
-		text_outline_width: number;
-		text_outline_color: string;
-		point_size_scale: number | null;
-		point_hover_color: string;
-		point_radius_min_pixels: number;
-		point_radius_max_pixels: number;
-		point_line_width_min_pixels: number;
-		point_line_width_max_pixels: number;
-		point_line_width: number;
-		cluster_boundary_line_width: number;
-		initial_zoom_fraction: number;
-		background_color: string | null;
-		background_image: string | null;
-	}
-
 	interface EmbeddedDataset {
 		embedded_dataset_id: number;
 		title: string;
@@ -142,7 +66,9 @@
 	let editingTransform = $state<VisualizationTransform | null>(null);
 	let newTitle = $state('');
 	let newEmbeddedDatasetId = $state<number | null>(null);
-	let config = $state<VisualizationConfig>({
+
+	// Default configuration values - must match backend defaults in crates/core/src/models.rs
+	const DEFAULT_CONFIG: VisualizationConfig = {
 		n_neighbors: 15,
 		min_dist: 0.1,
 		metric: 'cosine',
@@ -160,12 +86,12 @@
 		darkmode: true,
 		palette_hue_shift: 0.0,
 		palette_hue_radius_dependence: 1.0,
-		palette_theta_range: 0.196,
+		palette_theta_range: 0.19634954084936207, // π/16 - must match backend
 		use_medoids: false,
-		cluster_boundary_polygons: false,
+		cluster_boundary_polygons: true,
 		polygon_alpha: 0.1,
 		cvd_safer: false,
-		enable_topic_tree: false,
+		enable_topic_tree: true,
 		// Datamapplot render_html parameters
 		title: null,
 		sub_title: null,
@@ -196,7 +122,14 @@
 		initial_zoom_fraction: 1.0,
 		background_color: null,
 		background_image: null,
-	});
+	};
+
+	// Merge loaded config with defaults to handle missing fields from older records
+	function applyDefaults(loadedConfig: Partial<VisualizationConfig>): VisualizationConfig {
+		return { ...DEFAULT_CONFIG, ...loadedConfig };
+	}
+
+	let config = $state<VisualizationConfig>({ ...DEFAULT_CONFIG });
 	let creating = $state(false);
 	let createError = $state<string | null>(null);
 
@@ -220,7 +153,13 @@
 			if (!response.ok) {
 				throw new Error(`Failed to fetch visualization transforms: ${response.statusText}`);
 			}
-			transforms = await response.json();
+			const rawTransforms = await response.json();
+			
+			// Apply defaults to all loaded transforms to handle missing fields from older records
+			transforms = rawTransforms.map((t: VisualizationTransform) => ({
+				...t,
+				visualization_config: applyDefaults(t.visualization_config),
+			}));
 
 			// Fetch stats for each transform
 			for (const transform of transforms) {
@@ -255,6 +194,10 @@
 				throw new Error(`Failed to fetch embedded datasets: ${response.statusText}`);
 			}
 			embeddedDatasets = await response.json();
+			// Auto-select first option if available and nothing selected
+			if (embeddedDatasets.length > 0 && newEmbeddedDatasetId === null) {
+				newEmbeddedDatasetId = embeddedDatasets[0].embedded_dataset_id;
+			}
 		} catch (e) {
 			console.error('Failed to fetch embedded datasets:', e);
 		}
@@ -267,6 +210,10 @@
 				throw new Error(`Failed to fetch LLMs: ${response.statusText}`);
 			}
 			llms = await response.json();
+			// Auto-select first option if available and nothing selected
+			if (llms.length > 0 && config.topic_naming_llm_id === null) {
+				config.topic_naming_llm_id = llms[0].llm_id;
+			}
 		} catch (e) {
 			console.error('Failed to fetch LLMs:', e);
 		}
@@ -414,67 +361,15 @@
 		editingTransform = transform;
 		newTitle = transform.title;
 		newEmbeddedDatasetId = transform.embedded_dataset_id;
-		config = { ...transform.visualization_config };
+		// Apply defaults to handle missing fields from older database records
+		config = applyDefaults(transform.visualization_config);
 		showCreateForm = true;
 	}
 
 	function resetForm() {
 		newTitle = '';
 		newEmbeddedDatasetId = null;
-		config = {
-			n_neighbors: 15,
-			min_dist: 0.1,
-			metric: 'cosine',
-			min_cluster_size: 15,
-			min_samples: 5,
-			topic_naming_llm_id: null,
-			// Reset datamapplot parameters
-			inline_data: true,
-			noise_label: 'Unlabelled',
-			noise_color: '#999999',
-			color_label_text: true,
-			label_wrap_width: 16,
-			width: '100%',
-			height: 800,
-			darkmode: false,
-			palette_hue_shift: 0.0,
-			palette_hue_radius_dependence: 1.0,
-			palette_theta_range: 0.1963,
-			use_medoids: false,
-			cluster_boundary_polygons: false,
-			polygon_alpha: 0.1,
-			cvd_safer: false,
-			enable_topic_tree: false,
-			title: null,
-			sub_title: null,
-			title_font_size: 36,
-			sub_title_font_size: 18,
-			text_collision_size_scale: 3.0,
-			text_min_pixel_size: 12.0,
-			text_max_pixel_size: 36.0,
-			font_family: 'Roboto',
-			font_weight: 600,
-			tooltip_font_family: 'Roboto',
-			tooltip_font_weight: 400,
-			logo: null,
-			logo_width: 256,
-			line_spacing: 0.95,
-			min_fontsize: 12,
-			max_fontsize: 24,
-			text_outline_width: 8,
-			text_outline_color: '#eeeeeedd',
-			point_size_scale: null,
-			point_hover_color: '#aa0000bb',
-			point_radius_min_pixels: 0.01,
-			point_radius_max_pixels: 24,
-			point_line_width_min_pixels: 0.001,
-			point_line_width_max_pixels: 3,
-			point_line_width: 0.001,
-			cluster_boundary_line_width: 1.0,
-			initial_zoom_fraction: 1.0,
-			background_color: null,
-			background_image: null,
-		};
+		config = { ...DEFAULT_CONFIG };
 		showCreateForm = false;
 		editingTransform = null;
 		createError = null;
@@ -520,6 +415,22 @@
 		fetchTransforms();
 		fetchEmbeddedDatasets();
 		fetchLLMs();
+		
+		// Check URL parameters for create action and embedded dataset ID
+		const urlParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
+		const shouldCreate = urlParams.get('create') === 'true';
+		const embeddedDatasetId = urlParams.get('embedded_dataset_id');
+		
+		if (shouldCreate) {
+			showCreateForm = true;
+			// Remove the URL parameters after processing
+			const cleanHash = window.location.hash.split('?')[0];
+			window.history.replaceState(null, '', cleanHash);
+		}
+		
+		if (embeddedDatasetId) {
+			newEmbeddedDatasetId = parseInt(embeddedDatasetId, 10);
+		}
 	});
 
 	let filteredTransforms = $derived(
@@ -603,7 +514,7 @@
 							<option value={null}>Select an embedded dataset...</option>
 							{#each embeddedDatasets as dataset (dataset.embedded_dataset_id)}
 								<option value={dataset.embedded_dataset_id}>
-									{dataset.title} - {dataset.embedder_name} ({dataset.source_dataset_title})
+									{dataset.title}
 								</option>
 							{/each}
 						</select>
@@ -1139,8 +1050,8 @@
 										type="number"
 										bind:value={config.palette_theta_range}
 										min="0"
-										max="6.28"
-										step="0.01"
+										max="6.280"
+										step="any"
 										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 									/>
 								</div>
@@ -1452,10 +1363,8 @@
 										id="point-size-scale"
 										type="number"
 										bind:value={config.point_size_scale}
-										min="0.1"
-										max="10"
 										step="0.1"
-										placeholder="Auto"
+										placeholder="Auto (leave empty for automatic)"
 										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 									/>
 								</div>
@@ -1472,7 +1381,7 @@
 										bind:value={config.point_radius_min_pixels}
 										min="0.001"
 										max="100"
-										step="0.01"
+										step="any"
 										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 									/>
 								</div>
@@ -1506,7 +1415,7 @@
 										bind:value={config.point_line_width}
 										min="0.0"
 										max="5"
-										step="0.001"
+										step="any"
 										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 									/>
 								</div>
@@ -1523,7 +1432,7 @@
 										bind:value={config.point_line_width_min_pixels}
 										min="0.0"
 										max="5"
-										step="0.001"
+										step="any"
 										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 									/>
 								</div>
@@ -1540,7 +1449,7 @@
 										bind:value={config.point_line_width_max_pixels}
 										min="0.0"
 										max="5"
-										step="0.001"
+										step="any"
 										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 									/>
 								</div>
@@ -1662,7 +1571,7 @@
 										bind:value={config.logo_width}
 										min="50"
 										max="1000"
-										step="8"
+										step="1"
 										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 									/>
 								</div>

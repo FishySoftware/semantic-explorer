@@ -3,61 +3,14 @@
 	import { onMount } from 'svelte';
 	import ActionMenu from '../components/ActionMenu.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
+	import CreateVisualizationTransformModal from '../components/CreateVisualizationTransformModal.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
-
-	interface VisualizationConfig {
-		n_neighbors: number;
-		min_dist: number;
-		metric: string;
-		min_cluster_size: number;
-		min_samples: number | null;
-		topic_naming_llm_id: number | null;
-		min_fontsize?: number;
-		max_fontsize?: number;
-		font_family?: string;
-		darkmode?: boolean;
-		noise_color?: string;
-		label_wrap_width?: number;
-		use_medoids?: boolean;
-		cluster_boundary_polygons?: boolean;
-		polygon_alpha?: number;
-	}
-
-	interface VisualizationTransform {
-		visualization_transform_id: number;
-		title: string;
-		embedded_dataset_id: number;
-		owner: string;
-		is_enabled: boolean;
-		reduced_collection_name: string | null;
-		topics_collection_name: string | null;
-		visualization_config: VisualizationConfig;
-		last_run_status: string | null;
-		last_run_at: string | null;
-		last_error: string | null;
-		last_run_stats: {
-			point_count?: number;
-			cluster_count?: number;
-			processing_duration_ms?: number;
-		} | null;
-		created_at: string;
-		updated_at: string;
-	}
-
-	interface VisualizationRun {
-		run_id: number;
-		visualization_transform_id: number;
-		status: string;
-		started_at: string | null;
-		completed_at: string | null;
-		html_s3_key: string | null;
-		point_count: number | null;
-		cluster_count: number | null;
-		error_message: string | null;
-		stats_json: any | null;
-		created_at: string;
-	}
+	import type {
+		VisualizationConfig,
+		VisualizationTransform,
+		VisualizationRun,
+	} from '../types/visualizations';
 
 	interface Props {
 		onViewVisualization?: (_id: number) => void;
@@ -71,6 +24,9 @@
 	let searchQuery = $state('');
 
 	let visualizationPendingDelete = $state<VisualizationTransform | null>(null);
+
+	let transformModalOpen = $state(false);
+	let selectedEmbeddedDatasetIdForTransform = $state<number | null>(null);
 
 	onMount(async () => {
 		await loadVisualizations();
@@ -108,6 +64,18 @@
 		if (onViewVisualization) {
 			onViewVisualization(transformId);
 		}
+	}
+
+	function handleCreateTransform(embeddedDatasetId: number) {
+		selectedEmbeddedDatasetIdForTransform = embeddedDatasetId;
+		transformModalOpen = true;
+	}
+
+	function handleTransformCreated() {
+		transformModalOpen = false;
+		selectedEmbeddedDatasetIdForTransform = null;
+		loadVisualizations();
+		toastStore.success('Visualization transform created successfully');
 	}
 
 	function requestDeleteVisualization(viz: VisualizationTransform) {
@@ -432,6 +400,10 @@
 											handler: () => handleView(viz.visualization_transform_id),
 										},
 										{
+											label: 'Create Transform',
+											handler: () => handleCreateTransform(viz.embedded_dataset_id),
+										},
+										{
 											label: 'Trigger Run',
 											handler: () => triggerRun(viz),
 										},
@@ -474,3 +446,15 @@
 	on:confirm={confirmDeleteVisualization}
 	on:cancel={() => (visualizationPendingDelete = null)}
 />
+
+{#if transformModalOpen && selectedEmbeddedDatasetIdForTransform !== null}
+	<CreateVisualizationTransformModal
+		isOpen={transformModalOpen}
+		presetEmbeddedDatasetId={selectedEmbeddedDatasetIdForTransform}
+		onClose={() => {
+			transformModalOpen = false;
+			selectedEmbeddedDatasetIdForTransform = null;
+		}}
+		onSuccess={handleTransformCreated}
+	/>
+{/if}

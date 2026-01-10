@@ -251,7 +251,7 @@ fn default_palette_hue_radius_dependence() -> f32 {
     1.0
 }
 fn default_palette_theta_range() -> f32 {
-    0.19634954
+    0.19634954084936207
 } // π/16
 fn default_use_medoids() -> bool {
     false
