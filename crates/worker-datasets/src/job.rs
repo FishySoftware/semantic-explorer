@@ -28,6 +28,21 @@ pub(crate) async fn process_vector_job(job: DatasetTransformJob, ctx: WorkerCont
     let start_time = Instant::now();
     info!("Processing vector job");
 
+    // Send immediate acknowledgment that processing has started
+    // This allows the frontend to show progress as the job begins
+    if let Err(e) = send_progress_update(
+        &ctx.nats_client,
+        &job,
+        0, // 0 chunks processed yet
+        "processing",
+        None,
+    )
+    .await
+    {
+        error!(error = %e, "Failed to send initial progress update");
+        // Continue processing even if this fails
+    }
+
     info!(batch_file = %job.batch_file_key, bucket = %job.bucket, "Downloading batch file");
     let batch_content = match get_file(&ctx.s3_client, &job.bucket, &job.batch_file_key).await {
         Ok(content) => content,
@@ -229,6 +244,31 @@ pub(crate) async fn process_vector_job(job: DatasetTransformJob, ctx: WorkerCont
     )
     .await?;
 
+    Ok(())
+}
+
+async fn send_progress_update(
+    nats: &async_nats::Client,
+    job: &DatasetTransformJob,
+    chunk_count: usize,
+    status: &str,
+    error: Option<String>,
+) -> Result<()> {
+    let result_msg = DatasetTransformResult {
+        job_id: job.job_id,
+        dataset_transform_id: job.dataset_transform_id,
+        embedded_dataset_id: job.embedded_dataset_id,
+        owner: job.owner.clone(),
+        batch_file_key: job.batch_file_key.clone(),
+        chunk_count,
+        status: status.to_string(),
+        error,
+        processing_duration_ms: None,
+    };
+
+    let payload = serde_json::to_vec(&result_msg)?;
+    nats.publish("worker.result.vector".to_string(), payload.into())
+        .await?;
     Ok(())
 }
 

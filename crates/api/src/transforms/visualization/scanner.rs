@@ -56,18 +56,40 @@ pub async fn trigger_visualization_transform_scan(
     );
 
     // Parse visualization config - deserialize directly from JSON
-    let visualization_config: VisualizationConfig = serde_json::from_value(transform.visualization_config.clone())
-        .unwrap_or_else(|e| {
-            debug!("Failed to deserialize full config: {}. Using partial config with defaults.", e);
+    let visualization_config: VisualizationConfig =
+        serde_json::from_value(transform.visualization_config.clone()).unwrap_or_else(|e| {
+            debug!(
+                "Failed to deserialize full config: {}. Using partial config with defaults.",
+                e
+            );
             // Fallback: extract just the required fields manually
             let viz_config = &transform.visualization_config;
             VisualizationConfig {
-                n_neighbors: viz_config.get("n_neighbors").and_then(|v| v.as_i64()).unwrap_or(15) as i32,
-                min_dist: viz_config.get("min_dist").and_then(|v| v.as_f64()).unwrap_or(0.1) as f32,
-                metric: viz_config.get("metric").and_then(|v| v.as_str()).unwrap_or("cosine").to_string(),
-                min_cluster_size: viz_config.get("min_cluster_size").and_then(|v| v.as_i64()).unwrap_or(10) as i32,
-                min_samples: viz_config.get("min_samples").and_then(|v| v.as_i64()).map(|v| v as i32),
-                topic_naming_llm_id: viz_config.get("topic_naming_llm_id").and_then(|v| v.as_i64()).map(|v| v as i32),
+                n_neighbors: viz_config
+                    .get("n_neighbors")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(15) as i32,
+                min_dist: viz_config
+                    .get("min_dist")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.1) as f32,
+                metric: viz_config
+                    .get("metric")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("cosine")
+                    .to_string(),
+                min_cluster_size: viz_config
+                    .get("min_cluster_size")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(10) as i32,
+                min_samples: viz_config
+                    .get("min_samples")
+                    .and_then(|v| v.as_i64())
+                    .map(|v| v as i32),
+                topic_naming_llm_id: viz_config
+                    .get("topic_naming_llm_id")
+                    .and_then(|v| v.as_i64())
+                    .map(|v| v as i32),
                 // Use defaults for all datamapplot parameters
                 inline_data: true,
                 noise_label: "Unlabelled".to_string(),
@@ -122,13 +144,13 @@ pub async fn trigger_visualization_transform_scan(
     // Get LLM config if specified
     let llm_config = if let Some(llm_id) = topic_naming_llm_id {
         let llm = llms::get_llm(pool, owner, llm_id).await?;
-        
+
         // Log LLM config details for debugging
         let has_api_key = llm.api_key.is_some();
         debug!(
             "LLM config for visualization: llm_id={}, provider={}, has_api_key={}",
             llm_id, llm.provider, has_api_key
-        );    
+        );
         Some(LLMConfig {
             llm_id,
             provider: llm.provider.clone(),

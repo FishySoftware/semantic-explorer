@@ -1,6 +1,5 @@
 use crate::embedded_datasets::EmbeddedDataset;
-use crate::storage::postgres::datasets;
-use crate::transforms::dataset::{DatasetTransform, DatasetTransformStats};
+use crate::transforms::dataset::models::{DatasetTransform, DatasetTransformStats};
 use anyhow::{Context, Result};
 use sqlx::{Pool, Postgres, Transaction};
 
@@ -60,18 +59,31 @@ const DELETE_DATASET_TRANSFORM_QUERY: &str = r#"
 "#;
 
 const GET_DATASET_TRANSFORM_STATS_QUERY: &str = r#"
+    WITH unique_batches AS (
+        SELECT
+            ed.dataset_transform_id,
+            tpf.file_key,
+            MAX(tpf.item_count) as item_count,
+            MAX(tpf.process_status) as process_status,
+            MAX(tpf.processed_at) as processed_at
+        FROM transform_processed_files tpf
+        INNER JOIN embedded_datasets ed ON ed.embedded_dataset_id = tpf.transform_id
+        WHERE tpf.transform_type = 'dataset'
+        GROUP BY ed.dataset_transform_id, tpf.file_key
+    )
     SELECT
         dt.dataset_transform_id,
         COALESCE(array_length(dt.embedder_ids, 1), 0)::INTEGER as embedder_count,
-        COALESCE(COUNT(tpf.id), 0)::BIGINT as total_batches_processed,
-        COALESCE(COUNT(tpf.id) FILTER (WHERE tpf.process_status = 'completed'), 0)::BIGINT as successful_batches,
-        COALESCE(COUNT(tpf.id) FILTER (WHERE tpf.process_status = 'failed'), 0)::BIGINT as failed_batches,
-        COALESCE(SUM(tpf.item_count) FILTER (WHERE tpf.process_status = 'completed'), 0)::BIGINT as total_chunks_embedded,
-        COALESCE(SUM(tpf.item_count) FILTER (WHERE tpf.process_status = 'failed'), 0)::BIGINT as total_chunks_failed,
-        MAX(tpf.processed_at) as last_run_at
+        COALESCE(COUNT(DISTINCT ub.file_key), 0)::BIGINT as total_batches_processed,
+        COALESCE(COUNT(DISTINCT CASE WHEN ub.process_status = 'completed' THEN ub.file_key END), 0)::BIGINT as successful_batches,
+        COALESCE(COUNT(DISTINCT CASE WHEN ub.process_status = 'failed' THEN ub.file_key END), 0)::BIGINT as failed_batches,
+        COALESCE(SUM(CASE WHEN ub.process_status = 'completed' THEN ub.item_count ELSE 0 END), 0)::BIGINT as total_chunks_embedded,
+        COALESCE(SUM(CASE WHEN ub.process_status = 'processing' THEN ub.item_count ELSE 0 END), 0)::BIGINT as total_chunks_processing,
+        COALESCE(SUM(CASE WHEN ub.process_status = 'failed' THEN ub.item_count ELSE 0 END), 0)::BIGINT as total_chunks_failed,
+        (SELECT COALESCE(SUM(jsonb_array_length(chunks)), 0)::BIGINT FROM dataset_items WHERE dataset_id = dt.source_dataset_id) as total_chunks_to_process,
+        MAX(ub.processed_at) as last_run_at
     FROM dataset_transforms dt
-    LEFT JOIN embedded_datasets ed ON ed.dataset_transform_id = dt.dataset_transform_id
-    LEFT JOIN transform_processed_files tpf ON tpf.transform_type = 'dataset' AND tpf.transform_id = ed.embedded_dataset_id
+    LEFT JOIN unique_batches ub ON ub.dataset_transform_id = dt.dataset_transform_id
     WHERE dt.dataset_transform_id = $1
     GROUP BY dt.dataset_transform_id, dt.embedder_ids
 "#;
@@ -142,12 +154,7 @@ pub async fn create_dataset_transform(
         .await
         .context("Failed to create dataset transform")?;
 
-    // Step 2: Get the source dataset title
-    let source_dataset = datasets::get_dataset(pool, owner, source_dataset_id)
-        .await
-        .context("Failed to fetch source dataset for embedding")?;
-
-    // Step 3: Create N Embedded Datasets (one per embedder)
+    // Step 2: Create N Embedded Datasets (one per embedder)
     let mut embedded_datasets = Vec::new();
     for embedder_id in embedder_ids {
         let embedded_dataset = create_embedded_dataset_internal(
@@ -156,7 +163,7 @@ pub async fn create_dataset_transform(
             source_dataset_id,
             *embedder_id,
             owner,
-            &source_dataset.title,
+            &transform.title,
         )
         .await
         .context(format!(
@@ -197,7 +204,7 @@ pub async fn update_dataset_transform(
 
     // If embedder_ids was updated, sync embedded datasets
     let embedded_datasets = if embedder_ids.is_some() {
-        sync_embedded_datasets(&mut tx, pool, &transform).await?
+        sync_embedded_datasets(&mut tx, &transform).await?
     } else {
         // Just fetch existing embedded datasets
         get_embedded_datasets_for_transform_internal(&mut tx, dataset_transform_id).await?
@@ -244,12 +251,12 @@ async fn create_embedded_dataset_internal(
     source_dataset_id: i32,
     embedder_id: i32,
     owner: &str,
-    source_dataset_title: &str,
+    dataset_transform_title: &str,
 ) -> Result<EmbeddedDataset> {
     // Import the create function from embedded_datasets module
     use crate::storage::postgres::embedded_datasets::create_embedded_dataset_in_transaction;
 
-    let title = format!("{source_dataset_title}-embedded");
+    let title = format!("{dataset_transform_title}-{embedder_id}");
     let collection_name = EmbeddedDataset::generate_collection_name(0, owner); // Will be updated with actual ID
 
     create_embedded_dataset_in_transaction(
@@ -268,14 +275,8 @@ async fn create_embedded_dataset_internal(
 /// Adds new embedded datasets for new embedders, removes for embedders no longer in the list
 async fn sync_embedded_datasets(
     tx: &mut Transaction<'_, Postgres>,
-    pool: &Pool<Postgres>,
     transform: &DatasetTransform,
 ) -> Result<Vec<EmbeddedDataset>> {
-    // Get the source dataset title
-    let source_dataset = datasets::get_dataset(pool, &transform.owner, transform.source_dataset_id)
-        .await
-        .context("Failed to fetch source dataset for syncing embeddings")?;
-
     // Get existing embedded datasets
     let existing =
         get_embedded_datasets_for_transform_internal(&mut *tx, transform.dataset_transform_id)
@@ -306,7 +307,7 @@ async fn sync_embedded_datasets(
             transform.source_dataset_id,
             embedder_id,
             &transform.owner,
-            &source_dataset.title,
+            &transform.title,
         )
         .await?;
     }

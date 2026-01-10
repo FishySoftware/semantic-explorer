@@ -11,10 +11,11 @@ use uuid::Uuid;
 use semantic_explorer_core::models::{CollectionTransformJob, EmbedderConfig};
 
 use crate::storage::postgres::collection_transforms::{
-    get_active_collection_transforms, get_processed_files,
+    get_active_collection_transforms, get_collection_transform, get_processed_files
 };
 use crate::storage::postgres::{collections, embedders};
 use crate::storage::rustfs;
+use crate::transforms::collection::models::CollectionTransform;
 
 /// Initialize the background scanner for collection transforms
 pub(crate) fn initialize_scanner(
@@ -115,7 +116,7 @@ async fn process_collection_transform_scan(
     pool: &Pool<Postgres>,
     nats: &NatsClient,
     s3: &S3Client,
-    transform: &crate::transforms::collection::CollectionTransform,
+    transform: &CollectionTransform,
 ) -> Result<()> {
     info!(
         "Starting collection scan for collection transform {}",
@@ -257,7 +258,7 @@ pub async fn trigger_collection_transform_scan(
     );
 
     // Get the collection transform
-    let transform = crate::storage::postgres::collection_transforms::get_collection_transform(
+    let transform = get_collection_transform(
         pool,
         owner,
         collection_transform_id,

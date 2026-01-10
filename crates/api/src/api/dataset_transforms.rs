@@ -1,19 +1,17 @@
 use crate::auth::extract_username;
 use crate::errors::{bad_request, not_found};
 use crate::storage::postgres::{dataset_transforms, embedded_datasets};
-use crate::transforms::dataset::{
-    CreateDatasetTransform, DatasetTransform, DatasetTransformStats, UpdateDatasetTransform,
-    trigger_dataset_transform_scan,
-};
+use crate::transforms::dataset::models::{CreateDatasetTransform, DatasetTransform, DatasetTransformStats, UpdateDatasetTransform};
+
 
 use actix_web::web::{Data, Json, Path};
 use actix_web::{HttpResponse, Responder, delete, get, patch, post};
 use actix_web_openidconnect::openid_middleware::Authenticated;
 use async_nats::Client as NatsClient;
-use aws_sdk_s3::Client as S3Client;
 use qdrant_client::Qdrant;
 use sqlx::{Pool, Postgres};
-use tracing::error;
+use tracing::{error, info};
+use uuid::Uuid;
 
 #[utoipa::path(
     get,
@@ -92,12 +90,11 @@ pub async fn get_dataset_transform(
     ),
 )]
 #[post("/api/dataset-transforms")]
-#[tracing::instrument(name = "create_dataset_transform", skip(auth, postgres_pool, nats_client, s3_client, body), fields(title = %body.title, embedder_count = %body.embedder_ids.len()))]
+#[tracing::instrument(name = "create_dataset_transform", skip(auth, postgres_pool, nats_client, body), fields(title = %body.title, embedder_count = %body.embedder_ids.len()))]
 pub async fn create_dataset_transform(
     auth: Authenticated,
     postgres_pool: Data<Pool<Postgres>>,
     nats_client: Data<NatsClient>,
-    s3_client: Data<S3Client>,
     body: Json<CreateDatasetTransform>,
 ) -> impl Responder {
     let username = match extract_username(&auth) {
@@ -125,26 +122,42 @@ pub async fn create_dataset_transform(
     .await
     {
         Ok((transform, embedded_datasets)) => {
-            // Trigger the scan immediately upon creation
+            // Enqueue scan as a background job instead of processing synchronously
             let dataset_transform_id = transform.dataset_transform_id;
-            if let Err(e) = trigger_dataset_transform_scan(
-                &postgres_pool,
-                &nats_client,
-                &s3_client,
+            let scan_job = semantic_explorer_core::models::DatasetTransformScanJob {
+                job_id: Uuid::new_v4(),
                 dataset_transform_id,
-                &username,
-            )
-            .await
-            {
-                error!(
-                    "Failed to trigger dataset transform scan for newly created transform {}: {}",
-                    dataset_transform_id, e
-                );
+                owner: username.clone(),
+            };
+
+            if let Ok(payload) = serde_json::to_vec(&scan_job) {
+                // Use JetStream with message ID for deduplication
+                let msg_id = format!("scan-{}", dataset_transform_id);
+                let jetstream = async_nats::jetstream::new(nats_client.as_ref().clone());
+                if let Err(e) = jetstream
+                    .publish_with_headers(
+                        "workers.dataset-transform-scan".to_string(),
+                        {
+                            let mut headers = async_nats::HeaderMap::new();
+                            headers.insert("Nats-Msg-Id", msg_id.as_str());
+                            headers
+                        },
+                        payload.into(),
+                    )
+                    .await
+                {
+                    error!(
+                        "Failed to enqueue dataset transform scan for {}: {}",
+                        dataset_transform_id, e
+                    );
+                    // Log but don't fail the response
+                }
             }
+
             HttpResponse::Created().json(serde_json::json!({
                 "transform": transform,
                 "embedded_datasets": embedded_datasets,
-                "message": format!("Created dataset transform with {} embedded datasets", embedded_datasets.len())
+                "message": format!("Created dataset transform with {} embedded datasets. Batches are being generated in the background.", embedded_datasets.len())
             }))
         }
         Err(e) => {
@@ -362,7 +375,29 @@ pub async fn get_dataset_transform_stats(
             )
             .await
             {
-                Ok(stats) => HttpResponse::Ok().json(stats),
+                Ok(stats) => {
+                    info!(
+                        "Transform stats: batches={}, completed={}, chunks_embedded={}, chunks_to_process={}",
+                        stats.total_batches_processed,
+                        stats.successful_batches,
+                        stats.total_chunks_embedded,
+                        stats.total_chunks_to_process
+                    );
+                    let response = serde_json::json!({
+                        "dataset_transform_id": stats.dataset_transform_id,
+                        "embedder_count": stats.embedder_count,
+                        "total_batches_processed": stats.total_batches_processed,
+                        "successful_batches": stats.successful_batches,
+                        "failed_batches": stats.failed_batches,
+                        "total_chunks_embedded": stats.total_chunks_embedded,
+                        "total_chunks_processing": stats.total_chunks_processing,
+                        "total_chunks_failed": stats.total_chunks_failed,
+                        "total_chunks_to_process": stats.total_chunks_to_process,
+                        "status": stats.status(),
+                        "last_run_at": stats.last_run_at,
+                    });
+                    HttpResponse::Ok().json(response)
+                }
                 Err(e) => {
                     error!("Failed to get stats: {}", e);
                     HttpResponse::InternalServerError().json(serde_json::json!({

@@ -29,7 +29,6 @@
 	let activeUrl = $state('/dashboard');
 	let selectedCollectionId = $state<number | null>(null);
 	let selectedDatasetId = $state<number | null>(null);
-	let selectedVisualizationId = $state<number | null>(null);
 	let selectedEmbedderId = $state<number | null>(null);
 	let grabResourceType = $state<'collections' | 'datasets' | 'embedders' | 'llms' | null>(null);
 	let grabResourceId = $state<number | null>(null);
@@ -95,9 +94,9 @@
 		}
 
 		if (path === '/visualizations/detail' && params.id) {
-			selectedVisualizationId = parseInt(params.id, 10);
+			// Store visualization ID for future use
 		} else if (path !== '/visualizations/detail') {
-			selectedVisualizationId = null;
+			// Clear visualization state
 		}
 
 		if (path === '/embedders/detail' && params.id) {
@@ -151,15 +150,9 @@
 	}
 
 	function viewVisualization(transformId: number) {
-		selectedVisualizationId = transformId;
+		// Handle visualization navigation
 		activeUrl = '/visualizations/detail';
 		window.location.hash = `/visualizations/${transformId}/details`;
-	}
-
-	function backToVisualizations() {
-		selectedVisualizationId = null;
-		activeUrl = '/visualizations';
-		window.location.hash = '/visualizations';
 	}
 
 	function viewEmbedder(embedderId: number) {

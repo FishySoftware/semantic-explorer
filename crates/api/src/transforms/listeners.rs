@@ -37,6 +37,7 @@ pub(crate) async fn start_result_listeners(
     start_file_result_listener(context.clone(), nats_client.clone());
     start_vector_result_listener(context.clone(), nats_client.clone());
     start_visualization_result_listener(context.clone(), nats_client.clone());
+    start_dataset_transform_scan_listener(context.clone(), nats_client.clone());
 
     Ok(())
 }
@@ -310,8 +311,8 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
 #[tracing::instrument(name = "handle_vector_result", skip(ctx))]
 async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformContext) {
     info!(
-        "Handling vector batch result for: {}",
-        result.batch_file_key
+        "Handling vector batch result for: {} (status: {})",
+        result.batch_file_key, result.status
     );
 
     // Validate ownership by fetching the embedded dataset
@@ -329,50 +330,81 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
         return;
     }
 
-    if result.status != "success" {
-        error!(
-            "Vector batch failed for {}: {:?}",
-            result.batch_file_key, result.error
-        );
-        if let Err(e) = embedded_datasets::record_processed_batch(
-            &ctx.postgres_pool,
-            result.embedded_dataset_id,
-            &result.batch_file_key,
-            0,
-            "failed",
-            Some(&result.error.unwrap_or_default()),
-            result.processing_duration_ms,
-        )
-        .await
-        {
-            error!("Failed to record batch processing failure: {}", e);
+    match result.status.as_str() {
+        "processing" => {
+            // Record that processing has started
+            info!(
+                "Marking batch as processing: {} (ed_id={}, chunks=0)",
+                result.batch_file_key, result.embedded_dataset_id
+            );
+            if let Err(e) = embedded_datasets::record_processed_batch(
+                &ctx.postgres_pool,
+                result.embedded_dataset_id,
+                &result.batch_file_key,
+                0,
+                "processing",
+                None,
+                None,
+            )
+            .await
+            {
+                error!("Failed to record batch processing start: {}", e);
+            }
         }
-        return;
-    }
+        "failed" => {
+            error!(
+                "Vector batch failed for {}: {:?}",
+                result.batch_file_key, result.error
+            );
+            if let Err(e) = embedded_datasets::record_processed_batch(
+                &ctx.postgres_pool,
+                result.embedded_dataset_id,
+                &result.batch_file_key,
+                0,
+                "failed",
+                Some(&result.error.unwrap_or_default()),
+                result.processing_duration_ms,
+            )
+            .await
+            {
+                error!("Failed to record batch processing failure: {}", e);
+            }
+        }
+        "success" => {
+            info!(
+                "Marking batch as completed: {} with {} chunks (ed_id={}, duration_ms={})",
+                result.batch_file_key,
+                result.chunk_count,
+                result.embedded_dataset_id,
+                result.processing_duration_ms.unwrap_or(0)
+            );
+            if let Err(e) = embedded_datasets::record_processed_batch(
+                &ctx.postgres_pool,
+                result.embedded_dataset_id,
+                &result.batch_file_key,
+                result.chunk_count as i32,
+                "completed",
+                None,
+                result.processing_duration_ms,
+            )
+            .await
+            {
+                error!("Failed to record batch processing: {}", e);
+                return;
+            }
 
-    info!(
-        "Marking batch as processed: {} with {} chunks",
-        result.batch_file_key, result.chunk_count
-    );
-    if let Err(e) = embedded_datasets::record_processed_batch(
-        &ctx.postgres_pool,
-        result.embedded_dataset_id,
-        &result.batch_file_key,
-        result.chunk_count as i32,
-        "completed",
-        None,
-        result.processing_duration_ms,
-    )
-    .await
-    {
-        error!("Failed to record batch processing: {}", e);
-        return;
+            info!(
+                "Successfully processed vector batch {} with {} chunks",
+                result.batch_file_key, result.chunk_count
+            );
+        }
+        _ => {
+            error!(
+                "Unknown status '{}' for batch {}",
+                result.status, result.batch_file_key
+            );
+        }
     }
-
-    info!(
-        "Successfully processed vector batch {} with {} chunks",
-        result.batch_file_key, result.chunk_count
-    );
 }
 
 #[tracing::instrument(name = "handle_visualization_result", skip(ctx))]
@@ -442,4 +474,63 @@ async fn handle_visualization_result(result: VisualizationTransformResult, ctx: 
             error_message.unwrap_or_else(|| "Unknown error".to_string())
         );
     }
+}
+
+fn start_dataset_transform_scan_listener(context: TransformContext, nats_client: NatsClient) {
+    actix_web::rt::spawn(async move {
+        let mut subscriber = match nats_client
+            .subscribe("workers.dataset-transform-scan".to_string())
+            .await
+        {
+            Ok(sub) => sub,
+            Err(e) => {
+                error!("Failed to subscribe to dataset transform scan jobs: {}", e);
+                return;
+            }
+        };
+
+        info!("Started dataset transform scan listener");
+
+        while let Some(message) = subscriber.next().await {
+            let payload = message.payload.to_vec();
+            let scan_job: Result<semantic_explorer_core::models::DatasetTransformScanJob, _> =
+                serde_json::from_slice(&payload);
+
+            match scan_job {
+                Ok(job) => {
+                    info!(
+                        "Received dataset transform scan job {} for transform {}",
+                        job.job_id, job.dataset_transform_id
+                    );
+
+                    // Spawn the actual processing in a separate task to avoid blocking the listener
+                    let postgres_pool = context.postgres_pool.clone();
+                    let s3_client = context.s3_client.clone();
+                    let nats = nats_client.clone();
+                    let owner = job.owner.clone();
+                    let dataset_transform_id = job.dataset_transform_id;
+
+                    actix_web::rt::spawn(async move {
+                        if let Err(e) = crate::transforms::dataset::scanner::trigger_dataset_transform_scan(
+                            &postgres_pool,
+                            &nats,
+                            &s3_client,
+                            dataset_transform_id,
+                            &owner,
+                        )
+                        .await
+                        {
+                            error!(
+                                "Failed to process dataset transform scan for {}: {}",
+                                dataset_transform_id, e
+                            );
+                        }
+                    });
+                }
+                Err(e) => {
+                    error!("Failed to deserialize dataset transform scan job: {}", e);
+                }
+            }
+        }
+    });
 }

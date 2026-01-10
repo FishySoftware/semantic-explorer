@@ -11,6 +11,7 @@ use uuid::Uuid;
 use semantic_explorer_core::models::{DatasetTransformJob, EmbedderConfig, VectorDatabaseConfig};
 use semantic_explorer_core::storage::{DocumentUpload, ensure_bucket_exists, upload_document};
 
+use crate::embedded_datasets::EmbeddedDataset;
 use crate::storage::postgres::dataset_transforms::{
     get_active_dataset_transforms, get_dataset_transform,
 };
@@ -18,6 +19,7 @@ use crate::storage::postgres::datasets;
 use crate::storage::postgres::embedded_datasets;
 use crate::storage::postgres::embedders;
 use crate::storage::rustfs;
+use crate::transforms::dataset::models::DatasetTransform;
 
 /// Initialize the background scanner for dataset transforms
 pub(crate) fn initialize_scanner(
@@ -67,7 +69,7 @@ async fn process_dataset_transform_scan(
     pool: &Pool<Postgres>,
     nats: &NatsClient,
     s3: &S3Client,
-    transform: &crate::transforms::dataset::DatasetTransform,
+    transform: &DatasetTransform,
 ) -> Result<()> {
     info!(
         "Starting dataset transform scan for {} with {} embedders",
@@ -274,8 +276,8 @@ async fn create_batches_from_dataset_items(
     pool: &Pool<Postgres>,
     s3: &S3Client,
     nats: &NatsClient,
-    transform: &crate::transforms::dataset::DatasetTransform,
-    embedded_dataset: &crate::embedded_datasets::EmbeddedDataset,
+    transform: &DatasetTransform,
+    embedded_dataset: &EmbeddedDataset,
     embedder_config: &EmbedderConfig,
     vector_db_config: &VectorDatabaseConfig,
     bucket: &str,

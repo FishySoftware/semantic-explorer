@@ -579,7 +579,13 @@ pub async fn get_visualization_run(
     let (transform_id, run_id) = path.into_inner();
 
     // Get run with owner check - ensures the run belongs to a transform owned by the user
-    match visualization_transforms::get_visualization_run_with_owner(&postgres_pool, run_id, &username).await {
+    match visualization_transforms::get_visualization_run_with_owner(
+        &postgres_pool,
+        run_id,
+        &username,
+    )
+    .await
+    {
         Ok(run) => {
             // Verify the run belongs to the specified transform
             if run.visualization_transform_id != transform_id {
@@ -588,7 +594,10 @@ pub async fn get_visualization_run(
             HttpResponse::Ok().json(run)
         }
         Err(e) => {
-            error!("Failed to fetch visualization run for user {}: {}", username, e);
+            error!(
+                "Failed to fetch visualization run for user {}: {}",
+                username, e
+            );
             not_found("Visualization run not found".to_string())
         }
     }
@@ -685,7 +694,13 @@ pub async fn download_visualization_html(
     let (transform_id, run_id) = path.into_inner();
 
     // Get run with owner check - this verifies both the run exists and belongs to the user's transform
-    let run = match visualization_transforms::get_visualization_run_with_owner(&postgres_pool, run_id, &username).await {
+    let run = match visualization_transforms::get_visualization_run_with_owner(
+        &postgres_pool,
+        run_id,
+        &username,
+    )
+    .await
+    {
         Ok(run) => {
             // Verify the run belongs to the specified transform
             if run.visualization_transform_id != transform_id {
@@ -694,7 +709,10 @@ pub async fn download_visualization_html(
             run
         }
         Err(e) => {
-            error!("Failed to fetch visualization run for user {}: {}", username, e);
+            error!(
+                "Failed to fetch visualization run for user {}: {}",
+                username, e
+            );
             return not_found("Visualization run not found".to_string());
         }
     };

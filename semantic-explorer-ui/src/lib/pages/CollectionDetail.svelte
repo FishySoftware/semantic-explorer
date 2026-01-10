@@ -660,11 +660,7 @@
 							</div>
 
 							{#if uploadProgress}
-								<UploadProgressPanel
-									{uploadProgress}
-									{fileStatuses}
-									isUploading={uploading}
-								/>
+								<UploadProgressPanel {uploadProgress} {fileStatuses} isUploading={uploading} />
 							{/if}
 						</div>
 

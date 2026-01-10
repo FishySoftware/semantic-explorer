@@ -1,10 +1,10 @@
 use crate::auth::extract_username;
 use crate::errors::{bad_request, not_found};
 use crate::storage::postgres::collection_transforms;
-use crate::transforms::collection::{
-    CollectionTransform, CollectionTransformStats, CreateCollectionTransform, ProcessedFile,
-    UpdateCollectionTransform, trigger_collection_transform_scan,
+use crate::transforms::collection::models::{
+    CollectionTransform, CollectionTransformStats, CreateCollectionTransform, ProcessedFile, UpdateCollectionTransform
 };
+use crate::transforms::collection::scanner::trigger_collection_transform_scan;
 
 use actix_web::web::{Data, Json, Path};
 use actix_web::{HttpResponse, Responder, delete, get, patch, post};

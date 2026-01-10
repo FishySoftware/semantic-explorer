@@ -65,13 +65,13 @@ async fn main() -> Result<()> {
     .await?;
 
     // Start scanners for each transform type
-    let collection_scanner_handle = transforms::collection::initialize_scanner(
+    let collection_scanner_handle = transforms::collection::scanner::initialize_scanner(
         postgres_pool.clone(),
         nats_client.clone(),
         s3_client.clone(),
     );
 
-    let dataset_scanner_handle = transforms::dataset::initialize_scanner(
+    let dataset_scanner_handle = transforms::dataset::scanner::initialize_scanner(
         postgres_pool.clone(),
         nats_client.clone(),
         s3_client.clone(),

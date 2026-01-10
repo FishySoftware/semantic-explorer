@@ -47,6 +47,13 @@ pub struct DatasetTransformJob {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DatasetTransformScanJob {
+    pub job_id: Uuid,
+    pub dataset_transform_id: i32,
+    pub owner: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatasetTransformResult {
     pub job_id: Uuid,
     pub dataset_transform_id: i32,
@@ -116,7 +123,7 @@ pub struct VisualizationConfig {
     pub min_samples: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub topic_naming_llm_id: Option<i32>, // LLM database ID when mode = "llm"
-    
+
     // Datamapplot create_interactive_plot parameters
     #[serde(default = "default_inline_data")]
     pub inline_data: bool,
@@ -150,7 +157,7 @@ pub struct VisualizationConfig {
     pub cvd_safer: bool,
     #[serde(default = "default_enable_topic_tree")]
     pub enable_topic_tree: bool,
-    
+
     // Datamapplot render_html parameters
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -213,45 +220,123 @@ pub struct VisualizationConfig {
 }
 
 // Default value functions for serde
-fn default_inline_data() -> bool { true }
-fn default_noise_label() -> String { "Unlabelled".to_string() }
-fn default_noise_color() -> String { "#999999".to_string() }
-fn default_color_label_text() -> bool { true }
-fn default_label_wrap_width() -> i32 { 16 }
-fn default_width() -> String { "100%".to_string() }
-fn default_height() -> i32 { 800 }
-fn default_darkmode() -> bool { false }
-fn default_palette_hue_shift() -> f32 { 0.0 }
-fn default_palette_hue_radius_dependence() -> f32 { 1.0 }
-fn default_palette_theta_range() -> f32 { 0.19634954 } // π/16
-fn default_use_medoids() -> bool { false }
-fn default_cluster_boundary_polygons() -> bool { false }
-fn default_polygon_alpha() -> f32 { 0.1 }
-fn default_cvd_safer() -> bool { false }
-fn default_enable_topic_tree() -> bool { false }
-fn default_title_font_size() -> i32 { 36 }
-fn default_sub_title_font_size() -> i32 { 18 }
-fn default_text_collision_size_scale() -> f32 { 3.0 }
-fn default_text_min_pixel_size() -> f32 { 12.0 }
-fn default_text_max_pixel_size() -> f32 { 36.0 }
-fn default_font_family() -> String { "Roboto".to_string() }
-fn default_font_weight() -> i32 { 600 }
-fn default_tooltip_font_family() -> String { "Roboto".to_string() }
-fn default_tooltip_font_weight() -> i32 { 400 }
-fn default_logo_width() -> i32 { 256 }
-fn default_line_spacing() -> f32 { 0.95 }
-fn default_min_fontsize() -> f32 { 12.0 }
-fn default_max_fontsize() -> f32 { 24.0 }
-fn default_text_outline_width() -> f32 { 8.0 }
-fn default_text_outline_color() -> String { "#eeeeeedd".to_string() }
-fn default_point_hover_color() -> String { "#aa0000bb".to_string() }
-fn default_point_radius_min_pixels() -> f32 { 0.01 }
-fn default_point_radius_max_pixels() -> f32 { 24.0 }
-fn default_point_line_width_min_pixels() -> f32 { 0.001 }
-fn default_point_line_width_max_pixels() -> f32 { 3.0 }
-fn default_point_line_width() -> f32 { 0.001 }
-fn default_cluster_boundary_line_width() -> f32 { 1.0 }
-fn default_initial_zoom_fraction() -> f32 { 1.0 }
+fn default_inline_data() -> bool {
+    true
+}
+fn default_noise_label() -> String {
+    "Unlabelled".to_string()
+}
+fn default_noise_color() -> String {
+    "#999999".to_string()
+}
+fn default_color_label_text() -> bool {
+    true
+}
+fn default_label_wrap_width() -> i32 {
+    16
+}
+fn default_width() -> String {
+    "100%".to_string()
+}
+fn default_height() -> i32 {
+    800
+}
+fn default_darkmode() -> bool {
+    false
+}
+fn default_palette_hue_shift() -> f32 {
+    0.0
+}
+fn default_palette_hue_radius_dependence() -> f32 {
+    1.0
+}
+fn default_palette_theta_range() -> f32 {
+    0.19634954
+} // π/16
+fn default_use_medoids() -> bool {
+    false
+}
+fn default_cluster_boundary_polygons() -> bool {
+    false
+}
+fn default_polygon_alpha() -> f32 {
+    0.1
+}
+fn default_cvd_safer() -> bool {
+    false
+}
+fn default_enable_topic_tree() -> bool {
+    false
+}
+fn default_title_font_size() -> i32 {
+    36
+}
+fn default_sub_title_font_size() -> i32 {
+    18
+}
+fn default_text_collision_size_scale() -> f32 {
+    3.0
+}
+fn default_text_min_pixel_size() -> f32 {
+    12.0
+}
+fn default_text_max_pixel_size() -> f32 {
+    36.0
+}
+fn default_font_family() -> String {
+    "Roboto".to_string()
+}
+fn default_font_weight() -> i32 {
+    600
+}
+fn default_tooltip_font_family() -> String {
+    "Roboto".to_string()
+}
+fn default_tooltip_font_weight() -> i32 {
+    400
+}
+fn default_logo_width() -> i32 {
+    256
+}
+fn default_line_spacing() -> f32 {
+    0.95
+}
+fn default_min_fontsize() -> f32 {
+    12.0
+}
+fn default_max_fontsize() -> f32 {
+    24.0
+}
+fn default_text_outline_width() -> f32 {
+    8.0
+}
+fn default_text_outline_color() -> String {
+    "#eeeeeedd".to_string()
+}
+fn default_point_hover_color() -> String {
+    "#aa0000bb".to_string()
+}
+fn default_point_radius_min_pixels() -> f32 {
+    0.01
+}
+fn default_point_radius_max_pixels() -> f32 {
+    24.0
+}
+fn default_point_line_width_min_pixels() -> f32 {
+    0.001
+}
+fn default_point_line_width_max_pixels() -> f32 {
+    3.0
+}
+fn default_point_line_width() -> f32 {
+    0.001
+}
+fn default_cluster_boundary_line_width() -> f32 {
+    1.0
+}
+fn default_initial_zoom_fraction() -> f32 {
+    1.0
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VisualizationTransformResult {

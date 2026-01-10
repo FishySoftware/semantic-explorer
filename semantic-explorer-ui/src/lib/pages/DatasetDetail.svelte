@@ -3,6 +3,7 @@
 	import ApiExamples from '../ApiExamples.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import CreateDatasetTransformModal from '../components/CreateDatasetTransformModal.svelte';
+	import DatasetTransformProgressPanel from '../components/DatasetTransformProgressPanel.svelte';
 	import TabPanel from '../components/TabPanel.svelte';
 	import TransformsList from '../components/TransformsList.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
@@ -118,6 +119,16 @@
 		{ id: 'transforms', label: 'Transforms', icon: '🔄' },
 		{ id: 'embeddings', label: 'Embeddings', icon: '🧬' },
 	];
+
+	// Dataset Transform Progress state
+	let activeTransformProgress = $state<{
+		id: number;
+		title: string;
+		startedAt: string;
+		embedders: number[];
+	} | null>(null);
+	let transformProgressStats = $state<Record<string, any> | null>(null);
+	let transformProgressPollInterval: ReturnType<typeof setInterval> | null = null;
 
 	// Initialize search query from hash URL parameter early
 	function getInitialSearchQuery(): string {
@@ -300,6 +311,86 @@
 		}
 	}
 
+	async function handleTransformCreated(transformId: number, transformTitle: string) {
+		// Set up progress tracking for the newly created transform
+		activeTransformProgress = {
+			id: transformId,
+			title: transformTitle,
+			startedAt: new Date().toISOString(),
+			embedders: [],
+		};
+
+		// Start polling for progress
+		startTransformProgressPolling();
+
+		// Refresh transforms list after a short delay to show the new one
+		setTimeout(() => {
+			fetchDatasetTransforms();
+		}, 1000);
+	}
+
+	async function fetchTransformProgressStats() {
+		if (!activeTransformProgress) return;
+
+		try {
+			const response = await fetch(`/api/dataset-transforms/${activeTransformProgress.id}/stats`);
+			if (!response.ok) {
+				const errorText = await response.text();
+				console.error(
+					`Failed to fetch stats: ${response.status} ${response.statusText}`,
+					errorText
+				);
+				return;
+			}
+
+			const stats = await response.json();
+			transformProgressStats = stats;
+
+			console.debug('Transform stats:', {
+				batches: stats.total_batches_processed,
+				embedded: stats.total_chunks_embedded,
+				total: stats.total_chunks_to_process,
+				status: stats.status
+			});
+
+			// Check if the transform is complete
+			if (stats.status === 'completed' || stats.status === 'failed') {
+				console.info(`Transform ${stats.status}, stopping polling`);
+				stopTransformProgressPolling();
+				// Keep showing the progress panel for 3 more seconds, then auto-dismiss
+				setTimeout(() => {
+					activeTransformProgress = null;
+					transformProgressStats = null;
+				}, 3000);
+			}
+		} catch (e) {
+			console.error('Failed to fetch transform progress:', e);
+			// Stop polling on persistent errors to avoid spam
+			if (e instanceof TypeError) {
+				console.error('TypeError in fetch, stopping polling');
+				stopTransformProgressPolling();
+			}
+		}
+	}
+
+	function startTransformProgressPolling() {
+		if (transformProgressPollInterval) {
+			clearInterval(transformProgressPollInterval);
+		}
+
+		// Poll every 1 second for updates
+		transformProgressPollInterval = setInterval(() => {
+			fetchTransformProgressStats();
+		}, 1000);
+	}
+
+	function stopTransformProgressPolling() {
+		if (transformProgressPollInterval) {
+			clearInterval(transformProgressPollInterval);
+			transformProgressPollInterval = null;
+		}
+	}
+
 	async function fetchItems() {
 		try {
 			itemsLoading = true;
@@ -472,6 +563,11 @@
 		fetchDataset();
 		fetchDatasetTransforms();
 		// fetchItems will be called by the $effect watching currentPage
+
+		return () => {
+			// Cleanup polling on unmount
+			stopTransformProgressPolling();
+		};
 	});
 </script>
 
@@ -554,6 +650,19 @@
 					</div>
 				</div>
 			</div>
+
+			{#if activeTransformProgress && transformProgressStats}
+				<DatasetTransformProgressPanel
+					datasetTransformId={activeTransformProgress.id}
+					title={activeTransformProgress.title}
+					sourceDatasetTitle={dataset?.title || 'Unknown Dataset'}
+					overallStatus={transformProgressStats.status || 'processing'}
+					totalItemsProcessed={transformProgressStats.total_chunks_embedded || 0}
+					totalItems={transformProgressStats.total_chunks_to_process || 0}
+					startedAt={activeTransformProgress.startedAt}
+					embedderProgresses={transformProgressStats.embedders || []}
+				/>
+			{/if}
 
 			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-4">
 				<TabPanel {tabs} activeTabId={activeTab} onChange={(tabId: string) => (activeTab = tabId)}>
@@ -1141,9 +1250,8 @@
 <CreateDatasetTransformModal
 	bind:open={datasetTransformModalOpen}
 	{datasetId}
-	onSuccess={() => {
+	onSuccess={(transformId: number, transformTitle: string) => {
 		datasetTransformModalOpen = false;
-		toastStore.success('Transform created successfully');
-		fetchDatasetTransforms();
+		handleTransformCreated(transformId, transformTitle);
 	}}
 />

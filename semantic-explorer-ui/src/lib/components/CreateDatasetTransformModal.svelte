@@ -6,7 +6,7 @@
 	interface Props {
 		open?: boolean;
 		datasetId?: number | null;
-		onSuccess?: () => void;
+		onSuccess?: (_transformId: number, _transformTitle: string) => void;
 	}
 
 	interface Dataset {
@@ -128,8 +128,17 @@
 				throw new Error(`Failed to create transform: ${response.statusText}`);
 			}
 
+			const result = await response.json();
+			const newTransformId = result.transform?.dataset_transform_id;
+			const newTransformTitle = transformTitle.trim();
+
+			// Close modal immediately
 			resetForm();
-			onSuccess?.();
+
+			// Notify parent with the new transform ID and title
+			onSuccess?.(newTransformId, newTransformTitle);
+
+			toastStore.success('Dataset transform created! Embedding generation started.');
 		} catch (e) {
 			const message = formatError(e, 'Failed to create transform');
 			error = message;

@@ -93,11 +93,12 @@ pub async fn get_visualization_run_with_owner(
     run_id: i32,
     owner: &str,
 ) -> Result<VisualizationTransformRun> {
-    let run = sqlx::query_as::<_, VisualizationTransformRun>(GET_VISUALIZATION_RUN_WITH_OWNER_QUERY)
-        .bind(run_id)
-        .bind(owner)
-        .fetch_one(pool)
-        .await?;
+    let run =
+        sqlx::query_as::<_, VisualizationTransformRun>(GET_VISUALIZATION_RUN_WITH_OWNER_QUERY)
+            .bind(run_id)
+            .bind(owner)
+            .fetch_one(pool)
+            .await?;
     Ok(run)
 }
 

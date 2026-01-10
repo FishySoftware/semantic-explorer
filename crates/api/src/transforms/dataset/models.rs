@@ -60,9 +60,32 @@ pub struct DatasetTransformStats {
     pub successful_batches: i64,
     pub failed_batches: i64,
     pub total_chunks_embedded: i64,
+    pub total_chunks_processing: i64,
     pub total_chunks_failed: i64,
+    pub total_chunks_to_process: i64,
     #[schema(value_type = Option<String>, format = DateTime)]
     pub last_run_at: Option<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>>,
+}
+
+impl DatasetTransformStats {
+    /// Calculate overall status based on processing progress
+    pub fn status(&self) -> &'static str {
+        if self.total_chunks_to_process == 0 {
+            return "processing"; // No items to process yet
+        }
+
+        // Only count completed chunks for progress, not processing
+        // Processing will move to completed when batches finish
+        if self.total_chunks_embedded >= self.total_chunks_to_process {
+            if self.total_chunks_failed > 0 && self.total_chunks_embedded == 0 {
+                return "failed";
+            }
+            return "completed";
+        }
+
+        // Still processing
+        "processing"
+    }
 }
 
 /// Processed batch record for dataset transforms

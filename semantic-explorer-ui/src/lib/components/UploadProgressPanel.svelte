@@ -24,9 +24,7 @@
 		uploadProgress ? Math.round((uploadProgress.completed / uploadProgress.total) * 100) : 0
 	);
 
-	const completedFiles = $derived(
-		fileStatuses.filter((f) => f.status === 'completed').length
-	);
+	const completedFiles = $derived(fileStatuses.filter((f) => f.status === 'completed').length);
 	const failedFiles = $derived(fileStatuses.filter((f) => f.status === 'failed').length);
 	const uploadingFiles = $derived(fileStatuses.filter((f) => f.status === 'uploading').length);
 	const pendingFiles = $derived(fileStatuses.filter((f) => f.status === 'pending').length);
@@ -41,8 +39,20 @@
 			<div class="shrink-0">
 				{#if isUploading}
 					<div class="relative inline-flex">
-						<svg class="animate-spin h-6 w-6 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-							<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+						<svg
+							class="animate-spin h-6 w-6 text-blue-600"
+							xmlns="http://www.w3.org/2000/svg"
+							fill="none"
+							viewBox="0 0 24 24"
+						>
+							<circle
+								class="opacity-25"
+								cx="12"
+								cy="12"
+								r="10"
+								stroke="currentColor"
+								stroke-width="4"
+							></circle>
 							<path
 								class="opacity-75"
 								fill="currentColor"
@@ -52,7 +62,8 @@
 					</div>
 				{:else}
 					<svg class="h-6 w-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"
+						></path>
 					</svg>
 				{/if}
 			</div>
@@ -101,7 +112,11 @@
 			<div class="divide-y divide-blue-100 dark:divide-blue-900">
 				{#each fileStatuses as file (file.name)}
 					<div
-						class="px-3 py-2 flex items-center gap-3 text-xs {file.status === 'completed' ? 'bg-green-50 dark:bg-green-900/10' : file.status === 'failed' ? 'bg-red-50 dark:bg-red-900/10' : ''}"
+						class="px-3 py-2 flex items-center gap-3 text-xs {file.status === 'completed'
+							? 'bg-green-50 dark:bg-green-900/10'
+							: file.status === 'failed'
+								? 'bg-red-50 dark:bg-red-900/10'
+								: ''}"
 					>
 						<!-- Status icon -->
 						<div class="shrink-0">
@@ -140,7 +155,8 @@
 									stroke="currentColor"
 									viewBox="0 0 24 24"
 								>
-									<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"></circle>
+									<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"
+									></circle>
 									<path stroke-linecap="round" d="M12 2a10 10 0 010 20"></path>
 								</svg>
 							{:else}
@@ -150,7 +166,8 @@
 									stroke="currentColor"
 									viewBox="0 0 24 24"
 								>
-									<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"></circle>
+									<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"
+									></circle>
 								</svg>
 							{/if}
 						</div>
@@ -185,19 +202,27 @@
 
 		<!-- Status summary -->
 		<div class="grid grid-cols-4 gap-2">
-			<div class="text-center p-2 bg-white dark:bg-gray-800/50 rounded border border-gray-200 dark:border-gray-700">
+			<div
+				class="text-center p-2 bg-white dark:bg-gray-800/50 rounded border border-gray-200 dark:border-gray-700"
+			>
 				<p class="text-xs text-gray-500 dark:text-gray-400">Completed</p>
 				<p class="text-lg font-semibold text-green-600 dark:text-green-400">{completedFiles}</p>
 			</div>
-			<div class="text-center p-2 bg-white dark:bg-gray-800/50 rounded border border-gray-200 dark:border-gray-700">
+			<div
+				class="text-center p-2 bg-white dark:bg-gray-800/50 rounded border border-gray-200 dark:border-gray-700"
+			>
 				<p class="text-xs text-gray-500 dark:text-gray-400">Uploading</p>
 				<p class="text-lg font-semibold text-blue-600 dark:text-blue-400">{uploadingFiles}</p>
 			</div>
-			<div class="text-center p-2 bg-white dark:bg-gray-800/50 rounded border border-gray-200 dark:border-gray-700">
+			<div
+				class="text-center p-2 bg-white dark:bg-gray-800/50 rounded border border-gray-200 dark:border-gray-700"
+			>
 				<p class="text-xs text-gray-500 dark:text-gray-400">Pending</p>
 				<p class="text-lg font-semibold text-gray-600 dark:text-gray-400">{pendingFiles}</p>
 			</div>
-			<div class="text-center p-2 bg-white dark:bg-gray-800/50 rounded border border-gray-200 dark:border-gray-700">
+			<div
+				class="text-center p-2 bg-white dark:bg-gray-800/50 rounded border border-gray-200 dark:border-gray-700"
+			>
 				<p class="text-xs text-gray-500 dark:text-gray-400">Failed</p>
 				<p class="text-lg font-semibold text-red-600 dark:text-red-400">{failedFiles}</p>
 			</div>
