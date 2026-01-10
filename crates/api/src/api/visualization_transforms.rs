@@ -1,17 +1,31 @@
 use crate::auth::extract_username;
 use crate::errors::{bad_request, not_found};
-use crate::storage::postgres::visualization_transforms;
-use crate::transforms::visualization::{
+use crate::storage::postgres::{embedded_datasets, llms, visualization_transforms};
+use crate::transforms::visualization::models::{
     CreateVisualizationTransform, UpdateVisualizationTransform, VisualizationTransform,
-    VisualizationTransformStats, trigger_visualization_transform_job,
+    VisualizationTransformRun, VisualizationTransformStats,
 };
+use crate::transforms::visualization::scanner::trigger_visualization_transform_scan;
 
-use actix_web::web::{Data, Json, Path};
+use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, Responder, delete, get, patch, post};
 use actix_web_openidconnect::openid_middleware::Authenticated;
 use async_nats::Client as NatsClient;
+use serde::Deserialize;
 use sqlx::{Pool, Postgres};
-use tracing::error;
+use tracing::{error, info};
+
+#[derive(Deserialize, Debug)]
+pub struct PaginationParams {
+    #[serde(default = "default_limit")]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
+}
+
+fn default_limit() -> i64 {
+    50
+}
 
 #[utoipa::path(
     get,
@@ -67,17 +81,21 @@ pub async fn get_visualization_transform(
         Ok(username) => username,
         Err(e) => return e,
     };
-    match visualization_transforms::get_visualization_transform(
-        &postgres_pool,
-        &username,
-        path.into_inner(),
-    )
-    .await
-    {
-        Ok(transform) => HttpResponse::Ok().json(transform),
+
+    let id = path.into_inner();
+    match visualization_transforms::get_visualization_transform_by_id(&postgres_pool, id).await {
+        Ok(Some(transform)) => {
+            if transform.owner != username {
+                return not_found("Visualization transform not found".to_string());
+            }
+            HttpResponse::Ok().json(transform)
+        }
+        Ok(None) => not_found("Visualization transform not found".to_string()),
         Err(e) => {
-            error!("Visualization transform not found: {}", e);
-            not_found(format!("Visualization transform not found: {}", e))
+            error!("Failed to fetch visualization transform: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to fetch visualization transform: {}", e)
+            }))
         }
     }
 }
@@ -88,7 +106,7 @@ pub async fn get_visualization_transform(
     tag = "Visualization Transforms",
     request_body = CreateVisualizationTransform,
     responses(
-        (status = 201, description = "Visualization transform created", body = VisualizationTransform),
+        (status = 201, description = "Visualization transform created and triggered", body = VisualizationTransform),
         (status = 400, description = "Invalid request"),
         (status = 401, description = "Unauthorized"),
     ),
@@ -106,7 +124,63 @@ pub async fn create_visualization_transform(
         Err(e) => return e,
     };
 
-    let visualization_config = serde_json::to_value(&body.visualization_config).unwrap();
+    // Verify embedded dataset exists and belongs to user
+    match embedded_datasets::get_embedded_dataset(
+        &postgres_pool,
+        &username,
+        body.embedded_dataset_id,
+    )
+    .await
+    {
+        Ok(dataset) => {
+            if dataset.owner != username {
+                return bad_request("Embedded dataset not found or access denied");
+            }
+        }
+        Err(e) => {
+            error!("Failed to verify embedded dataset: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to verify embedded dataset"
+            }));
+        }
+    }
+
+    // If LLM ID provided, verify it exists and belongs to user
+    if let Some(llm_id) = body.llm_id {
+        match llms::get_llm(&postgres_pool, &username, llm_id).await {
+            Ok(llm) => {
+                if llm.owner != username {
+                    return bad_request("LLM not found or access denied");
+                }
+            }
+            Err(e) => {
+                error!("Failed to verify LLM: {}", e);
+                return HttpResponse::InternalServerError().json(serde_json::json!({
+                    "error": "Failed to verify LLM"
+                }));
+            }
+        }
+    }
+
+    // Build visualization config
+    let visualization_config = serde_json::json!({
+        "n_neighbors": body.n_neighbors,
+        "n_components": body.n_components,
+        "min_dist": body.min_dist,
+        "metric": body.metric,
+        "min_cluster_size": body.min_cluster_size,
+        "min_samples": body.min_samples,
+        "topic_naming_llm_id": body.llm_id,
+        // Datamapplot visualization parameters
+        "font_size": body.font_size,
+        "font_family": body.font_family,
+        "darkmode": body.darkmode,
+        "noise_color": body.noise_color,
+        "label_wrap_width": body.label_wrap_width,
+        "use_medoids": body.use_medoids,
+        "cluster_boundary_polygons": body.cluster_boundary_polygons,
+        "polygon_alpha": body.polygon_alpha,
+    });
 
     match visualization_transforms::create_visualization_transform(
         &postgres_pool,
@@ -118,22 +192,28 @@ pub async fn create_visualization_transform(
     .await
     {
         Ok(transform) => {
-            // Trigger the job immediately upon creation
-            let visualization_transform_id = transform.visualization_transform_id;
-            if let Err(e) = trigger_visualization_transform_job(
+            // Auto-trigger scan on creation
+            let transform_id = transform.visualization_transform_id;
+            info!(
+                "Created visualization transform {}, triggering initial scan",
+                transform_id
+            );
+
+            if let Err(e) = trigger_visualization_transform_scan(
                 &postgres_pool,
                 &nats_client,
-                visualization_transform_id,
+                transform_id,
                 &username,
             )
             .await
             {
                 error!(
-                    "Failed to trigger visualization job for newly created transform {}: {}",
-                    visualization_transform_id, e
+                    "Failed to trigger visualization transform scan for newly created transform {}: {}",
+                    transform_id, e
                 );
                 // Don't fail the creation, just log the error
             }
+
             HttpResponse::Created().json(transform)
         }
         Err(e) => {
@@ -170,25 +250,39 @@ pub async fn update_visualization_transform(
         Err(e) => return e,
     };
 
-    let visualization_config = body
-        .visualization_config
-        .as_ref()
-        .map(|config| serde_json::to_value(config).unwrap());
+    let id = path.into_inner();
+
+    // Verify ownership
+    match visualization_transforms::get_visualization_transform_by_id(&postgres_pool, id).await {
+        Ok(Some(transform)) => {
+            if transform.owner != username {
+                return not_found("Visualization transform not found".to_string());
+            }
+        }
+        Ok(None) => return not_found("Visualization transform not found".to_string()),
+        Err(e) => {
+            error!("Failed to fetch visualization transform: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to fetch visualization transform: {}", e)
+            }));
+        }
+    }
 
     match visualization_transforms::update_visualization_transform(
         &postgres_pool,
-        &username,
-        path.into_inner(),
+        id,
         body.title.as_deref(),
         body.is_enabled,
-        visualization_config.as_ref(),
+        body.visualization_config.as_ref(),
     )
     .await
     {
         Ok(transform) => HttpResponse::Ok().json(transform),
         Err(e) => {
             error!("Failed to update visualization transform: {}", e);
-            not_found(format!("Failed to update visualization transform: {}", e))
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to update visualization transform: {}", e)
+            }))
         }
     }
 }
@@ -218,17 +312,31 @@ pub async fn delete_visualization_transform(
         Err(e) => return e,
     };
 
-    match visualization_transforms::delete_visualization_transform(
-        &postgres_pool,
-        &username,
-        path.into_inner(),
-    )
-    .await
-    {
-        Ok(_) => HttpResponse::NoContent().finish(),
+    let id = path.into_inner();
+
+    // Verify ownership
+    match visualization_transforms::get_visualization_transform_by_id(&postgres_pool, id).await {
+        Ok(Some(transform)) => {
+            if transform.owner != username {
+                return not_found("Visualization transform not found".to_string());
+            }
+        }
+        Ok(None) => return not_found("Visualization transform not found".to_string()),
+        Err(e) => {
+            error!("Failed to fetch visualization transform: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to fetch visualization transform: {}", e)
+            }));
+        }
+    }
+
+    match visualization_transforms::delete_visualization_transform(&postgres_pool, id).await {
+        Ok(()) => HttpResponse::NoContent().finish(),
         Err(e) => {
             error!("Failed to delete visualization transform: {}", e);
-            not_found(format!("Failed to delete visualization transform: {}", e))
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to delete visualization transform: {}", e)
+            }))
         }
     }
 }
@@ -259,19 +367,27 @@ pub async fn trigger_visualization_transform(
         Err(e) => return e,
     };
 
-    let visualization_transform_id = path.into_inner();
+    let id = path.into_inner();
 
-    match trigger_visualization_transform_job(
-        &postgres_pool,
-        &nats_client,
-        visualization_transform_id,
-        &username,
-    )
-    .await
-    {
-        Ok(_) => HttpResponse::Ok().json(serde_json::json!({
-            "message": "Visualization transform triggered",
-            "visualization_transform_id": visualization_transform_id
+    // Verify ownership
+    match visualization_transforms::get_visualization_transform_by_id(&postgres_pool, id).await {
+        Ok(Some(transform)) => {
+            if transform.owner != username {
+                return not_found("Visualization transform not found".to_string());
+            }
+        }
+        Ok(None) => return not_found("Visualization transform not found".to_string()),
+        Err(e) => {
+            error!("Failed to fetch visualization transform: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to fetch visualization transform: {}", e)
+            }));
+        }
+    }
+
+    match trigger_visualization_transform_scan(&postgres_pool, &nats_client, id, &username).await {
+        Ok(()) => HttpResponse::Ok().json(serde_json::json!({
+            "message": "Visualization transform triggered successfully"
         })),
         Err(e) => {
             error!("Failed to trigger visualization transform: {}", e);
@@ -307,35 +423,128 @@ pub async fn get_visualization_transform_stats(
         Err(e) => return e,
     };
 
-    let visualization_transform_id = path.into_inner();
+    let id = path.into_inner();
 
-    match visualization_transforms::get_visualization_transform(
+    // Verify ownership
+    match visualization_transforms::get_visualization_transform_by_id(&postgres_pool, id).await {
+        Ok(Some(transform)) => {
+            if transform.owner != username {
+                return not_found("Visualization transform not found".to_string());
+            }
+        }
+        Ok(None) => return not_found("Visualization transform not found".to_string()),
+        Err(e) => {
+            error!("Failed to fetch visualization transform: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to fetch visualization transform: {}", e)
+            }));
+        }
+    }
+
+    // Get latest run
+    let latest_run =
+        match visualization_transforms::get_latest_visualization_run(&postgres_pool, id).await {
+            Ok(run) => run,
+            Err(e) => {
+                error!("Failed to fetch latest run: {}", e);
+                return HttpResponse::InternalServerError().json(serde_json::json!({
+                    "error": format!("Failed to fetch latest run: {}", e)
+                }));
+            }
+        };
+
+    // Get run counts
+    let all_runs = match visualization_transforms::list_visualization_runs(
         &postgres_pool,
-        &username,
-        visualization_transform_id,
+        id,
+        1000,
+        0,
     )
     .await
     {
-        Ok(_) => {
-            match visualization_transforms::get_visualization_transform_stats(
-                &postgres_pool,
-                visualization_transform_id,
-            )
-            .await
-            {
-                Ok(stats) => HttpResponse::Ok().json(stats),
-                Err(e) => {
-                    error!("Failed to get stats: {}", e);
-                    HttpResponse::InternalServerError().json(serde_json::json!({
-                        "error": format!("Failed to get stats: {}", e)
-                    }))
-                }
+        Ok(runs) => runs,
+        Err(e) => {
+            error!("Failed to fetch runs: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to fetch runs: {}", e)
+            }));
+        }
+    };
+
+    let total_runs = all_runs.len() as i64;
+    let successful_runs = all_runs.iter().filter(|r| r.status == "completed").count() as i64;
+    let failed_runs = all_runs.iter().filter(|r| r.status == "failed").count() as i64;
+
+    let stats = VisualizationTransformStats {
+        visualization_transform_id: id,
+        latest_run,
+        total_runs,
+        successful_runs,
+        failed_runs,
+    };
+
+    HttpResponse::Ok().json(stats)
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/visualization-transforms/{id}/runs",
+    tag = "Visualization Transforms",
+    params(
+        ("id" = i32, Path, description = "Visualization Transform ID"),
+        ("limit" = Option<i64>, Query, description = "Number of runs to return"),
+        ("offset" = Option<i64>, Query, description = "Number of runs to skip"),
+    ),
+    responses(
+        (status = 200, description = "List of visualization runs", body = Vec<VisualizationTransformRun>),
+        (status = 404, description = "Visualization transform not found"),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[get("/api/visualization-transforms/{id}/runs")]
+#[tracing::instrument(name = "get_visualization_runs", skip(auth, postgres_pool), fields(visualization_transform_id = %path.as_ref()))]
+pub async fn get_visualization_runs(
+    auth: Authenticated,
+    postgres_pool: Data<Pool<Postgres>>,
+    path: Path<i32>,
+    pagination: Query<PaginationParams>,
+) -> impl Responder {
+    let username = match extract_username(&auth) {
+        Ok(username) => username,
+        Err(e) => return e,
+    };
+
+    let id = path.into_inner();
+
+    // Verify ownership
+    match visualization_transforms::get_visualization_transform_by_id(&postgres_pool, id).await {
+        Ok(Some(transform)) => {
+            if transform.owner != username {
+                return not_found("Visualization transform not found".to_string());
             }
         }
+        Ok(None) => return not_found("Visualization transform not found".to_string()),
         Err(e) => {
-            error!("Visualization transform not found: {}", e);
-            HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Visualization transform not found: {}", e)
+            error!("Failed to fetch visualization transform: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to fetch visualization transform: {}", e)
+            }));
+        }
+    }
+
+    match visualization_transforms::list_visualization_runs(
+        &postgres_pool,
+        id,
+        pagination.limit,
+        pagination.offset,
+    )
+    .await
+    {
+        Ok(runs) => HttpResponse::Ok().json(runs),
+        Err(e) => {
+            error!("Failed to fetch visualization runs: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to fetch visualization runs: {}", e)
             }))
         }
     }
@@ -343,66 +552,81 @@ pub async fn get_visualization_transform_stats(
 
 #[utoipa::path(
     get,
-    path = "/api/visualization-transforms/{id}/points",
+    path = "/api/visualization-transforms/{id}/runs/{run_id}",
     tag = "Visualization Transforms",
     params(
-        ("id" = i32, Path, description = "Visualization Transform ID")
+        ("id" = i32, Path, description = "Visualization Transform ID"),
+        ("run_id" = i32, Path, description = "Run ID"),
     ),
     responses(
-        (status = 200, description = "3D visualization points", body = Vec<serde_json::Value>),  // TODO: Replace with VisualizationPoint type
-        (status = 404, description = "Visualization transform not found"),
+        (status = 200, description = "Visualization run details", body = VisualizationTransformRun),
+        (status = 404, description = "Visualization run not found"),
         (status = 401, description = "Unauthorized"),
     ),
 )]
-#[get("/api/visualization-transforms/{id}/points")]
-#[tracing::instrument(name = "get_visualization_points", skip(auth, postgres_pool), fields(visualization_transform_id = %path.as_ref()))]
-pub async fn get_visualization_points(
+#[get("/api/visualization-transforms/{id}/runs/{run_id}")]
+#[tracing::instrument(name = "get_visualization_run", skip(auth, postgres_pool), fields(visualization_transform_id = %path.0, run_id = %path.1))]
+pub async fn get_visualization_run(
     auth: Authenticated,
     postgres_pool: Data<Pool<Postgres>>,
-    path: Path<i32>,
+    path: Path<(i32, i32)>,
 ) -> impl Responder {
     let username = match extract_username(&auth) {
         Ok(username) => username,
         Err(e) => return e,
     };
 
-    let visualization_transform_id = path.into_inner();
+    let (transform_id, run_id) = path.into_inner();
 
-    match visualization_transforms::get_visualization_transform(
-        &postgres_pool,
-        &username,
-        visualization_transform_id,
-    )
-    .await
+    // Verify ownership of transform
+    match visualization_transforms::get_visualization_transform_by_id(&postgres_pool, transform_id)
+        .await
     {
-        Ok(_transform) => {
-            // TODO: Implement Qdrant query to fetch 3D points from reduced_collection_name
-            // For now, return placeholder
-            HttpResponse::Ok().json(Vec::<serde_json::Value>::new())
+        Ok(Some(transform)) => {
+            if transform.owner != username {
+                return not_found("Visualization transform not found".to_string());
+            }
+        }
+        Ok(None) => return not_found("Visualization transform not found".to_string()),
+        Err(e) => {
+            error!("Failed to fetch visualization transform: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to fetch visualization transform: {}", e)
+            }));
+        }
+    }
+
+    // Get run and verify it belongs to the transform
+    match visualization_transforms::get_visualization_run(&postgres_pool, run_id).await {
+        Ok(run) => {
+            if run.visualization_transform_id != transform_id {
+                return not_found("Visualization run not found".to_string());
+            }
+            HttpResponse::Ok().json(run)
         }
         Err(e) => {
-            error!("Visualization transform not found: {}", e);
-            not_found(format!("Visualization transform not found: {}", e))
+            error!("Failed to fetch visualization run: {}", e);
+            not_found(format!("Visualization run not found: {}", e))
         }
     }
 }
 
 #[utoipa::path(
     get,
-    path = "/api/visualization-transforms/{id}/topics",
+    path = "/api/embedded-datasets/{id}/visualizations",
     tag = "Visualization Transforms",
     params(
-        ("id" = i32, Path, description = "Visualization Transform ID")
+        ("id" = i32, Path, description = "Embedded Dataset ID")
     ),
     responses(
-        (status = 200, description = "Topic cluster information", body = Vec<serde_json::Value>),  // TODO: Replace with VisualizationTopic type
-        (status = 404, description = "Visualization transform not found"),
+        (status = 200, description = "List of visualization transforms for the embedded dataset", body = Vec<VisualizationTransform>),
+        (status = 404, description = "Embedded dataset not found"),
         (status = 401, description = "Unauthorized"),
     ),
 )]
-#[get("/api/visualization-transforms/{id}/topics")]
-#[tracing::instrument(name = "get_visualization_topics", skip(auth, postgres_pool), fields(visualization_transform_id = %path.as_ref()))]
-pub async fn get_visualization_topics(
+#[get("/api/embedded-datasets/{id}/visualizations")]
+#[tracing::instrument(name = "get_visualizations_by_dataset", skip(auth, postgres_pool), fields(embedded_dataset_id = %path.as_ref()))]
+pub async fn get_visualizations_by_dataset(
     auth: Authenticated,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<i32>,
@@ -412,55 +636,29 @@ pub async fn get_visualization_topics(
         Err(e) => return e,
     };
 
-    let visualization_transform_id = path.into_inner();
+    let embedded_dataset_id = path.into_inner();
 
-    match visualization_transforms::get_visualization_transform(
-        &postgres_pool,
-        &username,
-        visualization_transform_id,
-    )
-    .await
+    // Verify embedded dataset exists and belongs to user
+    match embedded_datasets::get_embedded_dataset(&postgres_pool, &username, embedded_dataset_id)
+        .await
     {
-        Ok(_transform) => {
-            // TODO: Implement Qdrant query to fetch topics from topics_collection_name
-            // For now, return placeholder
-            HttpResponse::Ok().json(Vec::<serde_json::Value>::new())
+        Ok(dataset) => {
+            if dataset.owner != username {
+                return not_found("Embedded dataset not found".to_string());
+            }
         }
         Err(e) => {
-            error!("Visualization transform not found: {}", e);
-            not_found(format!("Visualization transform not found: {}", e))
+            error!("Failed to fetch embedded dataset: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to fetch embedded dataset: {}", e)
+            }));
         }
     }
-}
 
-#[utoipa::path(
-    get,
-    path = "/api/embedded-datasets/{embedded_dataset_id}/visualizations",
-    tag = "Visualization Transforms",
-    params(
-        ("embedded_dataset_id" = i32, Path, description = "Embedded Dataset ID")
-    ),
-    responses(
-        (status = 200, description = "Visualizations for embedded dataset", body = Vec<VisualizationTransform>),
-        (status = 401, description = "Unauthorized"),
-    ),
-)]
-#[get("/api/embedded-datasets/{embedded_dataset_id}/visualizations")]
-#[tracing::instrument(name = "get_visualizations_for_embedded_dataset", skip(auth, postgres_pool), fields(embedded_dataset_id = %path.as_ref()))]
-pub async fn get_visualizations_for_embedded_dataset(
-    auth: Authenticated,
-    postgres_pool: Data<Pool<Postgres>>,
-    path: Path<i32>,
-) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
-    match visualization_transforms::get_visualization_transforms_for_embedded_dataset(
+    match visualization_transforms::get_visualization_transforms_by_embedded_dataset(
         &postgres_pool,
+        embedded_dataset_id,
         &username,
-        path.into_inner(),
     )
     .await
     {

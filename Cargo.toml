@@ -4,8 +4,7 @@ members = [
     "crates/api",
     "crates/core",
     "crates/worker-collections",
-    "crates/worker-datasets",
-    # "crates/worker-visualizations",  // Disabled for now - needs work.
+    "crates/worker-datasets"
 ]
 
 [workspace.dependencies]
@@ -46,6 +45,7 @@ unicode-segmentation = { version = "1.12.0" }
 scraper = { version = "0.25.0" }
 zip = {version = "7.0.0", features = ["deflate", "deflate64", "time", "ppmd", "bzip2"], default-features = false}
 uuid = { version = "1.19.0", features = ["v4", "serde"] }
+chrono = { version = "0.4.42", features = ["serde"] }
 tokio = { version = "1.49.0", features = ["full"] }
 reqwest = { version = "0.13.1", features = ["json"]}
 rust-stemmers = {version ="1.2.0" }

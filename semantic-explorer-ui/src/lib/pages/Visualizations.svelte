@@ -85,8 +85,7 @@
 	<div class="mb-4">
 		<h1 class="text-3xl font-bold text-gray-900 dark:text-white mb-2">Visualizations</h1>
 		<p class="text-gray-600 dark:text-gray-400">
-			2D and 3D visualizations of embedding spaces with UMAP dimensionality reduction and HDBSCAN
-			clustering
+			Visualizations of embedding spaces with UMAP dimensionality reduction and HDBSCAN clustering
 		</p>
 	</div>
 

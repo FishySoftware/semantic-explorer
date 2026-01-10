@@ -290,7 +290,7 @@
 				></path>
 			</svg>
 			<h3 class="text-lg font-semibold">Visualizations</h3>
-			<p class="text-sm text-orange-100 mt-1">Create 2D/3D visualizations</p>
+			<p class="text-sm text-orange-100 mt-1">Create visualizations</p>
 		</a>
 	</div>
 

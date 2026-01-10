@@ -263,6 +263,56 @@ Get the full image name for Worker Visualizations
 {{- end }}
 
 {{/*
+Worker Visualizations Python labels
+*/}}
+{{- define "semantic-explorer.workerVisualizationsPy.labels" -}}
+helm.sh/chart: {{ include "semantic-explorer.chart" . }}
+{{ include "semantic-explorer.workerVisualizationsPy.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+app.kubernetes.io/component: worker-visualizations-py
+{{- with .Values.commonLabels }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{/*
+Worker Visualizations Python selector labels
+*/}}
+{{- define "semantic-explorer.workerVisualizationsPy.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "semantic-explorer.name" . }}-worker-visualizations-py
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: worker-visualizations-py
+{{- end }}
+
+{{/*
+Worker Visualizations Python service account name
+*/}}
+{{- define "semantic-explorer.workerVisualizationsPy.serviceAccountName" -}}
+{{- if .Values.workerVisualizationsPy.serviceAccount.create }}
+{{- default (printf "%s-worker-visualizations-py" (include "semantic-explorer.fullname" .)) .Values.workerVisualizationsPy.serviceAccount.name }}
+{{- else }}
+{{- default "default" .Values.workerVisualizationsPy.serviceAccount.name }}
+{{- end }}
+{{- end }}
+
+{{/*
+Get the full image name for Worker Visualizations Python
+*/}}
+{{- define "semantic-explorer.workerVisualizationsPy.image" -}}
+{{- $registry := include "semantic-explorer.imageRegistry" (dict "registry" .Values.workerVisualizationsPy.image.registry "global" .Values.global) }}
+{{- $repository := .Values.workerVisualizationsPy.image.repository }}
+{{- $tag := .Values.workerVisualizationsPy.image.tag | default .Chart.AppVersion }}
+{{- if $registry }}
+{{- printf "%s/%s:%s" $registry $repository $tag }}
+{{- else }}
+{{- printf "%s:%s" $repository $tag }}
+{{- end }}
+{{- end }}
+
+{{/*
 Get storage class name
 */}}
 {{- define "semantic-explorer.storageClass" -}}

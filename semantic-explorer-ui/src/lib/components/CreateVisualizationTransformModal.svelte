@@ -25,10 +25,8 @@
 	let transformTitle = $state('');
 
 	// Topic naming fields
-	let topicNamingMode = $state('tfidf');
 	let topicNamingLlmId = $state<number | null>(null);
 
-	// Auto-generate title when opening the modal for new transforms
 	$effect(() => {
 		if (open && !transformTitle.startsWith('visualization-')) {
 			const now = new Date();
@@ -46,13 +44,23 @@
 
 	// UMAP Configuration
 	let umapNNeighbors = $state(15);
-	let umapNComponents = $state(2); // 2D or 3D
+	let umapNComponents = $state(2);
 	let umapMinDist = $state(0.1);
 	let umapMetric = $state('cosine');
 
 	// HDBSCAN Configuration
 	let hdbscanMinClusterSize = $state(5);
 	let hdbscanMinSamples = $state(1);
+
+	// Datamapplot Visualization Configuration
+	let fontSize = $state(9);
+	let fontFamily = $state('Arial, sans-serif');
+	let darkmode = $state(true);
+	let noiseColor = $state('#999999');
+	let labelWrapWidth = $state(16);
+	let useMedoids = $state(false);
+	let clusterBoundaryPolygons = $state(true);
+	let polygonAlpha = $state(0.3);
 
 	let loadingDatasets = $state(true);
 	let isCreating = $state(false);
@@ -91,28 +99,30 @@
 		try {
 			isCreating = true;
 
-			const visualizationConfig = {
-				umap_config: {
-					n_neighbors: umapNNeighbors,
-					n_components: umapNComponents,
-					min_dist: umapMinDist,
-					metric: umapMetric,
-				},
-				hdbscan_config: {
-					min_cluster_size: hdbscanMinClusterSize,
-					min_samples: hdbscanMinSamples,
-				},
-				topic_naming_mode: topicNamingMode,
-				topic_naming_llm_id: topicNamingLlmId,
-			};
-
 			const response = await fetch('/api/visualization-transforms', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					title: transformTitle.trim(),
 					embedded_dataset_id: selectedEmbeddedDatasetId,
-					visualization_config: visualizationConfig,
+					llm_id: topicNamingLlmId,
+					// UMAP parameters
+					n_neighbors: umapNNeighbors,
+					n_components: umapNComponents,
+					min_dist: umapMinDist,
+					metric: umapMetric,
+					// HDBSCAN parameters
+					min_cluster_size: hdbscanMinClusterSize,
+					min_samples: hdbscanMinSamples,
+					// Datamapplot visualization parameters
+					font_size: fontSize,
+					font_family: fontFamily,
+					darkmode: darkmode,
+					noise_color: noiseColor,
+					label_wrap_width: labelWrapWidth,
+					use_medoids: useMedoids,
+					cluster_boundary_polygons: clusterBoundaryPolygons,
+					polygon_alpha: polygonAlpha,
 				}),
 			});
 
@@ -140,8 +150,16 @@
 		umapMetric = 'cosine';
 		hdbscanMinClusterSize = 5;
 		hdbscanMinSamples = 1;
-		topicNamingMode = 'tfidf';
 		topicNamingLlmId = null;
+		// Reset datamapplot visualization parameters
+		fontSize = 9;
+		fontFamily = 'Arial, sans-serif';
+		darkmode = false;
+		noiseColor = '#999999';
+		labelWrapWidth = 16;
+		useMedoids = false;
+		clusterBoundaryPolygons = true;
+		polygonAlpha = 0.3;
 		error = null;
 		open = false;
 	}
@@ -216,45 +234,24 @@
 				{/if}
 			</div>
 
-			<!-- Topic Naming Mode -->
+			<!-- Topic Naming LLM ID (shown when mode is LLM) -->
 			<div>
 				<label
-					for="topic-naming-mode"
+					for="topic-naming-llm"
 					class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
 				>
-					Topic Naming Mode
-				</label>
-				<select
-					id="topic-naming-mode"
-					bind:value={topicNamingMode}
-					class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
-				>
-					<option value="tfidf">TF-IDF</option>
-					<option value="llm">LLM</option>
-				</select>
-			</div>
-
-			<!-- Topic Naming LLM ID (shown when mode is LLM) -->
-			{#if topicNamingMode === 'llm'}
-				<div>
-					<label
-						for="topic-naming-llm"
-						class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+					LLM for Topic Naming <span class="text-xs text-gray-500 dark:text-gray-400"
+						>(optional)</span
 					>
-						LLM for Topic Naming <span class="text-xs text-gray-500 dark:text-gray-400"
-							>(optional)</span
-						>
-					</label>
-					<input
-						id="topic-naming-llm"
-						type="number"
-						bind:value={topicNamingLlmId}
-						placeholder="LLM ID"
-						class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
-					/>
-				</div>
-			{/if}
-
+				</label>
+				<input
+					id="topic-naming-llm"
+					type="number"
+					bind:value={topicNamingLlmId}
+					placeholder="LLM ID"
+					class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
+				/>
+			</div>
 			<!-- UMAP Configuration Section -->
 			<div class="border-t border-gray-200 dark:border-gray-700 pt-4">
 				<h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-3">UMAP Configuration</h3>
@@ -385,6 +382,160 @@
 						/>
 						<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
 							Affects cluster density threshold
+						</p>
+					</div>
+				</div>
+			</div>
+
+			<!-- Datamapplot Visualization Configuration Section -->
+			<div class="border-t border-gray-200 dark:border-gray-700 pt-4">
+				<h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-3">
+					Visualization Settings
+				</h3>
+
+				<div class="space-y-3">
+					<!-- Font Size -->
+					<div>
+						<label
+							for="font-size"
+							class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1"
+						>
+							Label Font Size (6-20)
+						</label>
+						<input
+							id="font-size"
+							type="number"
+							min="6"
+							max="20"
+							bind:value={fontSize}
+							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
+						/>
+						<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+							Font size for cluster labels
+						</p>
+					</div>
+
+					<!-- Font Family -->
+					<div>
+						<label
+							for="font-family"
+							class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1"
+						>
+							Font Family
+						</label>
+						<input
+							id="font-family"
+							type="text"
+							bind:value={fontFamily}
+							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
+						/>
+						<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+							Font family for labels (e.g., Arial, sans-serif)
+						</p>
+					</div>
+
+					<!-- Darkmode -->
+					<div class="flex items-center gap-2">
+						<input
+							id="darkmode"
+							type="checkbox"
+							bind:checked={darkmode}
+							class="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-2 focus:ring-blue-500"
+						/>
+						<label for="darkmode" class="text-xs font-medium text-gray-700 dark:text-gray-300">
+							Dark Mode Theme
+						</label>
+					</div>
+
+					<!-- Noise Color -->
+					<div>
+						<label
+							for="noise-color"
+							class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1"
+						>
+							Noise Point Color
+						</label>
+						<input
+							id="noise-color"
+							type="text"
+							bind:value={noiseColor}
+							placeholder="#999999"
+							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
+						/>
+						<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+							Hex color for unclustered points (e.g., #999999)
+						</p>
+					</div>
+
+					<!-- Label Wrap Width -->
+					<div>
+						<label
+							for="label-wrap-width"
+							class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1"
+						>
+							Label Wrap Width (8-40)
+						</label>
+						<input
+							id="label-wrap-width"
+							type="number"
+							min="8"
+							max="40"
+							bind:value={labelWrapWidth}
+							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
+						/>
+						<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+							Character count before wrapping labels
+						</p>
+					</div>
+
+					<!-- Use Medoids -->
+					<div class="flex items-center gap-2">
+						<input
+							id="use-medoids"
+							type="checkbox"
+							bind:checked={useMedoids}
+							class="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-2 focus:ring-blue-500"
+						/>
+						<label for="use-medoids" class="text-xs font-medium text-gray-700 dark:text-gray-300">
+							Use Medoids (instead of centroids for cluster positions)
+						</label>
+					</div>
+
+					<!-- Cluster Boundary Polygons -->
+					<div class="flex items-center gap-2">
+						<input
+							id="cluster-boundary-polygons"
+							type="checkbox"
+							bind:checked={clusterBoundaryPolygons}
+							class="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-2 focus:ring-blue-500"
+						/>
+						<label
+							for="cluster-boundary-polygons"
+							class="text-xs font-medium text-gray-700 dark:text-gray-300"
+						>
+							Draw Cluster Boundary Polygons
+						</label>
+					</div>
+
+					<!-- Polygon Alpha -->
+					<div>
+						<label
+							for="polygon-alpha"
+							class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1"
+						>
+							Polygon Transparency (0.0-1.0)
+						</label>
+						<input
+							id="polygon-alpha"
+							type="number"
+							min="0.0"
+							max="1.0"
+							step="0.1"
+							bind:value={polygonAlpha}
+							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
+						/>
+						<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+							Transparency of cluster boundary polygons (0=invisible, 1=opaque)
 						</p>
 					</div>
 				</div>

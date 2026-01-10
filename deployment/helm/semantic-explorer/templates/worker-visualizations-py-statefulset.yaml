@@ -1,0 +1,111 @@
+{{- if .Values.workerVisualizationsPy.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-worker-visualizations-py
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.workerVisualizationsPy.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  serviceName: {{ include "semantic-explorer.fullname" . }}-worker-visualizations-py
+  {{- if not .Values.workerVisualizationsPy.autoscaling.enabled }}
+  replicas: {{ .Values.workerVisualizationsPy.replicaCount }}
+  {{- end }}
+  podManagementPolicy: {{ .Values.workerVisualizationsPy.statefulset.podManagementPolicy }}
+  updateStrategy:
+    {{- toYaml .Values.workerVisualizationsPy.statefulset.updateStrategy | nindent 4 }}
+  selector:
+    matchLabels:
+      {{- include "semantic-explorer.workerVisualizationsPy.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- with .Values.workerVisualizationsPy.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "semantic-explorer.workerVisualizationsPy.selectorLabels" . | nindent 8 }}
+        {{- with .Values.workerVisualizationsPy.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "semantic-explorer.workerVisualizationsPy.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.global.securityContext | nindent 8 }}
+      {{- with .Values.workerVisualizationsPy.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      containers:
+      - name: worker-visualizations-py
+        image: {{ include "semantic-explorer.workerVisualizationsPy.image" . }}
+        imagePullPolicy: {{ .Values.workerVisualizationsPy.image.pullPolicy }}
+        securityContext:
+          {{- toYaml .Values.global.podSecurityContext | nindent 10 }}
+        env:
+        {{- range $key, $value := .Values.workerVisualizationsPy.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        - name: NATS_URL
+          value: {{ include "semantic-explorer.nats.url" . }}
+        - name: QDRANT_URL
+          value: {{ include "semantic-explorer.qdrant.url" . }}
+        - name: S3_ENDPOINT
+          value: {{ include "semantic-explorer.storage.s3.endpoint" . }}
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "semantic-explorer.fullname" . }}-secrets
+              key: aws-access-key-id
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "semantic-explorer.fullname" . }}-secrets
+              key: aws-secret-access-key
+        - name: AWS_REGION
+          value: {{ include "semantic-explorer.storage.s3.region" . }}
+        {{- if .Values.observability.otelCollector.enabled }}
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: {{ include "semantic-explorer.otel.endpoint" . }}
+        {{- end }}
+        {{- with .Values.workerVisualizationsPy.envFrom }}
+        envFrom:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with .Values.workerVisualizationsPy.livenessProbe }}
+        livenessProbe:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with .Values.workerVisualizationsPy.readinessProbe }}
+        readinessProbe:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.workerVisualizationsPy.resources | nindent 10 }}
+        volumeMounts: {}
+      {{- with .Values.workerVisualizationsPy.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.workerVisualizationsPy.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.workerVisualizationsPy.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- if and .Values.workerVisualizationsPy.podDisruptionBudget.enabled }}
+  {{- if .Values.workerVisualizationsPy.podDisruptionBudget.minAvailable }}
+  # Pod disruption budget will be created separately
+  {{- end }}
+  {{- end }}
+{{- end }}

@@ -13,11 +13,6 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 opentelemetry = { workspace = true }
 async-nats = { workspace = true }
-reqwest = { workspace = true }
-rust-stemmers = { workspace = true }
-stop-words = { workspace = true }
-unicode-segmentation = { workspace = true }
-async-trait = { workspace = true }
 tokio = { workspace = true }
 futures-util = { workspace = true }
 opentelemetry_sdk = { workspace = true }

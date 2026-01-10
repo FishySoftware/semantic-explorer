@@ -66,8 +66,16 @@
 		metric: string;
 		min_cluster_size: number;
 		min_samples: number | null;
-		topic_naming_mode: string;
 		topic_naming_llm_id: number | null;
+		// Datamapplot visualization parameters
+		font_size: number;
+		font_family: string;
+		darkmode: boolean;
+		noise_color: string;
+		label_wrap_width: number;
+		use_medoids: boolean;
+		cluster_boundary_polygons: boolean;
+		polygon_alpha: number;
 	}
 
 	interface EmbeddedDataset {
@@ -104,8 +112,16 @@
 		metric: 'cosine',
 		min_cluster_size: 15,
 		min_samples: null,
-		topic_naming_mode: 'tfidf',
 		topic_naming_llm_id: null,
+		// Datamapplot visualization parameters
+		font_size: 9,
+		font_family: 'Arial, sans-serif',
+		darkmode: false,
+		noise_color: '#999999',
+		label_wrap_width: 16,
+		use_medoids: false,
+		cluster_boundary_polygons: true,
+		polygon_alpha: 0.3,
 	});
 	let creating = $state(false);
 	let createError = $state<string | null>(null);
@@ -324,8 +340,16 @@
 			metric: 'cosine',
 			min_cluster_size: 15,
 			min_samples: null,
-			topic_naming_mode: 'tfidf',
 			topic_naming_llm_id: null,
+			// Reset datamapplot visualization parameters
+			font_size: 9,
+			font_family: 'Arial, sans-serif',
+			darkmode: false,
+			noise_color: '#999999',
+			label_wrap_width: 16,
+			use_medoids: false,
+			cluster_boundary_polygons: true,
+			polygon_alpha: 0.3,
 		};
 		showCreateForm = false;
 		editingTransform = null;
@@ -385,7 +409,7 @@
 	function getEmbeddedDatasetTitle(embeddedDatasetId: number): string {
 		const dataset = embeddedDatasets.find((d) => d.embedded_dataset_id === embeddedDatasetId);
 		return dataset
-			? `${dataset.title} (${dataset.embedder_name})`
+			? `${dataset.title} (${dataset.embedded_dataset_id})`
 			: `Embedded Dataset ${embeddedDatasetId}`;
 	}
 </script>
@@ -393,7 +417,7 @@
 <div class="max-w-7xl mx-auto">
 	<PageHeader
 		title="Visualization Transforms"
-		description="Create 2D or 3D visualizations of Embedded Datasets using UMAP dimensionality reduction and HDBSCAN clustering. Visualizations help explore semantic relationships and discover topics in your data."
+		description="Create visualizations of Embedded Datasets using UMAP dimensionality reduction and HDBSCAN clustering. Visualizations help explore semantic relationships and discover topics in your data."
 	/>
 
 	<div class="flex justify-between items-center mb-6">
@@ -668,76 +692,256 @@
 						Topic Naming Configuration
 					</h3>
 
-					<div class="grid grid-cols-2 gap-4">
+					<div class="grid grid-cols-1 gap-4">
 						<div>
 							<label
-								for="topic-naming-mode"
+								for="topic-naming-llm"
 								class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
 							>
-								Topic Naming Mode
+								LLM Model
 								<button
 									type="button"
 									class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
 									onmouseenter={(e) =>
 										showTooltip(
 											e,
-											'TF-IDF: Fast, keyword-based topic labels using term frequency. LLM: Uses AI to generate more descriptive topic names. Default: TF-IDF'
+											'Select which LLM to use for generating topic names. The LLM will receive document samples from each cluster and generate descriptive labels.'
 										)}
 								>
 									{@html InfoIcon()}
 								</button>
 							</label>
 							<select
-								id="topic-naming-mode"
-								bind:value={config.topic_naming_mode}
+								id="topic-naming-llm"
+								bind:value={config.topic_naming_llm_id}
 								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 							>
-								<option value="tfidf">TF-IDF (Keyword-based)</option>
-								<option value="llm">LLM (AI-generated)</option>
+								<option value={null}>Select an LLM...</option>
+								{#each llms as llm (llm.llm_id)}
+									<option value={llm.llm_id}>
+										{llm.name} ({llm.provider})
+									</option>
+								{/each}
 							</select>
-							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-								Select naming strategy for topics
-							</p>
+							{#if llms.length === 0}
+								<p class="text-xs text-yellow-600 dark:text-yellow-400 mt-1">
+									No LLMs available. Create one in the LLMs section first.
+								</p>
+							{/if}
+						</div>
+					</div>
+				</div>
+
+				<div
+					class="mb-4 p-4 bg-cyan-50 dark:bg-cyan-900/10 border border-cyan-200 dark:border-cyan-800 rounded-lg"
+				>
+					<h3 class="text-sm font-semibold text-cyan-900 dark:text-cyan-300 mb-3">
+						Visualization Settings
+					</h3>
+
+					<div class="grid grid-cols-2 gap-4">
+						<div>
+							<label
+								for="font-size"
+								class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+							>
+								Label Font Size
+								<button
+									type="button"
+									class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+									onmouseenter={(e) => showTooltip(e, 'Font size for cluster labels. Default: 9')}
+								>
+									{@html InfoIcon()}
+								</button>
+							</label>
+							<input
+								id="font-size"
+								type="number"
+								bind:value={config.font_size}
+								min="6"
+								max="20"
+								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+							/>
+							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Range: 6-20</p>
 						</div>
 
-						{#if config.topic_naming_mode === 'llm'}
-							<div>
-								<label
-									for="topic-naming-llm"
-									class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+						<div>
+							<label
+								for="font-family"
+								class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+							>
+								Font Family
+								<button
+									type="button"
+									class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+									onmouseenter={(e) =>
+										showTooltip(
+											e,
+											'Font family for labels (e.g., Arial, sans-serif). Default: Arial, sans-serif'
+										)}
 								>
-									LLM Model
-									<button
-										type="button"
-										class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-										onmouseenter={(e) =>
-											showTooltip(
-												e,
-												'Select which LLM to use for generating topic names. The LLM will receive document samples from each cluster and generate descriptive labels.'
-											)}
-									>
-										{@html InfoIcon()}
-									</button>
-								</label>
-								<select
-									id="topic-naming-llm"
-									bind:value={config.topic_naming_llm_id}
-									class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									{@html InfoIcon()}
+								</button>
+							</label>
+							<input
+								id="font-family"
+								type="text"
+								bind:value={config.font_family}
+								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+							/>
+						</div>
+
+						<div>
+							<label
+								for="noise-color"
+								class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+							>
+								Noise Point Color
+								<button
+									type="button"
+									class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+									onmouseenter={(e) =>
+										showTooltip(e, 'Hex color for unclustered (noise) points. Default: #999999')}
 								>
-									<option value={null}>Select an LLM...</option>
-									{#each llms as llm (llm.llm_id)}
-										<option value={llm.llm_id}>
-											{llm.name} ({llm.provider})
-										</option>
-									{/each}
-								</select>
-								{#if llms.length === 0}
-									<p class="text-xs text-yellow-600 dark:text-yellow-400 mt-1">
-										No LLMs available. Create one in the LLMs section first.
-									</p>
-								{/if}
-							</div>
-						{/if}
+									{@html InfoIcon()}
+								</button>
+							</label>
+							<input
+								id="noise-color"
+								type="text"
+								bind:value={config.noise_color}
+								placeholder="#999999"
+								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+							/>
+						</div>
+
+						<div>
+							<label
+								for="label-wrap-width"
+								class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+							>
+								Label Wrap Width
+								<button
+									type="button"
+									class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+									onmouseenter={(e) =>
+										showTooltip(e, 'Character count before wrapping labels. Default: 16')}
+								>
+									{@html InfoIcon()}
+								</button>
+							</label>
+							<input
+								id="label-wrap-width"
+								type="number"
+								bind:value={config.label_wrap_width}
+								min="8"
+								max="40"
+								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+							/>
+							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Range: 8-40</p>
+						</div>
+
+						<div>
+							<label
+								for="polygon-alpha"
+								class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+							>
+								Polygon Transparency
+								<button
+									type="button"
+									class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+									onmouseenter={(e) =>
+										showTooltip(
+											e,
+											'Transparency of cluster boundary polygons. 0=invisible, 1=opaque. Default: 0.3'
+										)}
+								>
+									{@html InfoIcon()}
+								</button>
+							</label>
+							<input
+								id="polygon-alpha"
+								type="number"
+								bind:value={config.polygon_alpha}
+								min="0.0"
+								max="1.0"
+								step="0.1"
+								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+							/>
+							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Range: 0.0-1.0</p>
+						</div>
+
+						<div class="col-span-2">
+							<label class="flex items-center gap-2">
+								<input
+									id="darkmode"
+									type="checkbox"
+									bind:checked={config.darkmode}
+									class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+								/>
+								<span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+									Dark Mode Theme
+								</span>
+								<button
+									type="button"
+									class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+									onmouseenter={(e) =>
+										showTooltip(e, 'Use dark background theme for the visualization')}
+								>
+									{@html InfoIcon()}
+								</button>
+							</label>
+						</div>
+
+						<div class="col-span-2">
+							<label class="flex items-center gap-2">
+								<input
+									id="use-medoids"
+									type="checkbox"
+									bind:checked={config.use_medoids}
+									class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+								/>
+								<span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+									Use Medoids (instead of centroids for cluster positions)
+								</span>
+								<button
+									type="button"
+									class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+									onmouseenter={(e) =>
+										showTooltip(
+											e,
+											'Use actual data points (medoids) instead of calculated centroids for cluster center positions'
+										)}
+								>
+									{@html InfoIcon()}
+								</button>
+							</label>
+						</div>
+
+						<div class="col-span-2">
+							<label class="flex items-center gap-2">
+								<input
+									id="cluster-boundary-polygons"
+									type="checkbox"
+									bind:checked={config.cluster_boundary_polygons}
+									class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+								/>
+								<span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+									Draw Cluster Boundary Polygons
+								</span>
+								<button
+									type="button"
+									class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+									onmouseenter={(e) =>
+										showTooltip(
+											e,
+											'Draw alpha-shape boundary lines around clusters to visually separate them'
+										)}
+								>
+									{@html InfoIcon()}
+								</button>
+							</label>
+						</div>
 					</div>
 				</div>
 

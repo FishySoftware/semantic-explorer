@@ -1,268 +1,169 @@
-use actix_web::rt::{spawn, task::JoinHandle, time::interval};
 use anyhow::Result;
-use async_nats::{Client as NatsClient, jetstream};
+use async_nats::Client as NatsClient;
 use sqlx::{Pool, Postgres};
-use std::time::Duration;
-use tracing::{error, info};
+use tracing::{debug, info};
 use uuid::Uuid;
 
 use semantic_explorer_core::models::{
-    VectorDatabaseConfig, VisualizationConfig, VisualizationTransformJob,
+    LLMConfig, VectorDatabaseConfig, VisualizationConfig, VisualizationTransformJob,
 };
 
-use crate::storage::postgres::embedded_datasets;
-use crate::storage::postgres::visualization_transforms::{
-    get_active_visualization_transforms, update_visualization_transform_status_processing,
-};
+use crate::storage::postgres::{embedded_datasets, llms, visualization_transforms};
 
-/// Initialize the background scanner for visualization transforms
-pub(crate) fn initialize_scanner(
-    postgres_pool: Pool<Postgres>,
-    nats_client: NatsClient,
-) -> JoinHandle<()> {
-    spawn(async move {
-        let mut interval = interval(Duration::from_secs(120)); // Run less frequently
-        loop {
-            interval.tick().await;
-            if let Err(e) = scan_active_visualization_transforms(&postgres_pool, &nats_client).await
-            {
-                error!("Error scanning visualization transforms: {}", e);
-            }
-        }
-    })
-}
-
-#[tracing::instrument(name = "scan_active_visualization_transforms", skip_all)]
-async fn scan_active_visualization_transforms(
-    pool: &Pool<Postgres>,
-    nats: &NatsClient,
-) -> Result<()> {
-    let transforms = get_active_visualization_transforms(pool).await?;
-    info!(
-        "Scanning {} active visualization transforms",
-        transforms.len()
-    );
-
-    for transform in transforms {
-        if let Err(e) = process_visualization_transform_scan(pool, nats, &transform).await {
-            error!(
-                "Failed to process visualization transform scan for {}: {}",
-                transform.visualization_transform_id, e
-            );
-        }
-    }
-    Ok(())
-}
-
-#[tracing::instrument(
-    name = "process_visualization_transform_scan",
-    skip(pool, nats, transform),
-    fields(visualization_transform_id = %transform.visualization_transform_id)
-)]
-async fn process_visualization_transform_scan(
-    pool: &Pool<Postgres>,
-    nats: &NatsClient,
-    transform: &crate::transforms::visualization::VisualizationTransform,
-) -> Result<()> {
-    info!(
-        "Checking visualization transform {}",
-        transform.visualization_transform_id
-    );
-
-    // Only trigger if collections don't exist yet (collection names are null in DB)
-    if transform.reduced_collection_name.is_some() {
-        info!(
-            "Visualization transform {} already has output collection name set, skipping",
-            transform.visualization_transform_id
-        );
-        return Ok(());
-    }
-
-    // Get the embedded dataset
-    let embedded_dataset = embedded_datasets::get_embedded_dataset(
-        pool,
-        &transform.owner,
-        transform.embedded_dataset_id,
-    )
-    .await?;
-
-    // Get vector database config from environment
-    let qdrant_url =
-        std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string());
-    let vector_db_config = VectorDatabaseConfig {
-        database_type: "qdrant".to_string(),
-        connection_url: qdrant_url,
-        api_key: None,
-    };
-
-    // Parse visualization config or use defaults
-    let visualization_config = if !transform.visualization_config.is_null() {
-        serde_json::from_value::<VisualizationConfig>(transform.visualization_config.clone())
-            .unwrap_or_else(|_| default_visualization_config())
-    } else {
-        default_visualization_config()
-    };
-
-    // Generate output collection names using the standard naming convention
-    let (output_collection_reduced, output_collection_topics) =
-        crate::transforms::visualization::VisualizationTransform::generate_collection_names(
-            transform.visualization_transform_id,
-            &transform.owner,
-        );
-
-    let job = VisualizationTransformJob {
-        job_id: Uuid::new_v4(),
-        visualization_transform_id: transform.visualization_transform_id,
-        owner: transform.owner.clone(),
-        source_collection: embedded_dataset.collection_name.clone(),
-        output_collection_reduced: output_collection_reduced.clone(),
-        output_collection_topics: output_collection_topics.clone(),
-        visualization_config,
-        vector_database_config: vector_db_config,
-    };
-
-    // Mark the transform as processing before publishing the job
-    if let Err(e) =
-        update_visualization_transform_status_processing(pool, transform.visualization_transform_id)
-            .await
-    {
-        error!(
-            "Failed to update processing status for visualization transform {}: {}",
-            transform.visualization_transform_id, e
-        );
-    }
-
-    let payload = serde_json::to_vec(&job)?;
-
-    // Use JetStream with message ID for deduplication
-    let msg_id = format!("vt-{}", transform.visualization_transform_id);
-    let jetstream = jetstream::new(nats.clone());
-    let mut headers = async_nats::HeaderMap::new();
-    headers.insert("Nats-Msg-Id", msg_id.as_str());
-
-    jetstream
-        .publish_with_headers(
-            "workers.visualization-transform".to_string(),
-            headers,
-            payload.into(),
-        )
-        .await?
-        .await?;
-
-    info!(
-        "Created visualization job for transform {}",
-        transform.visualization_transform_id
-    );
-
-    Ok(())
-}
-
-fn default_visualization_config() -> VisualizationConfig {
-    VisualizationConfig {
-        n_neighbors: 15,
-        n_components: 3,
-        min_dist: 0.25,
-        metric: "cosine".to_string(),
-        min_cluster_size: 15,
-        min_samples: Some(5),
-        topic_naming_mode: "tfidf".to_string(),
-        topic_naming_llm_id: None,
-    }
-}
-
-/// Trigger a visualization transform job immediately
-#[tracing::instrument(
-    name = "trigger_visualization_transform_job",
-    skip(pool, nats),
-    fields(visualization_transform_id = %visualization_transform_id)
-)]
-pub async fn trigger_visualization_transform_job(
+/// Trigger a visualization transform scan manually
+pub async fn trigger_visualization_transform_scan(
     pool: &Pool<Postgres>,
     nats: &NatsClient,
     visualization_transform_id: i32,
     owner: &str,
 ) -> Result<()> {
     info!(
-        "Triggering visualization transform job for {}",
+        "Manually triggering visualization transform scan for ID: {}",
         visualization_transform_id
     );
 
-    // Get the visualization transform
-    let transform =
-        crate::storage::postgres::visualization_transforms::get_visualization_transform(
-            pool,
-            owner,
-            visualization_transform_id,
-        )
-        .await?;
-
-    // Get the embedded dataset
-    let embedded_dataset = embedded_datasets::get_embedded_dataset(
+    // Get transform
+    let transform = match visualization_transforms::get_visualization_transform_by_id(
         pool,
-        &transform.owner,
-        transform.embedded_dataset_id,
+        visualization_transform_id,
     )
-    .await?;
+    .await?
+    {
+        Some(t) => t,
+        None => {
+            return Err(anyhow::anyhow!(
+                "Visualization transform {} not found",
+                visualization_transform_id
+            ));
+        }
+    };
 
-    // Get vector database config from environment
+    // Verify ownership
+    if transform.owner != owner {
+        return Err(anyhow::anyhow!("Access denied"));
+    }
+
+    // Get embedded dataset
+    let embedded_dataset =
+        embedded_datasets::get_embedded_dataset(pool, owner, transform.embedded_dataset_id).await?;
+
+    // Create run record
+    let run = visualization_transforms::create_visualization_run(pool, visualization_transform_id)
+        .await?;
+    info!(
+        "Created visualization run {} for transform {}",
+        run.run_id, visualization_transform_id
+    );
+
+    // Parse visualization config
+    let viz_config = transform.visualization_config;
+    let n_neighbors = viz_config
+        .get("n_neighbors")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(15) as i32;
+    let n_components = viz_config
+        .get("n_components")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(2) as i32;
+    let min_dist = viz_config
+        .get("min_dist")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.1) as f32;
+    let metric = viz_config
+        .get("metric")
+        .and_then(|v| v.as_str())
+        .unwrap_or("cosine")
+        .to_string();
+    let min_cluster_size = viz_config
+        .get("min_cluster_size")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(10) as i32;
+    let min_samples = viz_config
+        .get("min_samples")
+        .and_then(|v| v.as_i64())
+        .map(|v| v as i32);
+    let topic_naming_llm_id = viz_config
+        .get("topic_naming_llm_id")
+        .and_then(|v| v.as_i64())
+        .map(|v| v as i32);
+
+    // Get LLM config if specified
+    let llm_config = if let Some(llm_id) = topic_naming_llm_id {
+        let llm = llms::get_llm(pool, owner, llm_id).await?;
+        
+        // Log LLM config details for debugging
+        let has_api_key = llm.api_key.is_some();
+        debug!(
+            "LLM config for visualization: llm_id={}, provider={}, has_api_key={}",
+            llm_id, llm.provider, has_api_key
+        );    
+        Some(LLMConfig {
+            llm_id,
+            provider: llm.provider.clone(),
+            model: llm
+                .config
+                .get("model")
+                .and_then(|m| m.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_default(),
+            api_key: llm.api_key.clone().unwrap_or_default(),
+            config: llm.config.clone(),
+        })
+    } else {
+        None
+    };
+
+    // Get vector database config
     let qdrant_url =
         std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string());
     let vector_db_config = VectorDatabaseConfig {
         database_type: "qdrant".to_string(),
         connection_url: qdrant_url,
-        api_key: None,
+        api_key: std::env::var("QDRANT_API_KEY").ok(),
     };
 
-    // Parse visualization config or use defaults
-    let visualization_config = if !transform.visualization_config.is_null() {
-        serde_json::from_value::<VisualizationConfig>(transform.visualization_config.clone())
-            .unwrap_or_else(|_| default_visualization_config())
-    } else {
-        default_visualization_config()
+    // Build visualization config
+    let visualization_config = VisualizationConfig {
+        n_neighbors,
+        n_components,
+        min_dist,
+        metric,
+        min_cluster_size,
+        min_samples,
+        topic_naming_llm_id,
     };
 
-    // Generate output collection names using the standard naming convention
-    let (output_collection_reduced, output_collection_topics) =
-        crate::transforms::visualization::VisualizationTransform::generate_collection_names(
-            transform.visualization_transform_id,
-            &transform.owner,
-        );
-
+    // Build job
     let job = VisualizationTransformJob {
         job_id: Uuid::new_v4(),
-        visualization_transform_id: transform.visualization_transform_id,
-        owner: transform.owner.clone(),
-        source_collection: embedded_dataset.collection_name.clone(),
-        output_collection_reduced: output_collection_reduced.clone(),
-        output_collection_topics: output_collection_topics.clone(),
+        visualization_transform_id,
+        run_id: run.run_id,
+        owner: owner.to_string(),
+        embedded_dataset_id: transform.embedded_dataset_id,
+        qdrant_collection_name: embedded_dataset.collection_name.clone(),
         visualization_config,
         vector_database_config: vector_db_config,
+        llm_config,
     };
 
-    // Mark the transform as processing before publishing the job
-    update_visualization_transform_status_processing(pool, transform.visualization_transform_id)
-        .await?;
+    // Publish to NATS
+    let js = async_nats::jetstream::new(nats.clone());
+    let message_id = format!("vt-{}-{}", visualization_transform_id, run.run_id);
 
-    let payload = serde_json::to_vec(&job)?;
-
-    // Use JetStream with message ID for deduplication
-    let msg_id = format!("vt-{}", transform.visualization_transform_id);
-    let jetstream = jetstream::new(nats.clone());
     let mut headers = async_nats::HeaderMap::new();
-    headers.insert("Nats-Msg-Id", msg_id.as_str());
+    headers.insert("Nats-Msg-Id", message_id.as_str());
 
-    jetstream
-        .publish_with_headers(
-            "workers.visualization-transform".to_string(),
-            headers,
-            payload.into(),
-        )
-        .await?
-        .await?;
+    js.publish_with_headers(
+        "workers.visualization-transform".to_string(),
+        headers,
+        serde_json::to_vec(&job)?.into(),
+    )
+    .await?
+    .await?;
 
     info!(
-        "Triggered visualization job for transform {}",
-        transform.visualization_transform_id
+        "Published visualization job {} for transform {} (run {})",
+        job.job_id, visualization_transform_id, run.run_id
     );
 
     Ok(())

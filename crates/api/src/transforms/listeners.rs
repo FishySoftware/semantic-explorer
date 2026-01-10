@@ -15,8 +15,7 @@ use crate::storage::postgres::collection_transforms;
 use crate::storage::postgres::datasets;
 use crate::storage::postgres::embedded_datasets;
 use crate::storage::postgres::visualization_transforms::{
-    get_visualization_transform, update_visualization_transform_status_completed,
-    update_visualization_transform_status_failed,
+    get_visualization_run, update_visualization_run,
 };
 
 #[derive(Clone)]
@@ -379,82 +378,68 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
 #[tracing::instrument(name = "handle_visualization_result", skip(ctx))]
 async fn handle_visualization_result(result: VisualizationTransformResult, ctx: &TransformContext) {
     info!(
-        "Handling visualization result for transform {}",
-        result.visualization_transform_id
+        "Handling visualization result for transform {} run {}",
+        result.visualization_transform_id, result.run_id
     );
 
-    // Validate ownership by fetching the visualization transform
-    if let Err(e) = get_visualization_transform(
-        &ctx.postgres_pool,
-        &result.owner,
-        result.visualization_transform_id,
-    )
-    .await
-    {
-        error!(
-            "Visualization transform {} not found or access denied for owner {}: {}",
-            result.visualization_transform_id, result.owner, e
-        );
+    // Verify run exists
+    if let Err(e) = get_visualization_run(&ctx.postgres_pool, result.run_id).await {
+        error!("Visualization run {} not found: {}", result.run_id, e);
         return;
     }
 
-    if result.status != "completed" {
-        error!(
-            "Visualization failed for transform {}: {:?}",
-            result.visualization_transform_id, result.error
-        );
+    // Determine status and update run record
+    let status = if result.status == "completed" {
+        "completed"
+    } else {
+        "failed"
+    };
 
-        // Update database with failure status
-        let error_message = result.error.unwrap_or_else(|| "Unknown error".to_string());
-        if let Err(e) = update_visualization_transform_status_failed(
-            &ctx.postgres_pool,
-            result.visualization_transform_id,
-            &error_message,
-        )
-        .await
-        {
-            error!(
-                "Failed to update failure status for visualization transform {}: {}",
-                result.visualization_transform_id, e
-            );
-        }
-        return;
-    }
-
-    info!(
-        "Visualization completed for transform {} with {} points in {} clusters (processing time: {}ms)",
-        result.visualization_transform_id,
-        result.n_points,
-        result.n_clusters,
-        result.processing_duration_ms.unwrap_or(0)
-    );
+    let error_message = result.error_message.clone();
 
     // Build stats JSON
     let stats = serde_json::json!({
-        "n_points": result.n_points,
-        "n_clusters": result.n_clusters,
+        "point_count": result.point_count,
+        "cluster_count": result.cluster_count,
         "processing_duration_ms": result.processing_duration_ms
     });
 
-    // Update the database with collection names and success status
-    if let Err(e) = update_visualization_transform_status_completed(
+    // Update run record with results
+    let now = sqlx::types::chrono::Utc::now();
+    if let Err(e) = update_visualization_run(
         &ctx.postgres_pool,
-        result.visualization_transform_id,
-        &result.output_collection_reduced,
-        &result.output_collection_topics,
-        &stats,
+        result.run_id,
+        Some(status),
+        Some(now),
+        Some(now),
+        result.html_s3_key.as_deref(),
+        result.point_count.map(|p| p as i32),
+        result.cluster_count,
+        error_message.as_deref(),
+        Some(&stats),
     )
     .await
     {
         error!(
-            "Failed to update collection names and status for visualization transform {}: {}",
-            result.visualization_transform_id, e
+            "Failed to update visualization run {}: {}",
+            result.run_id, e
         );
         return;
     }
 
-    info!(
-        "Successfully completed visualization transform {} and updated collection names",
-        result.visualization_transform_id
-    );
+    if status == "completed" {
+        info!(
+            "Successfully completed visualization run {} with {} points in {} clusters (processing time: {}ms)",
+            result.run_id,
+            result.point_count.unwrap_or(0),
+            result.cluster_count.unwrap_or(0),
+            result.processing_duration_ms.unwrap_or(0)
+        );
+    } else {
+        error!(
+            "Visualization run {} failed: {}",
+            result.run_id,
+            error_message.unwrap_or_else(|| "Unknown error".to_string())
+        );
+    }
 }

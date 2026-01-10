@@ -55,6 +55,8 @@ async fn main() -> Result<()> {
     )
     .await?;
 
+    semantic_explorer_core::nats::initialize_jetstream(&nats_client).await?;
+
     transforms::listeners::start_result_listeners(
         postgres_pool.clone(),
         s3_client.clone(),
@@ -75,8 +77,8 @@ async fn main() -> Result<()> {
         s3_client.clone(),
     );
 
-    let visualization_scanner_handle =
-        transforms::visualization::initialize_scanner(postgres_pool.clone(), nats_client.clone());
+    // let visualization_scanner_handle =
+    //     transforms::visualization::initialize_scanner(postgres_pool.clone(), nats_client.clone());
 
     info!("server running at {address}");
 
@@ -180,11 +182,9 @@ async fn main() -> Result<()> {
             .service(api::visualization_transforms::delete_visualization_transform)
             .service(api::visualization_transforms::trigger_visualization_transform)
             .service(api::visualization_transforms::get_visualization_transform_stats)
-            .service(api::visualization_transforms::get_visualization_points)
-            .service(api::visualization_transforms::get_visualization_topics)
-            .service(api::visualization_transforms::get_visualizations_for_embedded_dataset)
-            .service(api::visualizations::get_visualization_points)
-            .service(api::visualizations::get_visualization_topics)
+            .service(api::visualization_transforms::get_visualization_runs)
+            .service(api::visualization_transforms::get_visualization_run)
+            .service(api::visualization_transforms::get_visualizations_by_dataset)
             .service(api::chat::create_chat_session)
             .service(api::chat::get_chat_sessions)
             .service(api::chat::get_chat_session)
@@ -207,7 +207,7 @@ async fn main() -> Result<()> {
 
     collection_scanner_handle.abort();
     dataset_scanner_handle.abort();
-    visualization_scanner_handle.abort();
+    // visualization_scanner_handle.abort();
 
     info!("Server shutdown");
 

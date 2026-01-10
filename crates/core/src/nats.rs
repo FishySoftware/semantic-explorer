@@ -127,7 +127,7 @@ fn stream_config_differs(current: &StreamConfig, desired: &StreamConfig) -> bool
 
 pub fn create_transform_file_consumer_config() -> ConsumerConfig {
     ConsumerConfig {
-        durable_name: Some("transform-file-workers".to_string()),
+        durable_name: Some("collection-transform-workers".to_string()),
         description: Some("Consumer for file transformation jobs".to_string()),
         ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
         ack_wait: Duration::from_secs(10 * 60), // 10 minutes to process
@@ -145,7 +145,7 @@ pub fn create_transform_file_consumer_config() -> ConsumerConfig {
 
 pub fn create_vector_embed_consumer_config() -> ConsumerConfig {
     ConsumerConfig {
-        durable_name: Some("vector-embed-workers".to_string()),
+        durable_name: Some("dataset-transform-workers".to_string()),
         description: Some("Consumer for vector embedding jobs".to_string()),
         ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
         ack_wait: Duration::from_secs(10 * 60), // 10 minutes to process
@@ -163,7 +163,7 @@ pub fn create_vector_embed_consumer_config() -> ConsumerConfig {
 
 pub fn create_visualization_consumer_config() -> ConsumerConfig {
     ConsumerConfig {
-        durable_name: Some("visualization-workers".to_string()),
+        durable_name: Some("visualization-transform-workers".to_string()),
         description: Some("Consumer for visualization transform jobs (UMAP/HDBSCAN)".to_string()),
         ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
         ack_wait: Duration::from_secs(30 * 60), // 30 minutes - visualization can be slow
@@ -251,9 +251,12 @@ async fn collect_nats_metrics(client: &Client) -> Result<()> {
 
             // Collect consumer metrics
             let consumers = vec![
-                ("collection-transforms", "COLLECTION_TRANSFORMS"),
-                ("dataset-workers", "DATASET_TRANSFORMS"),
-                ("visualization-workers", "VISUALIZATION_TRANSFORMS"),
+                ("collection-transform-workers", "COLLECTION_TRANSFORMS"),
+                ("dataset-transform-workers", "DATASET_TRANSFORMS"),
+                (
+                    "visualization-transform-workers",
+                    "VISUALIZATION_TRANSFORMS",
+                ),
             ];
 
             for (consumer_name, expected_stream) in consumers {

@@ -82,20 +82,27 @@ pub struct VectorDatabaseConfig {
     pub api_key: Option<String>,
 }
 
-fn default_topic_naming_mode() -> String {
-    "tfidf".to_string()
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LLMConfig {
+    pub llm_id: i32,
+    pub provider: String,
+    pub model: String,
+    pub api_key: String,
+    #[serde(default)]
+    pub config: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VisualizationTransformJob {
     pub job_id: Uuid,
     pub visualization_transform_id: i32,
+    pub run_id: i32,
     pub owner: String,
-    pub source_collection: String,
-    pub output_collection_reduced: String,
-    pub output_collection_topics: String,
+    pub embedded_dataset_id: i32,
+    pub qdrant_collection_name: String,
     pub visualization_config: VisualizationConfig,
     pub vector_database_config: VectorDatabaseConfig,
+    pub llm_config: Option<LLMConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,9 +115,6 @@ pub struct VisualizationConfig {
     // HDBSCAN parameters
     pub min_cluster_size: i32,
     pub min_samples: Option<i32>,
-    // Topic naming configuration
-    #[serde(default = "default_topic_naming_mode")]
-    pub topic_naming_mode: String, // "tfidf" or "llm"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub topic_naming_llm_id: Option<i32>, // LLM database ID when mode = "llm"
 }
@@ -119,14 +123,16 @@ pub struct VisualizationConfig {
 pub struct VisualizationTransformResult {
     pub job_id: Uuid,
     pub visualization_transform_id: i32,
+    pub run_id: i32,
     pub owner: String,
     pub status: String,
-    pub error: Option<String>,
+    pub error_message: Option<String>,
+    pub html_s3_key: Option<String>,
+    pub point_count: Option<usize>,
+    pub cluster_count: Option<i32>,
     pub processing_duration_ms: Option<i64>,
-    pub n_points: usize,
-    pub n_clusters: i32,
-    pub output_collection_reduced: String,
-    pub output_collection_topics: String,
+    pub stats_json: Option<serde_json::Value>,
 }
+
 #[deprecated(note = "Use VisualizationTransformResult instead")]
 pub type VisualizationResult = VisualizationTransformResult;

@@ -56,4 +56,23 @@ spec:
   selector:
     matchLabels:
       {{- include "semantic-explorer.workerDatasets.selectorLabels" . | nindent 6 }}
+{{- end }}---
+{{- if .Values.workerVisualizationsPy.podDisruptionBudget.enabled }}
+apiVersion: {{ include "semantic-explorer.pdb.apiVersion" . }}
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-worker-visualizations-py
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.workerVisualizationsPy.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.workerVisualizationsPy.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.workerVisualizationsPy.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  {{- if .Values.workerVisualizationsPy.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.workerVisualizationsPy.podDisruptionBudget.maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "semantic-explorer.workerVisualizationsPy.selectorLabels" . | nindent 6 }}
 {{- end }}

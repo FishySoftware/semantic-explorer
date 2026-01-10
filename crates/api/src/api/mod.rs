@@ -9,7 +9,6 @@ pub(crate) mod llms;
 pub(crate) mod marketplace;
 pub(crate) mod search;
 pub(crate) mod visualization_transforms;
-pub(crate) mod visualizations;
 
 use crate::auth::extract_user;
 use actix_files::NamedFile;

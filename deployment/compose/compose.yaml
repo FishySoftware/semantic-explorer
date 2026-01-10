@@ -67,27 +67,27 @@ services:
       - SERVICE_NAME=worker-datasets
     network_mode: host
 
-  worker-visualizations:
-    image: jofish89/worker-visualizations:latest
+  worker-visualizations-py:
+    image: jofish89/worker-visualizations-py:latest
     depends_on:
       - nats
       - qdrant
+      - rustfs
       - otel-collector
     restart: unless-stopped
     environment:
-      - RUST_LOG=warn,actix_web_prom=error,worker_visualizations=debug
       - NATS_URL=nats://localhost:4222
       - QDRANT_URL=http://localhost:6334
+      - S3_ENDPOINT=http://localhost:9000
+      - AWS_ACCESS_KEY_ID=test_access_key
+      - AWS_SECRET_ACCESS_KEY=test_secret_key
+      - AWS_REGION=us-east-1
+      - LOG_LEVEL=INFO
+      - WORKER_ID=py-worker-prod-1
+      - PROCESSING_TIMEOUT_SECS=3600
+      - MAX_CONCURRENT_JOBS=3
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
-      - SERVICE_NAME=worker-visualizations
     network_mode: host
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
 
   rustfs:
     image: rustfs/rustfs:latest

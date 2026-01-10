@@ -1,33 +1,8 @@
--- ============================================================================
--- Semantic Explorer - Unified Database Schema
--- ============================================================================
---
--- Schema includes:
--- 1. Collections (raw file storage)
--- 2. Datasets (structured data)
--- 3. Dataset Items
--- 4. Embedders (embedding providers)
--- 5. Collection Transforms (Collection → Dataset)
--- 6. Dataset Transforms (Dataset → Embeddings)
--- 7. Embedded Datasets (embedding results)
--- 8. Visualization Transforms (Embedded Dataset → 3D visualization)
--- 9. Transform Processed Files (job processing history)
--- 10. LLMs (Large Language Models for chat)
--- 11. Chat Sessions (RAG chat conversations)
--- 12. Chat Messages (conversation history)
--- 13. Chat Message Retrieved Documents (RAG document tracking)
-
--- ============================================================================
--- USERS TABLE
--- ============================================================================
 CREATE TABLE IF NOT EXISTS users (
     username TEXT PRIMARY KEY,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
--- ============================================================================
--- COLLECTIONS: Raw file storage
--- ============================================================================
 CREATE TABLE IF NOT EXISTS COLLECTIONS (
     collection_id    SERIAL PRIMARY KEY,
     title            TEXT                     NOT NULL,
@@ -51,9 +26,7 @@ CREATE INDEX IF NOT EXISTS idx_collections_owner_created
 CREATE INDEX IF NOT EXISTS idx_collections_public_owner
     ON COLLECTIONS(is_public, owner);
 
--- ============================================================================
--- DATASETS: Structured data
--- ============================================================================
+
 CREATE TABLE IF NOT EXISTS DATASETS (
     dataset_id       SERIAL PRIMARY KEY,
     title            TEXT                     NOT NULL,
@@ -75,9 +48,6 @@ CREATE INDEX IF NOT EXISTS idx_datasets_owner_created
 CREATE INDEX IF NOT EXISTS idx_datasets_public_owner
     ON DATASETS(is_public, owner);
 
--- ============================================================================
--- DATASET_ITEMS: Items within datasets
--- ============================================================================
 CREATE TABLE IF NOT EXISTS DATASET_ITEMS (
     item_id          SERIAL PRIMARY KEY,
     dataset_id       INTEGER             NOT NULL,
@@ -97,13 +67,9 @@ CREATE INDEX IF NOT EXISTS idx_dataset_items_dataset_created
 CREATE INDEX IF NOT EXISTS idx_dataset_items_updated_at
     ON dataset_items(dataset_id, updated_at DESC);
 
--- Unique constraint to prevent duplicate items in a dataset
 CREATE UNIQUE INDEX IF NOT EXISTS idx_dataset_items_dataset_title_unique
     ON dataset_items(dataset_id, title);
 
--- ============================================================================
--- EMBEDDERS: Embedding providers
--- ============================================================================
 CREATE TABLE IF NOT EXISTS EMBEDDERS (
     embedder_id          SERIAL PRIMARY KEY,
     name                 TEXT                     NOT NULL,
@@ -138,12 +104,6 @@ CREATE INDEX IF NOT EXISTS idx_embedders_owner_public
 CREATE INDEX IF NOT EXISTS idx_embedders_public_owner
     ON EMBEDDERS(is_public, owner);
 
-COMMENT ON COLUMN embedders.max_input_tokens IS 'Maximum input tokens accepted by this embedder model';
-COMMENT ON COLUMN embedders.truncate_strategy IS 'Text truncation strategy: NONE, START, END, or custom value';
-
--- ============================================================================
--- COLLECTION_TRANSFORMS: Collection → Dataset (file extraction & chunking)
--- ============================================================================
 CREATE TABLE IF NOT EXISTS COLLECTION_TRANSFORMS (
     collection_transform_id SERIAL PRIMARY KEY,
     title                   TEXT                     NOT NULL,
@@ -169,9 +129,6 @@ CREATE INDEX IF NOT EXISTS idx_collection_transforms_owner_enabled
 CREATE INDEX IF NOT EXISTS idx_collection_transforms_dataset
     ON collection_transforms(dataset_id);
 
--- ============================================================================
--- DATASET_TRANSFORMS: Dataset → Embedded Datasets (embedding with 1-N embedders)
--- ============================================================================
 CREATE TABLE IF NOT EXISTS DATASET_TRANSFORMS (
     dataset_transform_id SERIAL PRIMARY KEY,
     title                TEXT                     NOT NULL,
@@ -192,9 +149,6 @@ CREATE INDEX IF NOT EXISTS idx_dataset_transforms_owner_enabled
     ON DATASET_TRANSFORMS(owner, is_enabled)
     WHERE is_enabled = TRUE;
 
--- ============================================================================
--- EMBEDDED_DATASETS: Result entity (one per embedder from Dataset Transform)
--- ============================================================================
 CREATE TABLE IF NOT EXISTS EMBEDDED_DATASETS (
     embedded_dataset_id  SERIAL PRIMARY KEY,
     title                TEXT                     NOT NULL,
@@ -226,9 +180,6 @@ CREATE INDEX IF NOT EXISTS idx_embedded_datasets_owner_created
 CREATE INDEX IF NOT EXISTS idx_embedded_datasets_last_processed_at
     ON embedded_datasets(embedded_dataset_id, last_processed_at);
 
--- ============================================================================
--- VISUALIZATION_TRANSFORMS: Embedded Dataset → 3D visualization
--- ============================================================================
 CREATE TABLE IF NOT EXISTS VISUALIZATION_TRANSFORMS (
     visualization_transform_id SERIAL PRIMARY KEY,
     title                      TEXT                     NOT NULL,
@@ -256,9 +207,6 @@ CREATE INDEX IF NOT EXISTS idx_visualization_transforms_owner_enabled
 CREATE INDEX IF NOT EXISTS idx_visualization_transforms_last_run_status
     ON VISUALIZATION_TRANSFORMS(last_run_status);
 
--- ============================================================================
--- TRANSFORM_PROCESSED_FILES: Shared tracking table for all transform types
--- ============================================================================
 CREATE TABLE IF NOT EXISTS TRANSFORM_PROCESSED_FILES (
     id                      SERIAL PRIMARY KEY,
     transform_type          TEXT                     NOT NULL,
@@ -280,9 +228,6 @@ CREATE INDEX IF NOT EXISTS idx_transform_files_transform_status
 CREATE INDEX IF NOT EXISTS idx_transform_files_processed_at
     ON transform_processed_files(processed_at DESC);
 
--- ============================================================================
--- LLMS: Large Language Models for chat and topic naming
--- ============================================================================
 CREATE TABLE IF NOT EXISTS LLMS (
     llm_id               SERIAL PRIMARY KEY,
     name                 TEXT                     NOT NULL,
@@ -305,9 +250,6 @@ CREATE INDEX IF NOT EXISTS idx_llms_public
 CREATE INDEX IF NOT EXISTS idx_llms_public_owner
     ON LLMS(is_public, owner);
 
--- ============================================================================
--- CHAT_SESSIONS: RAG chat conversation sessions
--- ============================================================================
 CREATE TABLE IF NOT EXISTS chat_sessions (
     session_id TEXT PRIMARY KEY,
     owner TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
@@ -322,9 +264,6 @@ CREATE INDEX IF NOT EXISTS idx_chat_sessions_owner ON chat_sessions(owner);
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_embedded_dataset ON chat_sessions(embedded_dataset_id);
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_updated_at ON chat_sessions(updated_at DESC);
 
--- ============================================================================
--- CHAT_MESSAGES: Chat conversation message history
--- ============================================================================
 CREATE TABLE IF NOT EXISTS chat_messages (
     message_id SERIAL PRIMARY KEY,
     session_id TEXT NOT NULL REFERENCES chat_sessions(session_id) ON DELETE CASCADE,
@@ -341,9 +280,6 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation_created
 CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation_role
     ON chat_messages(session_id, role);
 
--- ============================================================================
--- CHAT_MESSAGE_RETRIEVED_DOCUMENTS: Retrieved documents for chat messages
--- ============================================================================
 CREATE TABLE IF NOT EXISTS chat_message_retrieved_documents (
     id SERIAL PRIMARY KEY,
     message_id INTEGER NOT NULL REFERENCES chat_messages(message_id) ON DELETE CASCADE,
@@ -359,11 +295,6 @@ CREATE INDEX IF NOT EXISTS idx_chat_message_retrieved_documents_message_id
 CREATE INDEX IF NOT EXISTS idx_chat_message_retrieved_documents_score 
     ON chat_message_retrieved_documents(message_id, similarity_score DESC);
 
--- ============================================================================
--- COMPREHENSIVE QUERY OPTIMIZATION INDICES
--- ============================================================================
-
--- TRANSFORMS tables optimization
 CREATE INDEX IF NOT EXISTS idx_transforms_collection_id
     ON collection_transforms(collection_id);
 CREATE INDEX IF NOT EXISTS idx_transforms_source_dataset
@@ -373,3 +304,28 @@ CREATE INDEX IF NOT EXISTS idx_transforms_target_dataset
 CREATE INDEX IF NOT EXISTS idx_transforms_owner_type_enabled
     ON collection_transforms(owner, collection_transform_id, is_enabled)
     WHERE is_enabled = TRUE;
+
+
+CREATE TABLE IF NOT EXISTS VISUALIZATION_TRANSFORM_RUNS (
+    run_id                  SERIAL PRIMARY KEY,
+    visualization_transform_id INTEGER NOT NULL,
+    status                  TEXT NOT NULL CHECK (status IN ('pending', 'processing', 'completed', 'failed')),
+    started_at              TIMESTAMP WITH TIME ZONE NULL,
+    completed_at            TIMESTAMP WITH TIME ZONE NULL,
+    html_s3_key             TEXT NULL,
+    point_count             INTEGER NULL,
+    cluster_count           INTEGER NULL,
+    error_message           TEXT NULL,
+    stats_json              JSONB NULL,
+    created_at              TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    FOREIGN KEY (visualization_transform_id) REFERENCES VISUALIZATION_TRANSFORMS(visualization_transform_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_visualization_transform_runs_transform_id 
+    ON VISUALIZATION_TRANSFORM_RUNS(visualization_transform_id);
+CREATE INDEX IF NOT EXISTS idx_visualization_transform_runs_status 
+    ON VISUALIZATION_TRANSFORM_RUNS(status);
+CREATE INDEX IF NOT EXISTS idx_visualization_transform_runs_created_at 
+    ON VISUALIZATION_TRANSFORM_RUNS(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_visualization_transform_runs_transform_created
+    ON VISUALIZATION_TRANSFORM_RUNS(visualization_transform_id, created_at DESC);

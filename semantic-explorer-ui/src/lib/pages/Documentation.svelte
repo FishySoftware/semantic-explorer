@@ -133,7 +133,7 @@
 					<h3 class="text-lg font-semibold text-gray-900 dark:text-white">Visualization</h3>
 				</div>
 				<p class="text-sm text-gray-600 dark:text-gray-400">
-					Create 2D/3D visualizations with UMAP dimensionality reduction and HDBSCAN clustering.
+					Create visualizations with UMAP dimensionality reduction and HDBSCAN clustering.
 				</p>
 			</div>
 
@@ -260,8 +260,7 @@
 				Provides configurable pipelines for each stage of data processing. Collection transforms
 				extract text from documents and generate chunks. Dataset transforms generate embeddings
 				using configured embedders, creating one Embedded Dataset per embedder for comparison.
-				Visualization transforms reduce embeddings to 2D/3D with UMAP and identify topics with
-				HDBSCAN.
+				Visualization transforms reduce embeddings with UMAP and identify topics with HDBSCAN.
 			</p>
 			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
 				<h4 class="font-semibold text-gray-900 dark:text-white mb-2">Transform Types:</h4>
@@ -282,8 +281,7 @@
 					<div>
 						<div class="font-semibold text-gray-900 dark:text-white">Visualization Transforms</div>
 						<p class="text-gray-600 dark:text-gray-400">
-							Reduce embeddings to 2D/3D using UMAP and identify topic clusters with HDBSCAN
-							(requires GPU)
+							Reduce embeddings using UMAP and identify topic clusters with HDBSCAN (requires GPU)
 						</p>
 					</div>
 				</div>
@@ -323,7 +321,7 @@
 					<li>Track embedding generation progress per model</li>
 					<li>View vector statistics and embedding metadata</li>
 					<li>Search across each embedded dataset independently</li>
-					<li>Trigger visualization transforms for 2D/3D visualization</li>
+					<li>Trigger visualization transforms for visualization</li>
 					<li>Compare embedding quality across models</li>
 				</ul>
 			</div>
@@ -367,15 +365,15 @@
 				>
 			</h3>
 			<p class="text-gray-700 dark:text-gray-300 mb-4">
-				Create interactive 2D/3D visualizations of your embedding spaces. Automatically reduces
-				high-dimensional embeddings to 2D/3D using UMAP and identifies topic clusters with HDBSCAN.
-				Compare how different embedding models organize your data in visual form.
+				Create interactive visualizations of your embedding spaces. Automatically reduces
+				high-dimensional embeddings using UMAP and identifies topic clusters with HDBSCAN. Compare
+				how different embedding models organize your data in visual form.
 			</p>
 			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
 				<h4 class="font-semibold text-gray-900 dark:text-white mb-2">Key Features:</h4>
 				<ul class="list-inside list-disc space-y-1 text-sm text-gray-600 dark:text-gray-400">
 					<li>GPU-accelerated dimensionality reduction (UMAP) and topic clustering (HDBSCAN)</li>
-					<li>Interactive 2D/3D visualization viewer</li>
+					<li>Interactive visualization viewer</li>
 					<li>Compare visualizations across embedding models</li>
 				</ul>
 			</div>
@@ -414,8 +412,8 @@
 			<li class="flex items-start gap-2">
 				<ArrowRightOutline class="w-4 h-4 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
 				<span
-					>Generate 2D/3D visualizations of your Embedded Datasets to visually compare embedding
-					model performance</span
+					>Generate visualizations of your Embedded Datasets to visually compare embedding model
+					performance</span
 				>
 			</li>
 		</ul>
