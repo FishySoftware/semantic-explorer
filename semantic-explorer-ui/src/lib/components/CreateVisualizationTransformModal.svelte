@@ -46,11 +46,9 @@
 	let umapNNeighbors = $state(15);
 	let umapMinDist = $state(0.1);
 	let umapMetric = $state('cosine');
-
 	// HDBSCAN Configuration
 	let hdbscanMinClusterSize = $state(5);
 	let hdbscanMinSamples = $state(1);
-
 	// Datamapplot Visualization Configuration
 	let minFontsize = $state(12);
 	let maxFontsize = $state(24);
@@ -108,7 +106,6 @@
 					llm_id: topicNamingLlmId,
 					// UMAP parameters
 					n_neighbors: umapNNeighbors,
-
 					min_dist: umapMinDist,
 					metric: umapMetric,
 					// HDBSCAN parameters
@@ -191,7 +188,7 @@
 			</div>
 		{/if}
 
-		<div class="space-y-4 max-h-[70vh] overflow-y-auto">
+		<div class="p-4 space-y-4 max-h-[70vh] overflow-y-auto">
 			<!-- Title -->
 			<div>
 				<label

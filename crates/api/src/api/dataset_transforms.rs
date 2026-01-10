@@ -140,7 +140,6 @@ pub async fn create_dataset_transform(
                     "Failed to trigger dataset transform scan for newly created transform {}: {}",
                     dataset_transform_id, e
                 );
-                // Don't fail the creation, just log the error
             }
             HttpResponse::Created().json(serde_json::json!({
                 "transform": transform,

@@ -135,7 +135,6 @@ pub async fn create_collection_transform(
                     "Failed to trigger collection transform scan for newly created transform {}: {}",
                     collection_transform_id, e
                 );
-                // Don't fail the creation, just log the error
             }
             HttpResponse::Created().json(transform)
         }

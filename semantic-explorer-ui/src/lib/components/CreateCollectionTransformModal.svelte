@@ -73,13 +73,13 @@
 
 	// Extraction strategy
 	let extractionStrategy = $state('plain_text');
-	let preserveFormatting = $state(false);
+	let preserveFormatting = $state(true);
 	let extractTables = $state(true);
 	let tableFormat = $state('plain_text');
-	let preserveHeadings = $state(false);
+	let preserveHeadings = $state(true);
 	let headingFormat = $state('plain_text');
-	let preserveLists = $state(false);
-	let preserveCodeBlocks = $state(false);
+	let preserveLists = $state(true);
+	let preserveCodeBlocks = $state(true);
 
 	// Update table and heading format when extraction strategy changes
 	$effect(() => {
@@ -347,7 +347,7 @@
 			</div>
 		{/if}
 
-		<div class="space-y-4 max-h-[70vh] overflow-y-auto">
+		<div class="p-4 space-y-4 max-h-[70vh] overflow-y-auto">
 			<!-- Title -->
 			<div>
 				<label
