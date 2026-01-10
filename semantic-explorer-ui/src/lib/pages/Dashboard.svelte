@@ -443,8 +443,13 @@
 		<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
 			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
 				<div class="flex justify-between items-center mb-3">
-					<h2 class="text-xl font-semibold text-gray-900 dark:text-white">Recent Embedded Datasets</h2>
-					<a href="#/embedded-datasets" class="text-blue-600 dark:text-blue-400 hover:underline text-sm">
+					<h2 class="text-xl font-semibold text-gray-900 dark:text-white">
+						Recent Embedded Datasets
+					</h2>
+					<a
+						href="#/embedded-datasets"
+						class="text-blue-600 dark:text-blue-400 hover:underline text-sm"
+					>
 						View all
 					</a>
 				</div>
@@ -486,7 +491,10 @@
 			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
 				<div class="flex justify-between items-center mb-3">
 					<h2 class="text-xl font-semibold text-gray-900 dark:text-white">Recent Visualizations</h2>
-					<a href="#/visualization-transforms" class="text-blue-600 dark:text-blue-400 hover:underline text-sm">
+					<a
+						href="#/visualization-transforms"
+						class="text-blue-600 dark:text-blue-400 hover:underline text-sm"
+					>
 						View all
 					</a>
 				</div>
@@ -505,7 +513,11 @@
 											{visualization.title}
 										</h3>
 										<div class="flex items-center gap-2 mt-1">
-											<span class="text-xs px-2 py-0.5 rounded {visualization.is_enabled ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'}">
+											<span
+												class="text-xs px-2 py-0.5 rounded {visualization.is_enabled
+													? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
+													: 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'}"
+											>
 												{visualization.is_enabled ? 'Enabled' : 'Disabled'}
 											</span>
 											{#if visualization.last_run_status}

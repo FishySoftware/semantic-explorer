@@ -163,7 +163,10 @@
 						visualizationTransformStatsMap.set(transform.visualization_transform_id, stats);
 					}
 				} catch (e) {
-					console.error(`Failed to fetch stats for transform ${transform.visualization_transform_id}:`, e);
+					console.error(
+						`Failed to fetch stats for transform ${transform.visualization_transform_id}:`,
+						e
+					);
 				}
 			}
 		} catch (e) {
@@ -235,8 +238,9 @@
 			loadVectorForPoint(pointId);
 		} else {
 			// Remove from cache to hide it
-			const { [pointId]: _, ...rest } = vectorCache;
-			vectorCache = rest;
+			vectorCache = Object.fromEntries(
+				Object.entries(vectorCache).filter(([key]) => key !== pointId)
+			);
 		}
 	}
 
@@ -391,16 +395,21 @@
 				<div>
 					<p class="text-sm text-gray-600 dark:text-gray-400">Source Dataset</p>
 					<button
-						onclick={() => embeddedDataset && (window.location.hash = `#/datasets/${embeddedDataset.source_dataset_id}`)}
+						onclick={() =>
+							embeddedDataset &&
+							(window.location.hash = `#/datasets/${embeddedDataset.source_dataset_id}`)}
 						class="text-lg font-medium text-blue-600 dark:text-blue-400 hover:underline text-left"
 					>
-						{embeddedDataset.source_dataset_title || `Dataset #${embeddedDataset.source_dataset_id}`}
+						{embeddedDataset.source_dataset_title ||
+							`Dataset #${embeddedDataset.source_dataset_id}`}
 					</button>
 				</div>
 				<div>
 					<p class="text-sm text-gray-600 dark:text-gray-400">Embedder</p>
 					<button
-						onclick={() => embeddedDataset && (window.location.hash = `#/embedders/${embeddedDataset.embedder_id}/details`)}
+						onclick={() =>
+							embeddedDataset &&
+							(window.location.hash = `#/embedders/${embeddedDataset.embedder_id}/details`)}
 						class="text-lg font-medium text-blue-600 dark:text-blue-400 hover:underline text-left"
 					>
 						{embeddedDataset.embedder_name || `Embedder #${embeddedDataset.embedder_id}`}
@@ -413,13 +422,17 @@
 					</div>
 					<div>
 						<p class="text-sm text-gray-600 dark:text-gray-400">Embedding Model</p>
-						<p class="text-lg font-medium text-gray-900 dark:text-white">{embedder.config?.model || embedder.name}</p>
+						<p class="text-lg font-medium text-gray-900 dark:text-white">
+							{embedder.config?.model || embedder.name}
+						</p>
 					</div>
 				{/if}
 				<div>
 					<p class="text-sm text-gray-600 dark:text-gray-400">Collection Name</p>
 					<button
-						onclick={() => embeddedDataset && (window.location.hash = `#/collections?search=${encodeURIComponent(embeddedDataset.collection_name)}`)}
+						onclick={() =>
+							embeddedDataset &&
+							(window.location.hash = `#/collections?search=${encodeURIComponent(embeddedDataset.collection_name)}`)}
 						class="font-mono text-blue-600 dark:text-blue-400 hover:underline text-sm break-all text-left"
 					>
 						{embeddedDataset.collection_name}
@@ -443,7 +456,9 @@
 						</div>
 						<div>
 							<p class="text-sm text-gray-600 dark:text-gray-400">Success Rate</p>
-							<p class="text-2xl font-bold text-green-600 dark:text-green-400">{getSuccessRate()}</p>
+							<p class="text-2xl font-bold text-green-600 dark:text-green-400">
+								{getSuccessRate()}
+							</p>
 						</div>
 						<div>
 							<p class="text-sm text-gray-600 dark:text-gray-400">Batches Processed</p>
@@ -468,7 +483,7 @@
 		</div>
 
 		<!-- Tabs -->
-		<TabPanel tabs={tabs} activeTabId={activeTab} onChange={handleTabChange}>
+		<TabPanel {tabs} activeTabId={activeTab} onChange={handleTabChange}>
 			{#snippet children(tabId)}
 				{#if tabId === 'overview'}
 					<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
@@ -571,12 +586,16 @@
 							</div>
 						{:else if points.length === 0}
 							<div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-8 text-center">
-								<p class="text-gray-600 dark:text-gray-400">No points found in this embedded dataset.</p>
+								<p class="text-gray-600 dark:text-gray-400">
+									No points found in this embedded dataset.
+								</p>
 							</div>
 						{:else}
 							<div class="space-y-4">
 								{#each points as point (point.id)}
-									<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 border border-gray-200 dark:border-gray-700">
+									<div
+										class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 border border-gray-200 dark:border-gray-700"
+									>
 										<div class="flex justify-between items-start mb-2">
 											<div class="flex-1">
 												<p class="text-sm font-mono text-gray-600 dark:text-gray-400 mb-2">
@@ -610,17 +629,25 @@
 													Payload:
 												</p>
 												<pre
-												class="text-xs bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 p-3 rounded overflow-x-auto border border-gray-200 dark:border-gray-700">{JSON.stringify(point.payload, null, 2)}</pre>
-										</div>
-									{/if}
+													class="text-xs bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 p-3 rounded overflow-x-auto border border-gray-200 dark:border-gray-700">{JSON.stringify(
+														point.payload,
+														null,
+														2
+													)}</pre>
+											</div>
+										{/if}
 
-									{#if vectorCache[point.id]}
-										<div class="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 rounded">
-											<p class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+										{#if vectorCache[point.id]}
+											<div class="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 rounded">
+												<p class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
 													Vector ({vectorCache[point.id].length} dimensions):
 												</p>
 												<pre
-													class="text-xs bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 p-3 rounded overflow-x-auto max-h-64">{JSON.stringify(vectorCache[point.id], null, 2)}</pre>
+													class="text-xs bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 p-3 rounded overflow-x-auto max-h-64">{JSON.stringify(
+														vectorCache[point.id],
+														null,
+														2
+													)}</pre>
 											</div>
 										{/if}
 									</div>

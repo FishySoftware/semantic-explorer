@@ -469,15 +469,11 @@ pub async fn get_point_vector(
     // Try to parse as UUID first, then as u64
     let qdrant_point_id = if let Ok(uuid) = uuid::Uuid::parse_str(&point_id) {
         PointId {
-            point_id_options: Some(PointIdOptions::Uuid(
-                uuid.to_string(),
-            )),
+            point_id_options: Some(PointIdOptions::Uuid(uuid.to_string())),
         }
     } else if let Ok(numeric_id) = point_id.parse::<u64>() {
         PointId {
-            point_id_options: Some(PointIdOptions::Num(
-                numeric_id,
-            )),
+            point_id_options: Some(PointIdOptions::Num(numeric_id)),
         }
     } else {
         error!("Failed to parse point_id as UUID or u64: {}", point_id);

@@ -533,15 +533,14 @@ fn start_dataset_transform_scan_listener(context: TransformContext, nats_client:
                     let dataset_transform_id = job.dataset_transform_id;
 
                     actix_web::rt::spawn(async move {
-                        if let Err(e) =
-                            trigger_dataset_transform_scan(
-                                &postgres_pool,
-                                &nats,
-                                &s3_client,
-                                dataset_transform_id,
-                                &owner,
-                            )
-                            .await
+                        if let Err(e) = trigger_dataset_transform_scan(
+                            &postgres_pool,
+                            &nats,
+                            &s3_client,
+                            dataset_transform_id,
+                            &owner,
+                        )
+                        .await
                         {
                             error!(
                                 "Failed to process dataset transform scan for {}: {}",

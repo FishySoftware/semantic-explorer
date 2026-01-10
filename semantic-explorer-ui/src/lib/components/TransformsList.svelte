@@ -148,7 +148,6 @@
 			const totalChunks = stats.total_chunks_to_process ?? 0;
 			const embedded = stats.total_chunks_embedded ?? 0;
 
-
 			// If processing, show processing count
 			if (stats.is_processing || stats.processing_batches > 0) {
 				const processingBatches = stats.processing_batches ?? 0;

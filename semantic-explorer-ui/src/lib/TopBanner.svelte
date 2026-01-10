@@ -77,19 +77,22 @@
 					<Avatar />
 				{/if}
 			</div>
-			
-			<Dropdown triggeredBy="#user-menu-button" class="w-48 bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700">
+
+			<Dropdown
+				triggeredBy="#user-menu-button"
+				class="w-48 bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700"
+			>
 				{#if userName}
 					<div class="px-4 py-3 text-sm text-gray-900 dark:text-white">
 						<div class="font-medium truncate">{userName}</div>
 						<div class="text-xs text-gray-500 dark:text-gray-400 truncate">{userEmail}</div>
-					</div>					
+					</div>
 				{/if}
-				
+
 				<div class="px-2 py-1 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">
 					Theme
 				</div>
-				
+
 				{#each ['light', 'dark', 'system'] as theme (theme)}
 					<DropdownItem
 						onclick={() => selectTheme(theme as Theme)}

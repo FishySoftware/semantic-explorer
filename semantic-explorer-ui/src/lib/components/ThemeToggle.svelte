@@ -37,7 +37,10 @@
 		{/if}
 	</Button>
 
-	<Dropdown triggeredBy="#theme-menu-button" class="w-36 bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 list-none">
+	<Dropdown
+		triggeredBy="#theme-menu-button"
+		class="w-36 bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 list-none"
+	>
 		{#each ['light', 'dark', 'system'] as theme (theme)}
 			<DropdownItem
 				onclick={() => selectTheme(theme as Theme)}

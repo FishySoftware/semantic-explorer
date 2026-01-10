@@ -430,15 +430,13 @@ async fn create_batches_from_dataset_items(
 
     // Update the last_processed_at timestamp to the max item timestamp we processed
     // This prevents race conditions where items created between query and update are missed
-    if jobs_created > 0 {
-        if let Some(max_ts) = max_item_timestamp {
-            embedded_datasets::update_embedded_dataset_last_processed_at_to(
-                pool,
-                embedded_dataset.embedded_dataset_id,
-                max_ts,
-            )
-            .await?;
-        }
+    if jobs_created > 0 && let Some(max_ts) = max_item_timestamp {
+        embedded_datasets::update_embedded_dataset_last_processed_at_to(
+            pool,
+            embedded_dataset.embedded_dataset_id,
+            max_ts,
+        )
+        .await?;
     }
 
     Ok(jobs_created)

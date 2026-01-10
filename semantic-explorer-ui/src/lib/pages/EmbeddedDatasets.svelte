@@ -376,7 +376,8 @@
 						<tr class="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50">
 							<TableBodyCell class="px-4 py-3">
 								<button
-								onclick={() => onNavigate(`/embedded-datasets/${dataset.embedded_dataset_id}/details`)}
+									onclick={() =>
+										onNavigate(`/embedded-datasets/${dataset.embedded_dataset_id}/details`)}
 									class="font-semibold text-blue-600 dark:text-blue-400 hover:underline text-left"
 								>
 									{dataset.title}
@@ -397,10 +398,7 @@
 							<TableBodyCell class="px-4 py-3">
 								{#if dataset.embedder_name}
 									<button
-										onclick={() =>
-											onNavigate(
-											`/embedders/${dataset.embedder_id}/details`
-											)}
+										onclick={() => onNavigate(`/embedders/${dataset.embedder_id}/details`)}
 										class="text-blue-600 dark:text-blue-400 hover:underline font-semibold text-sm"
 									>
 										{dataset.embedder_name}

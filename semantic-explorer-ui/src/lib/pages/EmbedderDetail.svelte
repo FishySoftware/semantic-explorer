@@ -642,27 +642,31 @@
 										>
 											<div class="flex items-start justify-between">
 												<div class="flex-1 min-w-0">
-												<button
-													onclick={() => window.location.hash = `#/embedded-datasets/${ed.embedded_dataset_id}/details`}
-													class="font-semibold text-blue-600 dark:text-blue-400 hover:underline wrap-break-word text-left"
-												>
-													{ed.title}
-												</button>
-												<p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
-													Dataset: <button
-														onclick={() => window.location.hash = `#/datasets/${ed.source_dataset_id}/details`}
-														class="text-blue-600 dark:text-blue-400 hover:underline"
+													<button
+														onclick={() =>
+															(window.location.hash = `#/embedded-datasets/${ed.embedded_dataset_id}/details`)}
+														class="font-semibold text-blue-600 dark:text-blue-400 hover:underline wrap-break-word text-left"
 													>
-													{datasetsCache.get(ed.source_dataset_id)?.title || `Dataset #${ed.source_dataset_id}`}
+														{ed.title}
 													</button>
-												</p>
-												<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-													Collection: <button
-														onclick={() => window.location.hash = `#/collections?search=${encodeURIComponent(ed.collection_name)}`}
-														class="font-mono text-[10px] text-blue-600 dark:text-blue-400 hover:underline"
-													>
-														{ed.collection_name}
-													</button>
+													<p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
+														Dataset: <button
+															onclick={() =>
+																(window.location.hash = `#/datasets/${ed.source_dataset_id}/details`)}
+															class="text-blue-600 dark:text-blue-400 hover:underline"
+														>
+															{datasetsCache.get(ed.source_dataset_id)?.title ||
+																`Dataset #${ed.source_dataset_id}`}
+														</button>
+													</p>
+													<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+														Collection: <button
+															onclick={() =>
+																(window.location.hash = `#/collections?search=${encodeURIComponent(ed.collection_name)}`)}
+															class="font-mono text-[10px] text-blue-600 dark:text-blue-400 hover:underline"
+														>
+															{ed.collection_name}
+														</button>
 													</p>
 												</div>
 												<div class="text-right ml-4 shrink-0">
