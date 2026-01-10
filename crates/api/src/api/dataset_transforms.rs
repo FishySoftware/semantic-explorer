@@ -310,10 +310,12 @@ pub async fn delete_dataset_transform(
     ),
 )]
 #[post("/api/dataset-transforms/{id}/trigger")]
-#[tracing::instrument(name = "trigger_dataset_transform", skip(auth, postgres_pool), fields(dataset_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "trigger_dataset_transform", skip(auth, postgres_pool, nats_client, s3_client), fields(dataset_transform_id = %path.as_ref()))]
 pub async fn trigger_dataset_transform(
     auth: Authenticated,
     postgres_pool: Data<Pool<Postgres>>,
+    nats_client: Data<NatsClient>,
+    s3_client: Data<aws_sdk_s3::Client>,
     path: Path<i32>,
 ) -> impl Responder {
     let username = match extract_username(&auth) {
@@ -323,19 +325,39 @@ pub async fn trigger_dataset_transform(
 
     let dataset_transform_id = path.into_inner();
 
-    match dataset_transforms::get_dataset_transform(&postgres_pool, &username, dataset_transform_id)
+    // Verify the transform exists
+    let transform = match dataset_transforms::get_dataset_transform(&postgres_pool, &username, dataset_transform_id)
         .await
     {
-        Ok(transform) => HttpResponse::Ok().json(serde_json::json!({
-            "message": "Dataset transform triggered for all embedders",
-            "dataset_transform_id": dataset_transform_id,
-            "embedder_count": transform.embedder_ids.len()
-        })),
+        Ok(t) => t,
         Err(e) => {
             error!("Dataset transform not found: {}", e);
-            not_found(format!("Dataset transform not found: {}", e))
+            return not_found(format!("Dataset transform not found: {}", e));
         }
+    };
+
+    // Actually trigger the scan
+    if let Err(e) = crate::transforms::dataset::scanner::trigger_dataset_transform_scan(
+        &postgres_pool,
+        &nats_client,
+        &s3_client,
+        dataset_transform_id,
+        &username,
+    )
+    .await
+    {
+        error!("Failed to trigger dataset transform scan: {}", e);
+        return HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": format!("Failed to trigger dataset transform: {}", e)
+        }));
     }
+
+    info!("Dataset transform {} triggered successfully", dataset_transform_id);
+    HttpResponse::Ok().json(serde_json::json!({
+        "message": "Dataset transform triggered for all embedders",
+        "dataset_transform_id": dataset_transform_id,
+        "embedder_count": transform.embedder_ids.len()
+    }))
 }
 
 #[utoipa::path(
@@ -377,9 +399,10 @@ pub async fn get_dataset_transform_stats(
             {
                 Ok(stats) => {
                     info!(
-                        "Transform stats: batches={}, completed={}, chunks_embedded={}, chunks_to_process={}",
+                        "Transform stats: batches={}, completed={}, processing={}, chunks_embedded={}, chunks_to_process={}",
                         stats.total_batches_processed,
                         stats.successful_batches,
+                        stats.processing_batches,
                         stats.total_chunks_embedded,
                         stats.total_chunks_to_process
                     );
@@ -389,12 +412,15 @@ pub async fn get_dataset_transform_stats(
                         "total_batches_processed": stats.total_batches_processed,
                         "successful_batches": stats.successful_batches,
                         "failed_batches": stats.failed_batches,
+                        "processing_batches": stats.processing_batches,
                         "total_chunks_embedded": stats.total_chunks_embedded,
                         "total_chunks_processing": stats.total_chunks_processing,
                         "total_chunks_failed": stats.total_chunks_failed,
                         "total_chunks_to_process": stats.total_chunks_to_process,
                         "status": stats.status(),
+                        "is_processing": stats.is_processing(),
                         "last_run_at": stats.last_run_at,
+                        "first_processing_at": stats.first_processing_at,
                     });
                     HttpResponse::Ok().json(response)
                 }
@@ -454,4 +480,125 @@ pub async fn get_dataset_transforms_for_dataset(
             }))
         }
     }
+}
+#[utoipa::path(
+    get,
+    path = "/api/dataset-transforms/{id}/detailed-stats",
+    tag = "Dataset Transforms",
+    params(
+        ("id" = i32, Path, description = "Dataset Transform ID")
+    ),
+    responses(
+        (status = 200, description = "Detailed statistics per embedded dataset"),
+        (status = 404, description = "Dataset transform not found"),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[get("/api/dataset-transforms/{id}/detailed-stats")]
+#[tracing::instrument(name = "get_dataset_transform_detailed_stats", skip(auth, postgres_pool), fields(dataset_transform_id = %path.as_ref()))]
+pub async fn get_dataset_transform_detailed_stats(
+    auth: Authenticated,
+    postgres_pool: Data<Pool<Postgres>>,
+    path: Path<i32>,
+) -> impl Responder {
+    let username = match extract_username(&auth) {
+        Ok(username) => username,
+        Err(e) => return e,
+    };
+
+    let dataset_transform_id = path.into_inner();
+
+    // Verify the transform exists and user has access
+    let transform = match dataset_transforms::get_dataset_transform(&postgres_pool, &username, dataset_transform_id)
+        .await
+    {
+        Ok(t) => t,
+        Err(e) => {
+            error!("Dataset transform not found: {}", e);
+            return not_found(format!("Dataset transform not found: {}", e));
+        }
+    };
+
+    // Get all embedded datasets for this transform
+    let embedded_datasets_list = match embedded_datasets::get_embedded_datasets_for_transform(
+        &postgres_pool,
+        dataset_transform_id,
+    )
+    .await
+    {
+        Ok(eds) => eds,
+        Err(e) => {
+            error!("Failed to get embedded datasets: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to get embedded datasets: {}", e)
+            }));
+        }
+    };
+
+    // Get stats for each embedded dataset
+    let mut per_embedder_stats = Vec::new();
+    for ed in &embedded_datasets_list {
+        match embedded_datasets::get_embedded_dataset_stats(&postgres_pool, ed.embedded_dataset_id).await {
+            Ok(stats) => {
+                per_embedder_stats.push(serde_json::json!({
+                    "embedded_dataset_id": ed.embedded_dataset_id,
+                    "embedder_id": ed.embedder_id,
+                    "collection_name": ed.collection_name,
+                    "title": ed.title,
+                    "total_batches_processed": stats.total_batches_processed,
+                    "successful_batches": stats.successful_batches,
+                    "failed_batches": stats.failed_batches,
+                    "processing_batches": stats.processing_batches,
+                    "total_chunks_embedded": stats.total_chunks_embedded,
+                    "total_chunks_failed": stats.total_chunks_failed,
+                    "total_chunks_processing": stats.total_chunks_processing,
+                    "last_run_at": stats.last_run_at,
+                    "first_processing_at": stats.first_processing_at,
+                    "avg_processing_duration_ms": stats.avg_processing_duration_ms,
+                    "is_processing": stats.processing_batches > 0,
+                }));
+            }
+            Err(e) => {
+                error!("Failed to get stats for embedded dataset {}: {}", ed.embedded_dataset_id, e);
+                per_embedder_stats.push(serde_json::json!({
+                    "embedded_dataset_id": ed.embedded_dataset_id,
+                    "embedder_id": ed.embedder_id,
+                    "collection_name": ed.collection_name,
+                    "title": ed.title,
+                    "error": format!("Failed to get stats: {}", e),
+                }));
+            }
+        }
+    }
+
+    // Also get the aggregate stats
+    let aggregate_stats = match dataset_transforms::get_dataset_transform_stats(&postgres_pool, dataset_transform_id).await {
+        Ok(s) => Some(serde_json::json!({
+            "dataset_transform_id": s.dataset_transform_id,
+            "embedder_count": s.embedder_count,
+            "total_batches_processed": s.total_batches_processed,
+            "successful_batches": s.successful_batches,
+            "failed_batches": s.failed_batches,
+            "processing_batches": s.processing_batches,
+            "total_chunks_embedded": s.total_chunks_embedded,
+            "total_chunks_processing": s.total_chunks_processing,
+            "total_chunks_failed": s.total_chunks_failed,
+            "total_chunks_to_process": s.total_chunks_to_process,
+            "status": s.status(),
+            "is_processing": s.is_processing(),
+            "last_run_at": s.last_run_at,
+            "first_processing_at": s.first_processing_at,
+        })),
+        Err(e) => {
+            error!("Failed to get aggregate stats: {}", e);
+            None
+        }
+    };
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "dataset_transform_id": dataset_transform_id,
+        "title": transform.title,
+        "aggregate": aggregate_stats,
+        "per_embedder": per_embedder_stats,
+    }))
 }

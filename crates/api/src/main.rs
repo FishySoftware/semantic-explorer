@@ -167,6 +167,7 @@ async fn main() -> Result<()> {
             .service(api::dataset_transforms::delete_dataset_transform)
             .service(api::dataset_transforms::trigger_dataset_transform)
             .service(api::dataset_transforms::get_dataset_transform_stats)
+            .service(api::dataset_transforms::get_dataset_transform_detailed_stats)
             .service(api::dataset_transforms::get_dataset_transforms_for_dataset)
             .service(api::embedded_datasets::get_embedded_datasets)
             .service(api::embedded_datasets::get_embedded_dataset)

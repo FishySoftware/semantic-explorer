@@ -1,4 +1,5 @@
 use anyhow::Result;
+use sqlx::types::chrono::{DateTime, Utc};
 use sqlx::{FromRow, Pool, Postgres, Transaction};
 
 use crate::embedded_datasets::{
@@ -98,8 +99,13 @@ const GET_EMBEDDED_DATASET_STATS_QUERY: &str = r#"
         COALESCE(COUNT(tpf.id), 0)::BIGINT as total_batches_processed,
         COALESCE(COUNT(tpf.id) FILTER (WHERE tpf.process_status = 'completed'), 0)::BIGINT as successful_batches,
         COALESCE(COUNT(tpf.id) FILTER (WHERE tpf.process_status = 'failed'), 0)::BIGINT as failed_batches,
+        COALESCE(COUNT(tpf.id) FILTER (WHERE tpf.process_status = 'processing'), 0)::BIGINT as processing_batches,
         COALESCE(SUM(tpf.item_count) FILTER (WHERE tpf.process_status = 'completed'), 0)::BIGINT as total_chunks_embedded,
-        COALESCE(SUM(tpf.item_count) FILTER (WHERE tpf.process_status = 'failed'), 0)::BIGINT as total_chunks_failed
+        COALESCE(SUM(tpf.item_count) FILTER (WHERE tpf.process_status = 'failed'), 0)::BIGINT as total_chunks_failed,
+        COALESCE(SUM(tpf.item_count) FILTER (WHERE tpf.process_status = 'processing'), 0)::BIGINT as total_chunks_processing,
+        MAX(tpf.processed_at) as last_run_at,
+        MIN(tpf.processed_at) FILTER (WHERE tpf.process_status = 'processing') as first_processing_at,
+        AVG(tpf.processing_duration_ms) FILTER (WHERE tpf.process_status = 'completed')::BIGINT as avg_processing_duration_ms
     FROM embedded_datasets ed
     LEFT JOIN transform_processed_files tpf ON tpf.transform_type = 'dataset' AND tpf.transform_id = ed.embedded_dataset_id
     WHERE ed.embedded_dataset_id = $1
@@ -319,6 +325,7 @@ pub async fn record_processed_batch(
     Ok(())
 }
 
+#[allow(dead_code)]
 pub async fn update_embedded_dataset_last_processed_at(
     pool: &Pool<Postgres>,
     embedded_dataset_id: i32,
@@ -331,6 +338,27 @@ pub async fn update_embedded_dataset_last_processed_at(
         "#,
     )
     .bind(embedded_dataset_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Update the last_processed_at timestamp to a specific value
+/// This prevents race conditions where items created between query and update are missed
+pub async fn update_embedded_dataset_last_processed_at_to(
+    pool: &Pool<Postgres>,
+    embedded_dataset_id: i32,
+    timestamp: DateTime<Utc>,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        UPDATE embedded_datasets
+        SET last_processed_at = $2
+        WHERE embedded_dataset_id = $1
+        "#,
+    )
+    .bind(embedded_dataset_id)
+    .bind(timestamp)
     .execute(pool)
     .await?;
     Ok(())

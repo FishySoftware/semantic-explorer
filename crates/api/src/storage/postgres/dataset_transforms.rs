@@ -62,26 +62,36 @@ const GET_DATASET_TRANSFORM_STATS_QUERY: &str = r#"
     WITH unique_batches AS (
         SELECT
             ed.dataset_transform_id,
+            ed.embedded_dataset_id,
             tpf.file_key,
             MAX(tpf.item_count) as item_count,
             MAX(tpf.process_status) as process_status,
-            MAX(tpf.processed_at) as processed_at
+            MAX(tpf.processed_at) as processed_at,
+            MIN(tpf.processed_at) as first_processed_at
         FROM transform_processed_files tpf
         INNER JOIN embedded_datasets ed ON ed.embedded_dataset_id = tpf.transform_id
         WHERE tpf.transform_type = 'dataset'
-        GROUP BY ed.dataset_transform_id, tpf.file_key
+        GROUP BY ed.dataset_transform_id, ed.embedded_dataset_id, tpf.file_key
+    ),
+    source_chunks AS (
+        SELECT COALESCE(SUM(jsonb_array_length(chunks)), 0)::BIGINT as chunk_count
+        FROM dataset_items
+        WHERE dataset_id = (SELECT source_dataset_id FROM dataset_transforms WHERE dataset_transform_id = $1)
     )
     SELECT
         dt.dataset_transform_id,
         COALESCE(array_length(dt.embedder_ids, 1), 0)::INTEGER as embedder_count,
-        COALESCE(COUNT(DISTINCT ub.file_key), 0)::BIGINT as total_batches_processed,
-        COALESCE(COUNT(DISTINCT CASE WHEN ub.process_status = 'completed' THEN ub.file_key END), 0)::BIGINT as successful_batches,
-        COALESCE(COUNT(DISTINCT CASE WHEN ub.process_status = 'failed' THEN ub.file_key END), 0)::BIGINT as failed_batches,
+        COALESCE(COUNT(DISTINCT (ub.embedded_dataset_id, ub.file_key)), 0)::BIGINT as total_batches_processed,
+        COALESCE(COUNT(DISTINCT CASE WHEN ub.process_status = 'completed' THEN (ub.embedded_dataset_id, ub.file_key) END), 0)::BIGINT as successful_batches,
+        COALESCE(COUNT(DISTINCT CASE WHEN ub.process_status = 'failed' THEN (ub.embedded_dataset_id, ub.file_key) END), 0)::BIGINT as failed_batches,
+        COALESCE(COUNT(DISTINCT CASE WHEN ub.process_status = 'processing' THEN (ub.embedded_dataset_id, ub.file_key) END), 0)::BIGINT as processing_batches,
         COALESCE(SUM(CASE WHEN ub.process_status = 'completed' THEN ub.item_count ELSE 0 END), 0)::BIGINT as total_chunks_embedded,
         COALESCE(SUM(CASE WHEN ub.process_status = 'processing' THEN ub.item_count ELSE 0 END), 0)::BIGINT as total_chunks_processing,
         COALESCE(SUM(CASE WHEN ub.process_status = 'failed' THEN ub.item_count ELSE 0 END), 0)::BIGINT as total_chunks_failed,
-        (SELECT COALESCE(SUM(jsonb_array_length(chunks)), 0)::BIGINT FROM dataset_items WHERE dataset_id = dt.source_dataset_id) as total_chunks_to_process,
-        MAX(ub.processed_at) as last_run_at
+        -- Multiply source chunks by embedder count to get total work across all embedders
+        (SELECT chunk_count FROM source_chunks) * COALESCE(array_length(dt.embedder_ids, 1), 1) as total_chunks_to_process,
+        MAX(ub.processed_at) as last_run_at,
+        MIN(CASE WHEN ub.process_status = 'processing' THEN ub.first_processed_at END) as first_processing_at
     FROM dataset_transforms dt
     LEFT JOIN unique_batches ub ON ub.dataset_transform_id = dt.dataset_transform_id
     WHERE dt.dataset_transform_id = $1

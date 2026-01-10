@@ -249,6 +249,23 @@
 				const stats = await response.json();
 				datasetTransformStatsMap.set(transformId, stats);
 				datasetTransformStatsMap = datasetTransformStatsMap; // Trigger reactivity
+				
+				// Check if this transform is currently processing and we're not already tracking it
+				if (stats.is_processing && !activeTransformProgress) {
+					// Find the transform to get its title
+					const transform = datasetTransforms.find(t => t.dataset_transform_id === transformId);
+					if (transform) {
+						console.info(`Detected active transform ${transformId}, resuming progress tracking`);
+						activeTransformProgress = {
+							id: transformId,
+							title: transform.title,
+							startedAt: stats.first_processing_at || new Date().toISOString(),
+							embedders: transform.embedder_ids,
+						};
+						transformProgressStats = stats;
+						startTransformProgressPolling();
+					}
+				}
 			}
 		} catch (e) {
 			console.error(e);
@@ -346,17 +363,26 @@
 			const stats = await response.json();
 			transformProgressStats = stats;
 
+			// Also update the stats map for the transforms list
+			datasetTransformStatsMap.set(activeTransformProgress.id, stats);
+			datasetTransformStatsMap = datasetTransformStatsMap;
+
 			console.debug('Transform stats:', {
 				batches: stats.total_batches_processed,
+				processing_batches: stats.processing_batches,
 				embedded: stats.total_chunks_embedded,
 				total: stats.total_chunks_to_process,
-				status: stats.status
+				status: stats.status,
+				is_processing: stats.is_processing
 			});
 
-			// Check if the transform is complete
-			if (stats.status === 'completed' || stats.status === 'failed') {
-				console.info(`Transform ${stats.status}, stopping polling`);
+			// Check if the transform is complete (any terminal state)
+			const terminalStatuses = ['completed', 'completed_with_errors', 'failed', 'idle'];
+			if (terminalStatuses.includes(stats.status) || !stats.is_processing) {
+				console.info(`Transform ${stats.status}, is_processing=${stats.is_processing}, stopping polling`);
 				stopTransformProgressPolling();
+				// Refresh the transforms list to get final state
+				fetchDatasetTransforms();
 				// Keep showing the progress panel for 3 more seconds, then auto-dismiss
 				setTimeout(() => {
 					activeTransformProgress = null;

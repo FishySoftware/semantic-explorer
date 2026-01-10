@@ -3,7 +3,7 @@ use async_nats::Client as NatsClient;
 use aws_sdk_s3::Client as S3Client;
 use futures_util::StreamExt;
 use sqlx::{Pool, Postgres};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use semantic_explorer_core::models::{
     CollectionTransformResult, DatasetTransformResult, VisualizationTransformResult,
@@ -17,6 +17,7 @@ use crate::storage::postgres::embedded_datasets;
 use crate::storage::postgres::visualization_transforms::{
     get_visualization_run, update_visualization_run,
 };
+use crate::storage::rustfs::delete_file;
 
 #[derive(Clone)]
 struct TransformContext {
@@ -316,19 +317,22 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
     );
 
     // Validate ownership by fetching the embedded dataset
-    if let Err(e) = embedded_datasets::get_embedded_dataset(
+    let embedded_dataset = match embedded_datasets::get_embedded_dataset(
         &ctx.postgres_pool,
         &result.owner,
         result.embedded_dataset_id,
     )
     .await
     {
-        error!(
-            "Embedded dataset {} not found or access denied for owner {}: {}",
-            result.embedded_dataset_id, result.owner, e
-        );
-        return;
-    }
+        Ok(ed) => ed,
+        Err(e) => {
+            error!(
+                "Embedded dataset {} not found or access denied for owner {}: {}",
+                result.embedded_dataset_id, result.owner, e
+            );
+            return;
+        }
+    };
 
     match result.status.as_str() {
         "processing" => {
@@ -391,6 +395,23 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
             {
                 error!("Failed to record batch processing: {}", e);
                 return;
+            }
+
+            // Clean up the batch file from S3 after successful processing and database recording
+            // The bucket name is derived from the collection name (lowercase)
+            let bucket = embedded_dataset.collection_name.to_lowercase();
+            if let Err(e) = delete_file(&ctx.s3_client, &bucket, &result.batch_file_key).await {
+                // Log the error but don't fail the overall operation
+                // The batch was successfully processed and recorded, cleanup failure is non-critical
+                warn!(
+                    "Failed to cleanup batch file {} from bucket {}: {}. Manual cleanup may be required.",
+                    result.batch_file_key, bucket, e
+                );
+            } else {
+                info!(
+                    "Cleaned up batch file {} from bucket {}",
+                    result.batch_file_key, bucket
+                );
             }
 
             info!(

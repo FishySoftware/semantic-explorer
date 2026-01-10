@@ -308,10 +308,15 @@ async fn create_batches_from_dataset_items(
         return Ok(0);
     }
 
+    // Capture the max updated_at timestamp from items we're about to process
+    // This prevents race conditions where items created between query and watermark update are missed
+    let max_item_timestamp = items.iter().filter_map(|item| item.updated_at).max();
+
     info!(
-        "Embedded dataset {} found {} items with new/modified chunks",
+        "Embedded dataset {} found {} items with new/modified chunks, max_timestamp: {:?}",
         embedded_dataset.embedded_dataset_id,
-        items.len()
+        items.len(),
+        max_item_timestamp
     );
 
     // Convert dataset items to batch items (one per chunk)
@@ -423,13 +428,17 @@ async fn create_batches_from_dataset_items(
         jobs_created, embedded_dataset.embedded_dataset_id
     );
 
-    // Update the last_processed_at timestamp now that we've processed these items
+    // Update the last_processed_at timestamp to the max item timestamp we processed
+    // This prevents race conditions where items created between query and update are missed
     if jobs_created > 0 {
-        embedded_datasets::update_embedded_dataset_last_processed_at(
-            pool,
-            embedded_dataset.embedded_dataset_id,
-        )
-        .await?;
+        if let Some(max_ts) = max_item_timestamp {
+            embedded_datasets::update_embedded_dataset_last_processed_at_to(
+                pool,
+                embedded_dataset.embedded_dataset_id,
+                max_ts,
+            )
+            .await?;
+        }
     }
 
     Ok(jobs_created)

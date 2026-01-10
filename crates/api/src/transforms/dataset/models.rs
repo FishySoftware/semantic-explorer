@@ -59,32 +59,57 @@ pub struct DatasetTransformStats {
     pub total_batches_processed: i64,
     pub successful_batches: i64,
     pub failed_batches: i64,
+    pub processing_batches: i64,
     pub total_chunks_embedded: i64,
     pub total_chunks_processing: i64,
     pub total_chunks_failed: i64,
     pub total_chunks_to_process: i64,
     #[schema(value_type = Option<String>, format = DateTime)]
     pub last_run_at: Option<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>>,
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub first_processing_at: Option<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>>,
 }
 
 impl DatasetTransformStats {
     /// Calculate overall status based on processing progress
     pub fn status(&self) -> &'static str {
-        if self.total_chunks_to_process == 0 {
-            return "processing"; // No items to process yet
+        // If there are batches currently processing, we're active
+        if self.processing_batches > 0 {
+            return "processing";
         }
 
-        // Only count completed chunks for progress, not processing
-        // Processing will move to completed when batches finish
-        if self.total_chunks_embedded >= self.total_chunks_to_process {
+        if self.total_chunks_to_process == 0 {
+            // No items to process, check if we have any activity at all
+            if self.total_batches_processed > 0 {
+                return "completed"; // Had activity but now idle
+            }
+            return "idle"; // Never processed anything
+        }
+
+        // Check if all chunks are processed
+        let total_processed = self.total_chunks_embedded + self.total_chunks_failed;
+        if total_processed >= self.total_chunks_to_process {
             if self.total_chunks_failed > 0 && self.total_chunks_embedded == 0 {
                 return "failed";
+            }
+            if self.total_chunks_failed > 0 {
+                return "completed_with_errors";
             }
             return "completed";
         }
 
-        // Still processing
+        // Have items to process but not done - could be waiting for scanner
+        if self.total_batches_processed == 0 {
+            return "pending";
+        }
+
+        // Has some activity but not done
         "processing"
+    }
+
+    /// Check if transform is currently processing
+    pub fn is_processing(&self) -> bool {
+        self.processing_batches > 0
     }
 }
 
