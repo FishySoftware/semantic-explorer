@@ -17,6 +17,7 @@
 	const Datasets = () => import('./lib/pages/Datasets.svelte');
 	const Documentation = () => import('./lib/pages/Documentation.svelte');
 	const EmbeddedDatasets = () => import('./lib/pages/EmbeddedDatasets.svelte');
+	const EmbeddedDatasetDetail = () => import('./lib/pages/EmbeddedDatasetDetail.svelte');
 	const EmbedderDetail = () => import('./lib/pages/EmbedderDetail.svelte');
 	const Embedders = () => import('./lib/pages/Embedders.svelte');
 	const GrabResource = () => import('./lib/pages/GrabResource.svelte');
@@ -29,6 +30,7 @@
 	let activeUrl = $state('/dashboard');
 	let selectedCollectionId = $state<number | null>(null);
 	let selectedDatasetId = $state<number | null>(null);
+	let selectedEmbeddedDatasetId = $state<number | null>(null);
 	let selectedEmbedderId = $state<number | null>(null);
 	let grabResourceType = $state<'collections' | 'datasets' | 'embedders' | 'llms' | null>(null);
 	let grabResourceId = $state<number | null>(null);
@@ -57,6 +59,9 @@
 		}
 		if (parts.length === 3 && parts[0] === 'datasets' && parts[2] === 'details') {
 			return { path: '/datasets/detail', params: { ...params, id: parts[1] } };
+		}
+		if (parts.length === 3 && parts[0] === 'embedded-datasets' && parts[2] === 'details') {
+			return { path: '/embedded-datasets/detail', params: { ...params, id: parts[1] } };
 		}
 		if (parts.length === 3 && parts[0] === 'visualizations' && parts[2] === 'details') {
 			return { path: '/visualizations/detail', params: { ...params, id: parts[1] } };
@@ -91,6 +96,12 @@
 			selectedDatasetId = parseInt(params.id, 10);
 		} else if (path !== '/datasets/detail') {
 			selectedDatasetId = null;
+		}
+
+		if (path === '/embedded-datasets/detail' && params.id) {
+			selectedEmbeddedDatasetId = parseInt(params.id, 10);
+		} else if (path !== '/embedded-datasets/detail') {
+			selectedEmbeddedDatasetId = null;
 		}
 
 		if (path === '/visualizations/detail' && params.id) {
@@ -147,6 +158,12 @@
 		selectedDatasetId = null;
 		activeUrl = '/datasets';
 		window.location.hash = '/datasets';
+	}
+
+	function backToEmbeddedDatasets() {
+		selectedEmbeddedDatasetId = null;
+		activeUrl = '/embedded-datasets';
+		window.location.hash = '#/embedded-datasets';
 	}
 
 	function viewVisualization(transformId: number) {
@@ -240,6 +257,15 @@
 				{#await EmbeddedDatasets() then { default: EmbeddedDatasetsComponent }}
 					<EmbeddedDatasetsComponent onViewDataset={viewDataset} onNavigate={navigate} />
 				{/await}
+			{:else if activeUrl === '/embedded-datasets/detail'}
+				{#if selectedEmbeddedDatasetId !== null}
+					{#await EmbeddedDatasetDetail() then { default: EmbeddedDatasetDetailComponent }}
+						<EmbeddedDatasetDetailComponent
+							embeddedDatasetId={selectedEmbeddedDatasetId}
+							onBack={backToEmbeddedDatasets}
+						/>
+					{/await}
+				{/if}
 			{:else if activeUrl === '/visualization-transforms'}
 				{#await VisualizationTransforms() then { default: VisualizationTransformsComponent }}
 					<VisualizationTransformsComponent />

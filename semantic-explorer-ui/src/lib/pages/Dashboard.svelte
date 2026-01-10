@@ -32,8 +32,27 @@
 		updated_at: string;
 	}
 
+	interface EmbeddedDataset {
+		embedded_dataset_id: number;
+		title: string;
+		source_dataset_title?: string;
+		embedder_name?: string;
+		updated_at: string;
+	}
+
+	interface VisualizationTransform {
+		visualization_transform_id: number;
+		title: string;
+		embedded_dataset_id: number;
+		is_enabled: boolean;
+		last_run_status?: string;
+		updated_at: string;
+	}
+
 	let collections = $state<Collection[]>([]);
 	let datasets = $state<Dataset[]>([]);
+	let embeddedDatasets = $state<EmbeddedDataset[]>([]);
+	let visualizations = $state<VisualizationTransform[]>([]);
 	let publicCollections = $state<Collection[]>([]);
 	let publicDatasets = $state<Dataset[]>([]);
 	let publicEmbedders = $state<Embedder[]>([]);
@@ -54,6 +73,8 @@
 			const [
 				collectionsRes,
 				datasetsRes,
+				embeddedDatasetsRes,
+				visualizationsRes,
 				publicCollectionsRes,
 				publicDatasetsRes,
 				publicEmbeddersRes,
@@ -61,6 +82,8 @@
 			] = await Promise.all([
 				fetch('/api/collections'),
 				fetch('/api/datasets'),
+				fetch('/api/embedded-datasets'),
+				fetch('/api/visualization-transforms'),
 				fetch('/api/marketplace/collections/recent?limit=5'),
 				fetch('/api/marketplace/datasets/recent?limit=5'),
 				fetch('/api/marketplace/embedders/recent?limit=5'),
@@ -70,6 +93,8 @@
 			if (
 				!collectionsRes.ok ||
 				!datasetsRes.ok ||
+				!embeddedDatasetsRes.ok ||
+				!visualizationsRes.ok ||
 				!publicCollectionsRes.ok ||
 				!publicDatasetsRes.ok ||
 				!publicEmbeddersRes.ok ||
@@ -80,6 +105,8 @@
 
 			const allCollections = await collectionsRes.json();
 			const allDatasets = await datasetsRes.json();
+			const allEmbeddedDatasets = await embeddedDatasetsRes.json();
+			const allVisualizations = await visualizationsRes.json();
 			publicCollections = await publicCollectionsRes.json();
 			publicDatasets = await publicDatasetsRes.json();
 			publicEmbedders = await publicEmbeddersRes.json();
@@ -95,6 +122,20 @@
 			datasets = allDatasets
 				.sort(
 					(a: Dataset, b: Dataset) =>
+						new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+				)
+				.slice(0, 5);
+
+			embeddedDatasets = allEmbeddedDatasets
+				.sort(
+					(a: EmbeddedDataset, b: EmbeddedDataset) =>
+						new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+				)
+				.slice(0, 5);
+
+			visualizations = allVisualizations
+				.sort(
+					(a: VisualizationTransform, b: VisualizationTransform) =>
 						new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
 				)
 				.slice(0, 5);
@@ -186,7 +227,7 @@
 
 			const newEmbedder = await response.json();
 			toastStore.success('Embedder grabbed successfully!');
-			window.location.hash = `#/embedders?name=${encodeURIComponent(newEmbedder.name)}`;
+			window.location.hash = `#/embedders/${newEmbedder.embedder_id}/details`;
 		} catch (e) {
 			const message = formatError(e, 'Failed to grab embedder');
 			toastStore.error(message);
@@ -390,6 +431,92 @@
 									</div>
 									<span class="text-xs text-gray-500 dark:text-gray-400 ml-2">
 										{formatDate(dataset.updated_at)}
+									</span>
+								</div>
+							</a>
+						{/each}
+					</div>
+				{/if}
+			</div>
+		</div>
+
+		<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
+				<div class="flex justify-between items-center mb-3">
+					<h2 class="text-xl font-semibold text-gray-900 dark:text-white">Recent Embedded Datasets</h2>
+					<a href="#/embedded-datasets" class="text-blue-600 dark:text-blue-400 hover:underline text-sm">
+						View all
+					</a>
+				</div>
+				{#if embeddedDatasets.length === 0}
+					<p class="text-gray-500 dark:text-gray-400 text-sm py-4">No embedded datasets yet</p>
+				{:else}
+					<div class="space-y-3">
+						{#each embeddedDatasets as embeddedDataset (embeddedDataset.embedded_dataset_id)}
+							<a
+								href={`#/embedded-datasets/${embeddedDataset.embedded_dataset_id}/details`}
+								class="block p-3 bg-gray-50 dark:bg-gray-900 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+							>
+								<div class="flex justify-between items-start">
+									<div class="flex-1">
+										<h3 class="font-medium text-gray-900 dark:text-white">
+											{embeddedDataset.title}
+										</h3>
+										{#if embeddedDataset.source_dataset_title}
+											<p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
+												Dataset: {embeddedDataset.source_dataset_title}
+											</p>
+										{/if}
+										{#if embeddedDataset.embedder_name}
+											<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+												Embedder: {embeddedDataset.embedder_name}
+											</p>
+										{/if}
+									</div>
+									<span class="text-xs text-gray-500 dark:text-gray-400 ml-2">
+										{formatDate(embeddedDataset.updated_at)}
+									</span>
+								</div>
+							</a>
+						{/each}
+					</div>
+				{/if}
+			</div>
+
+			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
+				<div class="flex justify-between items-center mb-3">
+					<h2 class="text-xl font-semibold text-gray-900 dark:text-white">Recent Visualizations</h2>
+					<a href="#/visualization-transforms" class="text-blue-600 dark:text-blue-400 hover:underline text-sm">
+						View all
+					</a>
+				</div>
+				{#if visualizations.length === 0}
+					<p class="text-gray-500 dark:text-gray-400 text-sm py-4">No visualizations yet</p>
+				{:else}
+					<div class="space-y-3">
+						{#each visualizations as visualization (visualization.visualization_transform_id)}
+							<a
+								href={`#/visualization-transforms/${visualization.visualization_transform_id}/details`}
+								class="block p-3 bg-gray-50 dark:bg-gray-900 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+							>
+								<div class="flex justify-between items-start">
+									<div class="flex-1">
+										<h3 class="font-medium text-gray-900 dark:text-white">
+											{visualization.title}
+										</h3>
+										<div class="flex items-center gap-2 mt-1">
+											<span class="text-xs px-2 py-0.5 rounded {visualization.is_enabled ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'}">
+												{visualization.is_enabled ? 'Enabled' : 'Disabled'}
+											</span>
+											{#if visualization.last_run_status}
+												<span class="text-xs text-gray-500 dark:text-gray-400">
+													{visualization.last_run_status}
+												</span>
+											{/if}
+										</div>
+									</div>
+									<span class="text-xs text-gray-500 dark:text-gray-400 ml-2">
+										{formatDate(visualization.updated_at)}
 									</span>
 								</div>
 							</a>

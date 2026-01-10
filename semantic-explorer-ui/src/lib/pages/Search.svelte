@@ -210,7 +210,31 @@
 		}
 	}
 
-	onMount(() => {
+	onMount(async () => {
+		const hashParts = window.location.hash.split('?');
+		if (hashParts.length > 1) {
+			const params = new URLSearchParams(hashParts[1]);
+			const embeddedDatasetIdsParam = params.get('embedded_dataset_ids');
+
+			if (embeddedDatasetIdsParam) {
+				const datasetIds = embeddedDatasetIdsParam
+					.split(',')
+					.map((id) => parseInt(id.trim(), 10))
+					.filter((id) => !isNaN(id));
+
+				await fetchData();
+
+				datasetIds.forEach((id) => {
+					if (allEmbeddedDatasets.some((ed) => ed.embedded_dataset_id === id)) {
+						selectedEmbeddedDatasetIds.add(id);
+					}
+				});
+
+				window.history.replaceState(null, '', '#/search');
+				return;
+			}
+		}
+
 		fetchData();
 	});
 </script>

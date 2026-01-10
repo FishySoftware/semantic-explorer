@@ -365,6 +365,24 @@
 	}
 
 	onMount(() => {
+		// Parse URL parameters for preset values
+		const hashParts = window.location.hash.split('?');
+		if (hashParts.length > 1) {
+			const params = new URLSearchParams(hashParts[1]);
+			const embeddedDatasetIdParam = params.get('embedded_dataset_id');
+
+			if (embeddedDatasetIdParam) {
+				const datasetId = parseInt(embeddedDatasetIdParam, 10);
+				if (!isNaN(datasetId)) {
+					newSessionEmbeddedDatasetId = datasetId;
+					showCreateForm = true;
+
+					// Clear the URL parameter after applying
+					window.history.replaceState(null, '', '#/chat');
+				}
+			}
+		}
+
 		fetchSessions();
 		fetchEmbeddedDatasets();
 		fetchLLMs();

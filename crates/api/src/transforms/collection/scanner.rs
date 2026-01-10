@@ -11,7 +11,7 @@ use uuid::Uuid;
 use semantic_explorer_core::models::{CollectionTransformJob, EmbedderConfig};
 
 use crate::storage::postgres::collection_transforms::{
-    get_active_collection_transforms, get_collection_transform, get_processed_files
+    get_active_collection_transforms, get_collection_transform, get_processed_files,
 };
 use crate::storage::postgres::{collections, embedders};
 use crate::storage::rustfs;
@@ -258,12 +258,7 @@ pub async fn trigger_collection_transform_scan(
     );
 
     // Get the collection transform
-    let transform = get_collection_transform(
-        pool,
-        owner,
-        collection_transform_id,
-    )
-    .await?;
+    let transform = get_collection_transform(pool, owner, collection_transform_id).await?;
 
     // Process the scan immediately
     process_collection_transform_scan(pool, nats, s3, &transform).await?;

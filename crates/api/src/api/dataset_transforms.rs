@@ -1,8 +1,9 @@
 use crate::auth::extract_username;
 use crate::errors::{bad_request, not_found};
 use crate::storage::postgres::{dataset_transforms, embedded_datasets};
-use crate::transforms::dataset::models::{CreateDatasetTransform, DatasetTransform, DatasetTransformStats, UpdateDatasetTransform};
-
+use crate::transforms::dataset::models::{
+    CreateDatasetTransform, DatasetTransform, DatasetTransformStats, UpdateDatasetTransform,
+};
 
 use actix_web::web::{Data, Json, Path};
 use actix_web::{HttpResponse, Responder, delete, get, patch, post};
@@ -326,8 +327,12 @@ pub async fn trigger_dataset_transform(
     let dataset_transform_id = path.into_inner();
 
     // Verify the transform exists
-    let transform = match dataset_transforms::get_dataset_transform(&postgres_pool, &username, dataset_transform_id)
-        .await
+    let transform = match dataset_transforms::get_dataset_transform(
+        &postgres_pool,
+        &username,
+        dataset_transform_id,
+    )
+    .await
     {
         Ok(t) => t,
         Err(e) => {
@@ -352,7 +357,10 @@ pub async fn trigger_dataset_transform(
         }));
     }
 
-    info!("Dataset transform {} triggered successfully", dataset_transform_id);
+    info!(
+        "Dataset transform {} triggered successfully",
+        dataset_transform_id
+    );
     HttpResponse::Ok().json(serde_json::json!({
         "message": "Dataset transform triggered for all embedders",
         "dataset_transform_id": dataset_transform_id,
@@ -509,8 +517,12 @@ pub async fn get_dataset_transform_detailed_stats(
     let dataset_transform_id = path.into_inner();
 
     // Verify the transform exists and user has access
-    let transform = match dataset_transforms::get_dataset_transform(&postgres_pool, &username, dataset_transform_id)
-        .await
+    let transform = match dataset_transforms::get_dataset_transform(
+        &postgres_pool,
+        &username,
+        dataset_transform_id,
+    )
+    .await
     {
         Ok(t) => t,
         Err(e) => {
@@ -538,7 +550,9 @@ pub async fn get_dataset_transform_detailed_stats(
     // Get stats for each embedded dataset
     let mut per_embedder_stats = Vec::new();
     for ed in &embedded_datasets_list {
-        match embedded_datasets::get_embedded_dataset_stats(&postgres_pool, ed.embedded_dataset_id).await {
+        match embedded_datasets::get_embedded_dataset_stats(&postgres_pool, ed.embedded_dataset_id)
+            .await
+        {
             Ok(stats) => {
                 per_embedder_stats.push(serde_json::json!({
                     "embedded_dataset_id": ed.embedded_dataset_id,
@@ -559,7 +573,10 @@ pub async fn get_dataset_transform_detailed_stats(
                 }));
             }
             Err(e) => {
-                error!("Failed to get stats for embedded dataset {}: {}", ed.embedded_dataset_id, e);
+                error!(
+                    "Failed to get stats for embedded dataset {}: {}",
+                    ed.embedded_dataset_id, e
+                );
                 per_embedder_stats.push(serde_json::json!({
                     "embedded_dataset_id": ed.embedded_dataset_id,
                     "embedder_id": ed.embedder_id,
@@ -572,28 +589,31 @@ pub async fn get_dataset_transform_detailed_stats(
     }
 
     // Also get the aggregate stats
-    let aggregate_stats = match dataset_transforms::get_dataset_transform_stats(&postgres_pool, dataset_transform_id).await {
-        Ok(s) => Some(serde_json::json!({
-            "dataset_transform_id": s.dataset_transform_id,
-            "embedder_count": s.embedder_count,
-            "total_batches_processed": s.total_batches_processed,
-            "successful_batches": s.successful_batches,
-            "failed_batches": s.failed_batches,
-            "processing_batches": s.processing_batches,
-            "total_chunks_embedded": s.total_chunks_embedded,
-            "total_chunks_processing": s.total_chunks_processing,
-            "total_chunks_failed": s.total_chunks_failed,
-            "total_chunks_to_process": s.total_chunks_to_process,
-            "status": s.status(),
-            "is_processing": s.is_processing(),
-            "last_run_at": s.last_run_at,
-            "first_processing_at": s.first_processing_at,
-        })),
-        Err(e) => {
-            error!("Failed to get aggregate stats: {}", e);
-            None
-        }
-    };
+    let aggregate_stats =
+        match dataset_transforms::get_dataset_transform_stats(&postgres_pool, dataset_transform_id)
+            .await
+        {
+            Ok(s) => Some(serde_json::json!({
+                "dataset_transform_id": s.dataset_transform_id,
+                "embedder_count": s.embedder_count,
+                "total_batches_processed": s.total_batches_processed,
+                "successful_batches": s.successful_batches,
+                "failed_batches": s.failed_batches,
+                "processing_batches": s.processing_batches,
+                "total_chunks_embedded": s.total_chunks_embedded,
+                "total_chunks_processing": s.total_chunks_processing,
+                "total_chunks_failed": s.total_chunks_failed,
+                "total_chunks_to_process": s.total_chunks_to_process,
+                "status": s.status(),
+                "is_processing": s.is_processing(),
+                "last_run_at": s.last_run_at,
+                "first_processing_at": s.first_processing_at,
+            })),
+            Err(e) => {
+                error!("Failed to get aggregate stats: {}", e);
+                None
+            }
+        };
 
     HttpResponse::Ok().json(serde_json::json!({
         "dataset_transform_id": dataset_transform_id,

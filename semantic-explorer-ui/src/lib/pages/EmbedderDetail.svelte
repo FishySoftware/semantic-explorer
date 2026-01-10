@@ -24,12 +24,16 @@
 		embedded_dataset_id: number;
 		title: string;
 		source_dataset_id: number;
-		source_dataset_title: string;
 		embedder_id: number;
 		owner: string;
 		collection_name: string;
 		created_at: string;
 		updated_at: string;
+	}
+
+	interface Dataset {
+		dataset_id: number;
+		title: string;
 	}
 
 	interface Props {
@@ -44,6 +48,7 @@
 	let error = $state<string | null>(null);
 	let embeddedDatasets = $state<EmbeddedDataset[]>([]);
 	let embeddingsLoading = $state(false);
+	let datasetsCache = $state<Map<number, Dataset>>(new Map());
 
 	// Edit form state
 	let editMode = $state(false);
@@ -94,6 +99,24 @@
 		}
 	}
 
+	async function fetchDataset(datasetId: number): Promise<Dataset | null> {
+		if (datasetsCache.has(datasetId)) {
+			return datasetsCache.get(datasetId) || null;
+		}
+		try {
+			const response = await fetch(`/api/datasets/${datasetId}`);
+			if (response.ok) {
+				const dataset = await response.json();
+				datasetsCache.set(datasetId, dataset);
+				datasetsCache = datasetsCache; // Trigger reactivity
+				return dataset;
+			}
+		} catch (e) {
+			console.error(`Failed to fetch dataset ${datasetId}:`, e);
+		}
+		return null;
+	}
+
 	async function fetchEmbeddedDatasets() {
 		try {
 			embeddingsLoading = true;
@@ -105,6 +128,11 @@
 			embeddedDatasets = allEmbeddedDatasets
 				.filter((ed) => ed.embedder_id === embedderId)
 				.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+			// Fetch dataset information for each embedded dataset
+			for (const ed of embeddedDatasets) {
+				await fetchDataset(ed.source_dataset_id);
+			}
 		} catch (e) {
 			toastStore.error(formatError(e, 'Failed to load embedded datasets'));
 		} finally {
@@ -614,16 +642,27 @@
 										>
 											<div class="flex items-start justify-between">
 												<div class="flex-1 min-w-0">
-													<h4 class="font-semibold text-gray-900 dark:text-white wrap-break-word">
-														{ed.title}
-													</h4>
-													<p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
-														Dataset: {ed.source_dataset_title}
-													</p>
-													<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-														Collection: <span class="font-mono text-[10px]"
-															>{ed.collection_name}</span
-														>
+												<button
+													onclick={() => window.location.hash = `#/embedded-datasets/${ed.embedded_dataset_id}/details`}
+													class="font-semibold text-blue-600 dark:text-blue-400 hover:underline wrap-break-word text-left"
+												>
+													{ed.title}
+												</button>
+												<p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
+													Dataset: <button
+														onclick={() => window.location.hash = `#/datasets/${ed.source_dataset_id}/details`}
+														class="text-blue-600 dark:text-blue-400 hover:underline"
+													>
+													{datasetsCache.get(ed.source_dataset_id)?.title || `Dataset #${ed.source_dataset_id}`}
+													</button>
+												</p>
+												<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+													Collection: <button
+														onclick={() => window.location.hash = `#/collections?search=${encodeURIComponent(ed.collection_name)}`}
+														class="font-mono text-[10px] text-blue-600 dark:text-blue-400 hover:underline"
+													>
+														{ed.collection_name}
+													</button>
 													</p>
 												</div>
 												<div class="text-right ml-4 shrink-0">

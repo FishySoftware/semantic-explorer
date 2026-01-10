@@ -293,6 +293,28 @@ pub async fn get_embedded_dataset_stats(
     Ok(stats)
 }
 
+pub async fn get_batch_embedded_dataset_stats(
+    pool: &Pool<Postgres>,
+    embedded_dataset_ids: &[i32],
+) -> Result<std::collections::HashMap<i32, EmbeddedDatasetStats>> {
+    use std::collections::HashMap;
+
+    let mut stats_map = HashMap::new();
+
+    for &id in embedded_dataset_ids {
+        match get_embedded_dataset_stats(pool, id).await {
+            Ok(stats) => {
+                stats_map.insert(id, stats);
+            }
+            Err(e) => {
+                tracing::warn!("Failed to get stats for embedded dataset {}: {}", id, e);
+            }
+        }
+    }
+
+    Ok(stats_map)
+}
+
 pub async fn get_processed_batches(
     pool: &Pool<Postgres>,
     embedded_dataset_id: i32,

@@ -4,8 +4,9 @@
 	import { formatError, toastStore } from '../utils/notifications';
 
 	interface Props {
-		open?: boolean;
-		embeddedDatasetId?: number | null;
+		isOpen?: boolean;
+		presetEmbeddedDatasetId?: number | null;
+		onClose?: () => void;
 		onSuccess?: () => void;
 	}
 
@@ -17,7 +18,12 @@
 		collection_name: string;
 	}
 
-	let { open = $bindable(false), embeddedDatasetId = null, onSuccess }: Props = $props();
+	let {
+		isOpen = $bindable(false),
+		presetEmbeddedDatasetId = null,
+		onClose,
+		onSuccess,
+	}: Props = $props();
 
 	let embeddedDatasets = $state<EmbeddedDataset[]>([]);
 
@@ -28,7 +34,7 @@
 	let topicNamingLlmId = $state<number | null>(null);
 
 	$effect(() => {
-		if (open && !transformTitle.startsWith('visualization-')) {
+		if (isOpen && !transformTitle.startsWith('visualization-')) {
 			const now = new Date();
 			const date = now.toISOString().split('T')[0];
 			const time = now.toTimeString().split(' ')[0].replace(/:/g, '').slice(0, 4);
@@ -37,8 +43,8 @@
 	});
 
 	$effect(() => {
-		if (open && embeddedDatasetId !== null) {
-			selectedEmbeddedDatasetId = embeddedDatasetId;
+		if (isOpen && presetEmbeddedDatasetId !== null && !selectedEmbeddedDatasetId) {
+			selectedEmbeddedDatasetId = presetEmbeddedDatasetId;
 		}
 	});
 
@@ -141,7 +147,7 @@
 
 	function resetForm() {
 		transformTitle = '';
-		selectedEmbeddedDatasetId = embeddedDatasetId ?? null;
+		selectedEmbeddedDatasetId = presetEmbeddedDatasetId ?? null;
 		umapNNeighbors = 15;
 		umapMinDist = 0.1;
 		umapMetric = 'cosine';
@@ -159,23 +165,25 @@
 		clusterBoundaryPolygons = true;
 		polygonAlpha = 0.3;
 		error = null;
-		open = false;
+		isOpen = false;
+		onClose?.();
 	}
 
 	function handleClose() {
-		open = false;
+		isOpen = false;
 		error = null;
+		onClose?.();
 	}
 
 	$effect(() => {
-		if (embeddedDatasetId && !selectedEmbeddedDatasetId) {
-			selectedEmbeddedDatasetId = embeddedDatasetId;
+		if (presetEmbeddedDatasetId && !selectedEmbeddedDatasetId) {
+			selectedEmbeddedDatasetId = presetEmbeddedDatasetId;
 		}
 	});
 </script>
 
-<Modal bind:open onclose={handleClose}>
-	<div class="w-full max-w-4xl mx-auto px-4 py-4">
+<Modal bind:open={isOpen} onclose={handleClose} size="xl" class="max-w-6xl">
+	<div class="w-full max-w-6xl mx-auto px-4 py-4">
 		<h2 class="text-xl font-bold text-gray-900 dark:text-white mb-4">
 			Create Visualization Transform
 		</h2>

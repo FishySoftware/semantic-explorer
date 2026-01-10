@@ -249,11 +249,11 @@
 				const stats = await response.json();
 				datasetTransformStatsMap.set(transformId, stats);
 				datasetTransformStatsMap = datasetTransformStatsMap; // Trigger reactivity
-				
+
 				// Check if this transform is currently processing and we're not already tracking it
 				if (stats.is_processing && !activeTransformProgress) {
 					// Find the transform to get its title
-					const transform = datasetTransforms.find(t => t.dataset_transform_id === transformId);
+					const transform = datasetTransforms.find((t) => t.dataset_transform_id === transformId);
 					if (transform) {
 						console.info(`Detected active transform ${transformId}, resuming progress tracking`);
 						activeTransformProgress = {
@@ -373,13 +373,15 @@
 				embedded: stats.total_chunks_embedded,
 				total: stats.total_chunks_to_process,
 				status: stats.status,
-				is_processing: stats.is_processing
+				is_processing: stats.is_processing,
 			});
 
 			// Check if the transform is complete (any terminal state)
 			const terminalStatuses = ['completed', 'completed_with_errors', 'failed', 'idle'];
 			if (terminalStatuses.includes(stats.status) || !stats.is_processing) {
-				console.info(`Transform ${stats.status}, is_processing=${stats.is_processing}, stopping polling`);
+				console.info(
+					`Transform ${stats.status}, is_processing=${stats.is_processing}, stopping polling`
+				);
 				stopTransformProgressPolling();
 				// Refresh the transforms list to get final state
 				fetchDatasetTransforms();
@@ -1189,7 +1191,7 @@
 																<button
 																	onclick={() => {
 																		if (typeof window !== 'undefined') {
-																			window.location.hash = '/embedded-datasets';
+																			window.location.hash = `/embedded-datasets/${embedded.embedded_dataset_id}/details`;
 																		}
 																	}}
 																	class="text-sm font-semibold text-blue-700 dark:text-blue-300 hover:underline text-left"

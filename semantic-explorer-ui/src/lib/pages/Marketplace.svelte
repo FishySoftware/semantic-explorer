@@ -181,7 +181,7 @@
 
 			const newEmbedder = await response.json();
 			toastStore.success('Embedder grabbed successfully!');
-			window.location.hash = `#/embedders?name=${encodeURIComponent(newEmbedder.name)}`;
+			window.location.hash = `#/embedders/${newEmbedder.embedder_id}/details`;
 		} catch (e) {
 			const message = formatError(e, 'Failed to grab embedder');
 			toastStore.error(message);

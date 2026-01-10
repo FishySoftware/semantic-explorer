@@ -147,19 +147,15 @@
 
 			const totalChunks = stats.total_chunks_to_process ?? 0;
 			const embedded = stats.total_chunks_embedded ?? 0;
-			const processing = stats.total_chunks_processing ?? 0;
-			const failed = stats.total_chunks_failed ?? 0;
-			
+
+
 			// If processing, show processing count
 			if (stats.is_processing || stats.processing_batches > 0) {
 				const processingBatches = stats.processing_batches ?? 0;
 				return `${embedded}/${totalChunks} chunks embedded • ${processingBatches} batches processing`;
 			}
 
-			const successRate =
-				totalChunks > 0
-					? ((embedded / totalChunks) * 100).toFixed(1)
-					: '0';
+			const successRate = totalChunks > 0 ? ((embedded / totalChunks) * 100).toFixed(1) : '0';
 
 			return `${embedded}/${totalChunks} chunks (${successRate}% complete) • ${stats.successful_batches ?? 0}/${stats.total_batches_processed ?? 0} batches`;
 		} else if (type === 'collection') {

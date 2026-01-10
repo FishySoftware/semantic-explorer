@@ -409,7 +409,7 @@
 			if (!editingEmbedder) {
 				// Fetch updated list and then redirect to show the new embedder
 				await fetchEmbedders();
-				window.location.hash = `#/embedders?name=${encodeURIComponent(newEmbedder.name)}`;
+				window.location.hash = `#/embedders/${newEmbedder.embedder_id}/details`;
 			} else {
 				await fetchEmbedders();
 			}

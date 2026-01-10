@@ -2,7 +2,8 @@ use crate::auth::extract_username;
 use crate::errors::{bad_request, not_found};
 use crate::storage::postgres::collection_transforms;
 use crate::transforms::collection::models::{
-    CollectionTransform, CollectionTransformStats, CreateCollectionTransform, ProcessedFile, UpdateCollectionTransform
+    CollectionTransform, CollectionTransformStats, CreateCollectionTransform, ProcessedFile,
+    UpdateCollectionTransform,
 };
 use crate::transforms::collection::scanner::trigger_collection_transform_scan;
 

@@ -38,13 +38,14 @@
 	interface Embedder {
 		embedder_id: number;
 		name: string;
+		title: string;
 		owner: string;
 		provider: string;
 		base_url: string;
 		api_key: string | null;
 		config: Record<string, any>;
 		max_batch_size?: number;
-		dimensions?: number;
+		dimension?: number;
 		collection_name: string;
 		created_at: string;
 		updated_at: string;
@@ -138,6 +139,13 @@
 			embeddedDatasets = await response.json();
 
 			// Fetch related datasets and embedders
+			// Fetch all stats in one batch request
+			const embeddedDatasetIds = embeddedDatasets.map((d) => d.embedded_dataset_id);
+			if (embeddedDatasetIds.length > 0) {
+				await fetchBatchStats(embeddedDatasetIds);
+			}
+
+			// Fetch related datasets and embedders
 			for (const dataset of embeddedDatasets) {
 				const sourceDataset = await fetchDataset(dataset.source_dataset_id);
 				if (sourceDataset) {
@@ -148,8 +156,6 @@
 				if (embedder) {
 					dataset.embedder_name = embedder.name;
 				}
-
-				await fetchStatsForEmbeddedDataset(dataset.embedded_dataset_id);
 			}
 
 			// Trigger reactivity
@@ -163,16 +169,23 @@
 		}
 	}
 
-	async function fetchStatsForEmbeddedDataset(embeddedDatasetId: number) {
+	async function fetchBatchStats(embeddedDatasetIds: number[]) {
 		try {
-			const response = await fetch(`/api/embedded-datasets/${embeddedDatasetId}/stats`);
+			const response = await fetch('/api/embedded-datasets/batch-stats', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ embedded_dataset_ids: embeddedDatasetIds }),
+			});
 			if (response.ok) {
-				const stats = await response.json();
-				statsMap.set(embeddedDatasetId, stats);
+				const batchStats: Record<number, Stats> = await response.json();
+				for (const [idStr, stats] of Object.entries(batchStats)) {
+					const id = parseInt(idStr, 10);
+					statsMap.set(id, stats);
+				}
 				statsMap = statsMap; // Trigger reactivity
 			}
 		} catch (e) {
-			console.error(`Failed to fetch stats for embedded dataset ${embeddedDatasetId}:`, e);
+			console.error('Failed to fetch batch stats:', e);
 		}
 	}
 
@@ -352,9 +365,9 @@
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Source Dataset</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Embedder</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center"
-						>Success Rate</TableHeadCell
+						>Dimension</TableHeadCell
 					>
-					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Chunks</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Stats</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Actions</TableHeadCell>
 				</TableHead>
 				<TableBody>
@@ -362,9 +375,12 @@
 						{@const stats = statsMap.get(dataset.embedded_dataset_id)}
 						<tr class="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50">
 							<TableBodyCell class="px-4 py-3">
-								<span class="font-semibold text-gray-900 dark:text-white">
+								<button
+								onclick={() => onNavigate(`/embedded-datasets/${dataset.embedded_dataset_id}/details`)}
+									class="font-semibold text-blue-600 dark:text-blue-400 hover:underline text-left"
+								>
 									{dataset.title}
-								</span>
+								</button>
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3">
 								{#if dataset.source_dataset_title}
@@ -383,7 +399,7 @@
 									<button
 										onclick={() =>
 											onNavigate(
-												`/embedders?search=${encodeURIComponent(dataset.embedder_name ?? '')}`
+											`/embedders/${dataset.embedder_id}/details`
 											)}
 										class="text-blue-600 dark:text-blue-400 hover:underline font-semibold text-sm"
 									>
@@ -394,30 +410,57 @@
 								{/if}
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3 text-center">
-								{#if stats}
+								{@const embedder = embeddersCache.get(dataset.embedder_id)}
+								{#if embedder?.dimension}
 									<span
-										class="inline-block px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded text-sm font-medium"
+										class="inline-block px-2 py-1 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded text-xs font-medium"
 									>
-										{stats.total_batches_processed > 0
-											? Math.round((stats.successful_batches / stats.total_batches_processed) * 100)
-											: 0}%
+										{embedder.dimension}d
 									</span>
 								{:else}
-									<span class="text-gray-500 dark:text-gray-400">—</span>
+									<span class="text-gray-500 dark:text-gray-400 text-xs">—</span>
 								{/if}
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3 text-center">
 								{#if stats}
-									<span class="text-gray-700 dark:text-gray-300 text-sm">
-										{stats.total_chunks_embedded}
-									</span>
+									<div class="flex gap-1 justify-center flex-wrap">
+										<span
+											class="inline-block px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded text-xs font-medium"
+											title="Success Rate"
+										>
+											{stats.total_batches_processed > 0
+												? Math.round(
+														(stats.successful_batches / stats.total_batches_processed) * 100
+													)
+												: 0}%
+										</span>
+										<span
+											class="inline-block px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs font-medium"
+											title="Total Chunks Embedded"
+										>
+											{stats.total_chunks_embedded.toLocaleString()}
+										</span>
+										{#if stats.failed_batches > 0}
+											<span
+												class="inline-block px-2 py-1 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded text-xs font-medium"
+												title="Failed Batches"
+											>
+												❌ {stats.failed_batches}
+											</span>
+										{/if}
+									</div>
 								{:else}
-									<span class="text-gray-500 dark:text-gray-400">—</span>
+									<span class="text-gray-500 dark:text-gray-400 text-xs">—</span>
 								{/if}
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3 text-center">
 								<ActionMenu
 									actions={[
+										{
+											label: 'View Details',
+											handler: () =>
+												onNavigate(`/embedded-datasets/${dataset.embedded_dataset_id}/details`),
+										},
 										...(stats && stats.failed_batches > 0
 											? [
 													{

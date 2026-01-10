@@ -1,7 +1,9 @@
 use anyhow::Result;
 use sqlx::{Pool, Postgres};
 
-use crate::transforms::collection::models::{CollectionTransform, CollectionTransformStats, ProcessedFile};
+use crate::transforms::collection::models::{
+    CollectionTransform, CollectionTransformStats, ProcessedFile,
+};
 
 const GET_COLLECTION_TRANSFORM_QUERY: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner, is_enabled,
