@@ -1,14 +1,27 @@
 <script lang="ts">
+	import { Table, TableBody, TableBodyCell, TableHead, TableHeadCell } from 'flowbite-svelte';
 	import { onMount } from 'svelte';
+	import ActionMenu from '../components/ActionMenu.svelte';
+	import ConfirmDialog from '../components/ConfirmDialog.svelte';
+	import PageHeader from '../components/PageHeader.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
 
 	interface VisualizationConfig {
 		n_neighbors: number;
-		n_components: number;
 		min_dist: number;
 		metric: string;
 		min_cluster_size: number;
 		min_samples: number | null;
+		topic_naming_llm_id: number | null;
+		min_fontsize?: number;
+		max_fontsize?: number;
+		font_family?: string;
+		darkmode?: boolean;
+		noise_color?: string;
+		label_wrap_width?: number;
+		use_medoids?: boolean;
+		cluster_boundary_polygons?: boolean;
+		polygon_alpha?: number;
 	}
 
 	interface VisualizationTransform {
@@ -24,12 +37,26 @@
 		last_run_at: string | null;
 		last_error: string | null;
 		last_run_stats: {
-			n_points?: number;
-			n_clusters?: number;
+			point_count?: number;
+			cluster_count?: number;
 			processing_duration_ms?: number;
 		} | null;
 		created_at: string;
 		updated_at: string;
+	}
+
+	interface VisualizationRun {
+		run_id: number;
+		visualization_transform_id: number;
+		status: string;
+		started_at: string | null;
+		completed_at: string | null;
+		html_s3_key: string | null;
+		point_count: number | null;
+		cluster_count: number | null;
+		error_message: string | null;
+		stats_json: any | null;
+		created_at: string;
 	}
 
 	interface Props {
@@ -41,6 +68,9 @@
 	let visualizations = $state<VisualizationTransform[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+	let searchQuery = $state('');
+
+	let visualizationPendingDelete = $state<VisualizationTransform | null>(null);
 
 	onMount(async () => {
 		await loadVisualizations();
@@ -79,42 +109,208 @@
 			onViewVisualization(transformId);
 		}
 	}
+
+	function requestDeleteVisualization(viz: VisualizationTransform) {
+		visualizationPendingDelete = viz;
+	}
+
+	async function confirmDeleteVisualization() {
+		if (!visualizationPendingDelete) return;
+
+		try {
+			const response = await fetch(
+				`/api/visualization-transforms/${visualizationPendingDelete.visualization_transform_id}`,
+				{
+					method: 'DELETE',
+				}
+			);
+
+			if (!response.ok) {
+				throw new Error(`Failed to delete visualization: ${response.statusText}`);
+			}
+
+			toastStore.success('Visualization deleted');
+			visualizationPendingDelete = null;
+			await loadVisualizations();
+		} catch (e) {
+			toastStore.error(formatError(e, 'Failed to delete visualization'));
+		}
+	}
+
+	async function toggleEnabled(viz: VisualizationTransform) {
+		try {
+			const response = await fetch(
+				`/api/visualization-transforms/${viz.visualization_transform_id}`,
+				{
+					method: 'PATCH',
+					headers: {
+						'Content-Type': 'application/json',
+					},
+					body: JSON.stringify({
+						is_enabled: !viz.is_enabled,
+					}),
+				}
+			);
+
+			if (!response.ok) {
+				throw new Error(`Failed to update visualization: ${response.statusText}`);
+			}
+
+			toastStore.success(`Visualization ${viz.is_enabled ? 'disabled' : 'enabled'}`);
+			await loadVisualizations();
+		} catch (e) {
+			toastStore.error(formatError(e, 'Failed to update visualization'));
+		}
+	}
+
+	async function triggerRun(viz: VisualizationTransform) {
+		try {
+			const response = await fetch(
+				`/api/visualization-transforms/${viz.visualization_transform_id}/trigger`,
+				{
+					method: 'POST',
+				}
+			);
+
+			if (!response.ok) {
+				throw new Error(`Failed to trigger visualization: ${response.statusText}`);
+			}
+
+			toastStore.success('Visualization run triggered');
+			await loadVisualizations();
+		} catch (e) {
+			toastStore.error(formatError(e, 'Failed to trigger visualization'));
+		}
+	}
+
+	async function downloadLatestHtml(viz: VisualizationTransform) {
+		try {
+			// First, get the latest run
+			const runsResponse = await fetch(
+				`/api/visualization-transforms/${viz.visualization_transform_id}/runs?limit=1`
+			);
+			if (!runsResponse.ok) {
+				throw new Error(`Failed to fetch runs: ${runsResponse.statusText}`);
+			}
+
+			const runs: VisualizationRun[] = await runsResponse.json();
+			if (runs.length === 0 || !runs[0].html_s3_key) {
+				toastStore.error('No HTML file available for this visualization');
+				return;
+			}
+
+			const run = runs[0];
+
+			// Download the HTML file
+			const downloadResponse = await fetch(
+				`/api/visualization-transforms/${viz.visualization_transform_id}/runs/${run.run_id}/download`
+			);
+
+			if (!downloadResponse.ok) {
+				throw new Error(`Failed to download HTML: ${downloadResponse.statusText}`);
+			}
+
+			// Create a blob and download it
+			const blob = await downloadResponse.blob();
+			const url = window.URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = `visualization-${viz.visualization_transform_id}-${run.run_id}.html`;
+			document.body.appendChild(a);
+			a.click();
+			window.URL.revokeObjectURL(url);
+			document.body.removeChild(a);
+
+			toastStore.success('HTML file downloaded');
+		} catch (e) {
+			toastStore.error(formatError(e, 'Failed to download HTML'));
+		}
+	}
+
+	function getStatusBadge(status: string | null): { color: string; text: string } {
+		if (!status) return { color: 'gray', text: 'Unknown' };
+
+		switch (status) {
+			case 'completed':
+				return { color: 'green', text: 'Completed' };
+			case 'processing':
+				return { color: 'blue', text: 'Processing' };
+			case 'failed':
+				return { color: 'red', text: 'Failed' };
+			case 'pending':
+				return { color: 'yellow', text: 'Pending' };
+			default:
+				return { color: 'gray', text: status };
+		}
+	}
+
+	let filteredVisualizations = $derived(
+		visualizations.filter((v) => {
+			if (!searchQuery.trim()) return true;
+			const query = searchQuery.toLowerCase();
+			return (
+				v.title.toLowerCase().includes(query) ||
+				v.owner.toLowerCase().includes(query) ||
+				v.embedded_dataset_id.toString().includes(query)
+			);
+		})
+	);
 </script>
 
 <div class="max-w-7xl mx-auto">
-	<div class="mb-4">
-		<h1 class="text-3xl font-bold text-gray-900 dark:text-white mb-2">Visualizations</h1>
-		<p class="text-gray-600 dark:text-gray-400">
-			Visualizations of embedding spaces with UMAP dimensionality reduction and HDBSCAN clustering
-		</p>
+	<PageHeader
+		title="Visualizations"
+		description="Interactive visualizations of embedding spaces with UMAP dimensionality reduction and HDBSCAN clustering. Visualizations can be generated from embedded datasets using transforms."
+	/>
+
+	<div class="flex justify-between items-center mb-4">
+		<h1 class="text-3xl font-bold text-gray-900 dark:text-white">Visualizations</h1>
 	</div>
 
-	{#if loading}
-		<div class="flex items-center justify-center h-64">
-			<div class="text-center">
+	{#if !loading && visualizations.length > 0}
+		<div class="mb-4">
+			<div class="relative">
+				<input
+					type="text"
+					bind:value={searchQuery}
+					placeholder="Search visualizations by title, owner, or embedded dataset..."
+					class="w-full px-4 py-2 pl-10 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+				/>
 				<svg
-					class="animate-spin h-12 w-12 text-blue-600 dark:text-blue-400 mx-auto mb-4"
-					xmlns="http://www.w3.org/2000/svg"
+					class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400"
 					fill="none"
+					stroke="currentColor"
 					viewBox="0 0 24 24"
 				>
-					<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"
-					></circle>
 					<path
-						class="opacity-75"
-						fill="currentColor"
-						d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-					></path>
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width="2"
+						d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+					/>
 				</svg>
-				<p class="text-gray-600 dark:text-gray-400">Loading visualizations...</p>
 			</div>
 		</div>
+	{/if}
+
+	{#if loading}
+		<div class="flex items-center justify-center py-12">
+			<div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+		</div>
 	{:else if error}
-		<div class="bg-red-50 dark:bg-red-900/20 border-l-4 border-red-400 p-4 rounded-lg">
+		<div
+			class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4"
+		>
 			<p class="text-red-700 dark:text-red-400">{error}</p>
+			<button
+				onclick={loadVisualizations}
+				class="mt-2 text-sm text-red-600 dark:text-red-400 hover:underline"
+			>
+				Try again
+			</button>
 		</div>
 	{:else if visualizations.length === 0}
-		<div class="text-center py-12">
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-8 text-center">
 			<svg
 				class="mx-auto h-12 w-12 text-gray-400 dark:text-gray-600 mb-4"
 				fill="none"
@@ -128,79 +324,153 @@
 					d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
 				></path>
 			</svg>
-			<h3 class="text-lg font-medium text-gray-900 dark:text-white mb-2">No visualizations yet</h3>
-			<p class="text-gray-600 dark:text-gray-400 mb-4">
-				Create a visualization transform in the Transforms section to get started.
+			<p class="text-gray-500 dark:text-gray-400 mb-4">No visualizations yet</p>
+			<p class="text-sm text-gray-600 dark:text-gray-400">
+				Create visualization transforms from embedded datasets in the Transforms section.
 			</p>
 		</div>
+	{:else if filteredVisualizations.length === 0}
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-8 text-center">
+			<p class="text-gray-500 dark:text-gray-400 mb-4">No visualizations match your search</p>
+			<button
+				onclick={() => (searchQuery = '')}
+				class="text-blue-600 dark:text-blue-400 hover:underline"
+			>
+				Clear search
+			</button>
+		</div>
 	{:else}
-		<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-			{#each visualizations as viz (viz.visualization_transform_id)}
-				<div
-					class="bg-white dark:bg-gray-800 rounded-lg shadow hover:shadow-lg transition-shadow overflow-hidden"
-				>
-					<div class="p-4">
-						<h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-							{viz.title}
-						</h3>
-
-						<div class="space-y-2 mb-4">
-							<div class="text-sm text-gray-600 dark:text-gray-400">
-								<span class="font-medium">Embedded Dataset ID:</span>
-								{viz.embedded_dataset_id}
-							</div>
-							<div class="text-sm text-gray-600 dark:text-gray-400">
-								<span class="font-medium">Status:</span>
-								<span
-									class={viz.is_enabled
-										? 'text-green-600 dark:text-green-400'
-										: 'text-gray-500 dark:text-gray-400'}
-								>
-									{viz.is_enabled ? 'Enabled' : 'Disabled'}
-								</span>
-							</div>
-							<div class="text-sm text-gray-600 dark:text-gray-400">
-								<span class="font-medium">Updated:</span>
-								{formatDate(viz.updated_at)}
-							</div>
-						</div>
-
-						<div class="mb-4">
-							<div class="text-xs font-medium text-gray-500 dark:text-gray-500 mb-1">
-								Configuration
-							</div>
-							<div class="text-xs text-gray-600 dark:text-gray-400 space-y-1">
-								<div>Dimensions: {viz.visualization_config.n_components}D</div>
-								<div>UMAP neighbors: {viz.visualization_config.n_neighbors}</div>
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
+			<Table hoverable striped>
+				<TableHead>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Title</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center"
+						>Embedded Dataset</TableHeadCell
+					>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Status</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center"
+						>Statistics</TableHeadCell
+					>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Config</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Actions</TableHeadCell>
+				</TableHead>
+				<TableBody>
+					{#each filteredVisualizations as viz (viz.visualization_transform_id)}
+						{@const statusBadge = getStatusBadge(viz.last_run_status)}
+						<tr class="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50">
+							<TableBodyCell class="px-4 py-2">
 								<div>
-									HDBSCAN min cluster size: {viz.visualization_config.min_cluster_size}
+									<button
+										onclick={() => handleView(viz.visualization_transform_id)}
+										class="font-medium text-blue-600 dark:text-blue-400 hover:underline"
+									>
+										{viz.title}
+									</button>
+									<div class="text-xs text-gray-600 dark:text-gray-400 mt-1">
+										{viz.is_enabled ? '✓ Enabled' : '✗ Disabled'}
+									</div>
 								</div>
-							</div>
-						</div>
-
-						<button
-							onclick={() => handleView(viz.visualization_transform_id)}
-							class="w-full btn-primary flex items-center justify-center gap-2"
-						>
-							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width="2"
-									d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-								></path>
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width="2"
-									d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
-								></path>
-							</svg>
-							View {viz.visualization_config.n_components}D Visualization
-						</button>
-					</div>
-				</div>
-			{/each}
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-2 text-center">
+								<span
+									class="inline-block px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded text-sm font-medium"
+								>
+									ED #{viz.embedded_dataset_id}
+								</span>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-2 text-center">
+								<span
+									class="inline-block px-2 py-1 bg-{statusBadge.color}-100 dark:bg-{statusBadge.color}-900/30 text-{statusBadge.color}-700 dark:text-{statusBadge.color}-300 rounded text-sm font-medium"
+								>
+									{statusBadge.text}
+								</span>
+								{#if viz.last_run_at}
+									<div class="text-xs text-gray-600 dark:text-gray-400 mt-1">
+										{formatDate(viz.last_run_at)}
+									</div>
+								{/if}
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-2 text-center">
+								{#if viz.last_run_stats}
+									<div class="text-sm">
+										{#if viz.last_run_stats.point_count !== undefined}
+											<div class="text-gray-700 dark:text-gray-300">
+												{viz.last_run_stats.point_count.toLocaleString()} points
+											</div>
+										{/if}
+										{#if viz.last_run_stats.cluster_count !== undefined}
+											<div class="text-gray-600 dark:text-gray-400 text-xs">
+												{viz.last_run_stats.cluster_count} clusters
+											</div>
+										{/if}
+										{#if viz.last_run_stats.processing_duration_ms !== undefined}
+											<div class="text-gray-500 dark:text-gray-500 text-xs">
+												{(viz.last_run_stats.processing_duration_ms / 1000).toFixed(1)}s
+											</div>
+										{/if}
+									</div>
+								{:else}
+									<span class="text-gray-500 dark:text-gray-400">—</span>
+								{/if}
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-2">
+								<div class="text-xs space-y-0.5">
+									<div class="text-gray-700 dark:text-gray-300">
+										{viz.visualization_config.n_neighbors} neighbors
+									</div>
+									<div class="text-gray-600 dark:text-gray-400">
+										{viz.visualization_config.metric}, min_cluster={viz.visualization_config
+											.min_cluster_size}
+									</div>
+								</div>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-2 text-center">
+								<ActionMenu
+									actions={[
+										{
+											label: 'View Details',
+											handler: () => handleView(viz.visualization_transform_id),
+										},
+										{
+											label: 'Trigger Run',
+											handler: () => triggerRun(viz),
+										},
+										...(viz.last_run_status === 'completed'
+											? [
+													{
+														label: 'Download HTML',
+														handler: () => downloadLatestHtml(viz),
+													},
+												]
+											: []),
+										{
+											label: viz.is_enabled ? 'Disable' : 'Enable',
+											handler: () => toggleEnabled(viz),
+										},
+										{
+											label: 'Delete',
+											handler: () => requestDeleteVisualization(viz),
+											isDangerous: true,
+										},
+									]}
+								/>
+							</TableBodyCell>
+						</tr>
+					{/each}
+				</TableBody>
+			</Table>
 		</div>
 	{/if}
 </div>
+
+<ConfirmDialog
+	open={visualizationPendingDelete !== null}
+	title="Delete visualization"
+	message={visualizationPendingDelete
+		? `Are you sure you want to delete "${visualizationPendingDelete.title}"? This action cannot be undone.`
+		: ''}
+	confirmLabel="Delete"
+	variant="danger"
+	on:confirm={confirmDeleteVisualization}
+	on:cancel={() => (visualizationPendingDelete = null)}
+/>

@@ -7,22 +7,23 @@ interactive visualization generation.
 
 import logging
 import time
+import tempfile
+import os
 from typing import Any, Dict, Optional
 
 import numpy as np
 from qdrant_client import QdrantClient
-from qdrant_client.models import PointStruct
 from umap import UMAP
 from hdbscan import HDBSCAN
 import datamapplot
 
 try:
     # Try relative imports (for package execution)
-    from .models import VisualizationTransformJob, LLMConfig, VisualizationConfig
+    from .models import VisualizationTransformJob, VisualizationConfig
     from .llm_namer import LLMProvider
 except ImportError:
     # Fallback to absolute imports (for direct script execution)
-    from models import VisualizationTransformJob, LLMConfig, VisualizationConfig
+    from models import VisualizationTransformJob, VisualizationConfig
     from llm_namer import LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -87,7 +88,7 @@ class VisualizationProcessor:
 
         # Fetch vectors from Qdrant
         logger.info(f"Fetching vectors from Qdrant collection: {job.qdrant_collection_name}")
-        vectors, ids, texts = await self._fetch_vectors_from_qdrant(
+        vectors, _ids, texts = await self._fetch_vectors_from_qdrant(
             job.qdrant_collection_name, job.owner
         )
 
@@ -96,7 +97,6 @@ class VisualizationProcessor:
         # Apply UMAP dimensionality reduction
         logger.info(
             f"Applying UMAP: n_neighbors={job.visualization_config.n_neighbors}, "
-            f"n_components={job.visualization_config.n_components}, "
             f"min_dist={job.visualization_config.min_dist}, "
             f"metric={job.visualization_config.metric}"
         )
@@ -130,7 +130,6 @@ class VisualizationProcessor:
                 "unique_clusters": unique_clusters,
                 "noise_points": int(np.sum(labels == -1)),
                 "umap_n_neighbors": job.visualization_config.n_neighbors,
-                "umap_n_components": job.visualization_config.n_components,
                 "hdbscan_min_cluster_size": job.visualization_config.min_cluster_size,
             },
         }
@@ -153,7 +152,8 @@ class VisualizationProcessor:
             owner: Owner/username for audit logging
 
         Returns:
-            Tuple of (vectors array, point IDs, texts)
+            Tuple of (vectors array, point IDs, hover_texts)
+            hover_texts format: "<title>\n\n<text>" if title exists, otherwise just text
 
         Raises:
             Exception: If collection not found or fetch fails
@@ -196,11 +196,19 @@ class VisualizationProcessor:
                 for point in points:
                     vectors.append(point.vector)
                     ids.append(str(point.id))
-                    # Try to extract text from payload
-                    text = ""
+                    # Extract both title and text from payload for hover text
+                    hover_text = ""
                     if point.payload:
+                        title = point.payload.get("item_title", "")
                         text = point.payload.get("text", "")
-                    texts.append(text)
+                        # Format as "<title>\n\n<text>"
+                        if title and text:
+                            hover_text = f"{title}\n\n{text}"
+                        elif title:
+                            hover_text = title
+                        else:
+                            hover_text = text
+                    texts.append(hover_text)
                 
                 # Check if there are more pages (offset is None means this was the last page)
                 if offset is None:
@@ -258,7 +266,7 @@ class VisualizationProcessor:
             logger.debug(f"Initializing UMAP with {vectors.shape[0]} vectors")
             umap = UMAP(
                 n_neighbors=job.visualization_config.n_neighbors,
-                n_components=job.visualization_config.n_components,
+                n_components=2,
                 min_dist=job.visualization_config.min_dist,
                 metric=job.visualization_config.metric,
                 random_state=42,  # For reproducibility
@@ -443,7 +451,7 @@ class VisualizationProcessor:
             labels: Cluster labels
             cluster_labels: Cluster ID to label mapping
             texts: Point descriptions
-            config: Visualization configuration with datamapplot parameters
+            config: Visualization configuration with all datamapplot parameters
 
         Returns:
             HTML content of interactive visualization
@@ -454,33 +462,101 @@ class VisualizationProcessor:
             logger.debug(f"Preparing label names for {len(labels)} points")
             label_names = [cluster_labels.get(int(label), f"Cluster {label}") for label in labels]
 
-            # Generate interactive HTML map with configurable parameters
+            # Build kwargs for create_interactive_plot
+            plot_kwargs = {
+                # Direct create_interactive_plot parameters
+                "inline_data": config.inline_data,
+                "noise_label": config.noise_label,
+                "noise_color": config.noise_color,
+                "color_label_text": config.color_label_text,
+                "label_wrap_width": config.label_wrap_width,
+                "width": config.width,
+                "height": config.height,
+                "darkmode": config.darkmode,
+                "palette_hue_shift": config.palette_hue_shift,
+                "palette_hue_radius_dependence": config.palette_hue_radius_dependence,
+                "palette_theta_range": config.palette_theta_range,
+                "use_medoids": config.use_medoids,
+                "cluster_boundary_polygons": config.cluster_boundary_polygons,
+                "polygon_alpha": config.polygon_alpha,
+                "cvd_safer": config.cvd_safer,
+                "enable_topic_tree": config.enable_topic_tree,
+                
+                # render_html parameters (passed through **render_html_kwds)
+                "title_font_size": config.title_font_size,
+                "sub_title_font_size": config.sub_title_font_size,
+                "text_collision_size_scale": config.text_collision_size_scale,
+                "text_min_pixel_size": config.text_min_pixel_size,
+                "text_max_pixel_size": config.text_max_pixel_size,
+                "font_family": config.font_family,
+                "font_weight": config.font_weight,
+                "tooltip_font_family": config.tooltip_font_family,
+                "tooltip_font_weight": config.tooltip_font_weight,
+                "logo_width": config.logo_width,
+                "line_spacing": config.line_spacing,
+                "min_fontsize": config.min_fontsize,
+                "max_fontsize": config.max_fontsize,
+                "text_outline_width": config.text_outline_width,
+                "text_outline_color": config.text_outline_color,
+                "point_hover_color": config.point_hover_color,
+                "point_radius_min_pixels": config.point_radius_min_pixels,
+                "point_radius_max_pixels": config.point_radius_max_pixels,
+                "point_line_width_min_pixels": config.point_line_width_min_pixels,
+                "point_line_width_max_pixels": config.point_line_width_max_pixels,
+                "point_line_width": config.point_line_width,
+                "cluster_boundary_line_width": config.cluster_boundary_line_width,
+                "initial_zoom_fraction": config.initial_zoom_fraction,
+            }
+            
+            # Add optional parameters if they're set
+            if config.title is not None:
+                plot_kwargs["title"] = config.title
+            if config.sub_title is not None:
+                plot_kwargs["sub_title"] = config.sub_title
+            if config.logo is not None:
+                plot_kwargs["logo"] = config.logo
+            if config.point_size_scale is not None:
+                plot_kwargs["point_size_scale"] = config.point_size_scale
+            if config.background_color is not None:
+                plot_kwargs["background_color"] = config.background_color
+            if config.background_image is not None:
+                plot_kwargs["background_image"] = config.background_image
+            
+            # Generate interactive HTML map with all configurable parameters
             plot_start = time.time()
             logger.debug("Calling datamapplot.create_interactive_plot...")
             fig = datamapplot.create_interactive_plot(
                 vectors,
                 np.array(label_names),
-                font_family=config.font_family,
-                darkmode=config.darkmode,
-                noise_label="Noise",
-                noise_color=config.noise_color,
-                label_wrap_width=config.label_wrap_width,
-                use_medoids=config.use_medoids,
-                cluster_boundary_polygons=config.cluster_boundary_polygons,
-                polygon_alpha=config.polygon_alpha,
-                min_fontsize=config.min_fontsize,
-                max_fontsize=config.max_fontsize,
+                hover_text=texts if texts else None,
+                **plot_kwargs
             )
             plot_elapsed = time.time() - plot_start
             logger.debug(f"datamapplot plot creation completed in {plot_elapsed:.3f}s")
 
-            # Convert the interactive figure to HTML string
+            # Convert the interactive figure to HTML string using temporary file
             html_start = time.time()
             logger.debug("Converting figure to HTML...")
-            html_content = fig._repr_html_()
+            
+            # Create a temporary file to save the HTML
+            with tempfile.NamedTemporaryFile(mode='w+', suffix='.html', delete=False, encoding='utf-8') as tmp_file:
+                tmp_path = tmp_file.name
+            
+            try:
+                # Save the figure to the temporary file
+                fig.save(tmp_path)
+                
+                # Read the HTML content
+                with open(tmp_path, 'r', encoding='utf-8') as f:
+                    html_content = f.read()
+            finally:
+                # Clean up the temporary file
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+            
             html_elapsed = time.time() - html_start
             
-            if html_content is None:
+            if html_content is None or len(html_content) == 0:
                 logger.error("Failed to generate HTML from interactive figure")
                 raise RuntimeError("Failed to generate HTML from interactive figure")
             

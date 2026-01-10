@@ -184,6 +184,7 @@ async fn main() -> Result<()> {
             .service(api::visualization_transforms::get_visualization_transform_stats)
             .service(api::visualization_transforms::get_visualization_runs)
             .service(api::visualization_transforms::get_visualization_run)
+            .service(api::visualization_transforms::download_visualization_html)
             .service(api::visualization_transforms::get_visualizations_by_dataset)
             .service(api::chat::create_chat_session)
             .service(api::chat::get_chat_sessions)

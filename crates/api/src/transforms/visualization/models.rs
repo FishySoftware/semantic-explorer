@@ -58,8 +58,6 @@ pub struct CreateVisualizationTransform {
     // UMAP parameters
     #[serde(default = "default_n_neighbors")]
     pub n_neighbors: i32,
-    #[serde(default = "default_n_components")]
-    pub n_components: i32,
     #[serde(default = "default_min_dist")]
     pub min_dist: f32,
     #[serde(default = "default_metric")]
@@ -70,8 +68,10 @@ pub struct CreateVisualizationTransform {
     #[serde(default)]
     pub min_samples: Option<i32>,
     // Datamapplot visualization parameters
-    #[serde(default = "default_font_size")]
-    pub font_size: i32,
+    #[serde(default = "default_min_fontsize")]
+    pub min_fontsize: f32,
+    #[serde(default = "default_max_fontsize")]
+    pub max_fontsize: f32,
     #[serde(default = "default_font_family")]
     pub font_family: String,
     #[serde(default = "default_darkmode")]
@@ -111,10 +111,6 @@ fn default_n_neighbors() -> i32 {
     15
 }
 
-fn default_n_components() -> i32 {
-    2
-}
-
 fn default_min_dist() -> f32 {
     0.1
 }
@@ -127,8 +123,12 @@ fn default_min_cluster_size() -> i32 {
     10
 }
 
-fn default_font_size() -> i32 {
-    9
+fn default_min_fontsize() -> f32 {
+    12.0
+}
+
+fn default_max_fontsize() -> f32 {
+    24.0
 }
 
 fn default_font_family() -> String {

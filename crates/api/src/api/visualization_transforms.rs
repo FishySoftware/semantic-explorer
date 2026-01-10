@@ -165,14 +165,14 @@ pub async fn create_visualization_transform(
     // Build visualization config
     let visualization_config = serde_json::json!({
         "n_neighbors": body.n_neighbors,
-        "n_components": body.n_components,
         "min_dist": body.min_dist,
         "metric": body.metric,
         "min_cluster_size": body.min_cluster_size,
         "min_samples": body.min_samples,
         "topic_naming_llm_id": body.llm_id,
         // Datamapplot visualization parameters
-        "font_size": body.font_size,
+        "min_fontsize": body.min_fontsize,
+        "max_fontsize": body.max_fontsize,
         "font_family": body.font_family,
         "darkmode": body.darkmode,
         "noise_color": body.noise_color,
@@ -578,35 +578,18 @@ pub async fn get_visualization_run(
 
     let (transform_id, run_id) = path.into_inner();
 
-    // Verify ownership of transform
-    match visualization_transforms::get_visualization_transform_by_id(&postgres_pool, transform_id)
-        .await
-    {
-        Ok(Some(transform)) => {
-            if transform.owner != username {
-                return not_found("Visualization transform not found".to_string());
-            }
-        }
-        Ok(None) => return not_found("Visualization transform not found".to_string()),
-        Err(e) => {
-            error!("Failed to fetch visualization transform: {}", e);
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": format!("Failed to fetch visualization transform: {}", e)
-            }));
-        }
-    }
-
-    // Get run and verify it belongs to the transform
-    match visualization_transforms::get_visualization_run(&postgres_pool, run_id).await {
+    // Get run with owner check - ensures the run belongs to a transform owned by the user
+    match visualization_transforms::get_visualization_run_with_owner(&postgres_pool, run_id, &username).await {
         Ok(run) => {
+            // Verify the run belongs to the specified transform
             if run.visualization_transform_id != transform_id {
-                return not_found("Visualization run not found".to_string());
+                return not_found("Visualization run not found for this transform".to_string());
             }
             HttpResponse::Ok().json(run)
         }
         Err(e) => {
-            error!("Failed to fetch visualization run: {}", e);
-            not_found(format!("Visualization run not found: {}", e))
+            error!("Failed to fetch visualization run for user {}: {}", username, e);
+            not_found("Visualization run not found".to_string())
         }
     }
 }
@@ -668,6 +651,96 @@ pub async fn get_visualizations_by_dataset(
             HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": format!("Failed to fetch visualization transforms: {}", e)
             }))
+        }
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/visualization-transforms/{id}/runs/{run_id}/download",
+    tag = "Visualization Transforms",
+    params(
+        ("id" = i32, Path, description = "Visualization Transform ID"),
+        ("run_id" = i32, Path, description = "Run ID"),
+    ),
+    responses(
+        (status = 200, description = "HTML file download", content_type = "text/html"),
+        (status = 404, description = "Visualization run not found or no HTML file available"),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[get("/api/visualization-transforms/{id}/runs/{run_id}/download")]
+#[tracing::instrument(name = "download_visualization_html", skip(auth, postgres_pool, s3_client), fields(visualization_transform_id = %path.0, run_id = %path.1))]
+pub async fn download_visualization_html(
+    auth: Authenticated,
+    postgres_pool: Data<Pool<Postgres>>,
+    s3_client: Data<aws_sdk_s3::Client>,
+    path: Path<(i32, i32)>,
+) -> impl Responder {
+    let username = match extract_username(&auth) {
+        Ok(username) => username,
+        Err(e) => return e,
+    };
+
+    let (transform_id, run_id) = path.into_inner();
+
+    // Get run with owner check - this verifies both the run exists and belongs to the user's transform
+    let run = match visualization_transforms::get_visualization_run_with_owner(&postgres_pool, run_id, &username).await {
+        Ok(run) => {
+            // Verify the run belongs to the specified transform
+            if run.visualization_transform_id != transform_id {
+                return not_found("Visualization run not found for this transform".to_string());
+            }
+            run
+        }
+        Err(e) => {
+            error!("Failed to fetch visualization run for user {}: {}", username, e);
+            return not_found("Visualization run not found".to_string());
+        }
+    };
+
+    // Check if HTML file exists
+    let html_s3_key = match run.html_s3_key {
+        Some(key) => key,
+        None => {
+            return not_found("No HTML file available for this visualization run".to_string());
+        }
+    };
+
+    // Get the bucket from environment
+    let bucket = match std::env::var("AWS_S3_BUCKET") {
+        Ok(bucket) => bucket,
+        Err(_) => {
+            error!("AWS_S3_BUCKET environment variable not set");
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Storage configuration error"
+            }));
+        }
+    };
+
+    // Download the file from S3
+    match crate::storage::rustfs::get_file_with_size_check(&s3_client, &bucket, &html_s3_key).await
+    {
+        Ok(file_data) => {
+            let filename = format!("visualization-{}-{}.html", transform_id, run_id);
+            HttpResponse::Ok()
+                .content_type("text/html")
+                .insert_header((
+                    "Content-Disposition",
+                    format!("attachment; filename=\"{}\"", filename),
+                ))
+                .body(file_data)
+        }
+        Err(e) => {
+            error!("Failed to download HTML file: {}", e);
+            let error_msg = e.to_string();
+            if error_msg.contains("exceeds maximum download limit") {
+                bad_request(error_msg)
+            } else {
+                HttpResponse::InternalServerError().json(serde_json::json!({
+                    "error": format!("Failed to download HTML file: {}", e)
+                }))
+            }
         }
     }
 }

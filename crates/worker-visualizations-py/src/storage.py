@@ -12,6 +12,7 @@ from typing import Optional
 
 import boto3
 from botocore.config import Config
+from botocore.exceptions import ClientError
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,45 @@ class S3Storage:
             )
             raise
 
+    def _ensure_bucket_exists(self, bucket_name: str) -> None:
+        """
+        Ensure the S3 bucket exists, creating it if necessary.
+
+        Args:
+            bucket_name: Name of the bucket to check/create
+
+        Raises:
+            Exception: If bucket check or creation fails
+        """
+        try:
+            # Try to head the bucket to see if it exists
+            self.s3_client.head_bucket(Bucket=bucket_name)
+            logger.debug(f"Bucket {bucket_name} already exists")
+        except ClientError as e:
+            # Check if it's a 404 (bucket doesn't exist) or 403 (no permission)
+            error_code = e.response.get('Error', {}).get('Code', '')
+            status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode', 0)
+            
+            if status_code == 404 or error_code == 'NoSuchBucket':
+                # Bucket doesn't exist, create it
+                logger.info(f"Bucket {bucket_name} does not exist, creating it")
+                try:
+                    create_start = time.time()
+                    self.s3_client.create_bucket(Bucket=bucket_name)
+                    create_elapsed = time.time() - create_start
+                    logger.info(f"Successfully created bucket {bucket_name} in {create_elapsed:.3f}s")
+                except Exception as create_error:
+                    logger.error(f"Failed to create bucket {bucket_name}: {type(create_error).__name__}: {create_error}")
+                    raise
+            else:
+                # Some other error (like 403 Forbidden)
+                logger.error(f"Error checking bucket {bucket_name}: {type(e).__name__}: {e}")
+                raise
+        except Exception as e:
+            # Catch any non-ClientError exceptions
+            logger.error(f"Unexpected error checking bucket {bucket_name}: {type(e).__name__}: {e}")
+            raise
+
     async def upload_visualization(
         self,
         owner: str,
@@ -85,6 +125,10 @@ class S3Storage:
             bucket_name = f"visualizations-{transform_id}"
             s3_path = (f"visualization-{timestamp_str}.html")
             content_size = len(html_content.encode("utf-8"))
+
+            # Ensure bucket exists before uploading
+            logger.debug(f"Ensuring bucket {bucket_name} exists")
+            self._ensure_bucket_exists(bucket_name)
 
             # Upload to S3
             logger.debug(f"Uploading to s3://{bucket_name}/{s3_path} ({content_size} bytes)")

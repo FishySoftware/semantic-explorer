@@ -65,12 +65,6 @@ export default [
 		},
 	},
 	{
-		files: ['**/VisualizationDetail.svelte'],
-		rules: {
-			'svelte/prefer-svelte-reactivity': 'off',
-		},
-	},
-	{
 		files: ['**/Chat.svelte'],
 		rules: {
 			'svelte/no-at-html-tags': 'off',

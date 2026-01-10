@@ -24,6 +24,14 @@ const GET_VISUALIZATION_RUN_QUERY: &str = r#"
     WHERE run_id = $1
 "#;
 
+const GET_VISUALIZATION_RUN_WITH_OWNER_QUERY: &str = r#"
+    SELECT vtr.run_id, vtr.visualization_transform_id, vtr.status, vtr.started_at, vtr.completed_at,
+           vtr.html_s3_key, vtr.point_count, vtr.cluster_count, vtr.error_message, vtr.stats_json, vtr.created_at
+    FROM visualization_transform_runs vtr
+    INNER JOIN visualization_transforms vt ON vtr.visualization_transform_id = vt.visualization_transform_id
+    WHERE vtr.run_id = $1 AND vt.owner = $2
+"#;
+
 const GET_LATEST_VISUALIZATION_RUN_QUERY: &str = r#"
     SELECT run_id, visualization_transform_id, status, started_at, completed_at,
            html_s3_key, point_count, cluster_count, error_message, stats_json, created_at
@@ -75,6 +83,19 @@ pub async fn get_visualization_run(
 ) -> Result<VisualizationTransformRun> {
     let run = sqlx::query_as::<_, VisualizationTransformRun>(GET_VISUALIZATION_RUN_QUERY)
         .bind(run_id)
+        .fetch_one(pool)
+        .await?;
+    Ok(run)
+}
+
+pub async fn get_visualization_run_with_owner(
+    pool: &Pool<Postgres>,
+    run_id: i32,
+    owner: &str,
+) -> Result<VisualizationTransformRun> {
+    let run = sqlx::query_as::<_, VisualizationTransformRun>(GET_VISUALIZATION_RUN_WITH_OWNER_QUERY)
+        .bind(run_id)
+        .bind(owner)
         .fetch_one(pool)
         .await?;
     Ok(run)

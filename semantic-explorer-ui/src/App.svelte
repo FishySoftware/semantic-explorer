@@ -255,15 +255,6 @@
 				{#await Visualizations() then { default: VisualizationsComponent }}
 					<VisualizationsComponent onViewVisualization={viewVisualization} />
 				{/await}
-			{:else if activeUrl === '/visualizations/detail'}
-				{#if selectedVisualizationId !== null}
-					{#await import('./lib/pages/VisualizationDetail.svelte') then { default: VisualizationDetail }}
-						<VisualizationDetail
-							transformId={selectedVisualizationId}
-							onBack={backToVisualizations}
-						/>
-					{/await}
-				{/if}
 			{:else if activeUrl === '/search'}
 				{#await Search() then { default: SearchComponent }}
 					<SearchComponent onViewDataset={viewDataset} onViewEmbedder={viewEmbedder} />

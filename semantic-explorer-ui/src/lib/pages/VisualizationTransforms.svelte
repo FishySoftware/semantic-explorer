@@ -61,21 +61,58 @@
 
 	interface VisualizationConfig {
 		n_neighbors: number;
-		n_components: number;
 		min_dist: number;
 		metric: string;
 		min_cluster_size: number;
 		min_samples: number | null;
 		topic_naming_llm_id: number | null;
-		// Datamapplot visualization parameters
-		font_size: number;
-		font_family: string;
-		darkmode: boolean;
+		// Datamapplot create_interactive_plot parameters
+		inline_data: boolean;
+		noise_label: string;
 		noise_color: string;
+		color_label_text: boolean;
 		label_wrap_width: number;
+		width: string;
+		height: number;
+		darkmode: boolean;
+		palette_hue_shift: number;
+		palette_hue_radius_dependence: number;
+		palette_theta_range: number;
 		use_medoids: boolean;
 		cluster_boundary_polygons: boolean;
 		polygon_alpha: number;
+		cvd_safer: boolean;
+		enable_topic_tree: boolean;
+		// Datamapplot render_html parameters
+		title: string | null;
+		sub_title: string | null;
+		title_font_size: number;
+		sub_title_font_size: number;
+		text_collision_size_scale: number;
+		text_min_pixel_size: number;
+		text_max_pixel_size: number;
+		font_family: string;
+		font_weight: number;
+		tooltip_font_family: string;
+		tooltip_font_weight: number;
+		logo: string | null;
+		logo_width: number;
+		line_spacing: number;
+		min_fontsize: number;
+		max_fontsize: number;
+		text_outline_width: number;
+		text_outline_color: string;
+		point_size_scale: number | null;
+		point_hover_color: string;
+		point_radius_min_pixels: number;
+		point_radius_max_pixels: number;
+		point_line_width_min_pixels: number;
+		point_line_width_max_pixels: number;
+		point_line_width: number;
+		cluster_boundary_line_width: number;
+		initial_zoom_fraction: number;
+		background_color: string | null;
+		background_image: string | null;
 	}
 
 	interface EmbeddedDataset {
@@ -107,21 +144,58 @@
 	let newEmbeddedDatasetId = $state<number | null>(null);
 	let config = $state<VisualizationConfig>({
 		n_neighbors: 15,
-		n_components: 3,
-		min_dist: 0.25,
+		min_dist: 0.1,
 		metric: 'cosine',
 		min_cluster_size: 15,
-		min_samples: null,
+		min_samples: 5,
 		topic_naming_llm_id: null,
-		// Datamapplot visualization parameters
-		font_size: 9,
-		font_family: 'Arial, sans-serif',
-		darkmode: false,
+		// Datamapplot create_interactive_plot parameters
+		inline_data: true,
+		noise_label: 'Unlabelled',
 		noise_color: '#999999',
+		color_label_text: true,
 		label_wrap_width: 16,
+		width: '100%',
+		height: 800,
+		darkmode: true,
+		palette_hue_shift: 0.0,
+		palette_hue_radius_dependence: 1.0,
+		palette_theta_range: 0.196,
 		use_medoids: false,
-		cluster_boundary_polygons: true,
-		polygon_alpha: 0.3,
+		cluster_boundary_polygons: false,
+		polygon_alpha: 0.1,
+		cvd_safer: false,
+		enable_topic_tree: false,
+		// Datamapplot render_html parameters
+		title: null,
+		sub_title: null,
+		title_font_size: 36,
+		sub_title_font_size: 18,
+		text_collision_size_scale: 3.0,
+		text_min_pixel_size: 12.0,
+		text_max_pixel_size: 36.0,
+		font_family: 'Roboto',
+		font_weight: 600,
+		tooltip_font_family: 'Roboto',
+		tooltip_font_weight: 400,
+		logo: null,
+		logo_width: 256,
+		line_spacing: 0.95,
+		min_fontsize: 12,
+		max_fontsize: 24,
+		text_outline_width: 8,
+		text_outline_color: '#eeeeeedd',
+		point_size_scale: null,
+		point_hover_color: '#aa0000bb',
+		point_radius_min_pixels: 0.01,
+		point_radius_max_pixels: 24,
+		point_line_width_min_pixels: 0.001,
+		point_line_width_max_pixels: 3,
+		point_line_width: 0.001,
+		cluster_boundary_line_width: 1.0,
+		initial_zoom_fraction: 1.0,
+		background_color: null,
+		background_image: null,
 	});
 	let creating = $state(false);
 	let createError = $state<string | null>(null);
@@ -226,7 +300,21 @@
 				: {
 						title: newTitle,
 						embedded_dataset_id: newEmbeddedDatasetId,
-						visualization_config: config,
+						llm_id: config.topic_naming_llm_id,
+						n_neighbors: config.n_neighbors,
+						min_dist: config.min_dist,
+						metric: config.metric,
+						min_cluster_size: config.min_cluster_size,
+						min_samples: config.min_samples,
+						min_fontsize: config.min_fontsize,
+						max_fontsize: config.max_fontsize,
+						font_family: config.font_family,
+						darkmode: config.darkmode,
+						noise_color: config.noise_color,
+						label_wrap_width: config.label_wrap_width,
+						use_medoids: config.use_medoids,
+						cluster_boundary_polygons: config.cluster_boundary_polygons,
+						polygon_alpha: config.polygon_alpha,
 					};
 
 			const response = await fetch(url, {
@@ -335,21 +423,57 @@
 		newEmbeddedDatasetId = null;
 		config = {
 			n_neighbors: 15,
-			n_components: 3,
-			min_dist: 0.25,
+			min_dist: 0.1,
 			metric: 'cosine',
 			min_cluster_size: 15,
-			min_samples: null,
+			min_samples: 5,
 			topic_naming_llm_id: null,
-			// Reset datamapplot visualization parameters
-			font_size: 9,
-			font_family: 'Arial, sans-serif',
-			darkmode: false,
+			// Reset datamapplot parameters
+			inline_data: true,
+			noise_label: 'Unlabelled',
 			noise_color: '#999999',
+			color_label_text: true,
 			label_wrap_width: 16,
+			width: '100%',
+			height: 800,
+			darkmode: false,
+			palette_hue_shift: 0.0,
+			palette_hue_radius_dependence: 1.0,
+			palette_theta_range: 0.1963,
 			use_medoids: false,
-			cluster_boundary_polygons: true,
-			polygon_alpha: 0.3,
+			cluster_boundary_polygons: false,
+			polygon_alpha: 0.1,
+			cvd_safer: false,
+			enable_topic_tree: false,
+			title: null,
+			sub_title: null,
+			title_font_size: 36,
+			sub_title_font_size: 18,
+			text_collision_size_scale: 3.0,
+			text_min_pixel_size: 12.0,
+			text_max_pixel_size: 36.0,
+			font_family: 'Roboto',
+			font_weight: 600,
+			tooltip_font_family: 'Roboto',
+			tooltip_font_weight: 400,
+			logo: null,
+			logo_width: 256,
+			line_spacing: 0.95,
+			min_fontsize: 12,
+			max_fontsize: 24,
+			text_outline_width: 8,
+			text_outline_color: '#eeeeeedd',
+			point_size_scale: null,
+			point_hover_color: '#aa0000bb',
+			point_radius_min_pixels: 0.01,
+			point_radius_max_pixels: 24,
+			point_line_width_min_pixels: 0.001,
+			point_line_width_max_pixels: 3,
+			point_line_width: 0.001,
+			cluster_boundary_line_width: 1.0,
+			initial_zoom_fraction: 1.0,
+			background_color: null,
+			background_image: null,
 		};
 		showCreateForm = false;
 		editingTransform = null;
@@ -518,38 +642,10 @@
 								bind:value={config.n_neighbors}
 								min="2"
 								max="200"
+								step="1"
 								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 							/>
 							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Range: 2-200</p>
-						</div>
-
-						<div>
-							<label
-								for="n-components"
-								class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-							>
-								N Components
-								<button
-									type="button"
-									class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-									onmouseenter={(e) =>
-										showTooltip(
-											e,
-											'Target dimensionality: 2 for flat visualizations, 3 for spatial visualizations. Higher dimensions work better for clustering but are harder to visualize.'
-										)}
-								>
-									{@html InfoIcon()}
-								</button>
-							</label>
-							<input
-								id="n-components"
-								type="number"
-								bind:value={config.n_components}
-								min="2"
-								max="3"
-								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-							/>
-							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">2D or 3D</p>
 						</div>
 
 						<div>
@@ -575,7 +671,7 @@
 								type="number"
 								bind:value={config.min_dist}
 								min="0.0"
-								max="1.0"
+								max="0.99"
 								step="0.01"
 								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 							/>
@@ -648,6 +744,7 @@
 								bind:value={config.min_cluster_size}
 								min="2"
 								max="500"
+								step="1"
 								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 							/>
 							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Range: 2-500</p>
@@ -658,14 +755,14 @@
 								for="min-samples"
 								class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
 							>
-								Min Samples (Optional)
+								Min Samples
 								<button
 									type="button"
 									class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
 									onmouseenter={(e) =>
 										showTooltip(
 											e,
-											'Controls how conservative the clustering is. Higher values make clusters more conservative (fewer outliers classified as cluster members). Leave empty to use min_cluster_size value. Default: auto (same as min_cluster_size)'
+											'Controls how conservative the clustering is. Higher values make clusters more conservative (fewer outliers classified as cluster members). Default: 5'
 										)}
 								>
 									{@html InfoIcon()}
@@ -677,10 +774,10 @@
 								bind:value={config.min_samples}
 								min="1"
 								max="500"
-								placeholder="Auto (same as min_cluster_size)"
+								step="1"
 								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 							/>
-							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Leave empty for auto</p>
+							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Range: 1-500 (Default: 5)</p>
 						</div>
 					</div>
 				</div>
@@ -742,29 +839,60 @@
 					<div class="grid grid-cols-2 gap-4">
 						<div>
 							<label
-								for="font-size"
+								for="min-fontsize"
 								class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
 							>
-								Label Font Size
+								Min Font Size
 								<button
 									type="button"
 									class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-									onmouseenter={(e) => showTooltip(e, 'Font size for cluster labels. Default: 9')}
+									onmouseenter={(e) =>
+										showTooltip(e, 'Minimum font size for cluster labels in points. Default: 12')}
 								>
 									{@html InfoIcon()}
 								</button>
 							</label>
 							<input
-								id="font-size"
+								id="min-fontsize"
 								type="number"
-								bind:value={config.font_size}
-								min="6"
-								max="20"
+								bind:value={config.min_fontsize}
+								min="8"
+								max="48"
+								step="1"
 								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 							/>
-							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Range: 6-20</p>
+							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Range: 8-48</p>
 						</div>
 
+						<div>
+							<label
+								for="max-fontsize"
+								class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+							>
+								Max Font Size
+								<button
+									type="button"
+									class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+									onmouseenter={(e) =>
+										showTooltip(e, 'Maximum font size for cluster labels in points. Default: 24')}
+								>
+									{@html InfoIcon()}
+								</button>
+							</label>
+							<input
+								id="max-fontsize"
+								type="number"
+								bind:value={config.max_fontsize}
+								min="8"
+								max="48"
+								step="1"
+								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+							/>
+							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Range: 8-48</p>
+						</div>
+					</div>
+
+					<div class="grid grid-cols-2 gap-4">
 						<div>
 							<label
 								for="font-family"
@@ -836,6 +964,7 @@
 								bind:value={config.label_wrap_width}
 								min="8"
 								max="40"
+								step="1"
 								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 							/>
 							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Range: 8-40</p>
@@ -853,7 +982,7 @@
 									onmouseenter={(e) =>
 										showTooltip(
 											e,
-											'Transparency of cluster boundary polygons. 0=invisible, 1=opaque. Default: 0.3'
+											'Transparency of cluster boundary polygons. 0=invisible, 1=opaque. Default: 0.1'
 										)}
 								>
 									{@html InfoIcon()}
@@ -865,7 +994,7 @@
 								bind:value={config.polygon_alpha}
 								min="0.0"
 								max="1.0"
-								step="0.1"
+								step="0.01"
 								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 							/>
 							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Range: 0.0-1.0</p>
@@ -944,6 +1073,642 @@
 						</div>
 					</div>
 				</div>
+
+				<!-- Advanced Settings (Collapsible) -->
+				<details
+					class="mb-4 p-4 bg-gray-50 dark:bg-gray-900/10 border border-gray-200 dark:border-gray-700 rounded-lg"
+				>
+					<summary
+						class="text-sm font-semibold text-gray-900 dark:text-gray-300 cursor-pointer mb-3"
+					>
+						Advanced Visualization Settings (Click to expand)
+					</summary>
+
+					<div class="mt-4 space-y-4">
+						<!-- Color & Appearance -->
+						<div
+							class="p-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded"
+						>
+							<h4 class="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2 uppercase">
+								Color & Palette
+							</h4>
+							<div class="grid grid-cols-2 gap-3">
+								<div>
+									<label
+										for="palette-hue-shift"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Palette Hue Shift (degrees)
+									</label>
+									<input
+										id="palette-hue-shift"
+										type="number"
+										bind:value={config.palette_hue_shift}
+										min="-180"
+										max="180"
+										step="0.1"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="palette-hue-radius-dep"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Hue Radius Dependence
+									</label>
+									<input
+										id="palette-hue-radius-dep"
+										type="number"
+										bind:value={config.palette_hue_radius_dependence}
+										min="0"
+										max="10"
+										step="0.1"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="palette-theta-range"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Palette Theta Range (π/16 ≈ 0.196)
+									</label>
+									<input
+										id="palette-theta-range"
+										type="number"
+										bind:value={config.palette_theta_range}
+										min="0"
+										max="6.28"
+										step="0.01"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="background-color"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Background Color (hex)
+									</label>
+									<input
+										id="background-color"
+										type="text"
+										bind:value={config.background_color}
+										placeholder="Auto"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div class="col-span-2">
+									<label class="flex items-center gap-2">
+										<input
+											type="checkbox"
+											bind:checked={config.color_label_text}
+											class="w-3 h-3 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
+										/>
+										<span class="text-xs font-medium text-gray-700 dark:text-gray-300"
+											>Color Label Text</span
+										>
+									</label>
+								</div>
+								<div class="col-span-2">
+									<label class="flex items-center gap-2">
+										<input
+											type="checkbox"
+											bind:checked={config.cvd_safer}
+											class="w-3 h-3 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
+										/>
+										<span class="text-xs font-medium text-gray-700 dark:text-gray-300"
+											>CVD Safer Palette (Color Vision Deficiency)</span
+										>
+									</label>
+								</div>
+							</div>
+						</div>
+
+						<!-- Text & Typography -->
+						<div
+							class="p-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded"
+						>
+							<h4 class="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2 uppercase">
+								Text & Typography
+							</h4>
+							<div class="grid grid-cols-2 gap-3">
+								<div>
+									<label
+										for="title"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Plot Title
+									</label>
+									<input
+										id="title"
+										type="text"
+										bind:value={config.title}
+										placeholder="None"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="sub-title"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Plot Subtitle
+									</label>
+									<input
+										id="sub-title"
+										type="text"
+										bind:value={config.sub_title}
+										placeholder="None"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="title-font-size"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Title Font Size (pt)
+									</label>
+									<input
+										id="title-font-size"
+										type="number"
+										bind:value={config.title_font_size}
+										min="8"
+										max="100"
+										step="1"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="sub-title-font-size"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Subtitle Font Size (pt)
+									</label>
+									<input
+										id="sub-title-font-size"
+										type="number"
+										bind:value={config.sub_title_font_size}
+										min="8"
+										max="100"
+										step="1"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="font-weight"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Font Weight (0-1000)
+									</label>
+									<input
+										id="font-weight"
+										type="number"
+										bind:value={config.font_weight}
+										min="100"
+										max="900"
+										step="100"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="line-spacing"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Line Spacing
+									</label>
+									<input
+										id="line-spacing"
+										type="number"
+										bind:value={config.line_spacing}
+										min="0.1"
+										max="3"
+										step="0.05"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="text-outline-width"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Text Outline Width
+									</label>
+									<input
+										id="text-outline-width"
+										type="number"
+										bind:value={config.text_outline_width}
+										min="0"
+										max="20"
+										step="1"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="text-outline-color"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Text Outline Color
+									</label>
+									<input
+										id="text-outline-color"
+										type="text"
+										bind:value={config.text_outline_color}
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="text-collision-size-scale"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Text Collision Size Scale
+									</label>
+									<input
+										id="text-collision-size-scale"
+										type="number"
+										bind:value={config.text_collision_size_scale}
+										min="0.1"
+										max="10"
+										step="0.1"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="text-min-pixel-size"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Text Min Pixel Size
+									</label>
+									<input
+										id="text-min-pixel-size"
+										type="number"
+										bind:value={config.text_min_pixel_size}
+										min="6"
+										max="100"
+										step="0.5"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="text-max-pixel-size"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Text Max Pixel Size
+									</label>
+									<input
+										id="text-max-pixel-size"
+										type="number"
+										bind:value={config.text_max_pixel_size}
+										min="12"
+										max="100"
+										step="0.5"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+							</div>
+						</div>
+
+						<!-- Tooltips -->
+						<div
+							class="p-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded"
+						>
+							<h4 class="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2 uppercase">
+								Tooltip Settings
+							</h4>
+							<div class="grid grid-cols-2 gap-3">
+								<div>
+									<label
+										for="tooltip-font-family"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Tooltip Font Family
+									</label>
+									<input
+										id="tooltip-font-family"
+										type="text"
+										bind:value={config.tooltip_font_family}
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="tooltip-font-weight"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Tooltip Font Weight
+									</label>
+									<input
+										id="tooltip-font-weight"
+										type="number"
+										bind:value={config.tooltip_font_weight}
+										min="100"
+										max="900"
+										step="100"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+							</div>
+						</div>
+
+						<!-- Points & Markers -->
+						<div
+							class="p-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded"
+						>
+							<h4 class="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2 uppercase">
+								Point & Marker Settings
+							</h4>
+							<div class="grid grid-cols-2 gap-3">
+								<div>
+									<label
+										for="point-hover-color"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Point Hover Color
+									</label>
+									<input
+										id="point-hover-color"
+										type="text"
+										bind:value={config.point_hover_color}
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="point-size-scale"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Point Size Scale
+									</label>
+									<input
+										id="point-size-scale"
+										type="number"
+										bind:value={config.point_size_scale}
+										min="0.1"
+										max="10"
+										step="0.1"
+										placeholder="Auto"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="point-radius-min-pixels"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Point Radius Min (px)
+									</label>
+									<input
+										id="point-radius-min-pixels"
+										type="number"
+										bind:value={config.point_radius_min_pixels}
+										min="0.001"
+										max="100"
+										step="0.01"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="point-radius-max-pixels"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Point Radius Max (px)
+									</label>
+									<input
+										id="point-radius-max-pixels"
+										type="number"
+										bind:value={config.point_radius_max_pixels}
+										min="0.1"
+										max="100"
+										step="0.1"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="point-line-width"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Point Line Width
+									</label>
+									<input
+										id="point-line-width"
+										type="number"
+										bind:value={config.point_line_width}
+										min="0.0"
+										max="5"
+										step="0.001"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="point-line-width-min"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Point Line Width Min (px)
+									</label>
+									<input
+										id="point-line-width-min"
+										type="number"
+										bind:value={config.point_line_width_min_pixels}
+										min="0.0"
+										max="5"
+										step="0.001"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="point-line-width-max"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Point Line Width Max (px)
+									</label>
+									<input
+										id="point-line-width-max"
+										type="number"
+										bind:value={config.point_line_width_max_pixels}
+										min="0.0"
+										max="5"
+										step="0.001"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="cluster-boundary-line-width"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Cluster Boundary Line Width
+									</label>
+									<input
+										id="cluster-boundary-line-width"
+										type="number"
+										bind:value={config.cluster_boundary_line_width}
+										min="0.0"
+										max="5"
+										step="0.1"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+							</div>
+						</div>
+
+						<!-- Layout & Display -->
+						<div
+							class="p-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded"
+						>
+							<h4 class="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2 uppercase">
+								Layout & Display
+							</h4>
+							<div class="grid grid-cols-2 gap-3">
+								<div>
+									<label
+										for="width"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Width
+									</label>
+									<input
+										id="width"
+										type="text"
+										bind:value={config.width}
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="height"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Height (px)
+									</label>
+									<input
+										id="height"
+										type="number"
+										bind:value={config.height}
+										min="400"
+										max="5000"
+										step="50"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="initial-zoom-fraction"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Initial Zoom Fraction
+									</label>
+									<input
+										id="initial-zoom-fraction"
+										type="number"
+										bind:value={config.initial_zoom_fraction}
+										min="0.1"
+										max="3"
+										step="0.05"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="noise-label"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Noise Label
+									</label>
+									<input
+										id="noise-label"
+										type="text"
+										bind:value={config.noise_label}
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="logo"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Logo URL
+									</label>
+									<input
+										id="logo"
+										type="text"
+										bind:value={config.logo}
+										placeholder="None"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="logo-width"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Logo Width (px)
+									</label>
+									<input
+										id="logo-width"
+										type="number"
+										bind:value={config.logo_width}
+										min="50"
+										max="1000"
+										step="8"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div>
+									<label
+										for="background-image"
+										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+									>
+										Background Image URL
+									</label>
+									<input
+										id="background-image"
+										type="text"
+										bind:value={config.background_image}
+										placeholder="None"
+										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									/>
+								</div>
+								<div class="col-span-2">
+									<label class="flex items-center gap-2">
+										<input
+											type="checkbox"
+											bind:checked={config.inline_data}
+											class="w-3 h-3 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
+										/>
+										<span class="text-xs font-medium text-gray-700 dark:text-gray-300"
+											>Inline Data (embed data in HTML vs separate files)</span
+										>
+									</label>
+								</div>
+								<div class="col-span-2">
+									<label class="flex items-center gap-2">
+										<input
+											type="checkbox"
+											bind:checked={config.enable_topic_tree}
+											class="w-3 h-3 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
+										/>
+										<span class="text-xs font-medium text-gray-700 dark:text-gray-300"
+											>Enable Topic Tree</span
+										>
+									</label>
+								</div>
+							</div>
+						</div>
+					</div>
+				</details>
 
 				{#if createError}
 					<div
@@ -1088,7 +1853,6 @@
 							<p class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">UMAP Config</p>
 							<div class="text-xs text-gray-600 dark:text-gray-400 space-y-1">
 								<p>Neighbors: {transform.visualization_config.n_neighbors}</p>
-								<p>Components: {transform.visualization_config.n_components}</p>
 								<p>Min Distance: {transform.visualization_config.min_dist}</p>
 								<p>Metric: {transform.visualization_config.metric}</p>
 							</div>

@@ -111,7 +111,7 @@ class LLMProvider:
             )
 
             api_call_start = time.time()
-            logger.debug(f"Calling Cohere {llm_config.model} API (prompt length: {len(prompt)})")
+            logger.info(f"Calling Cohere {llm_config.model} API (prompt length: {len(prompt)})")
 
             # Call Cohere Chat API (v2 uses messages list format with proper types)
             response = client.chat(
@@ -124,7 +124,7 @@ class LLMProvider:
             )
             
             api_elapsed = time.time() - api_call_start
-            logger.debug(f"Cohere API call completed in {api_elapsed:.3f}s")
+            logger.info(f"Cohere API call completed in {api_elapsed:.3f}s")
 
             # Extract text from response message
             if not response.message.content:

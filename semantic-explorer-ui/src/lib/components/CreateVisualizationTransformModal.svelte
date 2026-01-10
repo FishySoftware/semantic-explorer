@@ -44,7 +44,6 @@
 
 	// UMAP Configuration
 	let umapNNeighbors = $state(15);
-	let umapNComponents = $state(2);
 	let umapMinDist = $state(0.1);
 	let umapMetric = $state('cosine');
 
@@ -53,7 +52,8 @@
 	let hdbscanMinSamples = $state(1);
 
 	// Datamapplot Visualization Configuration
-	let fontSize = $state(9);
+	let minFontsize = $state(12);
+	let maxFontsize = $state(24);
 	let fontFamily = $state('Arial, sans-serif');
 	let darkmode = $state(true);
 	let noiseColor = $state('#999999');
@@ -108,14 +108,15 @@
 					llm_id: topicNamingLlmId,
 					// UMAP parameters
 					n_neighbors: umapNNeighbors,
-					n_components: umapNComponents,
+
 					min_dist: umapMinDist,
 					metric: umapMetric,
 					// HDBSCAN parameters
 					min_cluster_size: hdbscanMinClusterSize,
 					min_samples: hdbscanMinSamples,
 					// Datamapplot visualization parameters
-					font_size: fontSize,
+					min_fontsize: minFontsize,
+					max_fontsize: maxFontsize,
 					font_family: fontFamily,
 					darkmode: darkmode,
 					noise_color: noiseColor,
@@ -145,16 +146,16 @@
 		transformTitle = '';
 		selectedEmbeddedDatasetId = embeddedDatasetId ?? null;
 		umapNNeighbors = 15;
-		umapNComponents = 2;
 		umapMinDist = 0.1;
 		umapMetric = 'cosine';
 		hdbscanMinClusterSize = 5;
 		hdbscanMinSamples = 1;
 		topicNamingLlmId = null;
 		// Reset datamapplot visualization parameters
-		fontSize = 9;
+		minFontsize = 12;
+		maxFontsize = 24;
 		fontFamily = 'Arial, sans-serif';
-		darkmode = false;
+		darkmode = true;
 		noiseColor = '#999999';
 		labelWrapWidth = 16;
 		useMedoids = false;
@@ -257,24 +258,6 @@
 				<h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-3">UMAP Configuration</h3>
 
 				<div class="space-y-3">
-					<!-- Dimensionality -->
-					<div>
-						<label
-							for="umap-components"
-							class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-						>
-							Dimensionality
-						</label>
-						<select
-							id="umap-components"
-							bind:value={umapNComponents}
-							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
-						>
-							<option value={2}>2D (2 components)</option>
-							<option value={3}>3D (3 components)</option>
-						</select>
-					</div>
-
 					<!-- N Neighbors -->
 					<div>
 						<label
@@ -394,24 +377,47 @@
 				</h3>
 
 				<div class="space-y-3">
-					<!-- Font Size -->
+					<!-- Min Font Size -->
 					<div>
 						<label
-							for="font-size"
+							for="min-fontsize"
 							class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1"
 						>
-							Label Font Size (6-20)
+							Min Font Size (8-48)
 						</label>
 						<input
-							id="font-size"
+							id="min-fontsize"
 							type="number"
-							min="6"
-							max="20"
-							bind:value={fontSize}
+							min="8"
+							max="48"
+							step="0.5"
+							bind:value={minFontsize}
 							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
 						/>
 						<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-							Font size for cluster labels
+							Minimum font size for cluster labels
+						</p>
+					</div>
+
+					<!-- Max Font Size -->
+					<div>
+						<label
+							for="max-fontsize"
+							class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1"
+						>
+							Max Font Size (8-48)
+						</label>
+						<input
+							id="max-fontsize"
+							type="number"
+							min="8"
+							max="48"
+							step="0.5"
+							bind:value={maxFontsize}
+							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
+						/>
+						<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+							Maximum font size for cluster labels
 						</p>
 					</div>
 

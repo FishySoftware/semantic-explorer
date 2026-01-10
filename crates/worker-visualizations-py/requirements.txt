@@ -1,0 +1,24 @@
+# Core dependencies
+numpy
+pydantic
+
+# NATS messaging
+nats-py
+
+# Vector database client
+qdrant-client
+
+# Machine learning and visualization
+umap-learn
+hdbscan
+datamapplot
+
+# LLM providers
+cohere
+openai
+
+# AWS S3 storage
+boto3
+
+# Environment variables
+python-dotenv
