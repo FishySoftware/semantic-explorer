@@ -252,7 +252,7 @@
 			<p class="text-sm text-gray-600 dark:text-gray-400">Loading transforms...</p>
 		</div>
 	</div>
-{:else if transforms.length === 0}
+{:else if !transforms || transforms.length === 0}
 	<div class="text-center py-8 text-gray-500 dark:text-gray-400">
 		<p>No transforms yet</p>
 	</div>

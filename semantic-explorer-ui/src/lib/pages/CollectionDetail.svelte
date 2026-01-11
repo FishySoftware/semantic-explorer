@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import ApiExamples from '../ApiExamples.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
@@ -8,6 +8,7 @@
 	import TransformsList from '../components/TransformsList.svelte';
 	import UploadProgressPanel from '../components/UploadProgressPanel.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
+	import { createSSEConnection, type SSEConnection } from '../utils/sse';
 
 	interface FileStatus {
 		name: string;
@@ -105,9 +106,33 @@
 	let updatingPublic = $state(false);
 	let uploadPollInterval: ReturnType<typeof setInterval> | null = null;
 
+	// SSE connection for real-time transform status updates
+	let sseConnection: SSEConnection | null = null;
+
 	onMount(async () => {
 		await Promise.all([fetchCollection(), fetchFiles(), fetchCollectionTransforms()]);
+		connectSSE();
 	});
+
+	onDestroy(() => {
+		sseConnection?.disconnect();
+	});
+
+	function connectSSE() {
+		sseConnection = createSSEConnection({
+			url: `/api/collection-transforms/stream?collection_id=${collectionId}`,
+			onStatus: (data: unknown) => {
+				const status = data as { collection_transform_id?: number };
+				if (status.collection_transform_id) {
+					// Refresh stats for this transform
+					fetchCollectionTransformStats(status.collection_transform_id);
+				}
+			},
+			onMaxRetriesReached: () => {
+				console.warn('SSE connection lost for collection transforms');
+			},
+		});
+	}
 
 	$effect(() => {
 		return () => {
@@ -1031,7 +1056,7 @@
 	collectionTitle={collection?.title}
 	onSuccess={() => {
 		transformModalOpen = false;
-		toastStore.success('Transform created successfully');
-		fetchCollectionTransforms();
+		// Redirect to datasets page to monitor transform progress
+		window.location.hash = '#/datasets';
 	}}
 />

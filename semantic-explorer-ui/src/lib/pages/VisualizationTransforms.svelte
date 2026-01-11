@@ -1,11 +1,18 @@
 <!-- eslint-disable svelte/no-at-html-tags -->
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { SvelteSet } from 'svelte/reactivity';
+	import { onDestroy, onMount } from 'svelte';
+	import { SvelteSet, SvelteURLSearchParams } from 'svelte/reactivity';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
 	import type { VisualizationConfig, VisualizationTransform } from '../types/visualizations';
 	import { formatError, toastStore } from '../utils/notifications';
+
+	interface Props {
+		// eslint-disable-next-line no-unused-vars
+		onViewTransform?: (id: number) => void;
+	}
+
+	let { onViewTransform }: Props = $props();
 
 	// Helper function for tooltip display with hover persistence
 	function showTooltip(event: MouseEvent, text: string) {
@@ -62,6 +69,13 @@
 	let error = $state<string | null>(null);
 
 	let searchQuery = $state('');
+	let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+	// SSE connection state
+	let eventSource: EventSource | null = null;
+	let reconnectAttempts = 0;
+	let maxReconnectAttempts = 10;
+	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
 	let showCreateForm = $state(false);
 	let editingTransform = $state<VisualizationTransform | null>(null);
@@ -152,7 +166,7 @@
 	function toggleSelectAll() {
 		if (selectAll) {
 			selected.clear();
-			for (const t of filteredTransforms) {
+			for (const t of transforms) {
 				selected.add(t.visualization_transform_id);
 			}
 		} else {
@@ -171,7 +185,7 @@
 
 	async function bulkToggleEnabled(_enable: boolean) {
 		for (const id of selected) {
-			const transform = filteredTransforms.find((t) => t.visualization_transform_id === id);
+			const transform = transforms.find((t) => t.visualization_transform_id === id);
 			if (transform) {
 				transform.is_enabled = _enable;
 				await toggleEnabled(transform, false);
@@ -191,7 +205,7 @@
 
 	async function bulkDelete() {
 		for (const id of selected) {
-			const transform = filteredTransforms.find((t) => t.visualization_transform_id === id);
+			const transform = transforms.find((t) => t.visualization_transform_id === id);
 			if (transform) {
 				await requestDeleteTransform(transform, false);
 			}
@@ -214,12 +228,15 @@
 			loading = true;
 			error = null;
 			const offset = (currentPage - 1) * pageSize;
-			const params = new URLSearchParams({
+			const params = new SvelteURLSearchParams({
 				limit: pageSize.toString(),
 				offset: offset.toString(),
 				sort_by: sortBy,
 				sort_direction: sortDirection,
 			});
+			if (searchQuery.trim()) {
+				params.append('search', searchQuery.trim());
+			}
 			const response = await fetch(`/api/visualization-transforms?${params}`);
 			if (!response.ok) {
 				throw new Error(`Failed to fetch visualization transforms: ${response.statusText}`);
@@ -254,6 +271,16 @@
 		}
 		currentPage = 1;
 		fetchTransforms();
+	}
+
+	function handleSearchInput() {
+		if (searchDebounceTimer) {
+			clearTimeout(searchDebounceTimer);
+		}
+		searchDebounceTimer = setTimeout(() => {
+			currentPage = 1;
+			fetchTransforms();
+		}, 300);
 	}
 
 	function handlePageChange(newPage: number) {
@@ -380,12 +407,14 @@
 						: t
 				);
 				toastStore.success('Visualization transform updated successfully');
+				resetForm();
 			} else {
 				transforms = [...transforms, savedTransform];
 				toastStore.success('Visualization transform created successfully');
+				resetForm();
+				// Redirect to the Visualizations page to monitor progress
+				window.location.hash = '#/visualizations';
 			}
-
-			resetForm();
 		} catch (e) {
 			const message = formatError(
 				e,
@@ -509,13 +538,89 @@
 		}
 	}
 
+	function connectSSE() {
+		// Close existing connection
+		if (eventSource) {
+			eventSource.close();
+			eventSource = null;
+		}
+
+		try {
+			eventSource = new EventSource('/api/visualization-transforms/stream');
+
+			eventSource.addEventListener('connected', () => {
+				reconnectAttempts = 0;
+			});
+
+			eventSource.addEventListener('status', (event) => {
+				try {
+					const statusUpdate = JSON.parse(event.data);
+					// Handle status update - refresh specific transform or trigger refetch
+					if (statusUpdate.visualization_transform_id) {
+						// Refresh stats for the specific transform
+						fetchStatsForTransform(statusUpdate.visualization_transform_id);
+					}
+				} catch (e) {
+					console.error('Failed to parse SSE status event:', e);
+				}
+			});
+
+			eventSource.addEventListener('closed', () => {
+				reconnectSSE();
+			});
+
+			eventSource.onerror = () => {
+				eventSource?.close();
+				eventSource = null;
+				reconnectSSE();
+			};
+		} catch (e) {
+			console.error('Failed to connect to SSE stream:', e);
+			reconnectSSE();
+		}
+	}
+
+	function reconnectSSE() {
+		if (reconnectTimer) {
+			clearTimeout(reconnectTimer);
+		}
+
+		if (reconnectAttempts >= maxReconnectAttempts) {
+			console.error('Max SSE reconnection attempts reached');
+			return;
+		}
+
+		// Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, 64s... up to 60s max
+		const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 60000);
+		reconnectAttempts++;
+
+		reconnectTimer = setTimeout(() => {
+			connectSSE();
+		}, delay);
+	}
+
+	function disconnectSSE() {
+		if (reconnectTimer) {
+			clearTimeout(reconnectTimer);
+			reconnectTimer = null;
+		}
+		if (eventSource) {
+			eventSource.close();
+			eventSource = null;
+		}
+		reconnectAttempts = 0;
+	}
+
 	onMount(() => {
 		fetchTransforms();
 		fetchEmbeddedDatasets();
 		fetchLLMs();
 
+		// Connect to SSE stream for real-time updates
+		connectSSE();
+
 		// Check URL parameters for create action and embedded dataset ID
-		const urlParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
+		const urlParams = new SvelteURLSearchParams(window.location.hash.split('?')[1] || '');
 		const shouldCreate = urlParams.get('create') === 'true';
 		const embeddedDatasetId = urlParams.get('embedded_dataset_id');
 
@@ -531,19 +636,13 @@
 		}
 	});
 
-	let filteredTransforms = $derived(
-		transforms.filter((t) => {
-			if (!searchQuery.trim()) return true;
-			const query = searchQuery.toLowerCase();
-			return t.title.toLowerCase().includes(query) || t.owner.toLowerCase().includes(query);
-		})
-	);
+	onDestroy(() => {
+		disconnectSSE();
+	});
 
 	function getEmbeddedDatasetTitle(embeddedDatasetId: number): string {
 		const dataset = embeddedDatasets.find((d) => d.embedded_dataset_id === embeddedDatasetId);
-		return dataset
-			? `${dataset.title} (${dataset.embedded_dataset_id})`
-			: `Embedded Dataset ${embeddedDatasetId}`;
+		return dataset ? `${dataset.title}` : `Embedded Dataset ${embeddedDatasetId}`;
 	}
 </script>
 
@@ -1755,6 +1854,7 @@
 		<input
 			type="text"
 			bind:value={searchQuery}
+			oninput={handleSearchInput}
 			placeholder="Search visualization transforms..."
 			class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 		/>
@@ -1770,7 +1870,7 @@
 		>
 			<p class="text-red-600 dark:text-red-400">{error}</p>
 		</div>
-	{:else if filteredTransforms.length === 0}
+	{:else if transforms.length === 0}
 		<div class="bg-gray-50 dark:bg-gray-800 rounded-lg p-8 text-center">
 			<p class="text-gray-600 dark:text-gray-400">
 				{searchQuery
@@ -1822,7 +1922,9 @@
 			</div>
 		{/if}
 		<div class="overflow-x-auto">
-			<table class="w-full text-sm text-left text-gray-600 dark:text-gray-400">
+			<table
+				class="visualization-transforms-table w-full text-sm text-left text-gray-600 dark:text-gray-400"
+			>
 				<thead class="bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
 					<tr>
 						<th class="px-4 py-3 w-12">
@@ -1878,7 +1980,7 @@
 					</tr>
 				</thead>
 				<tbody>
-					{#each filteredTransforms as transform (transform.visualization_transform_id)}
+					{#each transforms as transform (transform.visualization_transform_id)}
 						{@const stats = statsMap.get(transform.visualization_transform_id)}
 						<tr
 							class="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
@@ -1891,8 +1993,26 @@
 									class="cursor-pointer"
 								/>
 							</td>
-							<td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{transform.title}</td>
-							<td class="px-4 py-3">{getEmbeddedDatasetTitle(transform.embedded_dataset_id)}</td>
+							<td class="px-4 py-3 font-medium text-gray-900 dark:text-white">
+								{#if onViewTransform}
+									<button
+										onclick={() => onViewTransform(transform.visualization_transform_id)}
+										class="text-blue-600 dark:text-blue-400 hover:underline"
+									>
+										{transform.title}
+									</button>
+								{:else}
+									{transform.title}
+								{/if}
+							</td>
+							<td class="px-4 py-3 text-sm">
+								<a
+									href="#/embedded-datasets/{transform.embedded_dataset_id}/details"
+									class="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
+								>
+									{getEmbeddedDatasetTitle(transform.embedded_dataset_id)}
+								</a>
+							</td>
 							<td class="px-4 py-3">
 								<span
 									class={transform.is_enabled
@@ -1921,47 +2041,15 @@
 			</table>
 		</div>
 
-		<div class="mt-4 flex items-center justify-between">
-			<div class="text-sm text-gray-600 dark:text-gray-400">
-				Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, totalCount)} of
-				{totalCount}
-			</div>
-			<div class="flex items-center gap-2">
-				<button
-					type="button"
-					onclick={() => handlePageChange(currentPage - 1)}
-					disabled={currentPage === 1}
-					class="px-3 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-				>
-					Previous
-				</button>
-
-				{#each Array.from({ length: Math.ceil(totalCount / pageSize) }, (_, i) => i + 1) as page (page)}
-					{#if page === 1 || page === Math.ceil(totalCount / pageSize) || (page >= currentPage - 1 && page <= currentPage + 1)}
-						{#if page > 1 && page > (currentPage > 2 ? currentPage - 2 : 2)}
-							<span class="px-2">...</span>
-						{/if}
-						<button
-							type="button"
-							onclick={() => handlePageChange(page)}
-							class="px-3 py-1 text-sm rounded-lg transition-colors {page === currentPage
-								? 'bg-blue-600 text-white'
-								: 'border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800'}"
-						>
-							{page}
-						</button>
-					{/if}
-				{/each}
-
-				<button
-					type="button"
-					onclick={() => handlePageChange(currentPage + 1)}
-					disabled={currentPage >= Math.ceil(totalCount / pageSize)}
-					class="px-3 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-				>
-					Next
-				</button>
-
+		<div class="mt-6 flex items-center justify-between">
+			<div class="flex items-center">
+				<div class="text-sm text-gray-600 dark:text-gray-400">
+					Showing {(currentPage - 1) * pageSize + 1} to {Math.min(
+						currentPage * pageSize,
+						totalCount
+					)} of
+					{totalCount} transforms
+				</div>
 				<div class="ml-4 flex items-center gap-2">
 					<label for="page-size" class="text-sm font-medium text-gray-700 dark:text-gray-300">
 						Per page:
@@ -1970,13 +2058,50 @@
 						id="page-size"
 						value={pageSize}
 						onchange={(e) => handlePageSizeChange(Number(e.currentTarget.value))}
-						class="px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"
+						class="px-2 py-1 pr-8 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"
 					>
 						{#each pageSizeOptions as size (size)}
 							<option value={size}>{size}</option>
 						{/each}
 					</select>
 				</div>
+			</div>
+			<div class="flex gap-2">
+				<button
+					type="button"
+					onclick={() => handlePageChange(currentPage - 1)}
+					disabled={currentPage === 1}
+					class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+				>
+					Previous
+				</button>
+				<div class="flex items-center gap-1">
+					{#each Array.from({ length: Math.ceil(totalCount / pageSize) }, (_, i) => i + 1) as page (page)}
+						{#if page === 1 || page === Math.ceil(totalCount / pageSize) || (page >= currentPage - 1 && page <= currentPage + 1)}
+							<button
+								type="button"
+								onclick={() => handlePageChange(page)}
+								class={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+									currentPage === page
+										? 'bg-blue-600 text-white'
+										: 'border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+								}`}
+							>
+								{page}
+							</button>
+						{:else if page === currentPage - 2 || page === currentPage + 2}
+							<span class="px-2 py-2 text-gray-500">...</span>
+						{/if}
+					{/each}
+				</div>
+				<button
+					type="button"
+					onclick={() => handlePageChange(currentPage + 1)}
+					disabled={currentPage >= Math.ceil(totalCount / pageSize)}
+					class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+				>
+					Next
+				</button>
 			</div>
 		</div>
 	{/if}
@@ -1993,3 +2118,12 @@
 	on:confirm={confirmDeleteTransform}
 	on:cancel={() => (transformPendingDelete = null)}
 />
+
+<style>
+	:global(.visualization-transforms-table :is(td, th)) {
+		word-wrap: break-word;
+		word-break: normal;
+		white-space: normal;
+		overflow-wrap: break-word;
+	}
+</style>

@@ -333,7 +333,7 @@
 	): Promise<string> {
 		let processedContent = content;
 
-		// Replace chunk references with actual filenames
+		// Replace chunk references with bold blue text
 		if (retrievedDocs && retrievedDocs.length > 0) {
 			// Create a map of chunk index to item title
 			const chunkToTitle: Record<number, string> = {};
@@ -341,10 +341,11 @@
 				chunkToTitle[idx + 1] = doc.item_title || `Chunk ${idx + 1}`;
 			});
 
-			// Replace Chunk X references with actual item titles
+			// Replace Chunk X references with bold blue styling
 			processedContent = processedContent.replace(/Chunk (\d+)/g, (match, chunkNum) => {
 				const num = parseInt(chunkNum);
-				return chunkToTitle[num] || match;
+				const title = chunkToTitle[num] || match;
+				return `**<span style="color: rgb(37 99 235)">${title}</span>**`;
 			});
 		}
 
@@ -362,6 +363,19 @@
 		}
 
 		return div.innerHTML;
+	}
+
+	function getDeduplicatedReferences(
+		retrievedDocs: RetrievedDocument[]
+	): Array<{ title: string; count: number }> {
+		const refMap: Record<string, number> = {};
+		retrievedDocs.forEach((doc) => {
+			const title = doc.item_title || 'Unknown';
+			refMap[title] = (refMap[title] || 0) + 1;
+		});
+		return Object.entries(refMap)
+			.map(([title, count]) => ({ title, count }))
+			.sort((a, b) => b.count - a.count);
 	}
 
 	onMount(() => {
@@ -405,6 +419,13 @@
 					resetCreateForm();
 				} else {
 					showCreateForm = true;
+					// Auto-select first items
+					if (embeddedDatasets.length > 0 && !newSessionEmbeddedDatasetId) {
+						newSessionEmbeddedDatasetId = embeddedDatasets[0].embedded_dataset_id;
+					}
+					if (llms.length > 0 && !newSessionLLMId) {
+						newSessionLLMId = llms[0].llm_id;
+					}
 				}
 			}}
 			class="mx-4 my-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
@@ -578,18 +599,29 @@
 									{/if}
 									{#if message.role === 'assistant' && message.retrieved_documents && message.retrieved_documents.length > 0}
 										<div class="mt-3 pt-3 border-t border-current opacity-75">
+											<div class="text-xs font-semibold mb-2">References</div>
+											<div class="space-y-1.5">
+												{#each getDeduplicatedReferences(message.retrieved_documents) as ref (ref.title)}
+													<div class="flex items-center gap-2">
+														<a
+															href="#/datasets/{embeddedDatasets.find(
+																(d) => d.embedded_dataset_id === currentSession?.embedded_dataset_id
+															)?.source_dataset_id}/details?search={encodeURIComponent(ref.title)}"
+															class="text-blue-600 dark:text-blue-400 hover:underline font-semibold"
+														>
+															{ref.title}
+														</a>
+														<span class="text-gray-500 dark:text-gray-400">× {ref.count}</span>
+													</div>
+												{/each}
+											</div>
 											<button
 												onclick={() => {
 													expandedDocs[message.message_id] = !expandedDocs[message.message_id];
 												}}
-												class="flex items-center justify-between w-full text-xs font-semibold mb-2 hover:opacity-80 transition-opacity"
+												class="flex items-center justify-between w-full text-xs font-semibold mt-2 hover:opacity-80 transition-opacity"
 											>
-												<span>
-													Retrieved {message.documents_retrieved} chunk{message.documents_retrieved !==
-													1
-														? 's'
-														: ''}
-												</span>
+												<span>Source Details</span>
 												<span class="ml-2">
 													{expandedDocs[message.message_id] === true ? '▼' : '▶'}
 												</span>

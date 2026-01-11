@@ -13,6 +13,7 @@
 	import { onDestroy, onMount } from 'svelte';
 	import type { Visualization, VisualizationTransform } from '../types/visualizations';
 	import { formatError, toastStore } from '../utils/notifications';
+	import { createSSEConnection, type SSEConnection } from '../utils/sse';
 
 	interface Props {
 		visualizationTransformId: number;
@@ -27,35 +28,38 @@
 	let error = $state<string | null>(null);
 	let selectedVisualization = $state<Visualization | null>(null);
 	let htmlContent = $state<string | null>(null);
-	let pollInterval: number | null = null;
+
+	// SSE connection for real-time status updates
+	let sseConnection: SSEConnection | null = null;
 
 	onMount(async () => {
 		await loadTransform();
 		await loadVisualizations();
-		startProgressPolling();
+		connectSSE();
 	});
 
 	onDestroy(() => {
-		stopProgressPolling();
+		sseConnection?.disconnect();
 	});
 
-	function startProgressPolling() {
-		// Poll for updates every 2 seconds if any visualizations are processing
-		pollInterval = window.setInterval(async () => {
-			const hasProcessing = visualizations.some(
-				(v) => v.status === 'processing' || v.status === 'pending'
-			);
-			if (hasProcessing) {
-				await loadVisualizations();
-			}
-		}, 2000);
-	}
-
-	function stopProgressPolling() {
-		if (pollInterval !== null) {
-			clearInterval(pollInterval);
-			pollInterval = null;
-		}
+	function connectSSE() {
+		// Connect to visualization transforms SSE for real-time updates
+		sseConnection = createSSEConnection({
+			url: `/api/visualization-transforms/stream?visualization_transform_id=${visualizationTransformId}`,
+			onStatus: (data: unknown) => {
+				const status = data as {
+					visualization_transform_id?: number;
+					visualization_id?: number;
+				};
+				// Reload visualizations when we get a status update for this transform
+				if (status.visualization_transform_id === visualizationTransformId) {
+					loadVisualizations();
+				}
+			},
+			onMaxRetriesReached: () => {
+				console.warn('SSE connection lost for visualization transform');
+			},
+		});
 	}
 
 	async function loadTransform() {

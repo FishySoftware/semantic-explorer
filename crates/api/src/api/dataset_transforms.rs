@@ -1,7 +1,7 @@
 use crate::audit::{ResourceType, events};
 use crate::auth::AuthenticatedUser;
 use crate::errors::{bad_request, not_found};
-use crate::storage::postgres::{dataset_transforms, embedded_datasets};
+use crate::storage::postgres::{dataset_transform_batches, dataset_transforms, embedded_datasets};
 use crate::transforms::dataset::models::{
     CreateDatasetTransform, DatasetTransform, DatasetTransformStats, UpdateDatasetTransform,
 };
@@ -27,6 +27,7 @@ pub struct SortParams {
     pub sort_by: String,
     #[serde(default = "default_sort_direction")]
     pub sort_direction: String,
+    pub search: Option<String>,
 }
 
 fn default_limit() -> i64 {
@@ -50,6 +51,7 @@ fn default_sort_direction() -> String {
         ("offset" = i64, Query, description = "Number of results to skip", example = 0),
         ("sort_by" = String, Query, description = "Field to sort by: title, is_enabled, created_at, updated_at", example = "created_at"),
         ("sort_direction" = String, Query, description = "Sort direction: asc or desc", example = "desc"),
+        ("search" = Option<String>, Query, description = "Search term to filter transforms by title"),
     ),
     responses(
         (status = 200, description = "Paginated list of dataset transforms", body = PaginatedResponse<DatasetTransform>),
@@ -70,6 +72,7 @@ pub async fn get_dataset_transforms(
         params.offset,
         &params.sort_by,
         &params.sort_direction,
+        params.search.as_deref(),
     )
     .await
     {
@@ -647,4 +650,294 @@ pub async fn get_dataset_transform_detailed_stats(
         "aggregate": aggregate_stats,
         "per_embedder": per_embedder_stats,
     }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/dataset-transforms/{id}/batches",
+    tag = "Dataset Transforms",
+    params(
+        ("id" = i32, Path, description = "Dataset Transform ID"),
+        ("limit" = Option<i64>, Query, description = "Number of batches per page", example = 20),
+        ("offset" = Option<i64>, Query, description = "Batch offset for pagination", example = 0),
+        ("status" = Option<String>, Query, description = "Filter by batch status"),
+    ),
+    responses(
+        (status = 200, description = "Paginated list of processing batches"),
+        (status = 404, description = "Dataset transform not found"),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[get("/api/dataset-transforms/{id}/batches")]
+#[tracing::instrument(name = "get_dataset_transform_batches", skip(user, postgres_pool), fields(dataset_transform_id = %path.as_ref()))]
+pub async fn get_dataset_transform_batches(
+    user: AuthenticatedUser,
+    postgres_pool: Data<Pool<Postgres>>,
+    path: Path<i32>,
+    query: Query<BatchQuery>,
+) -> impl Responder {
+    let dataset_transform_id = path.into_inner();
+    let limit = query.limit.unwrap_or(20);
+    let offset = query.offset.unwrap_or(0);
+
+    // Verify the transform exists and user has access
+    match dataset_transforms::get_dataset_transform(&postgres_pool, &user, dataset_transform_id)
+        .await
+    {
+        Ok(_) => {
+            let result = if let Some(status) = &query.status {
+                dataset_transform_batches::list_batches_by_status(
+                    &postgres_pool,
+                    dataset_transform_id,
+                    status,
+                    limit,
+                    offset,
+                )
+                .await
+            } else {
+                dataset_transform_batches::list_batches_by_transform(
+                    &postgres_pool,
+                    dataset_transform_id,
+                    limit,
+                    offset,
+                )
+                .await
+            };
+
+            match result {
+                Ok((batches, total_count)) => HttpResponse::Ok().json(PaginatedResponse {
+                    items: batches,
+                    total_count,
+                    limit,
+                    offset,
+                }),
+                Err(e) => {
+                    error!("Failed to get batches: {}", e);
+                    HttpResponse::InternalServerError().json(serde_json::json!({
+                        "error": format!("Failed to get batches: {}", e)
+                    }))
+                }
+            }
+        }
+        Err(e) => {
+            error!("Dataset transform not found: {}", e);
+            not_found(format!("Dataset transform not found: {}", e))
+        }
+    }
+}
+
+#[derive(Deserialize, Debug)]
+pub struct BatchQuery {
+    #[serde(default)]
+    pub limit: Option<i64>,
+    #[serde(default)]
+    pub offset: Option<i64>,
+    pub status: Option<String>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/dataset-transforms/{id}/batches/{batch_id}",
+    tag = "Dataset Transforms",
+    params(
+        ("id" = i32, Path, description = "Dataset Transform ID"),
+        ("batch_id" = i32, Path, description = "Batch ID"),
+    ),
+    responses(
+        (status = 200, description = "Single batch details"),
+        (status = 404, description = "Batch or transform not found"),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[get("/api/dataset-transforms/{id}/batches/{batch_id}")]
+#[tracing::instrument(
+    name = "get_dataset_transform_batch",
+    skip(user, postgres_pool),
+    fields(dataset_transform_id = %path_id.as_ref(), batch_id = %batch_id.as_ref())
+)]
+pub async fn get_dataset_transform_batch(
+    user: AuthenticatedUser,
+    postgres_pool: Data<Pool<Postgres>>,
+    path_id: Path<i32>,
+    batch_id: Path<i32>,
+) -> impl Responder {
+    let dataset_transform_id = path_id.into_inner();
+    let batch_id = batch_id.into_inner();
+
+    // Verify the transform exists and user has access
+    match dataset_transforms::get_dataset_transform(&postgres_pool, &user, dataset_transform_id)
+        .await
+    {
+        Ok(_) => {
+            match dataset_transform_batches::get_batch(&postgres_pool, batch_id).await {
+                Ok(Some(batch)) => {
+                    // Verify batch belongs to this transform
+                    if batch.dataset_transform_id != dataset_transform_id {
+                        return not_found("Batch not found for this transform".to_string());
+                    }
+                    HttpResponse::Ok().json(batch)
+                }
+                Ok(None) => not_found("Batch not found".to_string()),
+                Err(e) => {
+                    error!("Failed to get batch: {}", e);
+                    HttpResponse::InternalServerError().json(serde_json::json!({
+                        "error": format!("Failed to get batch: {}", e)
+                    }))
+                }
+            }
+        }
+        Err(e) => {
+            error!("Dataset transform not found: {}", e);
+            not_found(format!("Dataset transform not found: {}", e))
+        }
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/dataset-transforms/{id}/batches/stats",
+    tag = "Dataset Transforms",
+    params(
+        ("id" = i32, Path, description = "Dataset Transform ID"),
+    ),
+    responses(
+        (status = 200, description = "Batch processing statistics"),
+        (status = 404, description = "Dataset transform not found"),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[get("/api/dataset-transforms/{id}/batches/stats")]
+#[tracing::instrument(
+    name = "get_dataset_transform_batch_stats",
+    skip(user, postgres_pool),
+    fields(dataset_transform_id = %path.as_ref())
+)]
+pub async fn get_dataset_transform_batch_stats(
+    user: AuthenticatedUser,
+    postgres_pool: Data<Pool<Postgres>>,
+    path: Path<i32>,
+) -> impl Responder {
+    let dataset_transform_id = path.into_inner();
+
+    // Verify the transform exists and user has access
+    match dataset_transforms::get_dataset_transform(&postgres_pool, &user, dataset_transform_id)
+        .await
+    {
+        Ok(_) => {
+            match dataset_transform_batches::get_batch_stats(&postgres_pool, dataset_transform_id)
+                .await
+            {
+                Ok(stats) => HttpResponse::Ok().json(stats),
+                Err(e) => {
+                    error!("Failed to get batch stats: {}", e);
+                    HttpResponse::InternalServerError().json(serde_json::json!({
+                        "error": format!("Failed to get batch stats: {}", e)
+                    }))
+                }
+            }
+        }
+        Err(e) => {
+            error!("Dataset transform not found: {}", e);
+            not_found(format!("Dataset transform not found: {}", e))
+        }
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct DatasetSSEStreamQuery {
+    /// Optional dataset_id to filter updates for a specific dataset
+    pub dataset_id: Option<i32>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/dataset-transforms/stream",
+    tag = "Dataset Transforms",
+    params(
+        ("dataset_id" = Option<i32>, Query, description = "Optional dataset ID to filter updates"),
+    ),
+    responses(
+        (status = 200, description = "Server-Sent Events stream of dataset transform status updates", content_type = "text/event-stream"),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[get("/api/dataset-transforms/stream")]
+#[tracing::instrument(name = "stream_dataset_transform_status", skip(user, nats_client))]
+pub async fn stream_dataset_transform_status(
+    user: AuthenticatedUser,
+    nats_client: Data<NatsClient>,
+    query: Query<DatasetSSEStreamQuery>,
+) -> impl Responder {
+    use actix_web::http::header;
+    use futures_util::stream::StreamExt;
+    use std::time::Duration;
+    use tokio::time::interval;
+
+    let owner = user.to_string();
+    let nats = nats_client.get_ref().clone();
+    let dataset_id_filter = query.dataset_id;
+
+    // Create SSE stream
+    let stream = async_stream::stream! {
+        // Subscribe to dataset transform status updates
+        // Subject format: transforms.dataset.status.{owner}.{dataset_id}.{transform_id}
+        // Use wildcards for flexible filtering at subscription level
+        let subject = match dataset_id_filter {
+            Some(dataset_id) => format!("transforms.dataset.status.{}.{}.*", owner, dataset_id),
+            None => format!("transforms.dataset.status.{}.>", owner),
+        };
+
+        let mut subscriber = match nats.subscribe(subject.clone()).await {
+            Ok(sub) => sub,
+            Err(e) => {
+                error!("Failed to subscribe to NATS subject '{}': {}", subject, e);
+                yield Err(actix_web::error::ErrorInternalServerError(e));
+                return;
+            }
+        };
+
+        info!("SSE client connected to dataset transforms stream (subject: {})", subject);
+
+        // Send initial connection message
+        yield Ok::<_, actix_web::Error>(actix_web::web::Bytes::from("event: connected\ndata: {\"status\":\"connected\"}\n\n"));
+
+        // Heartbeat interval (30 seconds)
+        let mut heartbeat = interval(Duration::from_secs(30));
+        heartbeat.tick().await; // Skip first immediate tick
+
+        loop {
+            tokio::select! {
+                // Handle NATS messages
+                msg_result = subscriber.next() => {
+                    match msg_result {
+                        Some(msg) => {
+                            match String::from_utf8(msg.payload.to_vec()) {
+                                Ok(payload) => {
+                                    yield Ok(actix_web::web::Bytes::from(format!("event: status\ndata: {}\n\n", payload)));
+                                }
+                                Err(e) => {
+                                    error!("Failed to parse message payload: {}", e);
+                                }
+                            }
+                        }
+                        None => {
+                            // Subscription closed
+                            yield Ok(actix_web::web::Bytes::from("event: closed\ndata: {\"status\":\"subscription_closed\"}\n\n"));
+                            break;
+                        }
+                    }
+                }
+                // Send heartbeat
+                _ = heartbeat.tick() => {
+                    yield Ok(actix_web::web::Bytes::from(": heartbeat\n\n"));
+                }
+            }
+        }
+    };
+
+    HttpResponse::Ok()
+        .insert_header(header::ContentType(mime::TEXT_EVENT_STREAM))
+        .insert_header(header::CacheControl(vec![header::CacheDirective::NoCache]))
+        .insert_header(("X-Accel-Buffering", "no"))
+        .streaming(stream)
 }

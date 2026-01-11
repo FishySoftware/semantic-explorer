@@ -77,6 +77,34 @@ pub async fn initialize_jetstream(client: &Client) -> Result<()> {
     )
     .await?;
 
+    // Transform status stream for SSE real-time updates
+    // Uses hierarchical subjects: transforms.{type}.status.{owner}.{resource_id}.{transform_id}
+    // Examples:
+    //   transforms.collection.status.user@example.com.123.456
+    //   transforms.dataset.status.user@example.com.789.101
+    //   transforms.visualization.status.user@example.com.111.222
+    // Wildcards allow flexible subscriptions:
+    //   transforms.collection.status.user@example.com.* - all collection transforms for user
+    //   transforms.collection.status.user@example.com.123.* - transforms for specific collection
+    ensure_stream(
+        &jetstream,
+        "TRANSFORM_STATUS",
+        StreamConfig {
+            name: "TRANSFORM_STATUS".to_string(),
+            subjects: vec![
+                "transforms.collection.status.*.*.*".to_string(),
+                "transforms.dataset.status.*.*.*".to_string(),
+                "transforms.visualization.status.*.*.*".to_string(),
+            ],
+            retention: RetentionPolicy::Limits, // Keep for subscribers
+            max_age: Duration::from_secs(60 * 60), // 1 hour retention
+            max_messages: 100_000,              // 100k message limit for 15k users
+            num_replicas: 1,
+            ..Default::default()
+        },
+    )
+    .await?;
+
     info!("JetStream streams and DLQ initialized successfully");
     Ok(())
 }

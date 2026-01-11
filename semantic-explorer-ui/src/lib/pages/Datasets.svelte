@@ -492,7 +492,7 @@
 	onSuccess={() => {
 		transformModalOpen = false;
 		selectedDatasetForTransform = null;
-		toastStore.success('Transform created successfully');
-		fetchDatasets();
+		// Redirect to embedded datasets page to monitor transform progress
+		window.location.hash = '#/embedded-datasets';
 	}}
 />

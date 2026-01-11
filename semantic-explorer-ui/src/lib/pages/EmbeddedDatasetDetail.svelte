@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { Button, Spinner } from 'flowbite-svelte';
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import TabPanel from '../components/TabPanel.svelte';
 	import TransformsList from '../components/TransformsList.svelte';
 	import type { VisualizationTransform } from '../types/visualizations';
 	import { formatError, toastStore } from '../utils/notifications';
+	import { createSSEConnection, type SSEConnection } from '../utils/sse';
 
 	interface EmbeddedDataset {
 		embedded_dataset_id: number;
@@ -72,6 +73,9 @@
 	let visualizationTransforms = $state<VisualizationTransform[]>([]);
 	let transformsLoading = $state(false);
 	let visualizationTransformStatsMap = $state<Map<number, any>>(new Map());
+
+	// SSE connection for real-time visualization transform status updates
+	let sseConnection: SSEConnection | null = null;
 
 	let points = $state<QdrantPoint[]>([]);
 	let pointsLoading = $state(false);
@@ -332,8 +336,26 @@
 		return `${rate.toFixed(1)}%`;
 	}
 
+	function connectSSE() {
+		sseConnection = createSSEConnection({
+			url: `/api/visualization-transforms/stream?embedded_dataset_id=${embeddedDatasetId}`,
+			onStatus: () => {
+				// Refresh visualization transforms and their stats
+				fetchVisualizationTransforms();
+			},
+			onMaxRetriesReached: () => {
+				console.warn('SSE connection lost for visualization transforms');
+			},
+		});
+	}
+
 	onMount(() => {
 		fetchEmbeddedDataset();
+		connectSSE();
+	});
+
+	onDestroy(() => {
+		sseConnection?.disconnect();
 	});
 </script>
 

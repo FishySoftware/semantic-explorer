@@ -12,10 +12,12 @@ use semantic_explorer_core::storage::get_file_with_size_check;
 
 use crate::datasets::models::ChunkWithMetadata;
 use crate::storage::postgres::collection_transforms;
+use crate::storage::postgres::dataset_transform_batches::{self, CreateBatchRequest};
 use crate::storage::postgres::datasets;
 use crate::storage::postgres::embedded_datasets;
 use crate::storage::postgres::visualization_transforms::{
-    get_visualization, update_visualization, update_visualization_transform_status,
+    get_visualization, get_visualization_transform_by_id, update_visualization,
+    update_visualization_transform_status,
 };
 use crate::storage::rustfs::delete_file;
 use crate::transforms::dataset::scanner::trigger_dataset_transform_scan;
@@ -24,6 +26,64 @@ use crate::transforms::dataset::scanner::trigger_dataset_transform_scan;
 struct TransformContext {
     postgres_pool: Pool<Postgres>,
     s3_client: S3Client,
+    nats_client: NatsClient,
+}
+
+/// Status update payload for SSE streams
+#[derive(serde::Serialize)]
+struct TransformStatusUpdate {
+    /// The type of transform: "collection", "dataset", or "visualization"
+    transform_type: String,
+    /// The ID of the transform
+    transform_id: i32,
+    /// The ID of the related resource (collection_id, dataset_id, or embedded_dataset_id)
+    resource_id: i32,
+    /// Current status: "processing", "completed", "failed"
+    status: String,
+    /// Optional error message for failed status
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    /// Timestamp of the status update
+    timestamp: String,
+}
+
+/// Publish a transform status update to NATS for SSE streaming.
+/// Subject format: transforms.{type}.status.{owner}.{resource_id}.{transform_id}
+async fn publish_transform_status(
+    nats: &NatsClient,
+    transform_type: &str,
+    owner: &str,
+    resource_id: i32,
+    transform_id: i32,
+    status: &str,
+    error: Option<&str>,
+) {
+    let subject = format!(
+        "transforms.{}.status.{}.{}.{}",
+        transform_type, owner, resource_id, transform_id
+    );
+
+    let update = TransformStatusUpdate {
+        transform_type: transform_type.to_string(),
+        transform_id,
+        resource_id,
+        status: status.to_string(),
+        error: error.map(|e| e.to_string()),
+        timestamp: chrono::Utc::now().to_rfc3339(),
+    };
+
+    match serde_json::to_vec(&update) {
+        Ok(payload) => {
+            if let Err(e) = nats.publish(subject.clone(), payload.into()).await {
+                warn!("Failed to publish transform status to {}: {}", subject, e);
+            } else {
+                info!("Published transform status to {}", subject);
+            }
+        }
+        Err(e) => {
+            error!("Failed to serialize transform status update: {}", e);
+        }
+    }
 }
 
 pub(crate) async fn start_result_listeners(
@@ -34,6 +94,7 @@ pub(crate) async fn start_result_listeners(
     let context = TransformContext {
         postgres_pool: postgres_pool.clone(),
         s3_client: s3_client.clone(),
+        nats_client: nats_client.clone(),
     };
 
     start_file_result_listener(context.clone(), nats_client.clone());
@@ -125,6 +186,24 @@ fn start_visualization_result_listener(context: TransformContext, nats_client: N
 async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformContext) {
     info!("Handling file result for: {}", result.source_file_key);
 
+    // Fetch the transform first to get collection_id for status updates
+    let transform = match collection_transforms::get_collection_transform(
+        &ctx.postgres_pool,
+        &result.owner,
+        result.collection_transform_id,
+    )
+    .await
+    {
+        Ok(t) => t,
+        Err(e) => {
+            error!(
+                "Failed to get collection transform {} for owner {}: {}",
+                result.collection_transform_id, result.owner, e
+            );
+            return;
+        }
+    };
+
     // Check if this file was already successfully processed to avoid duplicates
     match collection_transforms::is_file_already_processed(
         &ctx.postgres_pool,
@@ -153,6 +232,7 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
     }
 
     if result.status != "success" {
+        let error_msg = result.error.clone().unwrap_or_default();
         error!(
             "File transform failed for {}: {:?}",
             result.source_file_key, result.error
@@ -163,13 +243,26 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
             &result.source_file_key,
             0,
             "failed",
-            Some(&result.error.unwrap_or_default()),
+            Some(&error_msg),
             result.processing_duration_ms,
         )
         .await
         {
             error!("Failed to record file processing failure: {}", e);
         }
+
+        // Publish failed status for SSE streaming
+        publish_transform_status(
+            &ctx.nats_client,
+            "collection",
+            &result.owner,
+            transform.collection_id,
+            result.collection_transform_id,
+            "failed",
+            Some(&error_msg),
+        )
+        .await;
+
         return;
     }
 
@@ -199,23 +292,6 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
         }
     };
 
-    let transform = match collection_transforms::get_collection_transform(
-        &ctx.postgres_pool,
-        &result.owner,
-        result.collection_transform_id,
-    )
-    .await
-    {
-        Ok(t) => t,
-        Err(e) => {
-            error!(
-                "Failed to get collection transform {} for owner {}: {}",
-                result.collection_transform_id, result.owner, e
-            );
-            return;
-        }
-    };
-
     let chunk_count = chunks.len() as i32;
 
     // Validate that we have at least one chunk
@@ -237,6 +313,19 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
         {
             error!("Failed to record file processing failure: {}", e);
         }
+
+        // Publish failed status for SSE streaming
+        publish_transform_status(
+            &ctx.nats_client,
+            "collection",
+            &result.owner,
+            transform.collection_id,
+            result.collection_transform_id,
+            "failed",
+            Some("No chunks generated"),
+        )
+        .await;
+
         return;
     }
 
@@ -263,6 +352,19 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
         {
             error!("Failed to record file processing failure: {}", e);
         }
+
+        // Publish failed status for SSE streaming
+        publish_transform_status(
+            &ctx.nats_client,
+            "collection",
+            &result.owner,
+            transform.collection_id,
+            result.collection_transform_id,
+            "failed",
+            Some("Empty file title"),
+        )
+        .await;
+
         return;
     }
 
@@ -276,20 +378,34 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
     )
     .await
     {
-        error!("Failed to create dataset item: {}", e);
+        let error_msg = format!("Failed to create dataset item: {}", e);
+        error!("{}", error_msg);
         if let Err(e) = collection_transforms::record_processed_file(
             &ctx.postgres_pool,
             result.collection_transform_id,
             &result.source_file_key,
             0,
             "failed",
-            Some(&format!("Failed to create dataset item: {}", e)),
+            Some(&error_msg),
             result.processing_duration_ms,
         )
         .await
         {
             error!("Failed to record file processing failure: {}", e);
         }
+
+        // Publish failed status for SSE streaming
+        publish_transform_status(
+            &ctx.nats_client,
+            "collection",
+            &result.owner,
+            transform.collection_id,
+            result.collection_transform_id,
+            "failed",
+            Some(&error_msg),
+        )
+        .await;
+
         return;
     }
 
@@ -310,6 +426,18 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
     {
         error!("Failed to record file processing: {}", e);
     }
+
+    // Publish status update for SSE streaming
+    publish_transform_status(
+        &ctx.nats_client,
+        "collection",
+        &result.owner,
+        transform.collection_id,
+        result.collection_transform_id,
+        "completed",
+        None,
+    )
+    .await;
 
     info!(
         "Successfully processed file {} with {} chunks",
@@ -362,25 +490,75 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
             {
                 error!("Failed to record batch processing start: {}", e);
             }
+
+            // Also record in dataset_transform_batches for tracking at transform level
+            if let Err(e) = dataset_transform_batches::create_batch(
+                &ctx.postgres_pool,
+                CreateBatchRequest {
+                    dataset_transform_id: embedded_dataset.dataset_transform_id,
+                    batch_key: result.batch_file_key.clone(),
+                    status: "processing".to_string(),
+                    chunk_count: 0,
+                    error_message: None,
+                    processing_duration_ms: None,
+                },
+            )
+            .await
+            {
+                error!("Failed to create dataset transform batch record: {}", e);
+            }
         }
         "failed" => {
             error!(
                 "Vector batch failed for {}: {:?}",
                 result.batch_file_key, result.error
             );
+
+            // Clone error before using it multiple times
+            let error_msg = result
+                .error
+                .clone()
+                .unwrap_or_else(|| "Unknown error".to_string());
+
             if let Err(e) = embedded_datasets::record_processed_batch(
                 &ctx.postgres_pool,
                 result.embedded_dataset_id,
                 &result.batch_file_key,
                 0,
                 "failed",
-                Some(&result.error.unwrap_or_default()),
+                Some(&error_msg),
                 result.processing_duration_ms,
             )
             .await
             {
                 error!("Failed to record batch processing failure: {}", e);
             }
+
+            // Also update batch record at transform level
+            if let Err(e) = dataset_transform_batches::update_batch_status(
+                &ctx.postgres_pool,
+                embedded_dataset.dataset_transform_id,
+                &result.batch_file_key,
+                "failed",
+                Some(&error_msg),
+                result.processing_duration_ms,
+            )
+            .await
+            {
+                error!("Failed to update dataset transform batch status: {}", e);
+            }
+
+            // Publish failed status for SSE streaming
+            publish_transform_status(
+                &ctx.nats_client,
+                "dataset",
+                &result.owner,
+                embedded_dataset.source_dataset_id,
+                result.dataset_transform_id,
+                "failed",
+                Some(&error_msg),
+            )
+            .await;
         }
         "success" => {
             info!(
@@ -405,6 +583,20 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
                 return;
             }
 
+            // Also update batch record at transform level
+            if let Err(e) = dataset_transform_batches::update_batch_status(
+                &ctx.postgres_pool,
+                embedded_dataset.dataset_transform_id,
+                &result.batch_file_key,
+                "success",
+                None,
+                result.processing_duration_ms,
+            )
+            .await
+            {
+                error!("Failed to update dataset transform batch status: {}", e);
+            }
+
             // Clean up the batch file from S3 after successful processing and database recording
             // The bucket name is derived from the collection name (lowercase)
             let bucket = embedded_dataset.collection_name.to_lowercase();
@@ -421,6 +613,18 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
                     result.batch_file_key, bucket
                 );
             }
+
+            // Publish completed status for SSE streaming
+            publish_transform_status(
+                &ctx.nats_client,
+                "dataset",
+                &result.owner,
+                embedded_dataset.source_dataset_id,
+                result.dataset_transform_id,
+                "completed",
+                None,
+            )
+            .await;
 
             info!(
                 "Successfully processed vector batch {} with {} chunks",
@@ -448,6 +652,30 @@ async fn handle_visualization_result(result: VisualizationTransformResult, ctx: 
         error!("Visualization {} not found: {}", result.visualization_id, e);
         return;
     }
+
+    // Fetch the transform to get embedded_dataset_id for status updates
+    let visualization_transform = match get_visualization_transform_by_id(
+        &ctx.postgres_pool,
+        result.visualization_transform_id,
+    )
+    .await
+    {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            error!(
+                "Visualization transform {} not found",
+                result.visualization_transform_id
+            );
+            return;
+        }
+        Err(e) => {
+            error!(
+                "Failed to get visualization transform {}: {}",
+                result.visualization_transform_id, e
+            );
+            return;
+        }
+    };
 
     let now = sqlx::types::chrono::Utc::now();
 
@@ -562,6 +790,18 @@ async fn handle_visualization_result(result: VisualizationTransformResult, ctx: 
             result.visualization_transform_id, e
         );
     }
+
+    // Publish status update for SSE streaming
+    publish_transform_status(
+        &ctx.nats_client,
+        "visualization",
+        &result.owner,
+        visualization_transform.embedded_dataset_id,
+        result.visualization_transform_id,
+        status,
+        error_message.as_deref(),
+    )
+    .await;
 
     if status == "completed" {
         info!(

@@ -440,7 +440,7 @@
 	onSuccess={() => {
 		transformModalOpen = false;
 		selectedCollectionForTransform = null;
-		toastStore.success('Transform created successfully');
-		fetchCollections();
+		// Redirect to datasets page to monitor transform progress
+		window.location.hash = '#/datasets';
 	}}
 />

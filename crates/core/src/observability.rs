@@ -37,6 +37,9 @@ pub struct Metrics {
     pub nats_consumer_pending: Gauge<f64>,
     pub nats_consumer_ack_pending: Gauge<f64>,
     pub nats_stream_bytes: Gauge<f64>,
+    // NATS latency metrics
+    pub nats_publish_duration: Histogram<f64>,
+    pub nats_subscribe_latency: Histogram<f64>,
     // Search performance metrics
     pub search_request_total: Counter<u64>,
     pub search_request_duration: Histogram<f64>,
@@ -47,6 +50,10 @@ pub struct Metrics {
     pub http_requests_total: Counter<u64>,
     pub http_request_duration: Histogram<f64>,
     pub http_requests_in_flight: Gauge<f64>,
+    // Server-Sent Events metrics
+    pub sse_connections_active: Gauge<f64>,
+    pub sse_messages_sent: Counter<u64>,
+    pub sse_connection_duration: Histogram<f64>,
     // Worker job failure tracking
     pub worker_job_failures_total: Counter<u64>,
     pub worker_job_retries_total: Counter<u64>,
@@ -204,6 +211,17 @@ impl Metrics {
             .with_description("Size of NATS stream in bytes")
             .build();
 
+        // NATS latency metrics
+        let nats_publish_duration = meter
+            .f64_histogram("nats_publish_duration_seconds")
+            .with_description("Duration of NATS message publish operations in seconds")
+            .build();
+
+        let nats_subscribe_latency = meter
+            .f64_histogram("nats_subscribe_latency_seconds")
+            .with_description("Latency between NATS message publish and processing in seconds")
+            .build();
+
         // Search performance metrics
         let search_request_total = meter
             .u64_counter("search_request_total")
@@ -244,6 +262,22 @@ impl Metrics {
         let http_requests_in_flight = meter
             .f64_gauge("http_requests_in_flight")
             .with_description("Number of HTTP requests currently being processed")
+            .build();
+
+        // Server-Sent Events metrics
+        let sse_connections_active = meter
+            .f64_gauge("sse_connections_active")
+            .with_description("Number of active Server-Sent Events connections")
+            .build();
+
+        let sse_messages_sent = meter
+            .u64_counter("sse_messages_sent")
+            .with_description("Total number of messages sent via Server-Sent Events")
+            .build();
+
+        let sse_connection_duration = meter
+            .f64_histogram("sse_connection_duration_seconds")
+            .with_description("Duration of Server-Sent Events connections in seconds")
             .build();
 
         // Worker job failure tracking
@@ -287,6 +321,8 @@ impl Metrics {
             nats_consumer_pending,
             nats_consumer_ack_pending,
             nats_stream_bytes,
+            nats_publish_duration,
+            nats_subscribe_latency,
             search_request_total,
             search_request_duration,
             search_embedder_call_duration,
@@ -295,6 +331,9 @@ impl Metrics {
             http_requests_total,
             http_request_duration,
             http_requests_in_flight,
+            sse_connections_active,
+            sse_messages_sent,
+            sse_connection_duration,
             worker_job_failures_total,
             worker_job_retries_total,
         }

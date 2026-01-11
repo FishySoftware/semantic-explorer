@@ -8,7 +8,7 @@
 		open?: boolean;
 		collectionId?: number | null;
 		collectionTitle?: string | null;
-		onSuccess?: () => void;
+		onSuccess?: (_transformId: number, _transformTitle: string) => void;
 	}
 
 	interface Collection {
@@ -262,6 +262,10 @@
 				throw new Error(`Failed to create transform: ${response.statusText} - ${errorText}`);
 			}
 
+			const createdTransform = await response.json();
+			const createdTransformId = createdTransform.collection_transform_id;
+			const createdTransformTitle = createdTransform.title;
+
 			// Create dataset transform if auto-create is enabled
 			if (autoCreateDatasetTransform && selectedDatasetTransformEmbedderIds.length > 0) {
 				const datasetTransformResponse = await fetch('/api/dataset-transforms', {
@@ -285,7 +289,7 @@
 
 			toastStore.success('Transform created successfully');
 			resetForm();
-			onSuccess?.();
+			onSuccess?.(createdTransformId, createdTransformTitle);
 		} catch (e) {
 			const message = formatError(e, 'Failed to create transform');
 			error = message;

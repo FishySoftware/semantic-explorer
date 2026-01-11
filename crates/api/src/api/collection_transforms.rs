@@ -16,7 +16,7 @@ use async_nats::Client as NatsClient;
 use aws_sdk_s3::Client as S3Client;
 use serde::Deserialize;
 use sqlx::{Pool, Postgres};
-use tracing::error;
+use tracing::{error, info};
 
 #[derive(Deserialize, Debug)]
 pub struct SortParams {
@@ -28,6 +28,7 @@ pub struct SortParams {
     pub sort_by: String,
     #[serde(default = "default_sort_direction")]
     pub sort_direction: String,
+    pub search: Option<String>,
 }
 
 fn default_limit() -> i64 {
@@ -51,6 +52,7 @@ fn default_sort_direction() -> String {
         ("offset" = i64, Query, description = "Number of results to skip", example = 0),
         ("sort_by" = String, Query, description = "Field to sort by: title, is_enabled, created_at, updated_at", example = "created_at"),
         ("sort_direction" = String, Query, description = "Sort direction: asc or desc", example = "desc"),
+        ("search" = Option<String>, Query, description = "Search term to filter transforms by title"),
     ),
     responses(
         (status = 200, description = "Paginated list of collection transforms", body = PaginatedResponse<CollectionTransform>),
@@ -71,6 +73,7 @@ pub async fn get_collection_transforms(
         params.offset,
         &params.sort_by,
         &params.sort_direction,
+        params.search.as_deref(),
     )
     .await
     {
@@ -455,4 +458,103 @@ pub async fn get_collection_transforms_for_collection(
             }))
         }
     }
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SSEStreamQuery {
+    /// Optional collection_id to filter updates for a specific collection
+    pub collection_id: Option<i32>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/collection-transforms/stream",
+    tag = "Collection Transforms",
+    params(
+        ("collection_id" = Option<i32>, Query, description = "Optional collection ID to filter updates"),
+    ),
+    responses(
+        (status = 200, description = "Server-Sent Events stream of collection transform status updates", content_type = "text/event-stream"),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[get("/api/collection-transforms/stream")]
+#[tracing::instrument(name = "stream_collection_transform_status", skip(user, nats_client))]
+pub async fn stream_collection_transform_status(
+    user: AuthenticatedUser,
+    nats_client: Data<NatsClient>,
+    query: Query<SSEStreamQuery>,
+) -> impl Responder {
+    use actix_web::http::header;
+    use futures_util::stream::StreamExt;
+    use std::time::Duration;
+    use tokio::time::interval;
+
+    let owner = user.to_string();
+    let nats = nats_client.get_ref().clone();
+    let collection_id_filter = query.collection_id;
+
+    // Create SSE stream
+    let stream = async_stream::stream! {
+        // Subscribe to collection transform status updates
+        // Subject format: transforms.collection.status.{owner}.{collection_id}.{transform_id}
+        // Use wildcards for flexible filtering at subscription level
+        let subject = match collection_id_filter {
+            Some(collection_id) => format!("transforms.collection.status.{}.{}.*", owner, collection_id),
+            None => format!("transforms.collection.status.{}.>", owner),
+        };
+
+        let mut subscriber = match nats.subscribe(subject.clone()).await {
+            Ok(sub) => sub,
+            Err(e) => {
+                error!("Failed to subscribe to NATS subject '{}': {}", subject, e);
+                yield Err(actix_web::error::ErrorInternalServerError(e));
+                return;
+            }
+        };
+
+        info!("SSE client connected to collection transforms stream (subject: {})", subject);
+
+        // Send initial connection message
+        yield Ok::<_, actix_web::Error>(actix_web::web::Bytes::from("event: connected\ndata: {\"status\":\"connected\"}\n\n"));
+
+        // Heartbeat interval (30 seconds)
+        let mut heartbeat = interval(Duration::from_secs(30));
+        heartbeat.tick().await; // Skip first immediate tick
+
+        loop {
+            tokio::select! {
+                // Handle NATS messages
+                msg_result = subscriber.next() => {
+                    match msg_result {
+                        Some(msg) => {
+                            match String::from_utf8(msg.payload.to_vec()) {
+                                Ok(payload) => {
+                                    yield Ok(actix_web::web::Bytes::from(format!("event: status\ndata: {}\n\n", payload)));
+                                }
+                                Err(e) => {
+                                    error!("Failed to parse message payload: {}", e);
+                                }
+                            }
+                        }
+                        None => {
+                            // Subscription closed
+                            yield Ok(actix_web::web::Bytes::from("event: closed\ndata: {\"status\":\"subscription_closed\"}\n\n"));
+                            break;
+                        }
+                    }
+                }
+                // Send heartbeat
+                _ = heartbeat.tick() => {
+                    yield Ok(actix_web::web::Bytes::from(": heartbeat\n\n"));
+                }
+            }
+        }
+    };
+
+    HttpResponse::Ok()
+        .insert_header(header::ContentType(mime::TEXT_EVENT_STREAM))
+        .insert_header(header::CacheControl(vec![header::CacheDirective::NoCache]))
+        .insert_header(("X-Accel-Buffering", "no"))
+        .streaming(stream)
 }

@@ -16,6 +16,7 @@ actix-files = {version = "0.6.9", features = ["actix-server"]}
 actix_web_openidconnect = { version = "0.3.2"}
 actix-web-prom = {version = "0.10.0", features = ["process"]}
 async-nats = { version = "0.45.0" }
+async-stream = { version = "0.3.6" }
 futures-util = { version = "0.3.31" }
 aws-sdk-s3 = {version = "1.119.0", features = ["behavior-version-latest"] }
 aws-config = { version = "1.8.12", features = ["rustls", "behavior-version-latest"] }

@@ -1,19 +1,19 @@
 <!-- eslint-disable svelte/no-at-html-tags -->
 <script lang="ts">
-	import {
-		Heading,
-		Table,
-		TableBody,
-		TableBodyCell,
-		TableHead,
-		TableHeadCell,
-	} from 'flowbite-svelte';
-	import { onMount } from 'svelte';
-	import { SvelteSet } from 'svelte/reactivity';
+	import { Heading } from 'flowbite-svelte';
+	import { onDestroy, onMount } from 'svelte';
+	import { SvelteSet, SvelteURLSearchParams } from 'svelte/reactivity';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import CreateCollectionTransformModal from '../components/CreateCollectionTransformModal.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
+
+	interface Props {
+		// eslint-disable-next-line no-unused-vars
+		onViewTransform?: (id: number) => void;
+	}
+
+	let { onViewTransform }: Props = $props();
 
 	interface CollectionTransform {
 		collection_transform_id: number;
@@ -89,6 +89,13 @@
 	let loadingFailedFiles = $state(false);
 
 	let searchQuery = $state('');
+	let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+	// SSE connection state
+	let eventSource: EventSource | null = null;
+	let reconnectAttempts = 0;
+	let maxReconnectAttempts = 10;
+	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
 	// Modal state
 	let showCreateModal = $state(false);
@@ -161,12 +168,15 @@
 			loading = true;
 			error = null;
 			const offset = (currentPage - 1) * pageSize;
-			const params = new URLSearchParams({
+			const params = new SvelteURLSearchParams({
 				limit: pageSize.toString(),
 				offset: offset.toString(),
 				sort_by: sortBy,
 				sort_direction: sortDirection,
 			});
+			if (searchQuery.trim()) {
+				params.append('search', searchQuery.trim());
+			}
 			const response = await fetch(`/api/collection-transforms?${params}`);
 			if (!response.ok) {
 				throw new Error(`Failed to fetch collection transforms: ${response.statusText}`);
@@ -197,14 +207,18 @@
 		fetchTransforms();
 	}
 
-	function handlePageChange(newPage: number) {
-		currentPage = newPage;
-		fetchTransforms();
+	function handleSearchInput() {
+		if (searchDebounceTimer) {
+			clearTimeout(searchDebounceTimer);
+		}
+		searchDebounceTimer = setTimeout(() => {
+			currentPage = 1; // Reset to first page on new search
+			fetchTransforms();
+		}, 300);
 	}
 
-	function handlePageSizeChange(newSize: number) {
-		pageSize = newSize;
-		currentPage = 1;
+	function handlePageChange(newPage: number) {
+		currentPage = newPage;
 		fetchTransforms();
 	}
 
@@ -342,8 +356,85 @@
 		}
 	}
 
+	function connectSSE() {
+		// Close existing connection
+		if (eventSource) {
+			eventSource.close();
+			eventSource = null;
+		}
+
+		try {
+			eventSource = new EventSource('/api/collection-transforms/stream');
+
+			eventSource.addEventListener('connected', () => {
+				reconnectAttempts = 0;
+			});
+
+			eventSource.addEventListener('status', (event) => {
+				try {
+					const statusUpdate = JSON.parse(event.data);
+					// Handle status update - refresh specific transform or trigger refetch
+					if (statusUpdate.collection_transform_id) {
+						// Refresh stats for the specific transform
+						fetchStatsForTransform(statusUpdate.collection_transform_id);
+					}
+				} catch (e) {
+					console.error('Failed to parse SSE status event:', e);
+				}
+			});
+
+			eventSource.addEventListener('closed', () => {
+				reconnectSSE();
+			});
+
+			eventSource.onerror = () => {
+				eventSource?.close();
+				eventSource = null;
+				reconnectSSE();
+			};
+		} catch (e) {
+			console.error('Failed to connect to SSE stream:', e);
+			reconnectSSE();
+		}
+	}
+
+	function reconnectSSE() {
+		if (reconnectTimer) {
+			clearTimeout(reconnectTimer);
+		}
+
+		if (reconnectAttempts >= maxReconnectAttempts) {
+			console.error('Max SSE reconnection attempts reached');
+			return;
+		}
+
+		// Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, 64s... up to 60s max
+		const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 60000);
+		reconnectAttempts++;
+
+		reconnectTimer = setTimeout(() => {
+			connectSSE();
+		}, delay);
+	}
+
+	function disconnectSSE() {
+		if (reconnectTimer) {
+			clearTimeout(reconnectTimer);
+			reconnectTimer = null;
+		}
+		if (eventSource) {
+			eventSource.close();
+			eventSource = null;
+		}
+		reconnectAttempts = 0;
+	}
+
 	onMount(async () => {
 		await Promise.all([fetchTransforms(), fetchCollections(), fetchDatasets()]);
+
+		// Connect to SSE stream for real-time updates
+		connectSSE();
+
 		const hashParts = window.location.hash.split('?');
 		if (hashParts.length > 1) {
 			const urlParams = new URLSearchParams(hashParts[1]);
@@ -367,7 +458,9 @@
 		}
 	});
 
-	let filteredTransforms = $derived(transforms);
+	onDestroy(() => {
+		disconnectSSE();
+	});
 
 	function getCollectionTitle(collectionId: number): string {
 		const collection = collections.find((c) => c.collection_id === collectionId);
@@ -380,16 +473,18 @@
 	}
 
 	function getTotalPages(): number {
+		if (totalCount <= 0 || pageSize <= 0) return 1;
 		return Math.ceil(totalCount / pageSize);
 	}
 
-	function getSortIcon(field: string): string {
-		if (sortBy !== field) return '';
-		return sortDirection === 'asc' ? '▲' : '▼';
+	function handlePageSizeChange(newSize: number) {
+		pageSize = newSize;
+		currentPage = 1; // Reset to first page when changing page size
+		fetchTransforms();
 	}
 </script>
 
-<div class="max-w-7xl mx-auto px-4">
+<div class="max-w-7xl mx-auto">
 	<PageHeader
 		title="Collection Transforms"
 		description="Process files from Collections into Dataset items. Collection transforms extract text from files, chunk them into manageable pieces, and create Dataset items ready for embedding."
@@ -408,31 +503,19 @@
 	<CreateCollectionTransformModal
 		bind:open={showCreateModal}
 		onSuccess={() => {
-			currentPage = 1;
-			fetchTransforms();
+			// Redirect to datasets page to monitor transform progress
+			window.location.hash = '#/datasets';
 		}}
 	/>
 
-	<div class="mb-4 flex gap-4">
+	<div class="mb-4">
 		<input
 			type="text"
 			bind:value={searchQuery}
-			placeholder="Filter by title or owner (client-side)..."
-			class="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+			oninput={handleSearchInput}
+			placeholder="Search collection transforms..."
+			class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 		/>
-		<div class="flex gap-2 items-center">
-			<label for="page-size" class="text-sm text-gray-600 dark:text-gray-400">Per page:</label>
-			<select
-				id="page-size"
-				bind:value={pageSize}
-				onchange={(e) => handlePageSizeChange(parseInt(e.currentTarget.value))}
-				class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-			>
-				{#each pageSizeOptions as option (option)}
-					<option value={option}>{option}</option>
-				{/each}
-			</select>
-		</div>
 	</div>
 
 	{#if loading}
@@ -445,7 +528,7 @@
 		>
 			<p class="text-red-600 dark:text-red-400">{error}</p>
 		</div>
-	{:else if filteredTransforms.length === 0}
+	{:else if transforms.length === 0}
 		<div class="bg-gray-50 dark:bg-gray-800 rounded-lg p-8 text-center">
 			<p class="text-gray-600 dark:text-gray-400">
 				{searchQuery
@@ -487,7 +570,7 @@
 				</button>
 				<button
 					onclick={() => {
-					selected.clear();
+						selected.clear();
 						selectAll = false;
 					}}
 					class="text-sm px-3 py-1 rounded bg-gray-300 hover:bg-gray-400 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-900 dark:text-white transition-colors"
@@ -497,120 +580,162 @@
 			</div>
 		{/if}
 		<div class="overflow-x-auto">
-			<Table hoverable striped>
-				<TableHead>
-					<TableHeadCell class="px-4 py-3 w-12">
-						<input
-							type="checkbox"
-							checked={selectAll}
-							onchange={() => toggleSelectAll()}
-							class="cursor-pointer"
-						/>
-					</TableHeadCell>
-					<TableHeadCell
-						class="px-4 py-3 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700"
-						onclick={() => handleSort('title')}
-					>
-						<div class="flex items-center gap-2">
-							Title
-							{getSortIcon('title')}
-						</div>
-					</TableHeadCell>
-					<TableHeadCell class="px-4 py-3">Collection</TableHeadCell>
-					<TableHeadCell class="px-4 py-3">Dataset</TableHeadCell>
-					<TableHeadCell
-						class="px-4 py-3 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700"
-						onclick={() => handleSort('is_enabled')}
-					>
-						<div class="flex items-center gap-2">
-							Status
-							{getSortIcon('is_enabled')}
-						</div>
-					</TableHeadCell>
-					<TableHeadCell class="px-4 py-3">Files Processed</TableHeadCell>
-					<TableHeadCell class="px-4 py-3">Items Created</TableHeadCell>
-					<TableHeadCell
-						class="px-4 py-3 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700"
-						onclick={() => handleSort('created_at')}
-					>
-						<div class="flex items-center gap-2">
-							Created
-							{getSortIcon('created_at')}
-						</div>
-					</TableHeadCell>
-					<TableHeadCell class="px-4 py-3 w-12 text-center">Edit</TableHeadCell>
-				</TableHead>
-				<TableBody>
-					{#each filteredTransforms as transform (transform.collection_transform_id)}
+			<table
+				class="collection-transforms-table w-full text-sm text-left text-gray-600 dark:text-gray-400"
+			>
+				<thead class="bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
+					<tr>
+						<th class="px-4 py-3 w-12">
+							<input
+								type="checkbox"
+								checked={selectAll}
+								onchange={() => toggleSelectAll()}
+								class="cursor-pointer"
+							/>
+						</th>
+						<th class="px-4 py-3">
+							<button
+								type="button"
+								onclick={() => handleSort('title')}
+								class="flex items-center gap-1 font-semibold text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+							>
+								Title
+								{#if sortBy === 'title'}
+									{sortDirection === 'asc' ? '▲' : '▼'}
+								{/if}
+							</button>
+						</th>
+						<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Collection</th>
+						<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Dataset</th>
+						<th class="px-4 py-3">
+							<button
+								type="button"
+								onclick={() => handleSort('is_enabled')}
+								class="flex items-center gap-1 font-semibold text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+							>
+								Status
+								{#if sortBy === 'is_enabled'}
+									{sortDirection === 'asc' ? '▲' : '▼'}
+								{/if}
+							</button>
+						</th>
+						<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Files Processed</th>
+						<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Items Created</th>
+						<th class="px-4 py-3">
+							<button
+								type="button"
+								onclick={() => handleSort('created_at')}
+								class="flex items-center gap-1 font-semibold text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+							>
+								Created
+								{#if sortBy === 'created_at'}
+									{sortDirection === 'asc' ? '▲' : '▼'}
+								{/if}
+							</button>
+						</th>
+						<th class="px-4 py-3 w-12 text-center font-semibold text-gray-900 dark:text-white"
+							>Edit</th
+						>
+					</tr>
+				</thead>
+				<tbody>
+					{#each transforms as transform (transform.collection_transform_id)}
 						{@const stats = statsMap.get(transform.collection_transform_id)}
-						<tr class="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50">
-							<TableBodyCell class="px-4 py-3 w-12">
+						<tr
+							class="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
+						>
+							<td class="px-4 py-3 w-12">
 								<input
 									type="checkbox"
 									checked={selected.has(transform.collection_transform_id)}
 									onchange={() => toggleSelect(transform.collection_transform_id)}
 									class="cursor-pointer"
 								/>
-							</TableBodyCell>
-							<TableBodyCell class="px-4 py-3 font-medium text-gray-900 dark:text-white">
-								{transform.title}
-							</TableBodyCell>
-							<TableBodyCell class="px-4 py-3 text-sm">
+							</td>
+							<td class="px-4 py-3 font-medium text-gray-900 dark:text-white">
+								{#if onViewTransform}
+									<button
+										onclick={() => onViewTransform(transform.collection_transform_id)}
+										class="text-blue-600 dark:text-blue-400 hover:underline"
+									>
+										{transform.title}
+									</button>
+								{:else}
+									{transform.title}
+								{/if}
+							</td>
+							<td class="px-4 py-3 text-sm">
 								<a
 									href="#/collections/{transform.collection_id}/details"
 									class="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
 								>
 									{getCollectionTitle(transform.collection_id)}
 								</a>
-							</TableBodyCell>
-							<TableBodyCell class="px-4 py-3 text-sm">
+							</td>
+							<td class="px-4 py-3 text-sm">
 								<a
 									href="#/datasets/{transform.dataset_id}/details"
 									class="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
 								>
 									{getDatasetTitle(transform.dataset_id)}
 								</a>
-							</TableBodyCell>
-							<TableBodyCell class="px-4 py-3">
+							</td>
+							<td class="px-4 py-3">
 								<span
-									class={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-										transform.is_enabled
-											? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
-											: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-400'
-									}`}
+									class={transform.is_enabled
+										? 'px-2 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400'
+										: 'px-2 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-400'}
 								>
 									{transform.is_enabled ? 'Enabled' : 'Disabled'}
 								</span>
-							</TableBodyCell>
-							<TableBodyCell class="px-4 py-3 text-sm">
+							</td>
+							<td class="px-4 py-3">
 								{stats?.total_files_processed ?? '-'}
-							</TableBodyCell>
-							<TableBodyCell class="px-4 py-3 text-sm">
+							</td>
+							<td class="px-4 py-3">
 								{stats?.total_items_created ?? '-'}
-							</TableBodyCell>
-							<TableBodyCell class="px-4 py-3 text-sm">
+							</td>
+							<td class="px-4 py-3">
 								{new Date(transform.created_at).toLocaleDateString()}
-							</TableBodyCell>
-							<TableBodyCell class="px-4 py-3 text-center">
+							</td>
+							<td class="px-4 py-3 text-center">
 								<button
+									type="button"
 									onclick={() => openEditForm(transform)}
 									title="Edit"
 									class="text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-300 transition-colors"
 								>
 									✎
 								</button>
-							</TableBodyCell>
+							</td>
 						</tr>
 					{/each}
-				</TableBody>
-			</Table>
+				</tbody>
+			</table>
 		</div>
 	{/if}
 
 	<div class="mt-6 flex items-center justify-between">
-		<div class="text-sm text-gray-600 dark:text-gray-400">
-			Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, totalCount)} of
-			{totalCount} transforms
+		<div class="flex items-center">
+			<div class="text-sm text-gray-600 dark:text-gray-400">
+				Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, totalCount)} of
+				{totalCount} transforms
+			</div>
+			<div class="ml-4 flex items-center gap-2">
+				<label for="page-size" class="text-sm font-medium text-gray-700 dark:text-gray-300">
+					Per page:
+				</label>
+				<select
+					id="page-size"
+					value={pageSize}
+					onchange={(e) => handlePageSizeChange(Number(e.currentTarget.value))}
+					class="px-2 py-1 pr-8 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"
+				>
+					{#each pageSizeOptions as option (option)}
+						<option value={option}>{option}</option>
+					{/each}
+				</select>
+			</div>
 		</div>
 		<div class="flex gap-2">
 			<button
@@ -738,3 +863,12 @@
 		</div>
 	</div>
 {/if}
+
+<style>
+	:global(.collection-transforms-table :is(td, th)) {
+		word-wrap: break-word;
+		word-break: normal;
+		white-space: normal;
+		overflow-wrap: break-word;
+	}
+</style>

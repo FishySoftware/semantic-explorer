@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import ApiExamples from '../ApiExamples.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import CreateDatasetTransformModal from '../components/CreateDatasetTransformModal.svelte';
@@ -7,6 +7,7 @@
 	import TabPanel from '../components/TabPanel.svelte';
 	import TransformsList from '../components/TransformsList.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
+	import { createSSEConnection, type SSEConnection } from '../utils/sse';
 
 	interface Dataset {
 		dataset_id: number;
@@ -129,6 +130,9 @@
 	} | null>(null);
 	let transformProgressStats = $state<Record<string, any> | null>(null);
 	let transformProgressPollInterval: ReturnType<typeof setInterval> | null = null;
+
+	// SSE connection for real-time transform status updates
+	let datasetSSE: SSEConnection | null = null;
 
 	// Initialize search query from hash URL parameter early
 	function getInitialSearchQuery(): string {
@@ -596,15 +600,37 @@
 		}
 	}
 
+	function connectSSE() {
+		// Connect to dataset transforms stream (for transforms that process this dataset)
+		// Dataset transforms use source_dataset_id in their subject for filtering
+		datasetSSE = createSSEConnection({
+			url: `/api/dataset-transforms/stream?dataset_id=${datasetId}`,
+			onStatus: (data: unknown) => {
+				const status = data as { dataset_transform_id?: number };
+				if (status.dataset_transform_id) {
+					fetchDatasetTransformStats(status.dataset_transform_id);
+				}
+			},
+			onMaxRetriesReached: () => {
+				console.warn('SSE connection lost for dataset transforms');
+			},
+		});
+	}
+
 	onMount(() => {
 		fetchDataset();
 		fetchDatasetTransforms();
+		connectSSE();
 		// fetchItems will be called by the $effect watching currentPage
 
 		return () => {
 			// Cleanup polling on unmount
 			stopTransformProgressPolling();
 		};
+	});
+
+	onDestroy(() => {
+		datasetSSE?.disconnect();
 	});
 </script>
 
@@ -1287,8 +1313,11 @@
 <CreateDatasetTransformModal
 	bind:open={datasetTransformModalOpen}
 	{datasetId}
-	onSuccess={(transformId: number, transformTitle: string) => {
+	onSuccess={(transformId, transformTitle) => {
 		datasetTransformModalOpen = false;
+		// Start tracking progress for the new transform
 		handleTransformCreated(transformId, transformTitle);
+		// Switch to transforms tab to show progress
+		activeTab = 'transforms';
 	}}
 />

@@ -27,6 +27,7 @@ pub struct SortParams {
     pub sort_by: String,
     #[serde(default = "default_sort_direction")]
     pub sort_direction: String,
+    pub search: Option<String>,
 }
 
 fn default_limit() -> i64 {
@@ -62,6 +63,7 @@ fn default_pagination_limit() -> i64 {
         ("offset" = i64, Query, description = "Number of results to skip", example = 0),
         ("sort_by" = String, Query, description = "Field to sort by: title, is_enabled, last_run_status, created_at, updated_at", example = "created_at"),
         ("sort_direction" = String, Query, description = "Sort direction: asc or desc", example = "desc"),
+        ("search" = Option<String>, Query, description = "Search term to filter transforms by title"),
     ),
     responses(
         (status = 200, description = "Paginated list of visualization transforms", body = PaginatedResponse<VisualizationTransform>),
@@ -85,6 +87,7 @@ pub async fn get_visualization_transforms(
         params.offset,
         &params.sort_by,
         &params.sort_direction,
+        params.search.as_deref(),
     )
     .await
     {
@@ -809,4 +812,121 @@ pub async fn get_recent_visualizations(
             }))
         }
     }
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct VisualizationSSEStreamQuery {
+    /// Optional embedded_dataset_id to filter updates for a specific embedded dataset
+    pub embedded_dataset_id: Option<i32>,
+    /// Optional visualization_transform_id to filter updates for a specific transform
+    pub visualization_transform_id: Option<i32>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/visualization-transforms/stream",
+    tag = "Visualization Transforms",
+    params(
+        ("embedded_dataset_id" = Option<i32>, Query, description = "Optional embedded dataset ID to filter updates"),
+        ("visualization_transform_id" = Option<i32>, Query, description = "Optional visualization transform ID to filter updates"),
+    ),
+    responses(
+        (status = 200, description = "Server-Sent Events stream of visualization transform status updates", content_type = "text/event-stream"),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[get("/api/visualization-transforms/stream")]
+#[tracing::instrument(
+    name = "stream_visualization_transform_status",
+    skip(user, nats_client)
+)]
+pub async fn stream_visualization_transform_status(
+    user: AuthenticatedUser,
+    nats_client: Data<NatsClient>,
+    query: Query<VisualizationSSEStreamQuery>,
+) -> impl Responder {
+    use actix_web::http::header;
+    use futures_util::stream::StreamExt;
+    use std::time::Duration;
+    use tokio::time::interval;
+
+    let owner = user.to_string();
+    let nats = nats_client.get_ref().clone();
+    let embedded_dataset_id_filter = query.embedded_dataset_id;
+    let visualization_transform_id_filter = query.visualization_transform_id;
+
+    // Create SSE stream
+    let stream = async_stream::stream! {
+        // Subscribe to visualization transform status updates
+        // Subject format: transforms.visualization.status.{owner}.{embedded_dataset_id}.{transform_id}
+        // Use wildcards for flexible filtering at subscription level
+        let subject = match (embedded_dataset_id_filter, visualization_transform_id_filter) {
+            (Some(embedded_dataset_id), Some(transform_id)) => {
+                format!("transforms.visualization.status.{}.{}.{}", owner, embedded_dataset_id, transform_id)
+            }
+            (Some(embedded_dataset_id), None) => {
+                format!("transforms.visualization.status.{}.{}.*", owner, embedded_dataset_id)
+            }
+            (None, Some(transform_id)) => {
+                // Filter by transform_id across all embedded datasets
+                format!("transforms.visualization.status.{}.*.{}", owner, transform_id)
+            }
+            (None, None) => {
+                format!("transforms.visualization.status.{}.>", owner)
+            }
+        };
+
+        let mut subscriber = match nats.subscribe(subject.clone()).await {
+            Ok(sub) => sub,
+            Err(e) => {
+                error!("Failed to subscribe to NATS subject '{}': {}", subject, e);
+                yield Err(actix_web::error::ErrorInternalServerError(e));
+                return;
+            }
+        };
+
+        info!("SSE client connected to visualization transforms stream (subject: {})", subject);
+
+        // Send initial connection message
+        yield Ok::<_, actix_web::Error>(actix_web::web::Bytes::from("event: connected\ndata: {\"status\":\"connected\"}\n\n"));
+
+        // Heartbeat interval (30 seconds)
+        let mut heartbeat = interval(Duration::from_secs(30));
+        heartbeat.tick().await; // Skip first immediate tick
+
+        loop {
+            tokio::select! {
+                // Handle NATS messages
+                msg_result = subscriber.next() => {
+                    match msg_result {
+                        Some(msg) => {
+                            match String::from_utf8(msg.payload.to_vec()) {
+                                Ok(payload) => {
+                                    yield Ok(actix_web::web::Bytes::from(format!("event: status\ndata: {}\n\n", payload)));
+                                }
+                                Err(e) => {
+                                    error!("Failed to parse message payload: {}", e);
+                                }
+                            }
+                        }
+                        None => {
+                            // Subscription closed
+                            yield Ok(actix_web::web::Bytes::from("event: closed\ndata: {\"status\":\"subscription_closed\"}\n\n"));
+                            break;
+                        }
+                    }
+                }
+                // Send heartbeat
+                _ = heartbeat.tick() => {
+                    yield Ok(actix_web::web::Bytes::from(": heartbeat\n\n"));
+                }
+            }
+        }
+    };
+
+    HttpResponse::Ok()
+        .insert_header(header::ContentType(mime::TEXT_EVENT_STREAM))
+        .insert_header(header::CacheControl(vec![header::CacheDirective::NoCache]))
+        .insert_header(("X-Accel-Buffering", "no"))
+        .streaming(stream)
 }

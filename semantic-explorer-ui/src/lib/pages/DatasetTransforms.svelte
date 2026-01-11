@@ -1,17 +1,18 @@
 <script lang="ts">
-	import {
-		Heading,
-		Table,
-		TableBody,
-		TableBodyCell,
-		TableHead,
-		TableHeadCell,
-	} from 'flowbite-svelte';
-	import { onMount } from 'svelte';
-	import { SvelteSet } from 'svelte/reactivity';
+	import { Heading } from 'flowbite-svelte';
+	import { onDestroy, onMount } from 'svelte';
+	import { SvelteSet, SvelteURLSearchParams } from 'svelte/reactivity';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
+	import CreateDatasetTransformModal from '../components/CreateDatasetTransformModal.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
+
+	interface Props {
+		// eslint-disable-next-line no-unused-vars
+		onViewTransform?: (id: number) => void;
+	}
+
+	let { onViewTransform }: Props = $props();
 
 	interface DatasetTransform {
 		dataset_transform_id: number;
@@ -70,15 +71,18 @@
 	let sortBy = $state('created_at');
 	let sortDirection = $state('desc');
 
-	// Create/edit form state
-	let showCreateForm = $state(false);
-	let editingTransform = $state<DatasetTransform | null>(null);
-	let newTitle = $state('');
-	let newDatasetId = $state<number | null>(null);
-	let selectedEmbedderIds = $state<number[]>([]);
-	let newWipeCollection = $state(false);
-	let creating = $state(false);
-	let createError = $state<string | null>(null);
+	// Search state
+	let searchQuery = $state('');
+	let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+	// SSE connection state
+	let eventSource: EventSource | null = null;
+	let reconnectAttempts = 0;
+	let maxReconnectAttempts = 10;
+	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+	// Modal state
+	let showCreateModal = $state(false);
 
 	let transformPendingDelete = $state<DatasetTransform | null>(null);
 
@@ -142,12 +146,15 @@
 			loading = true;
 			error = null;
 			const offset = (currentPage - 1) * pageSize;
-			const params = new URLSearchParams({
+			const params = new SvelteURLSearchParams({
 				limit: pageSize.toString(),
 				offset: offset.toString(),
 				sort_by: sortBy,
 				sort_direction: sortDirection,
 			});
+			if (searchQuery.trim()) {
+				params.append('search', searchQuery.trim());
+			}
 			const response = await fetch(`/api/dataset-transforms?${params}`);
 			if (!response.ok) {
 				throw new Error(`Failed to fetch dataset transforms: ${response.statusText}`);
@@ -176,6 +183,16 @@
 		}
 		currentPage = 1;
 		fetchTransforms();
+	}
+
+	function handleSearchInput() {
+		if (searchDebounceTimer) {
+			clearTimeout(searchDebounceTimer);
+		}
+		searchDebounceTimer = setTimeout(() => {
+			currentPage = 1;
+			fetchTransforms();
+		}, 300);
 	}
 
 	function handlePageChange(newPage: number) {
@@ -226,83 +243,6 @@
 		}
 	}
 
-	async function createTransform() {
-		if (!newTitle.trim()) {
-			createError = 'Title is required';
-			return;
-		}
-		if (!newDatasetId) {
-			createError = 'Dataset is required';
-			return;
-		}
-		if (selectedEmbedderIds.length === 0) {
-			createError = 'At least one embedder is required';
-			return;
-		}
-
-		try {
-			creating = true;
-			createError = null;
-
-			const url = editingTransform
-				? `/api/dataset-transforms/${editingTransform.dataset_transform_id}`
-				: '/api/dataset-transforms';
-			const method = editingTransform ? 'PATCH' : 'POST';
-
-			const body = editingTransform
-				? {
-						title: newTitle,
-						embedder_ids: selectedEmbedderIds,
-						job_config: { wipe_collection: newWipeCollection },
-					}
-				: {
-						title: newTitle,
-						source_dataset_id: newDatasetId,
-						embedder_ids: selectedEmbedderIds,
-						wipe_collection: newWipeCollection,
-					};
-
-			const response = await fetch(url, {
-				method,
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(body),
-			});
-
-			if (!response.ok) {
-				throw new Error(
-					`Failed to ${editingTransform ? 'update' : 'create'} dataset transform: ${response.statusText}`
-				);
-			}
-
-			const responseData = await response.json();
-			const savedTransform = responseData.transform || responseData;
-
-			if (editingTransform) {
-				transforms = transforms.map((t) =>
-					t.dataset_transform_id === savedTransform.dataset_transform_id ? savedTransform : t
-				);
-				toastStore.success('Dataset transform updated successfully');
-			} else {
-				currentPage = 1;
-				await fetchTransforms();
-				toastStore.success(
-					`Dataset transform created successfully with ${selectedEmbedderIds.length} embedder(s)`
-				);
-			}
-
-			resetForm();
-		} catch (e) {
-			const message = formatError(
-				e,
-				`Failed to ${editingTransform ? 'update' : 'create'} dataset transform`
-			);
-			createError = message;
-			toastStore.error(message);
-		} finally {
-			creating = false;
-		}
-	}
-
 	async function toggleEnabled(transform: DatasetTransform, refresh = true) {
 		try {
 			const response = await fetch(`/api/dataset-transforms/${transform.dataset_transform_id}`, {
@@ -350,33 +290,6 @@
 		}
 	}
 
-	function openEditForm(transform: DatasetTransform) {
-		editingTransform = transform;
-		newTitle = transform.title;
-		newDatasetId = transform.source_dataset_id;
-		selectedEmbedderIds = [...transform.embedder_ids];
-		newWipeCollection = transform.job_config?.wipe_collection || false;
-		showCreateForm = true;
-	}
-
-	function resetForm() {
-		newTitle = '';
-		newDatasetId = null;
-		selectedEmbedderIds = [];
-		newWipeCollection = false;
-		showCreateForm = false;
-		editingTransform = null;
-		createError = null;
-	}
-
-	function toggleEmbedder(embedderId: number) {
-		if (selectedEmbedderIds.includes(embedderId)) {
-			selectedEmbedderIds = selectedEmbedderIds.filter((id) => id !== embedderId);
-		} else {
-			selectedEmbedderIds = [...selectedEmbedderIds, embedderId];
-		}
-	}
-
 	function requestDeleteTransform(transform: DatasetTransform, refresh = true) {
 		transformPendingDelete = transform;
 		(transformPendingDelete as any)._skipRefresh = !refresh;
@@ -407,8 +320,88 @@
 		}
 	}
 
+	function connectSSE() {
+		// Close existing connection
+		if (eventSource) {
+			eventSource.close();
+			eventSource = null;
+		}
+
+		try {
+			eventSource = new EventSource('/api/dataset-transforms/stream');
+
+			eventSource.addEventListener('connected', () => {
+				reconnectAttempts = 0;
+			});
+
+			eventSource.addEventListener('status', (event) => {
+				try {
+					const statusUpdate = JSON.parse(event.data);
+					// Handle status update - refresh specific transform or trigger refetch
+					if (statusUpdate.dataset_transform_id) {
+						// Refresh stats for the specific transform
+						fetchStatsForTransform(statusUpdate.dataset_transform_id);
+					}
+				} catch (e) {
+					console.error('Failed to parse SSE status event:', e);
+				}
+			});
+
+			eventSource.addEventListener('closed', () => {
+				reconnectSSE();
+			});
+
+			eventSource.onerror = () => {
+				eventSource?.close();
+				eventSource = null;
+				reconnectSSE();
+			};
+		} catch (e) {
+			console.error('Failed to connect to SSE stream:', e);
+			reconnectSSE();
+		}
+	}
+
+	function reconnectSSE() {
+		if (reconnectTimer) {
+			clearTimeout(reconnectTimer);
+		}
+
+		if (reconnectAttempts >= maxReconnectAttempts) {
+			console.error('Max SSE reconnection attempts reached');
+			return;
+		}
+
+		// Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, 64s... up to 60s max
+		const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 60000);
+		reconnectAttempts++;
+
+		reconnectTimer = setTimeout(() => {
+			connectSSE();
+		}, delay);
+	}
+
+	function disconnectSSE() {
+		if (reconnectTimer) {
+			clearTimeout(reconnectTimer);
+			reconnectTimer = null;
+		}
+		if (eventSource) {
+			eventSource.close();
+			eventSource = null;
+		}
+		reconnectAttempts = 0;
+	}
+
 	onMount(async () => {
 		await Promise.all([fetchTransforms(), fetchDatasets(), fetchEmbedders()]);
+
+		// Connect to SSE stream for real-time updates
+		connectSSE();
+	});
+
+	onDestroy(() => {
+		disconnectSSE();
 	});
 
 	function getDataset(datasetId: number) {
@@ -416,24 +409,12 @@
 	}
 
 	function getTotalPages(): number {
+		if (totalCount <= 0 || pageSize <= 0) return 1;
 		return Math.ceil(totalCount / pageSize);
-	}
-
-	function getSortIcon(field: string): string {
-		if (sortBy !== field) return '';
-		return sortDirection === 'asc' ? '▲' : '▼';
-	}
-
-	function getEmbeddersText(embedderIds: number[] | undefined): string {
-		if (!embedderIds || embedderIds.length === 0) return 'None';
-		const names = embedderIds
-			.map((id) => embedders.find((e) => e.embedder_id === id)?.name || `Embedder ${id}`)
-			.join(', ');
-		return names.length > 40 ? names.substring(0, 40) + '...' : names;
 	}
 </script>
 
-<div class="max-w-7xl mx-auto px-4">
+<div class="max-w-7xl mx-auto">
 	<PageHeader
 		title="Dataset Transforms"
 		description="Process Datasets with embedders to create Embedded Datasets. Each Dataset Transform can use multiple embedders, creating one Embedded Dataset per embedder."
@@ -442,156 +423,29 @@
 	<div class="flex justify-between items-center mb-6">
 		<Heading tag="h1" class="text-3xl font-bold">Dataset Transforms</Heading>
 		<button
-			onclick={() => {
-				if (showCreateForm) {
-					resetForm();
-				} else {
-					showCreateForm = true;
-				}
-			}}
+			onclick={() => (showCreateModal = true)}
 			class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
 		>
-			{showCreateForm ? 'Cancel' : 'Create Dataset Transform'}
+			Create Dataset Transform
 		</button>
 	</div>
 
-	{#if showCreateForm}
-		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
-			<h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-4">
-				{editingTransform ? 'Edit Dataset Transform' : 'Create New Dataset Transform'}
-			</h2>
-			<form
-				onsubmit={(e) => {
-					e.preventDefault();
-					createTransform();
-				}}
-			>
-				<div class="mb-4">
-					<label
-						for="transform-title"
-						class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-					>
-						Title
-					</label>
-					<input
-						id="transform-title"
-						type="text"
-						bind:value={newTitle}
-						class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-						placeholder="Enter transform title..."
-					/>
-				</div>
+	<CreateDatasetTransformModal
+		bind:open={showCreateModal}
+		onSuccess={() => {
+			// Redirect to embedded datasets page to monitor transform progress
+			window.location.hash = '#/embedded-datasets';
+		}}
+	/>
 
-				{#if !editingTransform}
-					<div class="mb-4">
-						<label
-							for="dataset-select"
-							class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-						>
-							Source Dataset
-						</label>
-						<select
-							id="dataset-select"
-							bind:value={newDatasetId}
-							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-						>
-							<option value={null}>Select a dataset...</option>
-							{#each datasets as dataset (dataset.dataset_id)}
-								<option value={dataset.dataset_id}>{dataset.title}</option>
-							{/each}
-						</select>
-					</div>
-				{/if}
-
-				<div class="mb-4">
-					<p class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-						Embedders (Select at least one)
-					</p>
-					<div
-						class="border border-gray-300 dark:border-gray-600 rounded-lg p-4 max-h-64 overflow-y-auto bg-white dark:bg-gray-700"
-					>
-						{#if embedders.length === 0}
-							<p class="text-sm text-gray-500 dark:text-gray-400">No embedders available.</p>
-						{:else}
-							{#each embedders as embedder (embedder.embedder_id)}
-								<label
-									class="flex items-center py-2 hover:bg-gray-50 dark:hover:bg-gray-600 px-2 rounded cursor-pointer"
-								>
-									<input
-										type="checkbox"
-										checked={selectedEmbedderIds.includes(embedder.embedder_id)}
-										onchange={() => toggleEmbedder(embedder.embedder_id)}
-										class="w-4 h-4 text-blue-600"
-									/>
-									<span class="ml-2 text-sm text-gray-900 dark:text-white">
-										{embedder.name}
-										<span class="text-gray-500 dark:text-gray-400">({embedder.provider})</span>
-									</span>
-								</label>
-							{/each}
-						{/if}
-					</div>
-					<p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-						{selectedEmbedderIds.length} embedder(s) selected
-					</p>
-				</div>
-
-				<div class="mb-4">
-					<label class="flex items-center cursor-pointer">
-						<input type="checkbox" bind:checked={newWipeCollection} class="w-4 h-4 text-blue-600" />
-						<span class="ml-2 text-sm text-gray-700 dark:text-gray-300">Wipe existing data</span>
-					</label>
-				</div>
-
-				{#if createError}
-					<div
-						class="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg"
-					>
-						<p class="text-sm text-red-600 dark:text-red-400">{createError}</p>
-					</div>
-				{/if}
-
-				<div class="flex gap-3">
-					<button
-						type="submit"
-						disabled={creating}
-						class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-					>
-						{creating
-							? editingTransform
-								? 'Updating...'
-								: 'Creating...'
-							: editingTransform
-								? 'Update'
-								: 'Create'}
-					</button>
-					<button
-						type="button"
-						onclick={resetForm}
-						class="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300"
-					>
-						Cancel
-					</button>
-				</div>
-			</form>
-		</div>
-	{/if}
-
-	<div class="mb-4 flex gap-4">
-		<div class="flex-1"></div>
-		<div class="flex gap-2 items-center">
-			<label for="page-size" class="text-sm text-gray-600 dark:text-gray-400">Per page:</label>
-			<select
-				id="page-size"
-				bind:value={pageSize}
-				onchange={(e) => handlePageSizeChange(parseInt(e.currentTarget.value))}
-				class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-			>
-				{#each pageSizeOptions as option (option)}
-					<option value={option}>{option}</option>
-				{/each}
-			</select>
-		</div>
+	<div class="mb-4">
+		<input
+			type="text"
+			bind:value={searchQuery}
+			oninput={handleSearchInput}
+			placeholder="Search dataset transforms..."
+			class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+		/>
 	</div>
 
 	{#if loading}
@@ -607,7 +461,9 @@
 	{:else if transforms.length === 0}
 		<div class="bg-gray-50 dark:bg-gray-800 rounded-lg p-8 text-center">
 			<p class="text-gray-600 dark:text-gray-400">
-				No dataset transforms yet. Create one to get started!
+				{searchQuery
+					? 'No dataset transforms found matching your search.'
+					: 'No dataset transforms yet. Create one to get started!'}
 			</p>
 		</div>
 	{:else}
@@ -644,7 +500,7 @@
 				</button>
 				<button
 					onclick={() => {
-					selected.clear();
+						selected.clear();
 						selectAll = false;
 					}}
 					class="text-sm px-3 py-1 rounded bg-gray-300 hover:bg-gray-400 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-900 dark:text-white transition-colors"
@@ -654,119 +510,159 @@
 			</div>
 		{/if}
 		<div class="overflow-x-auto">
-			<Table hoverable striped>
-				<TableHead>
-					<TableHeadCell class="px-4 py-3 w-12">
-						<input
-							type="checkbox"
-							checked={selectAll}
-							onchange={() => toggleSelectAll()}
-							class="cursor-pointer"
-						/>
-					</TableHeadCell>
-					<TableHeadCell
-						class="px-4 py-3 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700"
-						onclick={() => handleSort('title')}
-					>
-						<div class="flex items-center gap-2">
-							Title
-							{getSortIcon('title')}
-						</div>
-					</TableHeadCell>
-					<TableHeadCell class="px-4 py-3">Source Dataset</TableHeadCell>
-					<TableHeadCell class="px-4 py-3">Embedders</TableHeadCell>
-					<TableHeadCell
-						class="px-4 py-3 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700"
-						onclick={() => handleSort('is_enabled')}
-					>
-						<div class="flex items-center gap-2">
-							Status
-							{getSortIcon('is_enabled')}
-						</div>
-					</TableHeadCell>
-					<TableHeadCell class="px-4 py-3">Chunks Embedded</TableHeadCell>
-					<TableHeadCell
-						class="px-4 py-3 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700"
-						onclick={() => handleSort('created_at')}
-					>
-						<div class="flex items-center gap-2">
-							Created
-							{getSortIcon('created_at')}
-						</div>
-					</TableHeadCell>
-					<TableHeadCell class="px-4 py-3 w-12 text-center">Edit</TableHeadCell>
-				</TableHead>
-				<TableBody>
+			<table
+				class="dataset-transforms-table w-full text-sm text-left text-gray-600 dark:text-gray-400"
+			>
+				<thead class="bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
+					<tr>
+						<th class="px-4 py-3 w-12">
+							<input
+								type="checkbox"
+								checked={selectAll}
+								onchange={() => toggleSelectAll()}
+								class="cursor-pointer"
+							/>
+						</th>
+						<th class="px-4 py-3">
+							<button
+								type="button"
+								onclick={() => handleSort('title')}
+								class="flex items-center gap-1 font-semibold text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+							>
+								Title
+								{#if sortBy === 'title'}
+									{sortDirection === 'asc' ? '▲' : '▼'}
+								{/if}
+							</button>
+						</th>
+						<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Source Dataset</th>
+						<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Embedders</th>
+						<th class="px-4 py-3">
+							<button
+								type="button"
+								onclick={() => handleSort('is_enabled')}
+								class="flex items-center gap-1 font-semibold text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+							>
+								Status
+								{#if sortBy === 'is_enabled'}
+									{sortDirection === 'asc' ? '▲' : '▼'}
+								{/if}
+							</button>
+						</th>
+						<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Chunks Embedded</th>
+						<th class="px-4 py-3">
+							<button
+								type="button"
+								onclick={() => handleSort('created_at')}
+								class="flex items-center gap-1 font-semibold text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+							>
+								Created
+								{#if sortBy === 'created_at'}
+									{sortDirection === 'asc' ? '▲' : '▼'}
+								{/if}
+							</button>
+						</th>
+					</tr>
+				</thead>
+				<tbody>
 					{#each transforms as transform (transform.dataset_transform_id)}
 						{@const stats = statsMap.get(transform.dataset_transform_id)}
 						{@const dataset = getDataset(transform.source_dataset_id)}
-						<tr class="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50">
-							<TableBodyCell class="px-4 py-3 w-12">
+						<tr
+							class="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
+						>
+							<td class="px-4 py-3 w-12">
 								<input
 									type="checkbox"
 									checked={selected.has(transform.dataset_transform_id)}
 									onchange={() => toggleSelect(transform.dataset_transform_id)}
 									class="cursor-pointer"
 								/>
-							</TableBodyCell>
-							<TableBodyCell class="px-4 py-3 font-medium text-gray-900 dark:text-white">
-								{transform.title}
-							</TableBodyCell>
-							<TableBodyCell class="px-4 py-3 text-sm">
+							</td>
+							<td class="px-4 py-3 font-medium text-gray-900 dark:text-white">
+								{#if onViewTransform}
+									<button
+										onclick={() => onViewTransform(transform.dataset_transform_id)}
+										class="text-blue-600 dark:text-blue-400 hover:underline"
+									>
+										{transform.title}
+									</button>
+								{:else}
+									{transform.title}
+								{/if}
+							</td>
+							<td class="px-4 py-3 text-sm">
 								{#if dataset}
 									<a
 										href="#/datasets/{transform.source_dataset_id}/details"
-										class="text-blue-600 dark:text-blue-400 hover:underline"
+										class="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
 									>
 										{dataset.title}
 									</a>
 								{:else}
 									Dataset {transform.source_dataset_id}
 								{/if}
-							</TableBodyCell>
-							<TableBodyCell
-								class="px-4 py-3 text-sm"
-								title={getEmbeddersText(transform.embedder_ids)}
-							>
-								{getEmbeddersText(transform.embedder_ids)}
-							</TableBodyCell>
-							<TableBodyCell class="px-4 py-3">
+							</td>
+							<td class="px-4 py-3 text-sm">
+								{#if transform.embedder_ids && transform.embedder_ids.length > 0}
+									<div class="flex flex-wrap gap-1">
+										{#each transform.embedder_ids as embedderId (embedderId)}
+											{@const embedder = embedders.find((e) => e.embedder_id === embedderId)}
+											<a
+												href="#/embedders/{embedderId}/details"
+												class="inline-block text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
+											>
+												{embedder?.name || `Embedder ${embedderId}`}
+											</a>
+										{/each}
+									</div>
+								{:else}
+									<span class="text-gray-500 dark:text-gray-400">None</span>
+								{/if}
+							</td>
+							<td class="px-4 py-3">
 								<span
-									class={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-										transform.is_enabled
-											? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
-											: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-400'
-									}`}
+									class={transform.is_enabled
+										? 'px-2 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400'
+										: 'px-2 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-400'}
 								>
 									{transform.is_enabled ? 'Enabled' : 'Disabled'}
 								</span>
-							</TableBodyCell>
-							<TableBodyCell class="px-4 py-3 text-sm">
+							</td>
+							<td class="px-4 py-3">
 								{stats?.total_chunks_embedded ?? '-'}
-							</TableBodyCell>
-							<TableBodyCell class="px-4 py-3 text-sm">
+							</td>
+							<td class="px-4 py-3">
 								{new Date(transform.created_at).toLocaleDateString()}
-							</TableBodyCell>
-							<TableBodyCell class="px-4 py-3 text-center">
-								<button
-									onclick={() => openEditForm(transform)}
-									title="Edit"
-									class="text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-300 transition-colors"
-								>
-									✎
-								</button>
-							</TableBodyCell>
+							</td>
 						</tr>
 					{/each}
-				</TableBody>
-			</Table>
+				</tbody>
+			</table>
 		</div>
 	{/if}
 
 	<div class="mt-6 flex items-center justify-between">
-		<div class="text-sm text-gray-600 dark:text-gray-400">
-			Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, totalCount)} of
-			{totalCount} transforms
+		<div class="flex items-center">
+			<div class="text-sm text-gray-600 dark:text-gray-400">
+				Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, totalCount)} of
+				{totalCount} transforms
+			</div>
+			<div class="ml-4 flex items-center gap-2">
+				<label for="page-size" class="text-sm font-medium text-gray-700 dark:text-gray-300">
+					Per page:
+				</label>
+				<select
+					id="page-size"
+					value={pageSize}
+					onchange={(e) => handlePageSizeChange(Number(e.currentTarget.value))}
+					class="px-2 py-1 pr-8 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"
+				>
+					{#each pageSizeOptions as option (option)}
+						<option value={option}>{option}</option>
+					{/each}
+				</select>
+			</div>
 		</div>
 		<div class="flex gap-2">
 			<button
@@ -781,7 +677,7 @@
 					{#if page === 1 || page === getTotalPages() || (page >= currentPage - 1 && page <= currentPage + 1)}
 						<button
 							onclick={() => handlePageChange(page)}
-							class={`px-3 py-2 rounded-lg text-sm font-medium ${
+							class={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
 								currentPage === page
 									? 'bg-blue-600 text-white'
 									: 'border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
@@ -816,3 +712,12 @@
 	on:confirm={confirmDeleteTransform}
 	on:cancel={() => (transformPendingDelete = null)}
 />
+
+<style>
+	:global(.dataset-transforms-table :is(td, th)) {
+		word-wrap: break-word;
+		word-break: normal;
+		white-space: normal;
+		overflow-wrap: break-word;
+	}
+</style>

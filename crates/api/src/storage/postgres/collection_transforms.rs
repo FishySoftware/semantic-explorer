@@ -109,15 +109,25 @@ const CHECK_FILE_PROCESSED_QUERY: &str = r#"
     LIMIT 1
 "#;
 
-const COUNT_COLLECTION_TRANSFORMS_QUERY: &str = "SELECT COUNT(*) as count FROM collection_transforms WHERE owner = $1";
+const COUNT_COLLECTION_TRANSFORMS_QUERY: &str =
+    "SELECT COUNT(*) as count FROM collection_transforms WHERE owner = $1";
+const COUNT_COLLECTION_TRANSFORMS_WITH_SEARCH_QUERY: &str =
+    "SELECT COUNT(*) as count FROM collection_transforms WHERE owner = $1 AND title ILIKE $2";
 
-const GET_COLLECTION_TRANSFORMS_PAGINATED_QUERY: &str = r#"
+// Note: ORDER BY clause is built dynamically with validated identifiers
+// Column names cannot be parameterized in PostgreSQL, so we validate and use format!
+const GET_COLLECTION_TRANSFORMS_PAGINATED_BASE: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner, is_enabled,
            chunk_size, job_config, created_at, updated_at
     FROM collection_transforms
     WHERE owner = $1
-    ORDER BY {field} {direction}
-    LIMIT $2 OFFSET $3
+"#;
+
+const GET_COLLECTION_TRANSFORMS_PAGINATED_WITH_SEARCH_BASE: &str = r#"
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner, is_enabled,
+           chunk_size, job_config, created_at, updated_at
+    FROM collection_transforms
+    WHERE owner = $1 AND title ILIKE $2
 "#;
 
 // CRUD operations
@@ -141,26 +151,59 @@ pub async fn get_collection_transforms_paginated(
     offset: i64,
     sort_by: &str,
     sort_direction: &str,
+    search: Option<&str>,
 ) -> Result<PaginatedResponse<CollectionTransform>> {
+    // Validate identifiers against allowlist to prevent SQL injection
     let sort_field = validate_sort_field(sort_by)?;
     let sort_dir = validate_sort_direction(sort_direction)?;
 
-    let count_result: (i64,) = sqlx::query_as(COUNT_COLLECTION_TRANSFORMS_QUERY)
-        .bind(owner)
-        .fetch_one(pool)
-        .await?;
-    let total_count = count_result.0;
+    let (total_count, transforms) = if let Some(search_term) = search {
+        let search_pattern = format!("%{}%", search_term);
 
-    let query_str = GET_COLLECTION_TRANSFORMS_PAGINATED_QUERY
-        .replace("{field}", &sort_field)
-        .replace("{direction}", &sort_dir);
+        let count_result: (i64,) = sqlx::query_as(COUNT_COLLECTION_TRANSFORMS_WITH_SEARCH_QUERY)
+            .bind(owner)
+            .bind(&search_pattern)
+            .fetch_one(pool)
+            .await?;
+        let total = count_result.0;
 
-    let transforms = sqlx::query_as::<_, CollectionTransform>(&query_str)
-        .bind(owner)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?;
+        // Build query with validated identifiers (column names cannot be parameterized)
+        let query_str = format!(
+            "{} ORDER BY {} {} LIMIT $3 OFFSET $4",
+            GET_COLLECTION_TRANSFORMS_PAGINATED_WITH_SEARCH_BASE, sort_field, sort_dir
+        );
+
+        let items = sqlx::query_as::<_, CollectionTransform>(&query_str)
+            .bind(owner)
+            .bind(&search_pattern)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?;
+
+        (total, items)
+    } else {
+        let count_result: (i64,) = sqlx::query_as(COUNT_COLLECTION_TRANSFORMS_QUERY)
+            .bind(owner)
+            .fetch_one(pool)
+            .await?;
+        let total = count_result.0;
+
+        // Build query with validated identifiers (column names cannot be parameterized)
+        let query_str = format!(
+            "{} ORDER BY {} {} LIMIT $2 OFFSET $3",
+            GET_COLLECTION_TRANSFORMS_PAGINATED_BASE, sort_field, sort_dir
+        );
+
+        let items = sqlx::query_as::<_, CollectionTransform>(&query_str)
+            .bind(owner)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?;
+
+        (total, items)
+    };
 
     Ok(PaginatedResponse {
         items: transforms,
