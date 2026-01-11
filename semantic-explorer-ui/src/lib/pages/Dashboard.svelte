@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { formatError, toastStore } from '../utils/notifications';
-	import type { VisualizationTransform } from '../types/visualizations';
+	import type { Visualization } from '../types/visualizations';
 
 	interface Collection {
 		collection_id: number;
@@ -44,7 +44,7 @@
 	let collections = $state<Collection[]>([]);
 	let datasets = $state<Dataset[]>([]);
 	let embeddedDatasets = $state<EmbeddedDataset[]>([]);
-	let visualizations = $state<VisualizationTransform[]>([]);
+	let visualizations = $state<Visualization[]>([]);
 	let publicCollections = $state<Collection[]>([]);
 	let publicDatasets = $state<Dataset[]>([]);
 	let publicEmbedders = $state<Embedder[]>([]);
@@ -75,7 +75,7 @@
 				fetch('/api/collections'),
 				fetch('/api/datasets'),
 				fetch('/api/embedded-datasets'),
-				fetch('/api/visualization-transforms'),
+				fetch('/api/visualizations/recent?limit=5'),
 				fetch('/api/marketplace/collections/recent?limit=5'),
 				fetch('/api/marketplace/datasets/recent?limit=5'),
 				fetch('/api/marketplace/embedders/recent?limit=5'),
@@ -98,7 +98,7 @@
 			const allCollections = await collectionsRes.json();
 			const allDatasets = await datasetsRes.json();
 			const allEmbeddedDatasets = await embeddedDatasetsRes.json();
-			const allVisualizations = await visualizationsRes.json();
+			const allVisualizations: Visualization[] = await visualizationsRes.json();
 			publicCollections = await publicCollectionsRes.json();
 			publicDatasets = await publicDatasetsRes.json();
 			publicEmbedders = await publicEmbeddersRes.json();
@@ -125,12 +125,7 @@
 				)
 				.slice(0, 5);
 
-			visualizations = allVisualizations
-				.sort(
-					(a: VisualizationTransform, b: VisualizationTransform) =>
-						new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-				)
-				.slice(0, 5);
+			visualizations = allVisualizations.slice(0, 5);
 		} catch (e) {
 			const message = formatError(e, 'Failed to load dashboard data');
 			error = message;
@@ -494,33 +489,28 @@
 					<p class="text-gray-500 dark:text-gray-400 text-sm py-4">No visualizations yet</p>
 				{:else}
 					<div class="space-y-3">
-						{#each visualizations as visualization (visualization.visualization_transform_id)}
+						{#each visualizations as visualization (visualization.visualization_id)}
 							<a
-								href={`#/visualization-transforms/${visualization.visualization_transform_id}/details`}
+								href={`#/visualizations/${visualization.visualization_transform_id}/details`}
 								class="block p-3 bg-gray-50 dark:bg-gray-900 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
 							>
 								<div class="flex justify-between items-start">
 									<div class="flex-1">
 										<h3 class="font-medium text-gray-900 dark:text-white">
-											{visualization.title}
+											Visualization #{visualization.visualization_id}
 										</h3>
 										<div class="flex items-center gap-2 mt-1">
 											<span
-												class="text-xs px-2 py-0.5 rounded {visualization.is_enabled
+												class="text-xs px-2 py-0.5 rounded {visualization.status === 'completed'
 													? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
-													: 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'}"
+													: 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300'}"
 											>
-												{visualization.is_enabled ? 'Enabled' : 'Disabled'}
+												{visualization.status}
 											</span>
-											{#if visualization.last_run_status}
-												<span class="text-xs text-gray-500 dark:text-gray-400">
-													{visualization.last_run_status}
-												</span>
-											{/if}
 										</div>
 									</div>
 									<span class="text-xs text-gray-500 dark:text-gray-400 ml-2">
-										{formatDate(visualization.updated_at)}
+										{formatDate(visualization.created_at)}
 									</span>
 								</div>
 							</a>

@@ -2,8 +2,8 @@ use crate::auth::extract_username;
 use crate::errors::{bad_request, not_found};
 use crate::storage::postgres::{embedded_datasets, llms, visualization_transforms};
 use crate::transforms::visualization::models::{
-    CreateVisualizationTransform, UpdateVisualizationTransform, VisualizationTransform,
-    VisualizationTransformRun, VisualizationTransformStats,
+    CreateVisualizationTransform, UpdateVisualizationTransform, Visualization,
+    VisualizationTransform, VisualizationTransformStats,
 };
 use crate::transforms::visualization::scanner::trigger_visualization_transform_scan;
 
@@ -170,6 +170,8 @@ pub async fn create_visualization_transform(
         "min_cluster_size": body.min_cluster_size,
         "min_samples": body.min_samples,
         "topic_naming_llm_id": body.llm_id,
+        "llm_batch_size": body.llm_batch_size,
+        "samples_per_cluster": body.samples_per_cluster,
         // Datamapplot visualization parameters
         "min_fontsize": body.min_fontsize,
         "max_fontsize": body.max_fontsize,
@@ -441,43 +443,43 @@ pub async fn get_visualization_transform_stats(
         }
     }
 
-    // Get latest run
-    let latest_run =
-        match visualization_transforms::get_latest_visualization_run(&postgres_pool, id).await {
-            Ok(run) => run,
+    // Get latest visualization
+    let latest_visualization =
+        match visualization_transforms::get_latest_visualization(&postgres_pool, id).await {
+            Ok(visualization) => visualization,
             Err(e) => {
-                error!("Failed to fetch latest run: {}", e);
+                error!("Failed to fetch latest visualization: {}", e);
                 return HttpResponse::InternalServerError().json(serde_json::json!({
-                    "error": format!("Failed to fetch latest run: {}", e)
+                    "error": format!("Failed to fetch latest visualization: {}", e)
                 }));
             }
         };
 
-    // Get run counts
-    let all_runs = match visualization_transforms::list_visualization_runs(
-        &postgres_pool,
-        id,
-        1000,
-        0,
-    )
-    .await
-    {
-        Ok(runs) => runs,
-        Err(e) => {
-            error!("Failed to fetch runs: {}", e);
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": format!("Failed to fetch runs: {}", e)
-            }));
-        }
-    };
+    // Get visualization counts
+    let all_visualizations =
+        match visualization_transforms::list_visualizations(&postgres_pool, id, 1000, 0).await {
+            Ok(visualizations) => visualizations,
+            Err(e) => {
+                error!("Failed to fetch visualizations: {}", e);
+                return HttpResponse::InternalServerError().json(serde_json::json!({
+                    "error": format!("Failed to fetch visualizations: {}", e)
+                }));
+            }
+        };
 
-    let total_runs = all_runs.len() as i64;
-    let successful_runs = all_runs.iter().filter(|r| r.status == "completed").count() as i64;
-    let failed_runs = all_runs.iter().filter(|r| r.status == "failed").count() as i64;
+    let total_runs = all_visualizations.len() as i64;
+    let successful_runs = all_visualizations
+        .iter()
+        .filter(|v| v.status == "completed")
+        .count() as i64;
+    let failed_runs = all_visualizations
+        .iter()
+        .filter(|v| v.status == "failed")
+        .count() as i64;
 
     let stats = VisualizationTransformStats {
         visualization_transform_id: id,
-        latest_run,
+        latest_visualization,
         total_runs,
         successful_runs,
         failed_runs,
@@ -488,22 +490,22 @@ pub async fn get_visualization_transform_stats(
 
 #[utoipa::path(
     get,
-    path = "/api/visualization-transforms/{id}/runs",
+    path = "/api/visualization-transforms/{id}/visualizations",
     tag = "Visualization Transforms",
     params(
         ("id" = i32, Path, description = "Visualization Transform ID"),
-        ("limit" = Option<i64>, Query, description = "Number of runs to return"),
-        ("offset" = Option<i64>, Query, description = "Number of runs to skip"),
+        ("limit" = Option<i64>, Query, description = "Number of visualizations to return"),
+        ("offset" = Option<i64>, Query, description = "Number of visualizations to skip"),
     ),
     responses(
-        (status = 200, description = "List of visualization runs", body = Vec<VisualizationTransformRun>),
+        (status = 200, description = "List of visualizations", body = Vec<Visualization>),
         (status = 404, description = "Visualization transform not found"),
         (status = 401, description = "Unauthorized"),
     ),
 )]
-#[get("/api/visualization-transforms/{id}/runs")]
-#[tracing::instrument(name = "get_visualization_runs", skip(auth, postgres_pool), fields(visualization_transform_id = %path.as_ref()))]
-pub async fn get_visualization_runs(
+#[get("/api/visualization-transforms/{id}/visualizations")]
+#[tracing::instrument(name = "get_visualizations", skip(auth, postgres_pool), fields(visualization_transform_id = %path.as_ref()))]
+pub async fn get_visualizations(
     auth: Authenticated,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<i32>,
@@ -532,7 +534,7 @@ pub async fn get_visualization_runs(
         }
     }
 
-    match visualization_transforms::list_visualization_runs(
+    match visualization_transforms::list_visualizations(
         &postgres_pool,
         id,
         pagination.limit,
@@ -540,11 +542,11 @@ pub async fn get_visualization_runs(
     )
     .await
     {
-        Ok(runs) => HttpResponse::Ok().json(runs),
+        Ok(visualizations) => HttpResponse::Ok().json(visualizations),
         Err(e) => {
-            error!("Failed to fetch visualization runs: {}", e);
+            error!("Failed to fetch visualizations: {}", e);
             HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": format!("Failed to fetch visualization runs: {}", e)
+                "error": format!("Failed to fetch visualizations: {}", e)
             }))
         }
     }
@@ -552,21 +554,21 @@ pub async fn get_visualization_runs(
 
 #[utoipa::path(
     get,
-    path = "/api/visualization-transforms/{id}/runs/{run_id}",
+    path = "/api/visualization-transforms/{id}/visualizations/{visualization_id}",
     tag = "Visualization Transforms",
     params(
         ("id" = i32, Path, description = "Visualization Transform ID"),
-        ("run_id" = i32, Path, description = "Run ID"),
+        ("visualization_id" = i32, Path, description = "Visualization ID"),
     ),
     responses(
-        (status = 200, description = "Visualization run details", body = VisualizationTransformRun),
-        (status = 404, description = "Visualization run not found"),
+        (status = 200, description = "Visualization details", body = Visualization),
+        (status = 404, description = "Visualization not found"),
         (status = 401, description = "Unauthorized"),
     ),
 )]
-#[get("/api/visualization-transforms/{id}/runs/{run_id}")]
-#[tracing::instrument(name = "get_visualization_run", skip(auth, postgres_pool), fields(visualization_transform_id = %path.0, run_id = %path.1))]
-pub async fn get_visualization_run(
+#[get("/api/visualization-transforms/{id}/visualizations/{visualization_id}")]
+#[tracing::instrument(name = "get_visualization", skip(auth, postgres_pool), fields(visualization_transform_id = %path.0, visualization_id = %path.1))]
+pub async fn get_visualization(
     auth: Authenticated,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<(i32, i32)>,
@@ -576,29 +578,26 @@ pub async fn get_visualization_run(
         Err(e) => return e,
     };
 
-    let (transform_id, run_id) = path.into_inner();
+    let (transform_id, visualization_id) = path.into_inner();
 
-    // Get run with owner check - ensures the run belongs to a transform owned by the user
-    match visualization_transforms::get_visualization_run_with_owner(
+    // Get visualization with owner check - ensures the visualization belongs to a transform owned by the user
+    match visualization_transforms::get_visualization_with_owner(
         &postgres_pool,
-        run_id,
+        visualization_id,
         &username,
     )
     .await
     {
-        Ok(run) => {
-            // Verify the run belongs to the specified transform
-            if run.visualization_transform_id != transform_id {
-                return not_found("Visualization run not found for this transform".to_string());
+        Ok(visualization) => {
+            // Verify the visualization belongs to the specified transform
+            if visualization.visualization_transform_id != transform_id {
+                return not_found("Visualization not found for this transform".to_string());
             }
-            HttpResponse::Ok().json(run)
+            HttpResponse::Ok().json(visualization)
         }
         Err(e) => {
-            error!(
-                "Failed to fetch visualization run for user {}: {}",
-                username, e
-            );
-            not_found("Visualization run not found".to_string())
+            error!("Failed to fetch visualization for user {}: {}", username, e);
+            not_found("Visualization not found".to_string())
         }
     }
 }
@@ -666,20 +665,20 @@ pub async fn get_visualizations_by_dataset(
 
 #[utoipa::path(
     get,
-    path = "/api/visualization-transforms/{id}/runs/{run_id}/download",
+    path = "/api/visualization-transforms/{id}/visualizations/{visualization_id}/download",
     tag = "Visualization Transforms",
     params(
         ("id" = i32, Path, description = "Visualization Transform ID"),
-        ("run_id" = i32, Path, description = "Run ID"),
+        ("visualization_id" = i32, Path, description = "Visualization ID"),
     ),
     responses(
         (status = 200, description = "HTML file download", content_type = "text/html"),
-        (status = 404, description = "Visualization run not found or no HTML file available"),
+        (status = 404, description = "Visualization not found or no HTML file available"),
         (status = 401, description = "Unauthorized"),
     ),
 )]
-#[get("/api/visualization-transforms/{id}/runs/{run_id}/download")]
-#[tracing::instrument(name = "download_visualization_html", skip(auth, postgres_pool, s3_client), fields(visualization_transform_id = %path.0, run_id = %path.1))]
+#[get("/api/visualization-transforms/{id}/visualizations/{visualization_id}/download")]
+#[tracing::instrument(name = "download_visualization_html", skip(auth, postgres_pool, s3_client), fields(visualization_transform_id = %path.0, visualization_id = %path.1))]
 pub async fn download_visualization_html(
     auth: Authenticated,
     postgres_pool: Data<Pool<Postgres>>,
@@ -691,56 +690,45 @@ pub async fn download_visualization_html(
         Err(e) => return e,
     };
 
-    let (transform_id, run_id) = path.into_inner();
+    let (transform_id, visualization_id) = path.into_inner();
 
-    // Get run with owner check - this verifies both the run exists and belongs to the user's transform
-    let run = match visualization_transforms::get_visualization_run_with_owner(
+    // Get visualization with owner check - this verifies both the visualization exists and belongs to the user's transform
+    let visualization = match visualization_transforms::get_visualization_with_owner(
         &postgres_pool,
-        run_id,
+        visualization_id,
         &username,
     )
     .await
     {
-        Ok(run) => {
-            // Verify the run belongs to the specified transform
-            if run.visualization_transform_id != transform_id {
-                return not_found("Visualization run not found for this transform".to_string());
+        Ok(visualization) => {
+            // Verify the visualization belongs to the specified transform
+            if visualization.visualization_transform_id != transform_id {
+                return not_found("Visualization not found for this transform".to_string());
             }
-            run
+            visualization
         }
         Err(e) => {
-            error!(
-                "Failed to fetch visualization run for user {}: {}",
-                username, e
-            );
-            return not_found("Visualization run not found".to_string());
+            error!("Failed to fetch visualization for user {}: {}", username, e);
+            return not_found("Visualization not found".to_string());
         }
     };
 
     // Check if HTML file exists
-    let html_s3_key = match run.html_s3_key {
+    let html_s3_key = match visualization.html_s3_key {
         Some(key) => key,
         None => {
-            return not_found("No HTML file available for this visualization run".to_string());
+            return not_found("No HTML file available for this visualization".to_string());
         }
     };
 
-    // Get the bucket from environment
-    let bucket = match std::env::var("AWS_S3_BUCKET") {
-        Ok(bucket) => bucket,
-        Err(_) => {
-            error!("AWS_S3_BUCKET environment variable not set");
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": "Storage configuration error"
-            }));
-        }
-    };
+    // Bucket name is derived from transform ID (same pattern as Python worker)
+    let bucket = format!("visualizations-{}", transform_id);
 
     // Download the file from S3
     match crate::storage::rustfs::get_file_with_size_check(&s3_client, &bucket, &html_s3_key).await
     {
         Ok(file_data) => {
-            let filename = format!("visualization-{}-{}.html", transform_id, run_id);
+            let filename = format!("visualization-{}-{}.html", transform_id, visualization_id);
             HttpResponse::Ok()
                 .content_type("text/html")
                 .insert_header((
@@ -759,6 +747,44 @@ pub async fn download_visualization_html(
                     "error": format!("Failed to download HTML file: {}", e)
                 }))
             }
+        }
+    }
+}
+#[utoipa::path(
+    get,
+    path = "/api/visualizations/recent",
+    tag = "Visualizations",
+    params(
+        ("limit" = Option<i64>, Query, description = "Maximum number of visualizations to return (default: 5)")
+    ),
+    responses(
+        (status = 200, description = "List of recent visualizations", body = Vec<Visualization>),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[get("/api/visualizations/recent")]
+#[tracing::instrument(name = "get_recent_visualizations", skip(auth, postgres_pool))]
+pub async fn get_recent_visualizations(
+    auth: Authenticated,
+    postgres_pool: Data<Pool<Postgres>>,
+    query: Query<PaginationParams>,
+) -> impl Responder {
+    let username = match extract_username(&auth) {
+        Ok(username) => username,
+        Err(e) => return e,
+    };
+
+    let limit = query.limit.clamp(1, 100);
+
+    match visualization_transforms::get_recent_visualizations(&postgres_pool, &username, limit)
+        .await
+    {
+        Ok(visualizations) => HttpResponse::Ok().json(visualizations),
+        Err(e) => {
+            error!("Failed to fetch recent visualizations: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to fetch recent visualizations: {}", e)
+            }))
         }
     }
 }

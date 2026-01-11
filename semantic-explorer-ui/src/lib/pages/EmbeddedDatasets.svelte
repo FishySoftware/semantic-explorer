@@ -374,7 +374,7 @@
 					{#each filteredDatasets as dataset (dataset.embedded_dataset_id)}
 						{@const stats = statsMap.get(dataset.embedded_dataset_id)}
 						<tr class="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50">
-							<TableBodyCell class="px-4 py-3">
+							<TableBodyCell class="px-4 py-3 wrap-break-word whitespace-normal">
 								<button
 									onclick={() =>
 										onNavigate(`/embedded-datasets/${dataset.embedded_dataset_id}/details`)}
@@ -383,7 +383,7 @@
 									{dataset.title}
 								</button>
 							</TableBodyCell>
-							<TableBodyCell class="px-4 py-3">
+							<TableBodyCell class="px-4 py-3 wrap-break-word whitespace-normal">
 								{#if dataset.source_dataset_title}
 									<button
 										onclick={() => onViewDataset(dataset.source_dataset_id)}
@@ -395,7 +395,7 @@
 									<span class="text-gray-500 dark:text-gray-400">Loading...</span>
 								{/if}
 							</TableBodyCell>
-							<TableBodyCell class="px-4 py-3">
+							<TableBodyCell class="px-4 py-3 wrap-break-word whitespace-normal">
 								{#if dataset.embedder_name}
 									<button
 										onclick={() => onNavigate(`/embedders/${dataset.embedder_id}/details`)}

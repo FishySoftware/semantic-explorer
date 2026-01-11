@@ -5,6 +5,7 @@ Handles UMAP dimensionality reduction, HDBSCAN clustering, and datamapplot
 interactive visualization generation.
 """
 
+import asyncio
 import logging
 import time
 import tempfile
@@ -63,7 +64,10 @@ class VisualizationProcessor:
         return url
 
     async def process_job(
-        self, job: VisualizationTransformJob, llm_provider: Optional[LLMProvider] = None
+        self,
+        job: VisualizationTransformJob,
+        llm_provider: Optional[LLMProvider] = None,
+        progress_callback=None,
     ) -> Dict[str, Any]:
         """
         Process visualization job end-to-end.
@@ -71,6 +75,7 @@ class VisualizationProcessor:
         Args:
             job: Visualization transform job
             llm_provider: Optional LLM provider for topic naming
+            progress_callback: Optional async callback(stage: str, progress: int) for progress updates
 
         Returns:
             Dictionary with keys:
@@ -86,39 +91,61 @@ class VisualizationProcessor:
             f"Starting visualization processing for transform {job.visualization_transform_id}"
         )
 
-        # Fetch vectors from Qdrant
-        logger.info(f"Fetching vectors from Qdrant collection: {job.qdrant_collection_name}")
+        # Fetch vectors from Qdrant (0-20%)
+        if progress_callback:
+            await progress_callback("fetching_vectors", 5)
+        logger.info(
+            f"Fetching vectors from Qdrant collection: {job.qdrant_collection_name}"
+        )
         vectors, _ids, texts = await self._fetch_vectors_from_qdrant(
             job.qdrant_collection_name, job.owner
         )
+        if progress_callback:
+            await progress_callback("fetching_vectors", 20)
 
         logger.info(f"Fetched {len(vectors)} vectors")
 
-        # Apply UMAP dimensionality reduction
+        # Apply UMAP dimensionality reduction (20-50%)
+        if progress_callback:
+            await progress_callback("applying_umap", 25)
         logger.info(
             f"Applying UMAP: n_neighbors={job.visualization_config.n_neighbors}, "
             f"min_dist={job.visualization_config.min_dist}, "
             f"metric={job.visualization_config.metric}"
         )
         umap_vectors = await self._apply_umap(vectors, job)
+        if progress_callback:
+            await progress_callback("applying_umap", 50)
 
-        # Apply HDBSCAN clustering
+        # Apply HDBSCAN clustering (50-70%)
+        if progress_callback:
+            await progress_callback("clustering", 55)
         logger.info(
             f"Applying HDBSCAN: min_cluster_size={job.visualization_config.min_cluster_size}, "
             f"min_samples={job.visualization_config.min_samples}"
         )
         labels = await self._apply_hdbscan(umap_vectors, job)
+        if progress_callback:
+            await progress_callback("clustering", 70)
 
-        # Generate cluster labels/names
+        # Generate cluster labels/names (70-85%)
+        if progress_callback:
+            await progress_callback("naming_clusters", 72)
         cluster_labels = await self._generate_cluster_labels(
             labels, texts, job, llm_provider
         )
+        if progress_callback:
+            await progress_callback("naming_clusters", 85)
 
-        # Generate interactive visualization
+        # Generate interactive visualization (85-100%)
+        if progress_callback:
+            await progress_callback("generating_html", 88)
         logger.info("Generating interactive visualization with datamapplot")
         html_content = await self._generate_visualization(
             umap_vectors, labels, cluster_labels, texts, job.visualization_config
         )
+        if progress_callback:
+            await progress_callback("generating_html", 100)
 
         # Prepare result
         unique_clusters = len(set(labels[labels >= 0]))  # Exclude noise points (-1)
@@ -189,9 +216,11 @@ class VisualizationProcessor:
                 if not points:
                     logger.debug(f"Scroll complete: no points returned")
                     break
-                
+
                 batches += 1
-                logger.debug(f"Fetched batch {batches}: {len(points)} points, next offset: {offset}")
+                logger.debug(
+                    f"Fetched batch {batches}: {len(points)} points, next offset: {offset}"
+                )
 
                 for point in points:
                     vectors.append(point.vector)
@@ -209,31 +238,35 @@ class VisualizationProcessor:
                         else:
                             hover_text = text
                     texts.append(hover_text)
-                
+
                 # Check if there are more pages (offset is None means this was the last page)
                 if offset is None:
-                    logger.debug(f"Scroll complete: offset is None (last page processed)")
+                    logger.debug(
+                        f"Scroll complete: offset is None (last page processed)"
+                    )
                     break
-                
+
                 # Prevent infinite loops if offset isn't changing
                 if offset == prev_offset:
-                    logger.warning(f"Offset not advancing: {offset}. Breaking to prevent infinite loop.")
+                    logger.warning(
+                        f"Offset not advancing: {offset}. Breaking to prevent infinite loop."
+                    )
                     break
-                
+
                 prev_offset = offset
 
             # Convert to numpy array
             vectors_array = np.array(vectors, dtype=np.float32)
 
             fetch_elapsed = time.time() - fetch_start
-            
+
             # Validate we fetched the expected number of points
             if len(vectors) != point_count:
                 logger.warning(
                     f"Point count mismatch: expected {point_count}, fetched {len(vectors)}. "
                     f"This may indicate incomplete data retrieval."
                 )
-            
+
             logger.info(
                 f"Fetched {len(vectors)} vectors from {collection_name} for owner {owner} "
                 f"in {fetch_elapsed:.3f}s ({batches} batches, expected {point_count})"
@@ -244,7 +277,7 @@ class VisualizationProcessor:
             fetch_elapsed = time.time() - fetch_start
             logger.error(
                 f"Failed to fetch vectors from Qdrant in {fetch_elapsed:.3f}s: {type(e).__name__}: {e}",
-                exc_info=True
+                exc_info=True,
             )
             raise
 
@@ -275,14 +308,19 @@ class VisualizationProcessor:
             logger.debug("Running UMAP fit_transform...")
             reduced = umap.fit_transform(vectors)
             reduced_array: np.ndarray = np.asarray(reduced, dtype=np.float32)  # type: ignore
-            
+
             umap_elapsed = time.time() - umap_start
-            logger.info(f"UMAP complete in {umap_elapsed:.3f}s: {vectors.shape} -> {reduced_array.shape}")
+            logger.info(
+                f"UMAP complete in {umap_elapsed:.3f}s: {vectors.shape} -> {reduced_array.shape}"
+            )
             return reduced_array
 
         except Exception as e:
             umap_elapsed = time.time() - umap_start
-            logger.error(f"UMAP processing failed in {umap_elapsed:.3f}s: {type(e).__name__}: {e}", exc_info=True)
+            logger.error(
+                f"UMAP processing failed in {umap_elapsed:.3f}s: {type(e).__name__}: {e}",
+                exc_info=True,
+            )
             raise
 
     async def _apply_hdbscan(
@@ -320,7 +358,10 @@ class VisualizationProcessor:
 
         except Exception as e:
             hdbscan_elapsed = time.time() - hdbscan_start
-            logger.error(f"HDBSCAN clustering failed in {hdbscan_elapsed:.3f}s: {type(e).__name__}: {e}", exc_info=True)
+            logger.error(
+                f"HDBSCAN clustering failed in {hdbscan_elapsed:.3f}s: {type(e).__name__}: {e}",
+                exc_info=True,
+            )
             raise
 
     async def _generate_cluster_labels(
@@ -336,6 +377,8 @@ class VisualizationProcessor:
         If LLM config is provided and llm_provider available, use LLM naming.
         Otherwise, use simple numeric labels.
 
+        Note: Cluster -1 (noise) is intentionally excluded from labeling.
+
         Args:
             labels: Cluster labels from HDBSCAN
             texts: Associated text for each point
@@ -343,22 +386,26 @@ class VisualizationProcessor:
             llm_provider: Optional LLM provider
 
         Returns:
-            Dictionary mapping cluster ID to label
+            Dictionary mapping cluster ID to label (excludes cluster -1)
         """
         label_start = time.time()
         try:
             cluster_labels = {}
-            unique_clusters = sorted([l for l in set(labels[labels >= 0])])
-            logger.debug(f"Generating labels for {len(unique_clusters)} clusters")
+            # Filter out cluster -1 (noise points) - they should not have labels
+            unique_clusters = sorted([l for l in set(labels) if l >= 0])
+            logger.debug(
+                f"Generating labels for {len(unique_clusters)} clusters (excluding noise cluster -1)"
+            )
 
             # Check if we should use LLM naming
             use_llm = (
                 llm_provider is not None
                 and job.llm_config is not None
                 and job.llm_config.api_key  # Will be falsy if empty string or None
-                and len(job.llm_config.api_key.strip()) > 0  # Check for non-empty after stripping
+                and len(job.llm_config.api_key.strip())
+                > 0  # Check for non-empty after stripping
             )
-            
+
             # Debug logging for LLM config
             if job.llm_config:
                 logger.debug(
@@ -368,7 +415,7 @@ class VisualizationProcessor:
                 )
             else:
                 logger.debug("No LLM config in job")
-            
+
             if llm_provider is None:
                 logger.debug("LLM provider not initialized")
 
@@ -376,39 +423,78 @@ class VisualizationProcessor:
                 # Type guard: at this point, both should not be None
                 assert llm_provider is not None, "llm_provider should not be None"
                 assert job.llm_config is not None, "job.llm_config should not be None"
-                
+
                 logger.info(
                     f"Generating cluster labels using LLM: "
-                    f"{job.llm_config.provider}/{job.llm_config.model}"
+                    f"{job.llm_config.provider}/{job.llm_config.model} "
+                    f"(batch_size={job.visualization_config.llm_batch_size}, "
+                    f"samples_per_cluster={job.visualization_config.samples_per_cluster})"
                 )
 
-                for cluster_idx, cluster_id in enumerate(unique_clusters, 1):
-                    cluster_indices = np.where(labels == cluster_id)[0]
-                    cluster_texts = [texts[i] for i in cluster_indices if texts[i]]
+                # Process clusters in batches for efficiency
+                batch_size = max(1, min(100, job.visualization_config.llm_batch_size))
+                samples_per_cluster = max(
+                    1, min(100, job.visualization_config.samples_per_cluster)
+                )
 
-                    if not cluster_texts:
-                        # Empty cluster - use numeric label
-                        cluster_labels[cluster_id] = f"Cluster {cluster_id}"
-                        logger.debug(f"Cluster {cluster_id}: no texts, using numeric label")
-                        continue
+                for batch_start in range(0, len(unique_clusters), batch_size):
+                    batch_end = min(batch_start + batch_size, len(unique_clusters))
+                    batch_clusters = unique_clusters[batch_start:batch_end]
 
-                    # Sample texts (up to 5, matching SAMPLE pattern)
-                    sample_texts = cluster_texts[:5]
+                    logger.debug(
+                        f"Processing cluster batch {batch_start//batch_size + 1}: "
+                        f"clusters {batch_start+1}-{batch_end} of {len(unique_clusters)}"
+                    )
 
-                    try:
-                        llm_start = time.time()
-                        label = await llm_provider.generate_topic_name(
-                            sample_texts, job.llm_config
+                    # Create tasks for parallel LLM requests
+                    tasks = []
+                    for cluster_id in batch_clusters:
+                        cluster_indices = np.where(labels == cluster_id)[0]
+                        cluster_texts = [texts[i] for i in cluster_indices if texts[i]]
+
+                        if not cluster_texts:
+                            # Empty cluster - use numeric label
+                            cluster_labels[cluster_id] = f"Cluster {cluster_id}"
+                            logger.debug(
+                                f"Cluster {cluster_id}: no texts, using numeric label"
+                            )
+                            continue
+
+                        # Sample texts based on configuration
+                        sample_texts = cluster_texts[:samples_per_cluster]
+                        tasks.append(
+                            (
+                                cluster_id,
+                                llm_provider.generate_topic_name(
+                                    sample_texts, job.llm_config
+                                ),
+                            )
                         )
-                        llm_elapsed = time.time() - llm_start
-                        cluster_labels[cluster_id] = label
-                        logger.info(f"Cluster {cluster_id} ({cluster_idx}/{len(unique_clusters)}) -> '{label}' ({llm_elapsed:.3f}s)")
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to generate label for cluster {cluster_id}: {type(e).__name__}: {e}, "
-                            f"using numeric fallback"
+
+                    # Execute batch in parallel
+                    if tasks:
+                        batch_start_time = time.time()
+                        results = await asyncio.gather(
+                            *[task for _, task in tasks], return_exceptions=True
                         )
-                        cluster_labels[cluster_id] = f"Cluster {cluster_id}"
+                        batch_elapsed = time.time() - batch_start_time
+
+                        # Process results
+                        for (cluster_id, _), result in zip(tasks, results):
+                            if isinstance(result, Exception):
+                                logger.warning(
+                                    f"Failed to generate label for cluster {cluster_id}: {type(result).__name__}: {result}, "
+                                    f"using numeric fallback"
+                                )
+                                cluster_labels[cluster_id] = f"Cluster {cluster_id}"
+                            else:
+                                cluster_labels[cluster_id] = result
+                                logger.debug(f"Cluster {cluster_id} -> '{result}'")
+
+                        logger.info(
+                            f"Batch {batch_start//batch_size + 1} complete: {len(tasks)} clusters in {batch_elapsed:.3f}s "
+                            f"({batch_elapsed/len(tasks):.3f}s per cluster)"
+                        )
             else:
                 # Use simple numeric labels
                 if job.llm_config:
@@ -424,14 +510,16 @@ class VisualizationProcessor:
                     cluster_labels[cluster_id] = f"Cluster {cluster_id}"
 
             label_elapsed = time.time() - label_start
-            logger.info(f"Generated labels for {len(cluster_labels)} clusters in {label_elapsed:.3f}s")
+            logger.info(
+                f"Generated labels for {len(cluster_labels)} clusters in {label_elapsed:.3f}s"
+            )
             return cluster_labels
 
         except Exception as e:
             label_elapsed = time.time() - label_start
             logger.error(
                 f"Cluster label generation failed in {label_elapsed:.3f}s: {type(e).__name__}: {e}",
-                exc_info=True
+                exc_info=True,
             )
             raise
 
@@ -460,7 +548,10 @@ class VisualizationProcessor:
         try:
             # Create data for visualization
             logger.debug(f"Preparing label names for {len(labels)} points")
-            label_names = [cluster_labels.get(int(label), f"Cluster {label}") for label in labels]
+            label_names = [
+                config.noise_label if int(label) == -1 else cluster_labels.get(int(label), f"Cluster {label}") 
+                for label in labels
+            ]
 
             # Build kwargs for create_interactive_plot
             plot_kwargs = {
@@ -481,7 +572,6 @@ class VisualizationProcessor:
                 "polygon_alpha": config.polygon_alpha,
                 "cvd_safer": config.cvd_safer,
                 "enable_topic_tree": config.enable_topic_tree,
-                
                 # render_html parameters (passed through **render_html_kwds)
                 "title_font_size": config.title_font_size,
                 "sub_title_font_size": config.sub_title_font_size,
@@ -507,7 +597,7 @@ class VisualizationProcessor:
                 "cluster_boundary_line_width": config.cluster_boundary_line_width,
                 "initial_zoom_fraction": config.initial_zoom_fraction,
             }
-            
+
             # Add optional parameters if they're set
             if config.title is not None:
                 plot_kwargs["title"] = config.title
@@ -521,7 +611,7 @@ class VisualizationProcessor:
                 plot_kwargs["background_color"] = config.background_color
             if config.background_image is not None:
                 plot_kwargs["background_image"] = config.background_image
-            
+
             # Generate interactive HTML map with all configurable parameters
             plot_start = time.time()
             logger.debug("Calling datamapplot.create_interactive_plot...")
@@ -529,7 +619,7 @@ class VisualizationProcessor:
                 vectors,
                 np.array(label_names),
                 hover_text=texts if texts else None,
-                **plot_kwargs
+                **plot_kwargs,
             )
             plot_elapsed = time.time() - plot_start
             logger.debug(f"datamapplot plot creation completed in {plot_elapsed:.3f}s")
@@ -537,29 +627,31 @@ class VisualizationProcessor:
             # Convert the interactive figure to HTML string using temporary file
             html_start = time.time()
             logger.debug("Converting figure to HTML...")
-            
+
             # Create a temporary file to save the HTML
-            with tempfile.NamedTemporaryFile(mode='w+', suffix='.html', delete=False, encoding='utf-8') as tmp_file:
+            with tempfile.NamedTemporaryFile(
+                mode="w+", suffix=".html", delete=False, encoding="utf-8"
+            ) as tmp_file:
                 tmp_path = tmp_file.name
-            
+
             try:
                 # Save the figure to the temporary file
                 fig.save(tmp_path)
-                
+
                 # Read the HTML content
-                with open(tmp_path, 'r', encoding='utf-8') as f:
+                with open(tmp_path, "r", encoding="utf-8") as f:
                     html_content = f.read()
             finally:
                 # Clean up the temporary file
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
-            
+
             html_elapsed = time.time() - html_start
-            
+
             if html_content is None or len(html_content) == 0:
                 logger.error("Failed to generate HTML from interactive figure")
                 raise RuntimeError("Failed to generate HTML from interactive figure")
-            
+
             viz_elapsed = time.time() - viz_start
             logger.info(
                 f"Generated interactive visualization in {viz_elapsed:.3f}s "
@@ -571,13 +663,15 @@ class VisualizationProcessor:
             viz_elapsed = time.time() - viz_start
             logger.error(
                 f"Visualization generation failed in {viz_elapsed:.3f}s: {type(e).__name__}: {e}",
-                exc_info=True
+                exc_info=True,
             )
             raise
 
 
 async def process_visualization_job(
-    job: VisualizationTransformJob, llm_provider: Optional[LLMProvider] = None
+    job: VisualizationTransformJob,
+    llm_provider: Optional[LLMProvider] = None,
+    progress_callback=None,
 ) -> Dict[str, Any]:
     """
     Process a visualization transform job.
@@ -587,9 +681,10 @@ async def process_visualization_job(
     Args:
         job: Visualization transform job from NATS
         llm_provider: Optional LLM provider for topic naming
+        progress_callback: Optional async callback(stage: str, progress: int) for progress updates
 
     Returns:
         Result dictionary with html, point_count, cluster_count, stats
     """
     processor = VisualizationProcessor(job.vector_database_config.connection_url)
-    return await processor.process_job(job, llm_provider)
+    return await processor.process_job(job, llm_provider, progress_callback)

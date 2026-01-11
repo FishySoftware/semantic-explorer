@@ -54,12 +54,12 @@ class LLMProvider:
         """
         request_start = time.time()
         self.request_count += 1
-        
+
         logger.debug(
             f"LLM request #{self.request_count}: {llm_config.provider}/{llm_config.model} "
             f"(texts: {len(texts)}, max_tokens: {max_tokens})"
         )
-        
+
         if not llm_config or not llm_config.api_key:
             logger.error("LLM config or API key is missing")
             raise ValueError("LLM config or API key is missing")
@@ -72,15 +72,17 @@ class LLMProvider:
             else:
                 logger.error(f"Unknown LLM provider: {llm_config.provider}")
                 raise ValueError(f"Unknown LLM provider: {llm_config.provider}")
-            
+
             elapsed = time.time() - request_start
-            logger.info(f"LLM request #{self.request_count} completed in {elapsed:.3f}s: '{result}'")
+            logger.info(
+                f"LLM request #{self.request_count} completed in {elapsed:.3f}s: '{result}'"
+            )
             return result
         except Exception as e:
             elapsed = time.time() - request_start
             logger.error(
                 f"LLM request #{self.request_count} failed in {elapsed:.3f}s: {type(e).__name__}: {e}",
-                exc_info=True
+                exc_info=True,
             )
             raise
 
@@ -111,18 +113,18 @@ class LLMProvider:
             )
 
             api_call_start = time.time()
-            logger.info(f"Calling Cohere {llm_config.model} API (prompt length: {len(prompt)})")
+            logger.info(
+                f"Calling Cohere {llm_config.model} API (prompt length: {len(prompt)})"
+            )
 
             # Call Cohere Chat API (v2 uses messages list format with proper types)
             response = client.chat(
                 model=llm_config.model or "command-r-plus",
-                messages=[
-                    UserChatMessageV2(role="user", content=prompt)
-                ],
+                messages=[UserChatMessageV2(role="user", content=prompt)],
                 max_tokens=max_tokens,
                 temperature=0.3,  # Lower temperature for consistency
             )
-            
+
             api_elapsed = time.time() - api_call_start
             logger.info(f"Cohere API call completed in {api_elapsed:.3f}s")
 
@@ -130,13 +132,13 @@ class LLMProvider:
             if not response.message.content:
                 logger.error("Cohere returned empty response content")
                 raise ValueError("Cohere returned empty response content")
-            
+
             # Get the text content from the first content item
             content_item = response.message.content[0]
             # Cast to TextAssistantMessageResponseContentItem to access text attribute
             text_item = cast(TextAssistantMessageResponseContentItem, content_item)
             topic_name = text_item.text.strip()
-            
+
             cohere_elapsed = time.time() - cohere_start
             logger.info(
                 f"Cohere {llm_config.model} generated topic '{topic_name}' "
@@ -149,7 +151,7 @@ class LLMProvider:
             logger.error(
                 f"Cohere topic generation failed in {cohere_elapsed:.3f}s: "
                 f"{type(e).__name__}: {e}",
-                exc_info=True
+                exc_info=True,
             )
             raise
 
@@ -178,7 +180,9 @@ class LLMProvider:
             )
 
             api_call_start = time.time()
-            logger.debug(f"Calling OpenAI {llm_config.model} API (prompt length: {len(prompt)})")
+            logger.debug(
+                f"Calling OpenAI {llm_config.model} API (prompt length: {len(prompt)})"
+            )
 
             # Call OpenAI API
             response = client.chat.completions.create(
@@ -187,7 +191,7 @@ class LLMProvider:
                 max_tokens=max_tokens,
                 temperature=0.3,  # Lower temperature for consistency
             )
-            
+
             api_elapsed = time.time() - api_call_start
             logger.debug(f"OpenAI API call completed in {api_elapsed:.3f}s")
 
@@ -208,6 +212,6 @@ class LLMProvider:
             logger.error(
                 f"OpenAI topic generation failed in {openai_elapsed:.3f}s: "
                 f"{type(e).__name__}: {e}",
-                exc_info=True
+                exc_info=True,
             )
             raise

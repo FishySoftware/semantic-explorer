@@ -51,7 +51,7 @@ class S3Storage:
             init_elapsed = time.time() - init_start
             logger.error(
                 f"Failed to initialize S3 client in {init_elapsed:.3f}s: {type(e).__name__}: {e}",
-                exc_info=True
+                exc_info=True,
             )
             raise
 
@@ -71,34 +71,44 @@ class S3Storage:
             logger.debug(f"Bucket {bucket_name} already exists")
         except ClientError as e:
             # Check if it's a 404 (bucket doesn't exist) or 403 (no permission)
-            error_code = e.response.get('Error', {}).get('Code', '')
-            status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode', 0)
-            
-            if status_code == 404 or error_code == 'NoSuchBucket':
+            error_code = e.response.get("Error", {}).get("Code", "")
+            status_code = e.response.get("ResponseMetadata", {}).get(
+                "HTTPStatusCode", 0
+            )
+
+            if status_code == 404 or error_code == "NoSuchBucket":
                 # Bucket doesn't exist, create it
                 logger.info(f"Bucket {bucket_name} does not exist, creating it")
                 try:
                     create_start = time.time()
                     self.s3_client.create_bucket(Bucket=bucket_name)
                     create_elapsed = time.time() - create_start
-                    logger.info(f"Successfully created bucket {bucket_name} in {create_elapsed:.3f}s")
+                    logger.info(
+                        f"Successfully created bucket {bucket_name} in {create_elapsed:.3f}s"
+                    )
                 except Exception as create_error:
-                    logger.error(f"Failed to create bucket {bucket_name}: {type(create_error).__name__}: {create_error}")
+                    logger.error(
+                        f"Failed to create bucket {bucket_name}: {type(create_error).__name__}: {create_error}"
+                    )
                     raise
             else:
                 # Some other error (like 403 Forbidden)
-                logger.error(f"Error checking bucket {bucket_name}: {type(e).__name__}: {e}")
+                logger.error(
+                    f"Error checking bucket {bucket_name}: {type(e).__name__}: {e}"
+                )
                 raise
         except Exception as e:
             # Catch any non-ClientError exceptions
-            logger.error(f"Unexpected error checking bucket {bucket_name}: {type(e).__name__}: {e}")
+            logger.error(
+                f"Unexpected error checking bucket {bucket_name}: {type(e).__name__}: {e}"
+            )
             raise
 
     async def upload_visualization(
         self,
         owner: str,
         transform_id: int,
-        run_id: int,
+        visualization_id: int,
         html_content: str,
     ) -> str:
         """
@@ -107,7 +117,7 @@ class S3Storage:
         Args:
             owner: Owner/username
             transform_id: Visualization transform ID
-            run_id: Run ID (for audit trail)
+            visualization_id: Visualization ID (for audit trail)
             html_content: HTML content to upload
 
         Returns:
@@ -118,12 +128,14 @@ class S3Storage:
         """
         upload_start = time.time()
         try:
-            logger.debug(f"Starting S3 upload for transform {transform_id}, run {run_id}")
-            
+            logger.debug(
+                f"Starting S3 upload for transform {transform_id}, visualization {visualization_id}"
+            )
+
             # Generate S3 path
             timestamp_str = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
             bucket_name = f"visualizations-{transform_id}"
-            s3_path = (f"visualization-{timestamp_str}.html")
+            s3_path = f"visualization-{timestamp_str}.html"
             content_size = len(html_content.encode("utf-8"))
 
             # Ensure bucket exists before uploading
@@ -131,7 +143,9 @@ class S3Storage:
             self._ensure_bucket_exists(bucket_name)
 
             # Upload to S3
-            logger.debug(f"Uploading to s3://{bucket_name}/{s3_path} ({content_size} bytes)")
+            logger.debug(
+                f"Uploading to s3://{bucket_name}/{s3_path} ({content_size} bytes)"
+            )
             put_start = time.time()
             self.s3_client.put_object(
                 Bucket=bucket_name,
@@ -141,7 +155,7 @@ class S3Storage:
                 Metadata={
                     "owner": owner,
                     "transform-id": str(transform_id),
-                    "run-id": str(run_id),
+                    "visualization-id": str(visualization_id),
                     "timestamp": timestamp_str,
                 },
             )
@@ -159,7 +173,7 @@ class S3Storage:
             logger.error(
                 f"Failed to upload visualization to S3 in {upload_elapsed:.3f}s: "
                 f"{type(e).__name__}: {e}",
-                exc_info=True
+                exc_info=True,
             )
             raise
 
@@ -216,7 +230,7 @@ class S3Storage:
             url_elapsed = time.time() - url_start
             logger.error(
                 f"Failed to generate presigned URL in {url_elapsed:.3f}s: {type(e).__name__}: {e}",
-                exc_info=True
+                exc_info=True,
             )
             raise
 
@@ -246,7 +260,9 @@ class S3Storage:
                 )
                 raise ValueError("Invalid S3 key for this owner/transform")
 
-            logger.debug(f"Deleting s3://{bucket_name}/{s3_key} (owner: {owner}, transform: {transform_id})")
+            logger.debug(
+                f"Deleting s3://{bucket_name}/{s3_key} (owner: {owner}, transform: {transform_id})"
+            )
 
             del_start = time.time()
             self.s3_client.delete_object(
@@ -266,6 +282,6 @@ class S3Storage:
             logger.error(
                 f"Failed to delete visualization from S3 in {delete_elapsed:.3f}s: "
                 f"{type(e).__name__}: {e}",
-                exc_info=True
+                exc_info=True,
             )
             raise

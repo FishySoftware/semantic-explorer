@@ -60,10 +60,10 @@
 					icon: FolderSolid,
 					url: '/collection-transforms',
 				},
-				{ 
-					name: 'Dataset Transforms', 
-					icon: DatabaseSolid, 
-					url: '/dataset-transforms' 
+				{
+					name: 'Dataset Transforms',
+					icon: DatabaseSolid,
+					url: '/dataset-transforms',
 				},
 				{
 					name: 'Visualization Transforms',

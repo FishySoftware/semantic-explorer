@@ -73,6 +73,7 @@ WORKER_ID = os.getenv("WORKER_ID", str(uuid.uuid4()))
 s3_storage: Optional[S3Storage] = None
 llm_provider: Optional[LLMProvider] = None
 
+
 async def initialize():
     """Initialize worker components."""
     global s3_storage, llm_provider
@@ -110,24 +111,60 @@ async def handle_job(
     job_start_time = time.time()
     logger.info(
         f"Processing job {job.job_id} for transform {job.visualization_transform_id} "
-        f"(run {job.run_id}, owner: {job.owner}, embedded_dataset: {job.embedded_dataset_id})"
+        f"(visualization {job.visualization_id}, owner: {job.owner}, embedded_dataset: {job.embedded_dataset_id})"
     )
 
     result = VisualizationTransformResult(
         jobId=job.job_id,
         visualizationTransformId=job.visualization_transform_id,
-        runId=job.run_id,
+        visualizationId=job.visualization_id,
         owner=job.owner,
         status="processing",
-        startedAt=datetime.now(timezone.utc),
     )
+
+    # Send immediate progress update to show job has started
+    try:
+        progress_result = VisualizationTransformResult(
+            jobId=job.job_id,
+            visualizationTransformId=job.visualization_transform_id,
+            visualizationId=job.visualization_id,
+            owner=job.owner,
+            status="processing",
+            statsJson={"stage": "starting", "progress_percent": 0},
+        )
+        progress_json = json.dumps(progress_result.model_dump_json_safe())
+        await nc.publish(RESULT_SUBJECT, progress_json.encode())
+        logger.debug(f"Sent initial progress update for job {job.job_id}")
+    except Exception as e:
+        logger.warning(f"Failed to send initial progress update: {e}")
+
+    # Define progress callback to send updates
+    async def send_progress(stage: str, progress_percent: int):
+        try:
+            progress_result = VisualizationTransformResult(
+                jobId=job.job_id,
+                visualizationTransformId=job.visualization_transform_id,
+                visualizationId=job.visualization_id,
+                owner=job.owner,
+                status="processing",
+                statsJson={"stage": stage, "progress_percent": progress_percent},
+            )
+            progress_json = json.dumps(progress_result.model_dump_json_safe())
+            await nc.publish(RESULT_SUBJECT, progress_json.encode())
+            logger.debug(
+                f"Progress update for job {job.job_id}: {stage} ({progress_percent}%)"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send progress update: {e}")
 
     try:
         # Process the visualization job
         process_start = time.time()
         logger.debug(f"Starting visualization processing for job {job.job_id}")
         processed_result = await asyncio.wait_for(
-            process_visualization_job(job, llm_provider),
+            process_visualization_job(
+                job, llm_provider, progress_callback=send_progress
+            ),
             timeout=PROCESSING_TIMEOUT_SECS,
         )
         process_elapsed = time.time() - process_start
@@ -141,21 +178,21 @@ async def handle_job(
         s3_key = await s3_storage.upload_visualization(
             owner=job.owner,
             transform_id=job.visualization_transform_id,
-            run_id=job.run_id,
+            visualization_id=job.visualization_id,
             html_content=processed_result["html"],
         )
         s3_elapsed = time.time() - s3_start
         logger.info(f"S3 upload completed in {s3_elapsed:.3f}s")
 
+        # Calculate processing duration
+        processing_duration_ms = int((time.time() - job_start_time) * 1000)
+
         # Update result with success
         result.status = "completed"
-        result.completed_at = datetime.now(timezone.utc)
         result.html_s3_key = s3_key
         result.point_count = processed_result.get("point_count")
         result.cluster_count = processed_result.get("cluster_count")
-        result.processing_duration_ms = int(
-            (result.completed_at - result.started_at).total_seconds() * 1000
-        )
+        result.processing_duration_ms = processing_duration_ms
         result.stats_json = processed_result.get("stats", {})
 
         job_elapsed = time.time() - job_start_time
@@ -169,18 +206,17 @@ async def handle_job(
         result.status = "failed"
         result.error_message = f"Processing timeout after {PROCESSING_TIMEOUT_SECS}s"
         job_elapsed = time.time() - job_start_time
-        logger.error(f"Job {job.job_id} timeout: {result.error_message} (elapsed: {job_elapsed:.3f}s)")
+        logger.error(
+            f"Job {job.job_id} timeout: {result.error_message} (elapsed: {job_elapsed:.3f}s)"
+        )
     except Exception as e:
         result.status = "failed"
         result.error_message = f"{type(e).__name__}: {str(e)}"
         job_elapsed = time.time() - job_start_time
         logger.error(
             f"Job {job.job_id} failed: {result.error_message} (elapsed: {job_elapsed:.3f}s)",
-            exc_info=True
+            exc_info=True,
         )
-
-    finally:
-        result.completed_at = datetime.now(timezone.utc)
 
     # Publish result back to Rust API
     try:
@@ -198,7 +234,9 @@ async def handle_job(
         await msg.ack()
         logger.debug(f"Acknowledged message for job {job.job_id}")
     except Exception as e:
-        logger.error(f"Failed to publish result for job {job.job_id}: {e}", exc_info=True)
+        logger.error(
+            f"Failed to publish result for job {job.job_id}: {e}", exc_info=True
+        )
         # Nack the message to retry
         await msg.nak()
         logger.warning(f"Nacked message for job {job.job_id} for retry")
@@ -230,7 +268,7 @@ async def message_handler(msg: Msg, nc: NATSConnection) -> None:
         handler_elapsed = time.time() - handler_start
         logger.error(
             f"Unexpected error in message handler: {e} (elapsed: {handler_elapsed:.3f}s)",
-            exc_info=True
+            exc_info=True,
         )
         await msg.nak()
         logger.warning("Nacked message due to unexpected error")
@@ -239,8 +277,10 @@ async def message_handler(msg: Msg, nc: NATSConnection) -> None:
 async def main():
     """Main worker loop."""
     main_start = time.time()
-    logger.info(f"Starting visualization worker (PID: {os.getpid()}, Worker ID: {WORKER_ID})")
-    
+    logger.info(
+        f"Starting visualization worker (PID: {os.getpid()}, Worker ID: {WORKER_ID})"
+    )
+
     init_start = time.time()
     await initialize()
     init_elapsed = time.time() - init_start
@@ -302,7 +342,7 @@ async def main():
             logger.debug("Closing NATS connection")
             await nc.close()
             logger.info("NATS connection closed")
-        
+
         total_elapsed = time.time() - main_start
         logger.info(
             f"Worker stopped (processed {message_count} messages, "

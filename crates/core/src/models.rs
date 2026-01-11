@@ -103,7 +103,7 @@ pub struct LLMConfig {
 pub struct VisualizationTransformJob {
     pub job_id: Uuid,
     pub visualization_transform_id: i32,
-    pub run_id: i32,
+    pub visualization_id: i32,
     pub owner: String,
     pub embedded_dataset_id: i32,
     pub qdrant_collection_name: String,
@@ -123,6 +123,12 @@ pub struct VisualizationConfig {
     pub min_samples: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub topic_naming_llm_id: Option<i32>, // LLM database ID when mode = "llm"
+
+    // LLM naming configuration
+    #[serde(default = "default_llm_batch_size")]
+    pub llm_batch_size: i32, // Number of clusters to process in parallel (1-100, default 10)
+    #[serde(default = "default_samples_per_cluster")]
+    pub samples_per_cluster: i32, // Number of sample texts to send to LLM per cluster (1-100, default 5)
 
     // Datamapplot create_interactive_plot parameters
     #[serde(default = "default_inline_data")]
@@ -235,6 +241,12 @@ fn default_color_label_text() -> bool {
 fn default_label_wrap_width() -> i32 {
     16
 }
+fn default_llm_batch_size() -> i32 {
+    10
+}
+fn default_samples_per_cluster() -> i32 {
+    5
+}
 fn default_width() -> String {
     "100%".to_string()
 }
@@ -251,7 +263,7 @@ fn default_palette_hue_radius_dependence() -> f32 {
     1.0
 }
 fn default_palette_theta_range() -> f32 {
-    0.19634954084936207
+    0.196_349_55
 } // π/16
 fn default_use_medoids() -> bool {
     false
@@ -339,13 +351,15 @@ fn default_initial_zoom_fraction() -> f32 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VisualizationTransformResult {
     pub job_id: Uuid,
     pub visualization_transform_id: i32,
-    pub run_id: i32,
+    pub visualization_id: i32,
     pub owner: String,
     pub status: String,
     pub error_message: Option<String>,
+    #[serde(rename = "htmlS3Key")]
     pub html_s3_key: Option<String>,
     pub point_count: Option<usize>,
     pub cluster_count: Option<i32>,

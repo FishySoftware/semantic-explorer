@@ -28,10 +28,10 @@ pub struct VisualizationTransform {
     pub updated_at: DateTime<Utc>,
 }
 
-/// Visualization Transform Run: Individual execution of a visualization transform
+/// Visualization: Individual execution of a visualization transform
 #[derive(Serialize, ToSchema, FromRow, Debug, Clone)]
-pub struct VisualizationTransformRun {
-    pub run_id: i32,
+pub struct Visualization {
+    pub visualization_id: i32,
     pub visualization_transform_id: i32,
     pub status: String,
     #[schema(value_type = Option<String>, format = DateTime)]
@@ -67,6 +67,11 @@ pub struct CreateVisualizationTransform {
     pub min_cluster_size: i32,
     #[serde(default)]
     pub min_samples: Option<i32>,
+    // LLM naming configuration
+    #[serde(default = "default_llm_batch_size")]
+    pub llm_batch_size: i32,
+    #[serde(default = "default_samples_per_cluster")]
+    pub samples_per_cluster: i32,
     // Datamapplot visualization parameters
     #[serde(default = "default_min_fontsize")]
     pub min_fontsize: f32,
@@ -96,11 +101,11 @@ pub struct UpdateVisualizationTransform {
     pub visualization_config: Option<serde_json::Value>,
 }
 
-/// Statistics for the latest run of a Visualization Transform
+/// Statistics for a Visualization Transform
 #[derive(Serialize, ToSchema, Debug, Clone)]
 pub struct VisualizationTransformStats {
     pub visualization_transform_id: i32,
-    pub latest_run: Option<VisualizationTransformRun>,
+    pub latest_visualization: Option<Visualization>,
     pub total_runs: i64,
     pub successful_runs: i64,
     pub failed_runs: i64,
@@ -121,6 +126,14 @@ fn default_metric() -> String {
 
 fn default_min_cluster_size() -> i32 {
     10
+}
+
+fn default_llm_batch_size() -> i32 {
+    10
+}
+
+fn default_samples_per_cluster() -> i32 {
+    5
 }
 
 fn default_min_fontsize() -> f32 {

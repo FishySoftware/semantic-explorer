@@ -4,55 +4,51 @@ use sqlx::{
     types::chrono::{DateTime, Utc},
 };
 
-use crate::transforms::visualization::models::{VisualizationTransform, VisualizationTransformRun};
+use crate::transforms::visualization::models::{Visualization, VisualizationTransform};
 
-// ============================================================================
-// Visualization Transform Runs (NEW: for tracking individual executions)
-// ============================================================================
-
-const CREATE_VISUALIZATION_RUN_QUERY: &str = r#"
-    INSERT INTO visualization_transform_runs (visualization_transform_id, status, created_at)
+const CREATE_VISUALIZATION_QUERY: &str = r#"
+    INSERT INTO visualizations (visualization_transform_id, status, created_at)
     VALUES ($1, $2, NOW())
-    RETURNING run_id, visualization_transform_id, status, started_at, completed_at,
+    RETURNING visualization_id, visualization_transform_id, status, started_at, completed_at,
               html_s3_key, point_count, cluster_count, error_message, stats_json, created_at
 "#;
 
-const GET_VISUALIZATION_RUN_QUERY: &str = r#"
-    SELECT run_id, visualization_transform_id, status, started_at, completed_at,
+const GET_VISUALIZATION_QUERY: &str = r#"
+    SELECT visualization_id, visualization_transform_id, status, started_at, completed_at,
            html_s3_key, point_count, cluster_count, error_message, stats_json, created_at
-    FROM visualization_transform_runs
-    WHERE run_id = $1
+    FROM visualizations
+    WHERE visualization_id = $1
 "#;
 
-const GET_VISUALIZATION_RUN_WITH_OWNER_QUERY: &str = r#"
-    SELECT vtr.run_id, vtr.visualization_transform_id, vtr.status, vtr.started_at, vtr.completed_at,
-           vtr.html_s3_key, vtr.point_count, vtr.cluster_count, vtr.error_message, vtr.stats_json, vtr.created_at
-    FROM visualization_transform_runs vtr
-    INNER JOIN visualization_transforms vt ON vtr.visualization_transform_id = vt.visualization_transform_id
-    WHERE vtr.run_id = $1 AND vt.owner = $2
+const GET_VISUALIZATION_WITH_OWNER_QUERY: &str = r#"
+    SELECT v.visualization_id, v.visualization_transform_id, v.status, v.started_at, v.completed_at,
+           v.html_s3_key, v.point_count, v.cluster_count, v.error_message, v.stats_json, v.created_at
+    FROM visualizations v
+    INNER JOIN visualization_transforms vt ON v.visualization_transform_id = vt.visualization_transform_id
+    WHERE v.visualization_id = $1 AND vt.owner = $2
 "#;
 
-const GET_LATEST_VISUALIZATION_RUN_QUERY: &str = r#"
-    SELECT run_id, visualization_transform_id, status, started_at, completed_at,
+const GET_LATEST_VISUALIZATION_QUERY: &str = r#"
+    SELECT visualization_id, visualization_transform_id, status, started_at, completed_at,
            html_s3_key, point_count, cluster_count, error_message, stats_json, created_at
-    FROM visualization_transform_runs
+    FROM visualizations
     WHERE visualization_transform_id = $1
     ORDER BY created_at DESC
     LIMIT 1
 "#;
 
-const LIST_VISUALIZATION_RUNS_QUERY: &str = r#"
-    SELECT run_id, visualization_transform_id, status, started_at, completed_at,
+const LIST_VISUALIZATIONS_QUERY: &str = r#"
+    SELECT visualization_id, visualization_transform_id, status, started_at, completed_at,
            html_s3_key, point_count, cluster_count, error_message, stats_json, created_at
-    FROM visualization_transform_runs
+    FROM visualizations
     WHERE visualization_transform_id = $1
     ORDER BY created_at DESC
     LIMIT $2 OFFSET $3
 "#;
 
-const UPDATE_VISUALIZATION_RUN_QUERY: &str = r#"
-    UPDATE visualization_transform_runs
-    SET status = COALESCE($2, status),
+const UPDATE_VISUALIZATION_QUERY: &str = r#"
+    UPDATE visualizations
+    SET status = $2,
         started_at = COALESCE($3, started_at),
         completed_at = COALESCE($4, completed_at),
         html_s3_key = COALESCE($5, html_s3_key),
@@ -60,78 +56,100 @@ const UPDATE_VISUALIZATION_RUN_QUERY: &str = r#"
         cluster_count = COALESCE($7, cluster_count),
         error_message = COALESCE($8, error_message),
         stats_json = COALESCE($9, stats_json)
-    WHERE run_id = $1
-    RETURNING run_id, visualization_transform_id, status, started_at, completed_at,
+    WHERE visualization_id = $1
+    RETURNING visualization_id, visualization_transform_id, status, started_at, completed_at,
               html_s3_key, point_count, cluster_count, error_message, stats_json, created_at
 "#;
 
-pub async fn create_visualization_run(
+const GET_RECENT_VISUALIZATIONS_QUERY: &str = r#"
+    SELECT v.visualization_id, v.visualization_transform_id, v.status, v.started_at, v.completed_at,
+           v.html_s3_key, v.point_count, v.cluster_count, v.error_message, v.stats_json, v.created_at
+    FROM visualizations v
+    INNER JOIN visualization_transforms vt ON v.visualization_transform_id = vt.visualization_transform_id
+    WHERE vt.owner = $1
+    ORDER BY v.created_at DESC
+    LIMIT $2
+"#;
+
+pub async fn create_visualization(
     pool: &Pool<Postgres>,
     visualization_transform_id: i32,
-) -> Result<VisualizationTransformRun> {
-    let run = sqlx::query_as::<_, VisualizationTransformRun>(CREATE_VISUALIZATION_RUN_QUERY)
+) -> Result<Visualization> {
+    let visualization = sqlx::query_as::<_, Visualization>(CREATE_VISUALIZATION_QUERY)
         .bind(visualization_transform_id)
         .bind("pending")
         .fetch_one(pool)
         .await?;
-    Ok(run)
+    Ok(visualization)
 }
 
-pub async fn get_visualization_run(
+pub async fn get_visualization(
     pool: &Pool<Postgres>,
-    run_id: i32,
-) -> Result<VisualizationTransformRun> {
-    let run = sqlx::query_as::<_, VisualizationTransformRun>(GET_VISUALIZATION_RUN_QUERY)
-        .bind(run_id)
+    visualization_id: i32,
+) -> Result<Visualization> {
+    let visualization = sqlx::query_as::<_, Visualization>(GET_VISUALIZATION_QUERY)
+        .bind(visualization_id)
         .fetch_one(pool)
         .await?;
-    Ok(run)
+    Ok(visualization)
 }
 
-pub async fn get_visualization_run_with_owner(
+pub async fn get_visualization_with_owner(
     pool: &Pool<Postgres>,
-    run_id: i32,
+    visualization_id: i32,
     owner: &str,
-) -> Result<VisualizationTransformRun> {
-    let run =
-        sqlx::query_as::<_, VisualizationTransformRun>(GET_VISUALIZATION_RUN_WITH_OWNER_QUERY)
-            .bind(run_id)
-            .bind(owner)
-            .fetch_one(pool)
-            .await?;
-    Ok(run)
+) -> Result<Visualization> {
+    let visualization = sqlx::query_as::<_, Visualization>(GET_VISUALIZATION_WITH_OWNER_QUERY)
+        .bind(visualization_id)
+        .bind(owner)
+        .fetch_one(pool)
+        .await?;
+    Ok(visualization)
 }
 
-pub async fn get_latest_visualization_run(
+pub async fn get_latest_visualization(
     pool: &Pool<Postgres>,
     visualization_transform_id: i32,
-) -> Result<Option<VisualizationTransformRun>> {
-    let run = sqlx::query_as::<_, VisualizationTransformRun>(GET_LATEST_VISUALIZATION_RUN_QUERY)
+) -> Result<Option<Visualization>> {
+    let visualization = sqlx::query_as::<_, Visualization>(GET_LATEST_VISUALIZATION_QUERY)
         .bind(visualization_transform_id)
         .fetch_optional(pool)
         .await?;
-    Ok(run)
+    Ok(visualization)
 }
 
-pub async fn list_visualization_runs(
+pub async fn list_visualizations(
     pool: &Pool<Postgres>,
     visualization_transform_id: i32,
     limit: i64,
     offset: i64,
-) -> Result<Vec<VisualizationTransformRun>> {
-    let runs = sqlx::query_as::<_, VisualizationTransformRun>(LIST_VISUALIZATION_RUNS_QUERY)
+) -> Result<Vec<Visualization>> {
+    let visualizations = sqlx::query_as::<_, Visualization>(LIST_VISUALIZATIONS_QUERY)
         .bind(visualization_transform_id)
         .bind(limit)
         .bind(offset)
         .fetch_all(pool)
         .await?;
-    Ok(runs)
+    Ok(visualizations)
+}
+
+pub async fn get_recent_visualizations(
+    pool: &Pool<Postgres>,
+    owner: &str,
+    limit: i64,
+) -> Result<Vec<Visualization>> {
+    let visualizations = sqlx::query_as::<_, Visualization>(GET_RECENT_VISUALIZATIONS_QUERY)
+        .bind(owner)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+    Ok(visualizations)
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn update_visualization_run(
+pub async fn update_visualization(
     pool: &Pool<Postgres>,
-    run_id: i32,
+    visualization_id: i32,
     status: Option<&str>,
     started_at: Option<DateTime<Utc>>,
     completed_at: Option<DateTime<Utc>>,
@@ -140,9 +158,9 @@ pub async fn update_visualization_run(
     cluster_count: Option<i32>,
     error_message: Option<&str>,
     stats_json: Option<&serde_json::Value>,
-) -> Result<VisualizationTransformRun> {
-    let run = sqlx::query_as::<_, VisualizationTransformRun>(UPDATE_VISUALIZATION_RUN_QUERY)
-        .bind(run_id)
+) -> Result<Visualization> {
+    let visualization = sqlx::query_as::<_, Visualization>(UPDATE_VISUALIZATION_QUERY)
+        .bind(visualization_id)
         .bind(status)
         .bind(started_at)
         .bind(completed_at)
@@ -153,7 +171,7 @@ pub async fn update_visualization_run(
         .bind(stats_json)
         .fetch_one(pool)
         .await?;
-    Ok(run)
+    Ok(visualization)
 }
 
 // ============================================================================
@@ -201,6 +219,16 @@ const UPDATE_VISUALIZATION_TRANSFORM_QUERY: &str = r#"
 
 const DELETE_VISUALIZATION_TRANSFORM_QUERY: &str = r#"
     DELETE FROM visualization_transforms
+    WHERE visualization_transform_id = $1
+"#;
+
+const UPDATE_VISUALIZATION_TRANSFORM_STATUS_QUERY: &str = r#"
+    UPDATE visualization_transforms
+    SET last_run_status = COALESCE($2, last_run_status),
+        last_run_at = COALESCE($3, last_run_at),
+        last_error = $4,
+        last_run_stats = COALESCE($5, last_run_stats),
+        updated_at = NOW()
     WHERE visualization_transform_id = $1
 "#;
 
@@ -295,4 +323,24 @@ pub async fn get_visualization_transforms_by_embedded_dataset(
     .fetch_all(pool)
     .await?;
     Ok(transforms)
+}
+
+/// Update the status fields on a visualization transform (last_run_status, last_run_at, last_error, last_run_stats)
+pub async fn update_visualization_transform_status(
+    pool: &Pool<Postgres>,
+    id: i32,
+    status: Option<&str>,
+    run_at: Option<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>>,
+    error: Option<&str>,
+    stats: Option<&serde_json::Value>,
+) -> Result<()> {
+    sqlx::query(UPDATE_VISUALIZATION_TRANSFORM_STATUS_QUERY)
+        .bind(id)
+        .bind(status)
+        .bind(run_at)
+        .bind(error)
+        .bind(stats)
+        .execute(pool)
+        .await?;
+    Ok(())
 }

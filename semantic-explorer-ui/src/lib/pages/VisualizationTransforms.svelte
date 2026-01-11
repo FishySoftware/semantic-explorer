@@ -154,7 +154,7 @@
 				throw new Error(`Failed to fetch visualization transforms: ${response.statusText}`);
 			}
 			const rawTransforms = await response.json();
-			
+
 			// Apply defaults to all loaded transforms to handle missing fields from older records
 			transforms = rawTransforms.map((t: VisualizationTransform) => ({
 				...t,
@@ -415,19 +415,19 @@
 		fetchTransforms();
 		fetchEmbeddedDatasets();
 		fetchLLMs();
-		
+
 		// Check URL parameters for create action and embedded dataset ID
 		const urlParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
 		const shouldCreate = urlParams.get('create') === 'true';
 		const embeddedDatasetId = urlParams.get('embedded_dataset_id');
-		
+
 		if (shouldCreate) {
 			showCreateForm = true;
 			// Remove the URL parameters after processing
 			const cleanHash = window.location.hash.split('?')[0];
 			window.history.replaceState(null, '', cleanHash);
 		}
-		
+
 		if (embeddedDatasetId) {
 			newEmbeddedDatasetId = parseInt(embeddedDatasetId, 10);
 		}

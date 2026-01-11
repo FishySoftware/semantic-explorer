@@ -26,12 +26,14 @@
 	const Search = () => import('./lib/pages/Search.svelte');
 	const VisualizationTransforms = () => import('./lib/pages/VisualizationTransforms.svelte');
 	const Visualizations = () => import('./lib/pages/Visualizations.svelte');
+	const VisualizationDetail = () => import('./lib/pages/VisualizationDetail.svelte');
 
 	let activeUrl = $state('/dashboard');
 	let selectedCollectionId = $state<number | null>(null);
 	let selectedDatasetId = $state<number | null>(null);
 	let selectedEmbeddedDatasetId = $state<number | null>(null);
 	let selectedEmbedderId = $state<number | null>(null);
+	let selectedVisualizationId = $state<number | null>(null);
 	let grabResourceType = $state<'collections' | 'datasets' | 'embedders' | 'llms' | null>(null);
 	let grabResourceId = $state<number | null>(null);
 
@@ -105,9 +107,9 @@
 		}
 
 		if (path === '/visualizations/detail' && params.id) {
-			// Store visualization ID for future use
+			selectedVisualizationId = parseInt(params.id, 10);
 		} else if (path !== '/visualizations/detail') {
-			// Clear visualization state
+			selectedVisualizationId = null;
 		}
 
 		if (path === '/embedders/detail' && params.id) {
@@ -168,8 +170,15 @@
 
 	function viewVisualization(transformId: number) {
 		// Handle visualization navigation
+		selectedVisualizationId = transformId;
 		activeUrl = '/visualizations/detail';
 		window.location.hash = `/visualizations/${transformId}/details`;
+	}
+
+	function backToVisualizations() {
+		selectedVisualizationId = null;
+		activeUrl = '/visualizations';
+		window.location.hash = '/visualizations';
 	}
 
 	function viewEmbedder(embedderId: number) {
@@ -274,6 +283,15 @@
 				{#await Visualizations() then { default: VisualizationsComponent }}
 					<VisualizationsComponent onViewVisualization={viewVisualization} />
 				{/await}
+			{:else if activeUrl === '/visualizations/detail'}
+				{#if selectedVisualizationId !== null}
+					{#await VisualizationDetail() then { default: VisualizationDetailComponent }}
+						<VisualizationDetailComponent
+							visualizationTransformId={selectedVisualizationId}
+							onBack={backToVisualizations}
+						/>
+					{/await}
+				{/if}
 			{:else if activeUrl === '/search'}
 				{#await Search() then { default: SearchComponent }}
 					<SearchComponent onViewDataset={viewDataset} onViewEmbedder={viewEmbedder} />

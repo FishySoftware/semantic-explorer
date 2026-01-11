@@ -82,8 +82,8 @@ export interface VisualizationTransform {
 	updated_at: string;
 }
 
-export interface VisualizationRun {
-	run_id: number;
+export interface Visualization {
+	visualization_id: number;
 	visualization_transform_id: number;
 	status: string;
 	started_at: string | null;
@@ -92,6 +92,6 @@ export interface VisualizationRun {
 	point_count: number | null;
 	cluster_count: number | null;
 	error_message: string | null;
-	stats_json: any | null;
+	stats_json: Record<string, unknown> | null;
 	created_at: string;
 }

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use async_nats::Client as NatsClient;
-use sqlx::{Pool, Postgres};
+use sqlx::{Pool, Postgres, types::chrono::Utc};
 use tracing::{debug, info};
 use uuid::Uuid;
 
@@ -47,13 +47,25 @@ pub async fn trigger_visualization_transform_scan(
     let embedded_dataset =
         embedded_datasets::get_embedded_dataset(pool, owner, transform.embedded_dataset_id).await?;
 
-    // Create run record
-    let run = visualization_transforms::create_visualization_run(pool, visualization_transform_id)
-        .await?;
+    // Create visualization record
+    let visualization =
+        visualization_transforms::create_visualization(pool, visualization_transform_id).await?;
     info!(
-        "Created visualization run {} for transform {}",
-        run.run_id, visualization_transform_id
+        "Created visualization {} for transform {}",
+        visualization.visualization_id, visualization_transform_id
     );
+
+    // Update transform status to pending
+    let now = Utc::now();
+    visualization_transforms::update_visualization_transform_status(
+        pool,
+        visualization_transform_id,
+        Some("pending"),
+        Some(now),
+        None,
+        None,
+    )
+    .await?;
 
     // Parse visualization config - deserialize directly from JSON
     let visualization_config: VisualizationConfig =
@@ -90,6 +102,14 @@ pub async fn trigger_visualization_transform_scan(
                     .get("topic_naming_llm_id")
                     .and_then(|v| v.as_i64())
                     .map(|v| v as i32),
+                llm_batch_size: viz_config
+                    .get("llm_batch_size")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(10) as i32,
+                samples_per_cluster: viz_config
+                    .get("samples_per_cluster")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(5) as i32,
                 // Use defaults for all datamapplot parameters
                 inline_data: true,
                 noise_label: "Unlabelled".to_string(),
@@ -101,7 +121,7 @@ pub async fn trigger_visualization_transform_scan(
                 darkmode: true,
                 palette_hue_shift: 0.0,
                 palette_hue_radius_dependence: 1.0,
-                palette_theta_range: 0.19634954084936207, // π/16
+                palette_theta_range: 0.196_349_55, // π/16
                 use_medoids: false,
                 cluster_boundary_polygons: true,
                 polygon_alpha: 0.1,
@@ -180,7 +200,7 @@ pub async fn trigger_visualization_transform_scan(
     let job = VisualizationTransformJob {
         job_id: Uuid::new_v4(),
         visualization_transform_id,
-        run_id: run.run_id,
+        visualization_id: visualization.visualization_id,
         owner: owner.to_string(),
         embedded_dataset_id: transform.embedded_dataset_id,
         qdrant_collection_name: embedded_dataset.collection_name.clone(),
@@ -191,7 +211,10 @@ pub async fn trigger_visualization_transform_scan(
 
     // Publish to NATS
     let js = async_nats::jetstream::new(nats.clone());
-    let message_id = format!("vt-{}-{}", visualization_transform_id, run.run_id);
+    let message_id = format!(
+        "vt-{}-{}",
+        visualization_transform_id, visualization.visualization_id
+    );
 
     let mut headers = async_nats::HeaderMap::new();
     headers.insert("Nats-Msg-Id", message_id.as_str());
@@ -205,8 +228,8 @@ pub async fn trigger_visualization_transform_scan(
     .await?;
 
     info!(
-        "Published visualization job {} for transform {} (run {})",
-        job.job_id, visualization_transform_id, run.run_id
+        "Published visualization job {} for transform {} (visualization {})",
+        job.job_id, visualization_transform_id, visualization.visualization_id
     );
 
     Ok(())

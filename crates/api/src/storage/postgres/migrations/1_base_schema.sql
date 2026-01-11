@@ -306,8 +306,8 @@ CREATE INDEX IF NOT EXISTS idx_transforms_owner_type_enabled
     WHERE is_enabled = TRUE;
 
 
-CREATE TABLE IF NOT EXISTS VISUALIZATION_TRANSFORM_RUNS (
-    run_id                  SERIAL PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS VISUALIZATIONS (
+    visualization_id        SERIAL PRIMARY KEY,
     visualization_transform_id INTEGER NOT NULL,
     status                  TEXT NOT NULL CHECK (status IN ('pending', 'processing', 'completed', 'failed')),
     started_at              TIMESTAMP WITH TIME ZONE NULL,
@@ -321,11 +321,11 @@ CREATE TABLE IF NOT EXISTS VISUALIZATION_TRANSFORM_RUNS (
     FOREIGN KEY (visualization_transform_id) REFERENCES VISUALIZATION_TRANSFORMS(visualization_transform_id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_visualization_transform_runs_transform_id 
-    ON VISUALIZATION_TRANSFORM_RUNS(visualization_transform_id);
-CREATE INDEX IF NOT EXISTS idx_visualization_transform_runs_status 
-    ON VISUALIZATION_TRANSFORM_RUNS(status);
-CREATE INDEX IF NOT EXISTS idx_visualization_transform_runs_created_at 
-    ON VISUALIZATION_TRANSFORM_RUNS(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_visualization_transform_runs_transform_created
-    ON VISUALIZATION_TRANSFORM_RUNS(visualization_transform_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_visualizations_transform_id 
+    ON VISUALIZATIONS(visualization_transform_id);
+CREATE INDEX IF NOT EXISTS idx_visualizations_status 
+    ON VISUALIZATIONS(status);
+CREATE INDEX IF NOT EXISTS idx_visualizations_created_at 
+    ON VISUALIZATIONS(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_visualizations_transform_created
+    ON VISUALIZATIONS(visualization_transform_id, created_at DESC);
