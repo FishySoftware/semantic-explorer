@@ -3,8 +3,8 @@
 	import { onMount } from 'svelte';
 	import TabPanel from '../components/TabPanel.svelte';
 	import TransformsList from '../components/TransformsList.svelte';
-	import { formatError, toastStore } from '../utils/notifications';
 	import type { VisualizationTransform } from '../types/visualizations';
+	import { formatError, toastStore } from '../utils/notifications';
 
 	interface EmbeddedDataset {
 		embedded_dataset_id: number;
@@ -133,7 +133,10 @@
 			if (!response.ok) {
 				throw new Error(`Failed to fetch visualization transforms: ${response.statusText}`);
 			}
-			const allTransforms: VisualizationTransform[] = await response.json();
+			const transformData = await response.json();
+			const allTransforms: VisualizationTransform[] = Array.isArray(transformData)
+				? transformData
+				: transformData.items || [];
 			visualizationTransforms = allTransforms.filter(
 				(t) => t.embedded_dataset_id === embeddedDataset!.embedded_dataset_id
 			);

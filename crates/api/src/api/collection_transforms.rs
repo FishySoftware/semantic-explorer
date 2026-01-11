@@ -7,36 +7,78 @@ use crate::transforms::collection::models::{
     UpdateCollectionTransform,
 };
 use crate::transforms::collection::scanner::trigger_collection_transform_scan;
+use semantic_explorer_core::models::PaginatedResponse;
 use semantic_explorer_core::validation;
 
-use actix_web::web::{Data, Json, Path};
+use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpRequest, HttpResponse, Responder, delete, get, patch, post};
 use async_nats::Client as NatsClient;
 use aws_sdk_s3::Client as S3Client;
+use serde::Deserialize;
 use sqlx::{Pool, Postgres};
 use tracing::error;
+
+#[derive(Deserialize, Debug)]
+pub struct SortParams {
+    #[serde(default = "default_limit")]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
+    #[serde(default = "default_sort_by")]
+    pub sort_by: String,
+    #[serde(default = "default_sort_direction")]
+    pub sort_direction: String,
+}
+
+fn default_limit() -> i64 {
+    10
+}
+
+fn default_sort_by() -> String {
+    "created_at".to_string()
+}
+
+fn default_sort_direction() -> String {
+    "desc".to_string()
+}
 
 #[utoipa::path(
     get,
     path = "/api/collection-transforms",
     tag = "Collection Transforms",
+    params(
+        ("limit" = i64, Query, description = "Number of results per page", example = 10),
+        ("offset" = i64, Query, description = "Number of results to skip", example = 0),
+        ("sort_by" = String, Query, description = "Field to sort by: title, is_enabled, created_at, updated_at", example = "created_at"),
+        ("sort_direction" = String, Query, description = "Sort direction: asc or desc", example = "desc"),
+    ),
     responses(
-        (status = 200, description = "List of collection transforms", body = Vec<CollectionTransform>),
+        (status = 200, description = "Paginated list of collection transforms", body = PaginatedResponse<CollectionTransform>),
         (status = 401, description = "Unauthorized"),
     ),
 )]
 #[get("/api/collection-transforms")]
-#[tracing::instrument(name = "get_collection_transforms", skip(user, postgres_pool))]
+#[tracing::instrument(name = "get_collection_transforms", skip(user, postgres_pool, params))]
 pub async fn get_collection_transforms(
     user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
+    params: Query<SortParams>,
 ) -> impl Responder {
-    match collection_transforms::get_collection_transforms(&postgres_pool, &user).await {
-        Ok(transforms) => HttpResponse::Ok().json(transforms),
+    match collection_transforms::get_collection_transforms_paginated(
+        &postgres_pool,
+        &user,
+        params.limit,
+        params.offset,
+        &params.sort_by,
+        &params.sort_direction,
+    )
+    .await
+    {
+        Ok(response) => HttpResponse::Ok().json(response),
         Err(e) => {
             error!("Failed to fetch collection transforms: {e:?}");
             HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": format!("Failed to fetch collection transforms: {e:?}")
+                "error": "Failed to fetch collection transforms"
             }))
         }
     }

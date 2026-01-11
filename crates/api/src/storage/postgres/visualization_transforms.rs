@@ -5,6 +5,23 @@ use sqlx::{
 };
 
 use crate::transforms::visualization::models::{Visualization, VisualizationTransform};
+use semantic_explorer_core::models::PaginatedResponse;
+
+fn validate_sort_field(sort_by: &str) -> Result<String> {
+    match sort_by {
+        "title" | "is_enabled" | "last_run_status" | "created_at" | "updated_at" => {
+            Ok(sort_by.to_string())
+        }
+        _ => anyhow::bail!("Invalid sort field: {}", sort_by),
+    }
+}
+
+fn validate_sort_direction(direction: &str) -> Result<String> {
+    match direction.to_lowercase().as_str() {
+        "asc" | "desc" => Ok(direction.to_uppercase()),
+        _ => anyhow::bail!("Invalid sort direction: {}", direction),
+    }
+}
 
 const CREATE_VISUALIZATION_QUERY: &str = r#"
     INSERT INTO visualizations (visualization_transform_id, status, created_at)
@@ -174,18 +191,6 @@ pub async fn update_visualization(
     Ok(visualization)
 }
 
-// ============================================================================
-// Visualization Transforms CRUD
-// ============================================================================
-
-const GET_VISUALIZATION_TRANSFORMS_QUERY: &str = r#"
-    SELECT visualization_transform_id, title, embedded_dataset_id, owner, is_enabled,
-           reduced_collection_name, topics_collection_name, visualization_config,
-           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
-    FROM visualization_transforms
-    WHERE owner = $1
-    ORDER BY created_at DESC
-"#;
 
 const GET_VISUALIZATION_TRANSFORM_BY_ID_QUERY: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner, is_enabled,
@@ -241,16 +246,52 @@ const GET_VISUALIZATION_TRANSFORMS_BY_EMBEDDED_DATASET_QUERY: &str = r#"
     ORDER BY created_at DESC
 "#;
 
-pub async fn get_visualization_transforms(
+const COUNT_VISUALIZATION_TRANSFORMS_QUERY: &str = "SELECT COUNT(*) as count FROM visualization_transforms WHERE owner = $1";
+
+const GET_VISUALIZATION_TRANSFORMS_PAGINATED_QUERY: &str = r#"
+    SELECT visualization_transform_id, title, embedded_dataset_id, owner, is_enabled,
+           reduced_collection_name, topics_collection_name, visualization_config,
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+    FROM visualization_transforms
+    WHERE owner = $1
+    ORDER BY {field} {direction}
+    LIMIT $2 OFFSET $3
+"#;
+
+pub async fn get_visualization_transforms_paginated(
     pool: &Pool<Postgres>,
     owner: &str,
-) -> Result<Vec<VisualizationTransform>> {
-    let transforms =
-        sqlx::query_as::<_, VisualizationTransform>(GET_VISUALIZATION_TRANSFORMS_QUERY)
-            .bind(owner)
-            .fetch_all(pool)
-            .await?;
-    Ok(transforms)
+    limit: i64,
+    offset: i64,
+    sort_by: &str,
+    sort_direction: &str,
+) -> Result<PaginatedResponse<VisualizationTransform>> {
+    let sort_field = validate_sort_field(sort_by)?;
+    let sort_dir = validate_sort_direction(sort_direction)?;
+
+    let count_result: (i64,) = sqlx::query_as(COUNT_VISUALIZATION_TRANSFORMS_QUERY)
+        .bind(owner)
+        .fetch_one(pool)
+        .await?;
+    let total_count = count_result.0;
+
+    let query_str = GET_VISUALIZATION_TRANSFORMS_PAGINATED_QUERY
+        .replace("{field}", &sort_field)
+        .replace("{direction}", &sort_dir);
+
+    let transforms = sqlx::query_as::<_, VisualizationTransform>(&query_str)
+        .bind(owner)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?;
+
+    Ok(PaginatedResponse {
+        items: transforms,
+        total_count,
+        limit,
+        offset,
+    })
 }
 
 pub async fn get_visualization_transform_by_id(

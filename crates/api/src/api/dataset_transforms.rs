@@ -5,37 +5,79 @@ use crate::storage::postgres::{dataset_transforms, embedded_datasets};
 use crate::transforms::dataset::models::{
     CreateDatasetTransform, DatasetTransform, DatasetTransformStats, UpdateDatasetTransform,
 };
+use semantic_explorer_core::models::PaginatedResponse;
 use semantic_explorer_core::validation;
 
-use actix_web::web::{Data, Json, Path};
+use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpRequest, HttpResponse, Responder, delete, get, patch, post};
 use async_nats::Client as NatsClient;
 use qdrant_client::Qdrant;
+use serde::Deserialize;
 use sqlx::{Pool, Postgres};
 use tracing::{error, info};
 use uuid::Uuid;
+
+#[derive(Deserialize, Debug)]
+pub struct SortParams {
+    #[serde(default = "default_limit")]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
+    #[serde(default = "default_sort_by")]
+    pub sort_by: String,
+    #[serde(default = "default_sort_direction")]
+    pub sort_direction: String,
+}
+
+fn default_limit() -> i64 {
+    10
+}
+
+fn default_sort_by() -> String {
+    "created_at".to_string()
+}
+
+fn default_sort_direction() -> String {
+    "desc".to_string()
+}
 
 #[utoipa::path(
     get,
     path = "/api/dataset-transforms",
     tag = "Dataset Transforms",
+    params(
+        ("limit" = i64, Query, description = "Number of results per page", example = 10),
+        ("offset" = i64, Query, description = "Number of results to skip", example = 0),
+        ("sort_by" = String, Query, description = "Field to sort by: title, is_enabled, created_at, updated_at", example = "created_at"),
+        ("sort_direction" = String, Query, description = "Sort direction: asc or desc", example = "desc"),
+    ),
     responses(
-        (status = 200, description = "List of dataset transforms", body = Vec<DatasetTransform>),
+        (status = 200, description = "Paginated list of dataset transforms", body = PaginatedResponse<DatasetTransform>),
         (status = 401, description = "Unauthorized"),
     ),
 )]
 #[get("/api/dataset-transforms")]
-#[tracing::instrument(name = "get_dataset_transforms", skip(user, postgres_pool))]
+#[tracing::instrument(name = "get_dataset_transforms", skip(user, postgres_pool, params))]
 pub async fn get_dataset_transforms(
     user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
+    params: Query<SortParams>,
 ) -> impl Responder {
-    match dataset_transforms::get_dataset_transforms(&postgres_pool, &user).await {
-        Ok(transforms) => HttpResponse::Ok().json(transforms),
+    match dataset_transforms::get_dataset_transforms_paginated(
+        &postgres_pool,
+        &user,
+        params.limit,
+        params.offset,
+        &params.sort_by,
+        &params.sort_direction,
+    )
+    .await
+    {
+        Ok(response) => HttpResponse::Ok().json(response),
         Err(e) => {
             error!("Failed to fetch dataset transforms: {}", e);
             HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": format!("Failed to fetch dataset transforms: {}", e)
+                "error": "Failed to fetch dataset transforms"
             }))
         }
     }

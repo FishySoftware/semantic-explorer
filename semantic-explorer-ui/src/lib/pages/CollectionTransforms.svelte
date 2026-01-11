@@ -1,6 +1,15 @@
 <!-- eslint-disable svelte/no-at-html-tags -->
 <script lang="ts">
+	import {
+		Heading,
+		Table,
+		TableBody,
+		TableBodyCell,
+		TableHead,
+		TableHeadCell,
+	} from 'flowbite-svelte';
 	import { onMount } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import CreateCollectionTransformModal from '../components/CreateCollectionTransformModal.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
@@ -49,12 +58,29 @@
 		processing_duration_ms: number | null;
 	}
 
+	interface PaginatedResponse {
+		items: CollectionTransform[];
+		total_count: number;
+		limit: number;
+		offset: number;
+	}
+
 	let transforms = $state<CollectionTransform[]>([]);
 	let collections = $state<Collection[]>([]);
 	let datasets = $state<Dataset[]>([]);
 	let statsMap = $state<Map<number, Stats>>(new Map());
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+
+	// Pagination state
+	let totalCount = $state(0);
+	let currentPage = $state(1);
+	let pageSize = $state(10);
+	const pageSizeOptions = [10, 50, 100];
+
+	// Sort state
+	let sortBy = $state('created_at');
+	let sortDirection = $state('desc');
 
 	// Failed files modal state
 	let showFailedFilesModal = $state(false);
@@ -67,18 +93,87 @@
 	// Modal state
 	let showCreateModal = $state(false);
 
-	let deleting = $state<number | null>(null);
 	let transformPendingDelete = $state<CollectionTransform | null>(null);
+
+	// Selection state
+	// eslint-disable-next-line svelte/no-unnecessary-state-wrap
+	let selected = $state(new SvelteSet<number>());
+	let selectAll = $state(false);
+
+	function toggleSelectAll() {
+		if (selectAll) {
+			selected.clear();
+			for (const t of transforms) {
+				selected.add(t.collection_transform_id);
+			}
+		} else {
+			selected.clear();
+		}
+	}
+
+	function toggleSelect(id: number) {
+		if (selected.has(id)) {
+			selected.delete(id);
+			selectAll = false;
+		} else {
+			selected.add(id);
+		}
+	}
+
+	async function bulkToggleEnabled(_enable: boolean) {
+		for (const id of selected) {
+			const transform = transforms.find((t) => t.collection_transform_id === id);
+			if (transform) {
+				await toggleEnabled(transform, false);
+			}
+		}
+		selected.clear();
+		selectAll = false;
+	}
+
+	async function bulkTrigger() {
+		for (const id of selected) {
+			await triggerTransform(id);
+		}
+		selected.clear();
+		selectAll = false;
+	}
+
+	async function bulkDelete() {
+		for (const id of selected) {
+			const transform = transforms.find((t) => t.collection_transform_id === id);
+			if (transform) {
+				await requestDeleteTransform(transform, false);
+			}
+		}
+		selected = new SvelteSet();
+		selectAll = false;
+	}
+
+	function openEditForm(_transform: CollectionTransform) {
+		// Opens the modal for editing - implementation depends on your modal setup
+		// For now, just trigger the create modal with the transform pre-populated
+		showCreateModal = true;
+	}
 
 	async function fetchTransforms() {
 		try {
 			loading = true;
 			error = null;
-			const response = await fetch('/api/collection-transforms');
+			const offset = (currentPage - 1) * pageSize;
+			const params = new URLSearchParams({
+				limit: pageSize.toString(),
+				offset: offset.toString(),
+				sort_by: sortBy,
+				sort_direction: sortDirection,
+			});
+			const response = await fetch(`/api/collection-transforms?${params}`);
 			if (!response.ok) {
 				throw new Error(`Failed to fetch collection transforms: ${response.statusText}`);
 			}
-			transforms = await response.json();
+			const data: PaginatedResponse = await response.json();
+			transforms = data.items;
+			totalCount = data.total_count;
 			for (const transform of transforms) {
 				fetchStatsForTransform(transform.collection_transform_id);
 			}
@@ -91,6 +186,28 @@
 		}
 	}
 
+	function handleSort(field: string) {
+		if (sortBy === field) {
+			sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+		} else {
+			sortBy = field;
+			sortDirection = 'desc';
+		}
+		currentPage = 1;
+		fetchTransforms();
+	}
+
+	function handlePageChange(newPage: number) {
+		currentPage = newPage;
+		fetchTransforms();
+	}
+
+	function handlePageSizeChange(newSize: number) {
+		pageSize = newSize;
+		currentPage = 1;
+		fetchTransforms();
+	}
+
 	async function fetchStatsForTransform(transformId: number) {
 		try {
 			const response = await fetch(`/api/collection-transforms/${transformId}/stats`);
@@ -101,32 +218,6 @@
 			}
 		} catch (e) {
 			console.error(`Failed to fetch stats for transform ${transformId}:`, e);
-		}
-	}
-
-	async function openFailedFilesModal(transform: CollectionTransform) {
-		failedFilesTransformTitle = transform.title;
-		showFailedFilesModal = true;
-		loadingFailedFiles = true;
-		failedFiles = [];
-
-		try {
-			const response = await fetch(
-				`/api/collection-transforms/${transform.collection_transform_id}/processed-files`
-			);
-			if (response.ok) {
-				const allFiles: ProcessedFile[] = await response.json();
-				// Filter to only failed files
-				failedFiles = allFiles.filter((f) => f.process_status === 'failed');
-			}
-		} catch (e) {
-			console.error(
-				`Failed to fetch processed files for transform ${transform.collection_transform_id}:`,
-				e
-			);
-			toastStore.error('Failed to fetch failed files');
-		} finally {
-			loadingFailedFiles = false;
 		}
 	}
 
@@ -160,7 +251,7 @@
 		}
 	}
 
-	async function toggleEnabled(transform: CollectionTransform) {
+	async function toggleEnabled(transform: CollectionTransform, refresh = true) {
 		try {
 			const response = await fetch(
 				`/api/collection-transforms/${transform.collection_transform_id}`,
@@ -187,6 +278,9 @@
 			toastStore.success(
 				`Collection transform ${updated.is_enabled ? 'enabled' : 'disabled'} successfully`
 			);
+			if (refresh) {
+				await fetchTransforms();
+			}
 		} catch (e) {
 			toastStore.error(formatError(e, 'Failed to toggle collection transform'));
 		}
@@ -212,8 +306,10 @@
 		}
 	}
 
-	function requestDeleteTransform(transform: CollectionTransform) {
+	function requestDeleteTransform(transform: CollectionTransform, refresh = true) {
 		transformPendingDelete = transform;
+		// Store refresh preference
+		(transformPendingDelete as any)._skipRefresh = !refresh;
 	}
 
 	async function confirmDeleteTransform() {
@@ -222,10 +318,10 @@
 		}
 
 		const target = transformPendingDelete;
+		const skipRefresh = (target as any)._skipRefresh;
 		transformPendingDelete = null;
 
 		try {
-			deleting = target.collection_transform_id;
 			const response = await fetch(`/api/collection-transforms/${target.collection_transform_id}`, {
 				method: 'DELETE',
 			});
@@ -238,10 +334,11 @@
 				(t) => t.collection_transform_id !== target.collection_transform_id
 			);
 			toastStore.success('Collection transform deleted');
+			if (!skipRefresh) {
+				await fetchTransforms();
+			}
 		} catch (e) {
 			toastStore.error(formatError(e, 'Failed to delete collection transform'));
-		} finally {
-			deleting = null;
 		}
 	}
 
@@ -270,13 +367,7 @@
 		}
 	});
 
-	let filteredTransforms = $derived(
-		transforms.filter((t) => {
-			if (!searchQuery.trim()) return true;
-			const query = searchQuery.toLowerCase();
-			return t.title.toLowerCase().includes(query) || t.owner.toLowerCase().includes(query);
-		})
-	);
+	let filteredTransforms = $derived(transforms);
 
 	function getCollectionTitle(collectionId: number): string {
 		const collection = collections.find((c) => c.collection_id === collectionId);
@@ -287,16 +378,25 @@
 		const dataset = datasets.find((d) => d.dataset_id === datasetId);
 		return dataset ? dataset.title : `Dataset ${datasetId}`;
 	}
+
+	function getTotalPages(): number {
+		return Math.ceil(totalCount / pageSize);
+	}
+
+	function getSortIcon(field: string): string {
+		if (sortBy !== field) return '';
+		return sortDirection === 'asc' ? '▲' : '▼';
+	}
 </script>
 
-<div class="max-w-7xl mx-auto">
+<div class="max-w-7xl mx-auto px-4">
 	<PageHeader
 		title="Collection Transforms"
 		description="Process files from Collections into Dataset items. Collection transforms extract text from files, chunk them into manageable pieces, and create Dataset items ready for embedding."
 	/>
 
 	<div class="flex justify-between items-center mb-6">
-		<h1 class="text-3xl font-bold text-gray-900 dark:text-white">Collection Transforms</h1>
+		<Heading tag="h1" class="text-3xl font-bold">Collection Transforms</Heading>
 		<button
 			onclick={() => (showCreateModal = true)}
 			class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
@@ -308,17 +408,31 @@
 	<CreateCollectionTransformModal
 		bind:open={showCreateModal}
 		onSuccess={() => {
+			currentPage = 1;
 			fetchTransforms();
 		}}
 	/>
 
-	<div class="mb-4">
+	<div class="mb-4 flex gap-4">
 		<input
 			type="text"
 			bind:value={searchQuery}
-			placeholder="Search collection transforms..."
-			class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+			placeholder="Filter by title or owner (client-side)..."
+			class="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 		/>
+		<div class="flex gap-2 items-center">
+			<label for="page-size" class="text-sm text-gray-600 dark:text-gray-400">Per page:</label>
+			<select
+				id="page-size"
+				bind:value={pageSize}
+				onchange={(e) => handlePageSizeChange(parseInt(e.currentTarget.value))}
+				class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+			>
+				{#each pageSizeOptions as option (option)}
+					<option value={option}>{option}</option>
+				{/each}
+			</select>
+		</div>
 	</div>
 
 	{#if loading}
@@ -335,127 +449,204 @@
 		<div class="bg-gray-50 dark:bg-gray-800 rounded-lg p-8 text-center">
 			<p class="text-gray-600 dark:text-gray-400">
 				{searchQuery
-					? 'No collection transforms found matching your search.'
+					? 'No collection transforms found matching your filter.'
 					: 'No collection transforms yet. Create one to get started!'}
 			</p>
 		</div>
 	{:else}
-		<div class="grid gap-4">
-			{#each filteredTransforms as transform (transform.collection_transform_id)}
-				{@const stats = statsMap.get(transform.collection_transform_id)}
-				<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
-					<div class="flex justify-between items-start mb-4">
-						<div class="flex-1">
-							<div class="flex items-baseline gap-3 mb-2">
-								<h3 class="text-xl font-semibold text-gray-900 dark:text-white">
-									{transform.title}
-								</h3>
-								<span class="text-sm text-gray-500 dark:text-gray-400">
-									#{transform.collection_transform_id}
+		{#if selected.size > 0}
+			<div
+				class="mb-4 flex items-center gap-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4"
+			>
+				<span class="text-sm text-blue-700 dark:text-blue-300 flex-1">
+					{selected.size} transform{selected.size !== 1 ? 's' : ''} selected
+				</span>
+				<button
+					onclick={() => bulkToggleEnabled(true)}
+					class="text-sm px-3 py-1 rounded bg-green-600 hover:bg-green-700 text-white transition-colors"
+				>
+					Enable
+				</button>
+				<button
+					onclick={() => bulkToggleEnabled(false)}
+					class="text-sm px-3 py-1 rounded bg-yellow-600 hover:bg-yellow-700 text-white transition-colors"
+				>
+					Disable
+				</button>
+				<button
+					onclick={() => bulkTrigger()}
+					class="text-sm px-3 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white transition-colors"
+				>
+					Trigger
+				</button>
+				<button
+					onclick={() => bulkDelete()}
+					class="text-sm px-3 py-1 rounded bg-red-600 hover:bg-red-700 text-white transition-colors"
+				>
+					Delete
+				</button>
+				<button
+					onclick={() => {
+					selected.clear();
+						selectAll = false;
+					}}
+					class="text-sm px-3 py-1 rounded bg-gray-300 hover:bg-gray-400 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-900 dark:text-white transition-colors"
+				>
+					Clear
+				</button>
+			</div>
+		{/if}
+		<div class="overflow-x-auto">
+			<Table hoverable striped>
+				<TableHead>
+					<TableHeadCell class="px-4 py-3 w-12">
+						<input
+							type="checkbox"
+							checked={selectAll}
+							onchange={() => toggleSelectAll()}
+							class="cursor-pointer"
+						/>
+					</TableHeadCell>
+					<TableHeadCell
+						class="px-4 py-3 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700"
+						onclick={() => handleSort('title')}
+					>
+						<div class="flex items-center gap-2">
+							Title
+							{getSortIcon('title')}
+						</div>
+					</TableHeadCell>
+					<TableHeadCell class="px-4 py-3">Collection</TableHeadCell>
+					<TableHeadCell class="px-4 py-3">Dataset</TableHeadCell>
+					<TableHeadCell
+						class="px-4 py-3 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700"
+						onclick={() => handleSort('is_enabled')}
+					>
+						<div class="flex items-center gap-2">
+							Status
+							{getSortIcon('is_enabled')}
+						</div>
+					</TableHeadCell>
+					<TableHeadCell class="px-4 py-3">Files Processed</TableHeadCell>
+					<TableHeadCell class="px-4 py-3">Items Created</TableHeadCell>
+					<TableHeadCell
+						class="px-4 py-3 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700"
+						onclick={() => handleSort('created_at')}
+					>
+						<div class="flex items-center gap-2">
+							Created
+							{getSortIcon('created_at')}
+						</div>
+					</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 w-12 text-center">Edit</TableHeadCell>
+				</TableHead>
+				<TableBody>
+					{#each filteredTransforms as transform (transform.collection_transform_id)}
+						{@const stats = statsMap.get(transform.collection_transform_id)}
+						<tr class="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50">
+							<TableBodyCell class="px-4 py-3 w-12">
+								<input
+									type="checkbox"
+									checked={selected.has(transform.collection_transform_id)}
+									onchange={() => toggleSelect(transform.collection_transform_id)}
+									class="cursor-pointer"
+								/>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3 font-medium text-gray-900 dark:text-white">
+								{transform.title}
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3 text-sm">
+								<a
+									href="#/collections/{transform.collection_id}/details"
+									class="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
+								>
+									{getCollectionTitle(transform.collection_id)}
+								</a>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3 text-sm">
+								<a
+									href="#/datasets/{transform.dataset_id}/details"
+									class="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
+								>
+									{getDatasetTitle(transform.dataset_id)}
+								</a>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3">
+								<span
+									class={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+										transform.is_enabled
+											? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+											: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-400'
+									}`}
+								>
+									{transform.is_enabled ? 'Enabled' : 'Disabled'}
 								</span>
-							</div>
-							<div class="text-sm text-gray-600 dark:text-gray-400 space-y-1">
-								<p>
-									<strong>Collection:</strong>
-									<a
-										href="#/collections/{transform.collection_id}/details"
-										class="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
-									>
-										{getCollectionTitle(transform.collection_id)}
-									</a>
-								</p>
-								<p>
-									<strong>Dataset:</strong>
-									<a
-										href="#/datasets/{transform.dataset_id}/details"
-										class="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
-									>
-										{getDatasetTitle(transform.dataset_id)}
-									</a>
-								</p>
-								<p><strong>Chunk Size:</strong> {transform.chunk_size}</p>
-								<p><strong>Owner:</strong> {transform.owner}</p>
-								<p>
-									<strong>Status:</strong>
-									<span
-										class={transform.is_enabled
-											? 'text-green-600 dark:text-green-400'
-											: 'text-gray-500 dark:text-gray-400'}
-									>
-										{transform.is_enabled ? 'Enabled' : 'Disabled'}
-									</span>
-								</p>
-								<p><strong>Created:</strong> {new Date(transform.created_at).toLocaleString()}</p>
-								<p><strong>Updated:</strong> {new Date(transform.updated_at).toLocaleString()}</p>
-							</div>
-						</div>
-						<div class="flex flex-col gap-2">
-							<button
-								onclick={() => toggleEnabled(transform)}
-								class="px-3 py-1 text-sm rounded-lg {transform.is_enabled
-									? 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-400'
-									: 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400'}"
-							>
-								{transform.is_enabled ? 'Disable' : 'Enable'}
-							</button>
-							<button
-								onclick={() => triggerTransform(transform.collection_transform_id)}
-								class="px-3 py-1 text-sm bg-blue-100 text-blue-700 hover:bg-blue-200 rounded-lg dark:bg-blue-900/20 dark:text-blue-400"
-							>
-								Trigger
-							</button>
-							<button
-								onclick={() => requestDeleteTransform(transform)}
-								disabled={deleting === transform.collection_transform_id}
-								class="px-3 py-1 text-sm bg-red-100 text-red-700 hover:bg-red-200 rounded-lg dark:bg-red-900/20 dark:text-red-400 disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								{deleting === transform.collection_transform_id ? 'Deleting...' : 'Delete'}
-							</button>
-						</div>
-					</div>
-
-					{#if stats}
-						<div
-							class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 grid grid-cols-4 gap-4"
-						>
-							<div>
-								<p class="text-sm text-gray-600 dark:text-gray-400">Files Processed</p>
-								<p class="text-lg font-semibold text-gray-900 dark:text-white">
-									{stats.total_files_processed}
-								</p>
-							</div>
-							<div>
-								<p class="text-sm text-gray-600 dark:text-gray-400">Successful</p>
-								<p class="text-lg font-semibold text-green-600 dark:text-green-400">
-									{stats.successful_files}
-								</p>
-							</div>
-							<div>
-								<p class="text-sm text-gray-600 dark:text-gray-400">Failed</p>
-								{#if stats.failed_files > 0}
-									<button
-										onclick={() => openFailedFilesModal(transform)}
-										class="text-lg font-semibold text-red-600 dark:text-red-400 hover:underline cursor-pointer"
-										title="Click to view failed files"
-									>
-										{stats.failed_files}
-									</button>
-								{:else}
-									<p class="text-lg font-semibold text-green-600 dark:text-green-400">0</p>
-								{/if}
-							</div>
-							<div>
-								<p class="text-sm text-gray-600 dark:text-gray-400">Items Created</p>
-								<p class="text-lg font-semibold text-blue-600 dark:text-blue-400">
-									{stats.total_items_created}
-								</p>
-							</div>
-						</div>
-					{/if}
-				</div>
-			{/each}
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3 text-sm">
+								{stats?.total_files_processed ?? '-'}
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3 text-sm">
+								{stats?.total_items_created ?? '-'}
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3 text-sm">
+								{new Date(transform.created_at).toLocaleDateString()}
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3 text-center">
+								<button
+									onclick={() => openEditForm(transform)}
+									title="Edit"
+									class="text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-300 transition-colors"
+								>
+									✎
+								</button>
+							</TableBodyCell>
+						</tr>
+					{/each}
+				</TableBody>
+			</Table>
 		</div>
 	{/if}
+
+	<div class="mt-6 flex items-center justify-between">
+		<div class="text-sm text-gray-600 dark:text-gray-400">
+			Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, totalCount)} of
+			{totalCount} transforms
+		</div>
+		<div class="flex gap-2">
+			<button
+				onclick={() => handlePageChange(currentPage - 1)}
+				disabled={currentPage === 1}
+				class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+			>
+				Previous
+			</button>
+			<div class="flex items-center gap-1">
+				{#each Array.from({ length: getTotalPages() }, (_, i) => i + 1) as page (page)}
+					{#if page === 1 || page === getTotalPages() || (page >= currentPage - 1 && page <= currentPage + 1)}
+						<button
+							onclick={() => handlePageChange(page)}
+							class={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+								currentPage === page
+									? 'bg-blue-600 text-white'
+									: 'border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+							}`}
+						>
+							{page}
+						</button>
+					{:else if page === currentPage - 2 || page === currentPage + 2}
+						<span class="px-2 py-2 text-gray-500">...</span>
+					{/if}
+				{/each}
+			</div>
+			<button
+				onclick={() => handlePageChange(currentPage + 1)}
+				disabled={currentPage === getTotalPages()}
+				class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+			>
+				Next
+			</button>
+		</div>
+	</div>
 </div>
 
 <ConfirmDialog

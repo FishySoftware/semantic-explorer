@@ -69,7 +69,8 @@
 			if (!response.ok) {
 				throw new Error(`Failed to fetch visualization transforms: ${response.statusText}`);
 			}
-			transforms = await response.json();
+			const data = await response.json();
+			transforms = Array.isArray(data) ? data : data.items || [];
 
 			// Load completed visualizations for each transform
 			await loadCompletedVisualizations();

@@ -1,5 +1,14 @@
 <script lang="ts">
+	import {
+		Heading,
+		Table,
+		TableBody,
+		TableBodyCell,
+		TableHead,
+		TableHeadCell,
+	} from 'flowbite-svelte';
 	import { onMount } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
@@ -37,6 +46,13 @@
 		total_chunks_failed: number;
 	}
 
+	interface PaginatedResponse {
+		items: DatasetTransform[];
+		total_count: number;
+		limit: number;
+		offset: number;
+	}
+
 	let transforms = $state<DatasetTransform[]>([]);
 	let datasets = $state<Dataset[]>([]);
 	let embedders = $state<Embedder[]>([]);
@@ -44,8 +60,17 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
-	let searchQuery = $state('');
+	// Pagination state
+	let totalCount = $state(0);
+	let currentPage = $state(1);
+	let pageSize = $state(10);
+	const pageSizeOptions = [10, 50, 100];
 
+	// Sort state
+	let sortBy = $state('created_at');
+	let sortDirection = $state('desc');
+
+	// Create/edit form state
 	let showCreateForm = $state(false);
 	let editingTransform = $state<DatasetTransform | null>(null);
 	let newTitle = $state('');
@@ -55,29 +80,81 @@
 	let creating = $state(false);
 	let createError = $state<string | null>(null);
 
-	let deleting = $state<number | null>(null);
 	let transformPendingDelete = $state<DatasetTransform | null>(null);
 
-	$effect(() => {
-		if (showCreateForm && !editingTransform && !newTitle) {
-			const now = new Date();
-			const date = now.toISOString().split('T')[0];
-			const time = now.toTimeString().split(' ')[0].replace(/:/g, '').slice(0, 4);
-			newTitle = `dataset-transform-${date}-${time}`;
+	// Selection state
+	let selected = new SvelteSet<number>();
+	let selectAll = $state(false);
+
+	function toggleSelectAll() {
+		if (selectAll) {
+			selected.clear();
+			for (const t of transforms) {
+				selected.add(t.dataset_transform_id);
+			}
+		} else {
+			selected.clear();
 		}
-	});
+	}
+
+	function toggleSelect(id: number) {
+		if (selected.has(id)) {
+			selected.delete(id);
+			selectAll = false;
+		} else {
+			selected.add(id);
+		}
+	}
+
+	async function bulkToggleEnabled(enable: boolean) {
+		for (const id of selected) {
+			const transform = transforms.find((t) => t.dataset_transform_id === id);
+			if (transform) {
+				transform.is_enabled = enable;
+				await toggleEnabled(transform, false);
+			}
+		}
+		selected.clear();
+		selectAll = false;
+	}
+
+	async function bulkTrigger() {
+		for (const id of selected) {
+			await triggerTransform(id);
+		}
+		selected.clear();
+		selectAll = false;
+	}
+
+	async function bulkDelete() {
+		for (const id of selected) {
+			const transform = transforms.find((t) => t.dataset_transform_id === id);
+			if (transform) {
+				await requestDeleteTransform(transform, false);
+			}
+		}
+		selected.clear();
+		selectAll = false;
+	}
 
 	async function fetchTransforms() {
 		try {
 			loading = true;
 			error = null;
-			const response = await fetch('/api/dataset-transforms');
+			const offset = (currentPage - 1) * pageSize;
+			const params = new URLSearchParams({
+				limit: pageSize.toString(),
+				offset: offset.toString(),
+				sort_by: sortBy,
+				sort_direction: sortDirection,
+			});
+			const response = await fetch(`/api/dataset-transforms?${params}`);
 			if (!response.ok) {
 				throw new Error(`Failed to fetch dataset transforms: ${response.statusText}`);
 			}
-			transforms = await response.json();
-
-			// Fetch stats for each transform
+			const data: PaginatedResponse = await response.json();
+			transforms = data.items;
+			totalCount = data.total_count;
 			for (const transform of transforms) {
 				fetchStatsForTransform(transform.dataset_transform_id);
 			}
@@ -90,13 +167,35 @@
 		}
 	}
 
+	function handleSort(field: string) {
+		if (sortBy === field) {
+			sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+		} else {
+			sortBy = field;
+			sortDirection = 'desc';
+		}
+		currentPage = 1;
+		fetchTransforms();
+	}
+
+	function handlePageChange(newPage: number) {
+		currentPage = newPage;
+		fetchTransforms();
+	}
+
+	function handlePageSizeChange(newSize: number) {
+		pageSize = newSize;
+		currentPage = 1;
+		fetchTransforms();
+	}
+
 	async function fetchStatsForTransform(transformId: number) {
 		try {
 			const response = await fetch(`/api/dataset-transforms/${transformId}/stats`);
 			if (response.ok) {
 				const stats = await response.json();
 				statsMap.set(transformId, stats);
-				statsMap = statsMap; // Trigger reactivity
+				statsMap = statsMap;
 			}
 		} catch (e) {
 			console.error(`Failed to fetch stats for transform ${transformId}:`, e);
@@ -132,12 +231,10 @@
 			createError = 'Title is required';
 			return;
 		}
-
 		if (!newDatasetId) {
 			createError = 'Dataset is required';
 			return;
 		}
-
 		if (selectedEmbedderIds.length === 0) {
 			createError = 'At least one embedder is required';
 			return;
@@ -156,9 +253,7 @@
 				? {
 						title: newTitle,
 						embedder_ids: selectedEmbedderIds,
-						job_config: {
-							wipe_collection: newWipeCollection,
-						},
+						job_config: { wipe_collection: newWipeCollection },
 					}
 				: {
 						title: newTitle,
@@ -169,9 +264,7 @@
 
 			const response = await fetch(url, {
 				method,
-				headers: {
-					'Content-Type': 'application/json',
-				},
+				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(body),
 			});
 
@@ -190,7 +283,8 @@
 				);
 				toastStore.success('Dataset transform updated successfully');
 			} else {
-				transforms = [...transforms, savedTransform];
+				currentPage = 1;
+				await fetchTransforms();
 				toastStore.success(
 					`Dataset transform created successfully with ${selectedEmbedderIds.length} embedder(s)`
 				);
@@ -209,16 +303,12 @@
 		}
 	}
 
-	async function toggleEnabled(transform: DatasetTransform) {
+	async function toggleEnabled(transform: DatasetTransform, refresh = true) {
 		try {
 			const response = await fetch(`/api/dataset-transforms/${transform.dataset_transform_id}`, {
 				method: 'PATCH',
-				headers: {
-					'Content-Type': 'application/json',
-				},
-				body: JSON.stringify({
-					is_enabled: !transform.is_enabled,
-				}),
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ is_enabled: !transform.is_enabled }),
 			});
 
 			if (!response.ok) {
@@ -234,6 +324,9 @@
 			toastStore.success(
 				`Dataset transform ${updated.is_enabled ? 'enabled' : 'disabled'} successfully`
 			);
+			if (refresh) {
+				await fetchTransforms();
+			}
 		} catch (e) {
 			toastStore.error(formatError(e, 'Failed to toggle dataset transform'));
 		}
@@ -243,9 +336,7 @@
 		try {
 			const response = await fetch(`/api/dataset-transforms/${transformId}/trigger`, {
 				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-				},
+				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ dataset_transform_id: transformId }),
 			});
 
@@ -286,20 +377,19 @@
 		}
 	}
 
-	function requestDeleteTransform(transform: DatasetTransform) {
+	function requestDeleteTransform(transform: DatasetTransform, refresh = true) {
 		transformPendingDelete = transform;
+		(transformPendingDelete as any)._skipRefresh = !refresh;
 	}
 
 	async function confirmDeleteTransform() {
-		if (!transformPendingDelete) {
-			return;
-		}
+		if (!transformPendingDelete) return;
 
 		const target = transformPendingDelete;
+		const skipRefresh = (target as any)._skipRefresh;
 		transformPendingDelete = null;
 
 		try {
-			deleting = target.dataset_transform_id;
 			const response = await fetch(`/api/dataset-transforms/${target.dataset_transform_id}`, {
 				method: 'DELETE',
 			});
@@ -308,77 +398,49 @@
 				throw new Error(`Failed to delete dataset transform: ${response.statusText}`);
 			}
 
-			transforms = transforms.filter((t) => t.dataset_transform_id !== target.dataset_transform_id);
+			if (!skipRefresh) {
+				await fetchTransforms();
+			}
 			toastStore.success('Dataset transform deleted');
 		} catch (e) {
 			toastStore.error(formatError(e, 'Failed to delete dataset transform'));
-		} finally {
-			deleting = null;
 		}
 	}
 
 	onMount(async () => {
 		await Promise.all([fetchTransforms(), fetchDatasets(), fetchEmbedders()]);
-		const hashParts = window.location.hash.split('?');
-		if (hashParts.length > 1) {
-			const urlParams = new URLSearchParams(hashParts[1]);
-
-			const action = urlParams.get('action');
-			const datasetIdParam = urlParams.get('dataset_id');
-
-			let shouldOpenForm = false;
-
-			if (action === 'create' && datasetIdParam) {
-				const datasetId = parseInt(datasetIdParam, 10);
-				if (!isNaN(datasetId)) {
-					newDatasetId = datasetId;
-					shouldOpenForm = true;
-				}
-			}
-
-			if (shouldOpenForm) {
-				showCreateForm = true;
-				const basePath = hashParts[0];
-				window.history.replaceState(
-					null,
-					'',
-					window.location.pathname + window.location.search + basePath
-				);
-			}
-		}
 	});
-
-	let filteredTransforms = $derived(
-		transforms.filter((t) => {
-			if (!searchQuery.trim()) return true;
-			const query = searchQuery.toLowerCase();
-			return t.title.toLowerCase().includes(query) || t.owner.toLowerCase().includes(query);
-		})
-	);
 
 	function getDataset(datasetId: number) {
 		return datasets.find((d) => d.dataset_id === datasetId);
 	}
 
-	function getEmbeddersList(embedderIds: number[] | undefined) {
-		if (!embedderIds || embedderIds.length === 0) {
-			return [];
-		}
-		return embedderIds.map((id) => {
-			const embedder = embedders.find((e) => e.embedder_id === id);
-			return embedder || { embedder_id: id, name: `Embedder ${id}`, provider: 'Unknown' };
-		});
+	function getTotalPages(): number {
+		return Math.ceil(totalCount / pageSize);
+	}
+
+	function getSortIcon(field: string): string {
+		if (sortBy !== field) return '';
+		return sortDirection === 'asc' ? '▲' : '▼';
+	}
+
+	function getEmbeddersText(embedderIds: number[] | undefined): string {
+		if (!embedderIds || embedderIds.length === 0) return 'None';
+		const names = embedderIds
+			.map((id) => embedders.find((e) => e.embedder_id === id)?.name || `Embedder ${id}`)
+			.join(', ');
+		return names.length > 40 ? names.substring(0, 40) + '...' : names;
 	}
 </script>
 
-<div class="max-w-7xl mx-auto">
+<div class="max-w-7xl mx-auto px-4">
 	<PageHeader
 		title="Dataset Transforms"
-		description="Process Datasets with embedders to create Embedded Datasets. Each Dataset Transform can use multiple embedders, creating one Embedded Dataset per embedder. These embedded datasets contain vector representations stored in Qdrant for semantic search."
+		description="Process Datasets with embedders to create Embedded Datasets. Each Dataset Transform can use multiple embedders, creating one Embedded Dataset per embedder."
 	/>
 
 	<div class="flex justify-between items-center mb-6">
-		<h1 class="text-3xl font-bold text-gray-900 dark:text-white">Dataset Transforms</h1>
+		<Heading tag="h1" class="text-3xl font-bold">Dataset Transforms</Heading>
 		<button
 			onclick={() => {
 				if (showCreateForm) {
@@ -415,7 +477,7 @@
 						id="transform-title"
 						type="text"
 						bind:value={newTitle}
-						class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+						class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 						placeholder="Enter transform title..."
 					/>
 				</div>
@@ -431,7 +493,7 @@
 						<select
 							id="dataset-select"
 							bind:value={newDatasetId}
-							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 						>
 							<option value={null}>Select a dataset...</option>
 							{#each datasets as dataset (dataset.dataset_id)}
@@ -449,9 +511,7 @@
 						class="border border-gray-300 dark:border-gray-600 rounded-lg p-4 max-h-64 overflow-y-auto bg-white dark:bg-gray-700"
 					>
 						{#if embedders.length === 0}
-							<p class="text-sm text-gray-500 dark:text-gray-400">
-								No embedders available. Create an embedder first.
-							</p>
+							<p class="text-sm text-gray-500 dark:text-gray-400">No embedders available.</p>
 						{:else}
 							{#each embedders as embedder (embedder.embedder_id)}
 								<label
@@ -461,37 +521,26 @@
 										type="checkbox"
 										checked={selectedEmbedderIds.includes(embedder.embedder_id)}
 										onchange={() => toggleEmbedder(embedder.embedder_id)}
-										class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+										class="w-4 h-4 text-blue-600"
 									/>
 									<span class="ml-2 text-sm text-gray-900 dark:text-white">
 										{embedder.name}
-										<span class="text-gray-500 dark:text-gray-400">
-											({embedder.provider})
-										</span>
+										<span class="text-gray-500 dark:text-gray-400">({embedder.provider})</span>
 									</span>
 								</label>
 							{/each}
 						{/if}
 					</div>
 					<p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-						{selectedEmbedderIds.length} embedder(s) selected. Each will create a separate Embedded Dataset.
+						{selectedEmbedderIds.length} embedder(s) selected
 					</p>
 				</div>
 
 				<div class="mb-4">
 					<label class="flex items-center cursor-pointer">
-						<input
-							type="checkbox"
-							bind:checked={newWipeCollection}
-							class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-						/>
-						<span class="ml-2 text-sm text-gray-700 dark:text-gray-300">
-							Wipe existing data if applicable
-						</span>
+						<input type="checkbox" bind:checked={newWipeCollection} class="w-4 h-4 text-blue-600" />
+						<span class="ml-2 text-sm text-gray-700 dark:text-gray-300">Wipe existing data</span>
 					</label>
-					<p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-						Warning: This will delete all existing embeddings in the target Qdrant collections
-					</p>
 				</div>
 
 				{#if createError}
@@ -506,20 +555,20 @@
 					<button
 						type="submit"
 						disabled={creating}
-						class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+						class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
 					>
 						{creating
 							? editingTransform
 								? 'Updating...'
 								: 'Creating...'
 							: editingTransform
-								? 'Update Transform'
-								: 'Create Transform'}
+								? 'Update'
+								: 'Create'}
 					</button>
 					<button
 						type="button"
 						onclick={resetForm}
-						class="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+						class="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300"
 					>
 						Cancel
 					</button>
@@ -528,13 +577,21 @@
 		</div>
 	{/if}
 
-	<div class="mb-4">
-		<input
-			type="text"
-			bind:value={searchQuery}
-			placeholder="Search dataset transforms..."
-			class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-		/>
+	<div class="mb-4 flex gap-4">
+		<div class="flex-1"></div>
+		<div class="flex gap-2 items-center">
+			<label for="page-size" class="text-sm text-gray-600 dark:text-gray-400">Per page:</label>
+			<select
+				id="page-size"
+				bind:value={pageSize}
+				onchange={(e) => handlePageSizeChange(parseInt(e.currentTarget.value))}
+				class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+			>
+				{#each pageSizeOptions as option (option)}
+					<option value={option}>{option}</option>
+				{/each}
+			</select>
+		</div>
 	</div>
 
 	{#if loading}
@@ -547,159 +604,212 @@
 		>
 			<p class="text-red-600 dark:text-red-400">{error}</p>
 		</div>
-	{:else if filteredTransforms.length === 0}
+	{:else if transforms.length === 0}
 		<div class="bg-gray-50 dark:bg-gray-800 rounded-lg p-8 text-center">
 			<p class="text-gray-600 dark:text-gray-400">
-				{searchQuery
-					? 'No dataset transforms found matching your search.'
-					: 'No dataset transforms yet. Create one to get started!'}
+				No dataset transforms yet. Create one to get started!
 			</p>
 		</div>
 	{:else}
-		<div class="grid gap-4">
-			{#each filteredTransforms as transform (transform.dataset_transform_id)}
-				{@const stats = statsMap.get(transform.dataset_transform_id)}
-				{@const dataset = getDataset(transform.source_dataset_id)}
-				{@const embeddersList = getEmbeddersList(transform.embedder_ids)}
-				<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
-					<div class="flex justify-between items-start mb-4">
-						<div class="flex-1">
-							<h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+		{#if selected.size > 0}
+			<div
+				class="mb-4 flex items-center gap-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4"
+			>
+				<span class="text-sm text-blue-700 dark:text-blue-300 flex-1">
+					{selected.size} transform{selected.size !== 1 ? 's' : ''} selected
+				</span>
+				<button
+					onclick={() => bulkToggleEnabled(true)}
+					class="text-sm px-3 py-1 rounded bg-green-600 hover:bg-green-700 text-white transition-colors"
+				>
+					Enable
+				</button>
+				<button
+					onclick={() => bulkToggleEnabled(false)}
+					class="text-sm px-3 py-1 rounded bg-yellow-600 hover:bg-yellow-700 text-white transition-colors"
+				>
+					Disable
+				</button>
+				<button
+					onclick={() => bulkTrigger()}
+					class="text-sm px-3 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white transition-colors"
+				>
+					Trigger
+				</button>
+				<button
+					onclick={() => bulkDelete()}
+					class="text-sm px-3 py-1 rounded bg-red-600 hover:bg-red-700 text-white transition-colors"
+				>
+					Delete
+				</button>
+				<button
+					onclick={() => {
+					selected.clear();
+						selectAll = false;
+					}}
+					class="text-sm px-3 py-1 rounded bg-gray-300 hover:bg-gray-400 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-900 dark:text-white transition-colors"
+				>
+					Clear
+				</button>
+			</div>
+		{/if}
+		<div class="overflow-x-auto">
+			<Table hoverable striped>
+				<TableHead>
+					<TableHeadCell class="px-4 py-3 w-12">
+						<input
+							type="checkbox"
+							checked={selectAll}
+							onchange={() => toggleSelectAll()}
+							class="cursor-pointer"
+						/>
+					</TableHeadCell>
+					<TableHeadCell
+						class="px-4 py-3 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700"
+						onclick={() => handleSort('title')}
+					>
+						<div class="flex items-center gap-2">
+							Title
+							{getSortIcon('title')}
+						</div>
+					</TableHeadCell>
+					<TableHeadCell class="px-4 py-3">Source Dataset</TableHeadCell>
+					<TableHeadCell class="px-4 py-3">Embedders</TableHeadCell>
+					<TableHeadCell
+						class="px-4 py-3 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700"
+						onclick={() => handleSort('is_enabled')}
+					>
+						<div class="flex items-center gap-2">
+							Status
+							{getSortIcon('is_enabled')}
+						</div>
+					</TableHeadCell>
+					<TableHeadCell class="px-4 py-3">Chunks Embedded</TableHeadCell>
+					<TableHeadCell
+						class="px-4 py-3 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700"
+						onclick={() => handleSort('created_at')}
+					>
+						<div class="flex items-center gap-2">
+							Created
+							{getSortIcon('created_at')}
+						</div>
+					</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 w-12 text-center">Edit</TableHeadCell>
+				</TableHead>
+				<TableBody>
+					{#each transforms as transform (transform.dataset_transform_id)}
+						{@const stats = statsMap.get(transform.dataset_transform_id)}
+						{@const dataset = getDataset(transform.source_dataset_id)}
+						<tr class="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50">
+							<TableBodyCell class="px-4 py-3 w-12">
+								<input
+									type="checkbox"
+									checked={selected.has(transform.dataset_transform_id)}
+									onchange={() => toggleSelect(transform.dataset_transform_id)}
+									class="cursor-pointer"
+								/>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3 font-medium text-gray-900 dark:text-white">
 								{transform.title}
-							</h3>
-							<div class="text-sm text-gray-600 dark:text-gray-400 space-y-1">
-								<p>
-									<strong>Source Dataset:</strong>
-									{#if dataset}
-										<a
-											href="#/datasets/{transform.source_dataset_id}/details"
-											class="text-blue-600 dark:text-blue-400 hover:underline"
-										>
-											{dataset.title}
-										</a>
-									{:else}
-										Dataset {transform.source_dataset_id}
-									{/if}
-								</p>
-								<div>
-									<strong>Embedders ({transform.embedder_ids?.length ?? 0}):</strong>
-									{#if embeddersList.length === 0}
-										<p class="ml-4">None</p>
-									{:else}
-										<ul class="ml-4 list-disc list-inside">
-											{#each embeddersList as embedder (embedder.embedder_id)}
-												<li>
-													<a
-														href="#/embedders?name={encodeURIComponent(embedder.name)}"
-														class="text-blue-600 dark:text-blue-400 hover:underline"
-													>
-														{embedder.name}
-													</a>
-													<span class="text-gray-500 dark:text-gray-400">
-														({embedder.provider})
-													</span>
-												</li>
-											{/each}
-										</ul>
-									{/if}
-								</div>
-								<p><strong>Owner:</strong> {transform.owner}</p>
-								<p>
-									<strong>Status:</strong>
-									<span
-										class={transform.is_enabled
-											? 'text-green-600 dark:text-green-400'
-											: 'text-gray-500 dark:text-gray-400'}
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3 text-sm">
+								{#if dataset}
+									<a
+										href="#/datasets/{transform.source_dataset_id}/details"
+										class="text-blue-600 dark:text-blue-400 hover:underline"
 									>
-										{transform.is_enabled ? 'Enabled' : 'Disabled'}
-									</span>
-								</p>
-							</div>
-						</div>
-						<div class="flex flex-col gap-2">
-							<button
-								onclick={() => toggleEnabled(transform)}
-								class="px-3 py-1 text-sm rounded-lg {transform.is_enabled
-									? 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-400'
-									: 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400'}"
+										{dataset.title}
+									</a>
+								{:else}
+									Dataset {transform.source_dataset_id}
+								{/if}
+							</TableBodyCell>
+							<TableBodyCell
+								class="px-4 py-3 text-sm"
+								title={getEmbeddersText(transform.embedder_ids)}
 							>
-								{transform.is_enabled ? 'Disable' : 'Enable'}
-							</button>
-							<button
-								onclick={() => triggerTransform(transform.dataset_transform_id)}
-								class="px-3 py-1 text-sm bg-blue-100 text-blue-700 hover:bg-blue-200 rounded-lg dark:bg-blue-900/20 dark:text-blue-400"
-							>
-								Trigger
-							</button>
-							<button
-								onclick={() => openEditForm(transform)}
-								class="px-3 py-1 text-sm bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-lg dark:bg-gray-700 dark:text-gray-300"
-							>
-								Edit
-							</button>
-							<button
-								onclick={() => requestDeleteTransform(transform)}
-								disabled={deleting === transform.dataset_transform_id}
-								class="px-3 py-1 text-sm bg-red-100 text-red-700 hover:bg-red-200 rounded-lg dark:bg-red-900/20 dark:text-red-400 disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								{deleting === transform.dataset_transform_id ? 'Deleting...' : 'Delete'}
-							</button>
-						</div>
-					</div>
-
-					{#if stats}
-						<div
-							class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 grid grid-cols-3 gap-4"
-						>
-							<div>
-								<p class="text-sm text-gray-600 dark:text-gray-400">Batches Processed</p>
-								<p class="text-lg font-semibold text-gray-900 dark:text-white">
-									{stats.total_batches_processed}
-								</p>
-							</div>
-							<div>
-								<p class="text-sm text-gray-600 dark:text-gray-400">Successful</p>
-								<p class="text-lg font-semibold text-green-600 dark:text-green-400">
-									{stats.successful_batches}
-								</p>
-							</div>
-							<div>
-								<p class="text-sm text-gray-600 dark:text-gray-400">Failed</p>
-								<p class="text-lg font-semibold text-red-600 dark:text-red-400">
-									{stats.failed_batches}
-								</p>
-							</div>
-							<div>
-								<p class="text-sm text-gray-600 dark:text-gray-400">Chunks Embedded</p>
-								<p class="text-lg font-semibold text-blue-600 dark:text-blue-400">
-									{stats.total_chunks_embedded}
-								</p>
-							</div>
-							<div>
-								<p class="text-sm text-gray-600 dark:text-gray-400">Chunks Failed</p>
-								<p class="text-lg font-semibold text-red-600 dark:text-red-400">
-									{stats.total_chunks_failed}
-								</p>
-							</div>
-							<div>
-								<p class="text-sm text-gray-600 dark:text-gray-400">Embedded Datasets</p>
-								<p class="text-lg font-semibold text-purple-600 dark:text-purple-400">
-									{stats.embedder_count}
-								</p>
-							</div>
-						</div>
-					{/if}
-				</div>
-			{/each}
+								{getEmbeddersText(transform.embedder_ids)}
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3">
+								<span
+									class={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+										transform.is_enabled
+											? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+											: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-400'
+									}`}
+								>
+									{transform.is_enabled ? 'Enabled' : 'Disabled'}
+								</span>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3 text-sm">
+								{stats?.total_chunks_embedded ?? '-'}
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3 text-sm">
+								{new Date(transform.created_at).toLocaleDateString()}
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3 text-center">
+								<button
+									onclick={() => openEditForm(transform)}
+									title="Edit"
+									class="text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-300 transition-colors"
+								>
+									✎
+								</button>
+							</TableBodyCell>
+						</tr>
+					{/each}
+				</TableBody>
+			</Table>
 		</div>
 	{/if}
+
+	<div class="mt-6 flex items-center justify-between">
+		<div class="text-sm text-gray-600 dark:text-gray-400">
+			Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, totalCount)} of
+			{totalCount} transforms
+		</div>
+		<div class="flex gap-2">
+			<button
+				onclick={() => handlePageChange(currentPage - 1)}
+				disabled={currentPage === 1}
+				class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+			>
+				Previous
+			</button>
+			<div class="flex items-center gap-1">
+				{#each Array.from({ length: getTotalPages() }, (_, i) => i + 1) as page (page)}
+					{#if page === 1 || page === getTotalPages() || (page >= currentPage - 1 && page <= currentPage + 1)}
+						<button
+							onclick={() => handlePageChange(page)}
+							class={`px-3 py-2 rounded-lg text-sm font-medium ${
+								currentPage === page
+									? 'bg-blue-600 text-white'
+									: 'border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+							}`}
+						>
+							{page}
+						</button>
+					{:else if page === currentPage - 2 || page === currentPage + 2}
+						<span class="px-2 py-2 text-gray-500">...</span>
+					{/if}
+				{/each}
+			</div>
+			<button
+				onclick={() => handlePageChange(currentPage + 1)}
+				disabled={currentPage === getTotalPages()}
+				class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+			>
+				Next
+			</button>
+		</div>
+	</div>
 </div>
 
 <ConfirmDialog
 	open={transformPendingDelete !== null}
 	title="Delete Dataset Transform"
 	message={transformPendingDelete
-		? `Are you sure you want to delete "${transformPendingDelete.title}"? This will also delete all associated Embedded Datasets. This action cannot be undone.`
+		? `Are you sure you want to delete "${transformPendingDelete.title}"? This will also delete associated Embedded Datasets.`
 		: ''}
 	confirmLabel="Delete"
 	variant="danger"

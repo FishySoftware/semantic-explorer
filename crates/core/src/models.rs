@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionTransformJob {
     pub job_id: Uuid,
@@ -369,3 +369,11 @@ pub struct VisualizationTransformResult {
 
 #[deprecated(note = "Use VisualizationTransformResult instead")]
 pub type VisualizationResult = VisualizationTransformResult;
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PaginatedResponse<T: ToSchema> {
+    pub items: Vec<T>,
+    pub total_count: i64,
+    pub limit: i64,
+    pub offset: i64,
+}

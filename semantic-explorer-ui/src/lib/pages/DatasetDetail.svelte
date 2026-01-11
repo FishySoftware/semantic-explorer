@@ -279,7 +279,10 @@
 			// Fetch collection transforms (Collection → this Dataset)
 			const collectionResponse = await fetch('/api/collection-transforms');
 			if (collectionResponse.ok) {
-				const allCollectionTransforms: CollectionTransform[] = await collectionResponse.json();
+				const collectionData = await collectionResponse.json();
+				const allCollectionTransforms: CollectionTransform[] = Array.isArray(collectionData)
+					? collectionData
+					: collectionData.items || [];
 				collectionTransforms = allCollectionTransforms
 					.filter((t) => t.dataset_id === datasetId)
 					.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
@@ -293,7 +296,10 @@
 			// Fetch dataset transforms (this Dataset → Embedded Datasets)
 			const datasetResponse = await fetch('/api/dataset-transforms');
 			if (datasetResponse.ok) {
-				const allDatasetTransforms: DatasetTransform[] = await datasetResponse.json();
+				const datasetData = await datasetResponse.json();
+				const allDatasetTransforms: DatasetTransform[] = Array.isArray(datasetData)
+					? datasetData
+					: datasetData.items || [];
 				datasetTransforms = allDatasetTransforms
 					.filter((t) => t.source_dataset_id === datasetId)
 					.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
@@ -307,7 +313,10 @@
 			// Fetch embedded datasets (created from this Dataset)
 			const embeddedResponse = await fetch('/api/embedded-datasets');
 			if (embeddedResponse.ok) {
-				const allEmbeddedDatasets: EmbeddedDataset[] = await embeddedResponse.json();
+				const embeddedData = await embeddedResponse.json();
+				const allEmbeddedDatasets: EmbeddedDataset[] = Array.isArray(embeddedData)
+					? embeddedData
+					: embeddedData.items || [];
 				embeddedDatasets = allEmbeddedDatasets
 					.filter((ed) => ed.source_dataset_id === datasetId)
 					.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
@@ -521,11 +530,11 @@
 
 	// Filtered items based on search (title only)
 	let filteredItems = $derived(
-		paginatedItems?.items.filter((item) => {
+		(paginatedItems?.items || []).filter((item) => {
 			if (!searchQuery.trim()) return true;
 			const query = searchQuery.toLowerCase();
 			return item.title.toLowerCase().includes(query);
-		}) || []
+		})
 	);
 
 	// Reset to page 0 when search query changes

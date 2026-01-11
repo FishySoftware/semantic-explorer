@@ -4570,6 +4570,7 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "utoipa",
  "uuid",
 ]
 

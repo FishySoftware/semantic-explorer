@@ -7,6 +7,7 @@ use crate::transforms::visualization::models::{
     VisualizationTransform, VisualizationTransformStats,
 };
 use crate::transforms::visualization::scanner::trigger_visualization_transform_scan;
+use semantic_explorer_core::models::PaginatedResponse;
 use semantic_explorer_core::validation;
 
 use actix_web::web::{Data, Json, Path, Query};
@@ -17,38 +18,81 @@ use sqlx::{Pool, Postgres};
 use tracing::{error, info};
 
 #[derive(Deserialize, Debug)]
-pub struct PaginationParams {
+pub struct SortParams {
     #[serde(default = "default_limit")]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
+    #[serde(default = "default_sort_by")]
+    pub sort_by: String,
+    #[serde(default = "default_sort_direction")]
+    pub sort_direction: String,
+}
+
+fn default_limit() -> i64 {
+    10
+}
+
+fn default_sort_by() -> String {
+    "created_at".to_string()
+}
+
+fn default_sort_direction() -> String {
+    "desc".to_string()
+}
+
+#[derive(Deserialize, Debug)]
+pub struct PaginationParams {
+    #[serde(default = "default_pagination_limit")]
     pub limit: i64,
     #[serde(default)]
     pub offset: i64,
 }
 
-fn default_limit() -> i64 {
+fn default_pagination_limit() -> i64 {
     50
 }
 
 #[utoipa::path(
-    get,
-    path = "/api/visualization-transforms",
+	get,
+	path = "/api/visualization-transforms",
     tag = "Visualization Transforms",
+    params(
+        ("limit" = i64, Query, description = "Number of results per page", example = 10),
+        ("offset" = i64, Query, description = "Number of results to skip", example = 0),
+        ("sort_by" = String, Query, description = "Field to sort by: title, is_enabled, last_run_status, created_at, updated_at", example = "created_at"),
+        ("sort_direction" = String, Query, description = "Sort direction: asc or desc", example = "desc"),
+    ),
     responses(
-        (status = 200, description = "List of visualization transforms", body = Vec<VisualizationTransform>),
+        (status = 200, description = "Paginated list of visualization transforms", body = PaginatedResponse<VisualizationTransform>),
         (status = 401, description = "Unauthorized"),
     ),
 )]
 #[get("/api/visualization-transforms")]
-#[tracing::instrument(name = "get_visualization_transforms", skip(user, postgres_pool))]
+#[tracing::instrument(
+    name = "get_visualization_transforms",
+    skip(user, postgres_pool, params)
+)]
 pub async fn get_visualization_transforms(
     user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
+    params: Query<SortParams>,
 ) -> impl Responder {
-    match visualization_transforms::get_visualization_transforms(&postgres_pool, &user).await {
-        Ok(transforms) => HttpResponse::Ok().json(transforms),
+    match visualization_transforms::get_visualization_transforms_paginated(
+        &postgres_pool,
+        &user,
+        params.limit,
+        params.offset,
+        &params.sort_by,
+        &params.sort_direction,
+    )
+    .await
+    {
+        Ok(response) => HttpResponse::Ok().json(response),
         Err(e) => {
             error!("Failed to fetch visualization transforms: {}", e);
             HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": format!("Failed to fetch visualization transforms: {}", e)
+                "error": "Failed to fetch visualization transforms"
             }))
         }
     }

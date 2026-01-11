@@ -1,10 +1,11 @@
 <!-- eslint-disable svelte/no-at-html-tags -->
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
-	import { formatError, toastStore } from '../utils/notifications';
 	import type { VisualizationConfig, VisualizationTransform } from '../types/visualizations';
+	import { formatError, toastStore } from '../utils/notifications';
 
 	// Helper function for tooltip display with hover persistence
 	function showTooltip(event: MouseEvent, text: string) {
@@ -129,12 +130,75 @@
 		return { ...DEFAULT_CONFIG, ...loadedConfig };
 	}
 
+	// Pagination and sort state
+	let totalCount = $state(0);
+	let currentPage = $state(1);
+	let pageSize = $state(10);
+	const pageSizeOptions = [10, 50, 100];
+	let sortBy = $state('created_at');
+	let sortDirection = $state('desc');
+
 	let config = $state<VisualizationConfig>({ ...DEFAULT_CONFIG });
 	let creating = $state(false);
 	let createError = $state<string | null>(null);
 
-	let deleting = $state<number | null>(null);
 	let transformPendingDelete = $state<VisualizationTransform | null>(null);
+
+	// Selection state
+	// eslint-disable-next-line svelte/no-unnecessary-state-wrap
+	let selected = $state(new SvelteSet<number>());
+	let selectAll = $state(false);
+
+	function toggleSelectAll() {
+		if (selectAll) {
+			selected.clear();
+			for (const t of filteredTransforms) {
+				selected.add(t.visualization_transform_id);
+			}
+		} else {
+			selected.clear();
+		}
+	}
+
+	function toggleSelect(id: number) {
+		if (selected.has(id)) {
+			selected.delete(id);
+			selectAll = false;
+		} else {
+			selected.add(id);
+		}
+	}
+
+	async function bulkToggleEnabled(_enable: boolean) {
+		for (const id of selected) {
+			const transform = filteredTransforms.find((t) => t.visualization_transform_id === id);
+			if (transform) {
+				transform.is_enabled = _enable;
+				await toggleEnabled(transform, false);
+			}
+		}
+		selected.clear();
+		selectAll = false;
+	}
+
+	async function bulkTrigger() {
+		for (const id of selected) {
+			await triggerTransform(id);
+		}
+		selected.clear();
+		selectAll = false;
+	}
+
+	async function bulkDelete() {
+		for (const id of selected) {
+			const transform = filteredTransforms.find((t) => t.visualization_transform_id === id);
+			if (transform) {
+				await requestDeleteTransform(transform, false);
+			}
+		}
+		selected.clear();
+		selectAll = false;
+	}
 
 	$effect(() => {
 		if (showCreateForm && !editingTransform && !newTitle) {
@@ -149,19 +213,26 @@
 		try {
 			loading = true;
 			error = null;
-			const response = await fetch('/api/visualization-transforms');
+			const offset = (currentPage - 1) * pageSize;
+			const params = new URLSearchParams({
+				limit: pageSize.toString(),
+				offset: offset.toString(),
+				sort_by: sortBy,
+				sort_direction: sortDirection,
+			});
+			const response = await fetch(`/api/visualization-transforms?${params}`);
 			if (!response.ok) {
 				throw new Error(`Failed to fetch visualization transforms: ${response.statusText}`);
 			}
-			const rawTransforms = await response.json();
+			const data = await response.json();
+			const rawTransforms = Array.isArray(data) ? data : data.items || [];
+			totalCount = data.total_count ?? (Array.isArray(data) ? data.length : rawTransforms.length);
 
-			// Apply defaults to all loaded transforms to handle missing fields from older records
 			transforms = rawTransforms.map((t: VisualizationTransform) => ({
 				...t,
 				visualization_config: applyDefaults(t.visualization_config),
 			}));
 
-			// Fetch stats for each transform
 			for (const transform of transforms) {
 				fetchStatsForTransform(transform.visualization_transform_id);
 			}
@@ -172,6 +243,28 @@
 		} finally {
 			loading = false;
 		}
+	}
+
+	function handleSort(field: string) {
+		if (sortBy === field) {
+			sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+		} else {
+			sortBy = field;
+			sortDirection = 'desc';
+		}
+		currentPage = 1;
+		fetchTransforms();
+	}
+
+	function handlePageChange(newPage: number) {
+		currentPage = newPage;
+		fetchTransforms();
+	}
+
+	function handlePageSizeChange(newSize: number) {
+		pageSize = newSize;
+		currentPage = 1;
+		fetchTransforms();
 	}
 
 	async function fetchStatsForTransform(transformId: number) {
@@ -305,7 +398,7 @@
 		}
 	}
 
-	async function toggleEnabled(transform: VisualizationTransform) {
+	async function toggleEnabled(transform: VisualizationTransform, refresh = true) {
 		try {
 			const response = await fetch(
 				`/api/visualization-transforms/${transform.visualization_transform_id}`,
@@ -332,6 +425,9 @@
 			toastStore.success(
 				`Visualization transform ${updated.is_enabled ? 'enabled' : 'disabled'} successfully`
 			);
+			if (refresh) {
+				await fetchTransforms();
+			}
 		} catch (e) {
 			toastStore.error(formatError(e, 'Failed to toggle visualization transform'));
 		}
@@ -375,8 +471,9 @@
 		createError = null;
 	}
 
-	function requestDeleteTransform(transform: VisualizationTransform) {
+	function requestDeleteTransform(transform: VisualizationTransform, refresh = true) {
 		transformPendingDelete = transform;
+		(transformPendingDelete as any)._skipRefresh = !refresh;
 	}
 
 	async function confirmDeleteTransform() {
@@ -385,10 +482,10 @@
 		}
 
 		const target = transformPendingDelete;
+		const skipRefresh = (target as any)._skipRefresh;
 		transformPendingDelete = null;
 
 		try {
-			deleting = target.visualization_transform_id;
 			const response = await fetch(
 				`/api/visualization-transforms/${target.visualization_transform_id}`,
 				{
@@ -404,10 +501,11 @@
 				(t) => t.visualization_transform_id !== target.visualization_transform_id
 			);
 			toastStore.success('Visualization transform deleted');
+			if (!skipRefresh) {
+				await fetchTransforms();
+			}
 		} catch (e) {
 			toastStore.error(formatError(e, 'Failed to delete visualization transform'));
-		} finally {
-			deleting = null;
 		}
 	}
 
@@ -1681,130 +1779,205 @@
 			</p>
 		</div>
 	{:else}
-		<div class="grid gap-4">
-			{#each filteredTransforms as transform (transform.visualization_transform_id)}
-				{@const stats = statsMap.get(transform.visualization_transform_id)}
-				<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
-					<div class="flex justify-between items-start mb-4">
-						<div class="flex-1">
-							<h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">
-								{transform.title}
-							</h3>
-							<div class="text-sm text-gray-600 dark:text-gray-400 space-y-1">
-								<p>
-									<strong>Embedded Dataset:</strong>
-									{getEmbeddedDatasetTitle(transform.embedded_dataset_id)}
-								</p>
-								<p><strong>Owner:</strong> {transform.owner}</p>
-								<p>
-									<strong>Status:</strong>
-									<span
-										class={transform.is_enabled
-											? 'text-green-600 dark:text-green-400'
-											: 'text-gray-500 dark:text-gray-400'}
-									>
-										{transform.is_enabled ? 'Enabled' : 'Disabled'}
-									</span>
-								</p>
-								{#if transform.reduced_collection_name}
-									<p>
-										<strong>3D Points Collection:</strong>
-										<code class="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded text-xs font-mono">
-											{transform.reduced_collection_name}
-										</code>
-									</p>
+		{#if selected.size > 0}
+			<div
+				class="mb-4 flex items-center gap-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4"
+			>
+				<span class="text-sm text-blue-700 dark:text-blue-300 flex-1">
+					{selected.size} transform{selected.size !== 1 ? 's' : ''} selected
+				</span>
+				<button
+					onclick={() => bulkToggleEnabled(true)}
+					class="text-sm px-3 py-1 rounded bg-green-600 hover:bg-green-700 text-white transition-colors"
+				>
+					Enable
+				</button>
+				<button
+					onclick={() => bulkToggleEnabled(false)}
+					class="text-sm px-3 py-1 rounded bg-yellow-600 hover:bg-yellow-700 text-white transition-colors"
+				>
+					Disable
+				</button>
+				<button
+					onclick={() => bulkTrigger()}
+					class="text-sm px-3 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white transition-colors"
+				>
+					Trigger
+				</button>
+				<button
+					onclick={() => bulkDelete()}
+					class="text-sm px-3 py-1 rounded bg-red-600 hover:bg-red-700 text-white transition-colors"
+				>
+					Delete
+				</button>
+				<button
+					onclick={() => {
+						selected = new SvelteSet();
+						selectAll = false;
+					}}
+					class="text-sm px-3 py-1 rounded bg-gray-300 hover:bg-gray-400 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-900 dark:text-white transition-colors"
+				>
+					Clear
+				</button>
+			</div>
+		{/if}
+		<div class="overflow-x-auto">
+			<table class="w-full text-sm text-left text-gray-600 dark:text-gray-400">
+				<thead class="bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
+					<tr>
+						<th class="px-4 py-3 w-12">
+							<input
+								type="checkbox"
+								checked={selectAll}
+								onchange={() => toggleSelectAll()}
+								class="cursor-pointer"
+							/>
+						</th>
+						<th class="px-4 py-3">
+							<button
+								type="button"
+								onclick={() => handleSort('title')}
+								class="flex items-center gap-1 font-semibold text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+							>
+								Title
+								{#if sortBy === 'title'}
+									{sortDirection === 'asc' ? '▲' : '▼'}
 								{/if}
-								{#if transform.topics_collection_name}
-									<p>
-										<strong>Topics Collection:</strong>
-										<code class="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded text-xs font-mono">
-											{transform.topics_collection_name}
-										</code>
-									</p>
+							</button>
+						</th>
+						<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Embedded Dataset</th>
+						<th class="px-4 py-3">
+							<button
+								type="button"
+								onclick={() => handleSort('is_enabled')}
+								class="flex items-center gap-1 font-semibold text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+							>
+								Status
+								{#if sortBy === 'is_enabled'}
+									{sortDirection === 'asc' ? '▲' : '▼'}
 								{/if}
-							</div>
-						</div>
-						<div class="flex flex-col gap-2">
-							<button
-								onclick={() => toggleEnabled(transform)}
-								class="px-3 py-1 text-sm rounded-lg {transform.is_enabled
-									? 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-400'
-									: 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400'}"
-							>
-								{transform.is_enabled ? 'Disable' : 'Enable'}
 							</button>
+						</th>
+						<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Points</th>
+						<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Clusters</th>
+						<th class="px-4 py-3">
 							<button
-								onclick={() => triggerTransform(transform.visualization_transform_id)}
-								class="px-3 py-1 text-sm bg-blue-100 text-blue-700 hover:bg-blue-200 rounded-lg dark:bg-blue-900/20 dark:text-blue-400"
+								type="button"
+								onclick={() => handleSort('created_at')}
+								class="flex items-center gap-1 font-semibold text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
 							>
-								Trigger
+								Created
+								{#if sortBy === 'created_at'}
+									{sortDirection === 'asc' ? '▲' : '▼'}
+								{/if}
 							</button>
-							<button
-								onclick={() => openEditForm(transform)}
-								class="px-3 py-1 text-sm bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-lg dark:bg-gray-700 dark:text-gray-300"
-							>
-								Edit
-							</button>
-							<button
-								onclick={() => requestDeleteTransform(transform)}
-								disabled={deleting === transform.visualization_transform_id}
-								class="px-3 py-1 text-sm bg-red-100 text-red-700 hover:bg-red-200 rounded-lg dark:bg-red-900/20 dark:text-red-400 disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								{deleting === transform.visualization_transform_id ? 'Deleting...' : 'Delete'}
-							</button>
-						</div>
-					</div>
-
-					<div
-						class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 grid grid-cols-2 gap-4"
-					>
-						<div>
-							<p class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">UMAP Config</p>
-							<div class="text-xs text-gray-600 dark:text-gray-400 space-y-1">
-								<p>Neighbors: {transform.visualization_config.n_neighbors}</p>
-								<p>Min Distance: {transform.visualization_config.min_dist}</p>
-								<p>Metric: {transform.visualization_config.metric}</p>
-							</div>
-						</div>
-						<div>
-							<p class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-								HDBSCAN Config
-							</p>
-							<div class="text-xs text-gray-600 dark:text-gray-400 space-y-1">
-								<p>Min Cluster Size: {transform.visualization_config.min_cluster_size}</p>
-								<p>
-									Min Samples: {transform.visualization_config.min_samples ?? 'Auto'}
-								</p>
-							</div>
-						</div>
-					</div>
-
-					{#if stats}
-						<div
-							class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 grid grid-cols-3 gap-4"
+						</th>
+						<th class="px-4 py-3 w-12 text-center font-semibold text-gray-900 dark:text-white"
+							>Edit</th
 						>
-							<div>
-								<p class="text-sm text-gray-600 dark:text-gray-400">Total Points</p>
-								<p class="text-lg font-semibold text-blue-600 dark:text-blue-400">
-									{stats.total_points}
-								</p>
-							</div>
-							<div>
-								<p class="text-sm text-gray-600 dark:text-gray-400">Clusters</p>
-								<p class="text-lg font-semibold text-purple-600 dark:text-purple-400">
-									{stats.total_clusters}
-								</p>
-							</div>
-							<div>
-								<p class="text-sm text-gray-600 dark:text-gray-400">Noise Points</p>
-								<p class="text-lg font-semibold text-gray-600 dark:text-gray-400">
-									{stats.noise_points}
-								</p>
-							</div>
-						</div>
+					</tr>
+				</thead>
+				<tbody>
+					{#each filteredTransforms as transform (transform.visualization_transform_id)}
+						{@const stats = statsMap.get(transform.visualization_transform_id)}
+						<tr
+							class="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
+						>
+							<td class="px-4 py-3 w-12">
+								<input
+									type="checkbox"
+									checked={selected.has(transform.visualization_transform_id)}
+									onchange={() => toggleSelect(transform.visualization_transform_id)}
+									class="cursor-pointer"
+								/>
+							</td>
+							<td class="px-4 py-3 font-medium text-gray-900 dark:text-white">{transform.title}</td>
+							<td class="px-4 py-3">{getEmbeddedDatasetTitle(transform.embedded_dataset_id)}</td>
+							<td class="px-4 py-3">
+								<span
+									class={transform.is_enabled
+										? 'px-2 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400'
+										: 'px-2 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-400'}
+								>
+									{transform.is_enabled ? 'Enabled' : 'Disabled'}
+								</span>
+							</td>
+							<td class="px-4 py-3">{stats?.total_points ?? '-'}</td>
+							<td class="px-4 py-3">{stats?.total_clusters ?? '-'}</td>
+							<td class="px-4 py-3">{new Date(transform.created_at).toLocaleDateString()}</td>
+							<td class="px-4 py-3 text-center">
+								<button
+									type="button"
+									onclick={() => openEditForm(transform)}
+									title="Edit"
+									class="text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-300 transition-colors"
+								>
+									✎
+								</button>
+							</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
+
+		<div class="mt-4 flex items-center justify-between">
+			<div class="text-sm text-gray-600 dark:text-gray-400">
+				Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, totalCount)} of
+				{totalCount}
+			</div>
+			<div class="flex items-center gap-2">
+				<button
+					type="button"
+					onclick={() => handlePageChange(currentPage - 1)}
+					disabled={currentPage === 1}
+					class="px-3 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+				>
+					Previous
+				</button>
+
+				{#each Array.from({ length: Math.ceil(totalCount / pageSize) }, (_, i) => i + 1) as page (page)}
+					{#if page === 1 || page === Math.ceil(totalCount / pageSize) || (page >= currentPage - 1 && page <= currentPage + 1)}
+						{#if page > 1 && page > (currentPage > 2 ? currentPage - 2 : 2)}
+							<span class="px-2">...</span>
+						{/if}
+						<button
+							type="button"
+							onclick={() => handlePageChange(page)}
+							class="px-3 py-1 text-sm rounded-lg transition-colors {page === currentPage
+								? 'bg-blue-600 text-white'
+								: 'border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800'}"
+						>
+							{page}
+						</button>
 					{/if}
+				{/each}
+
+				<button
+					type="button"
+					onclick={() => handlePageChange(currentPage + 1)}
+					disabled={currentPage >= Math.ceil(totalCount / pageSize)}
+					class="px-3 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+				>
+					Next
+				</button>
+
+				<div class="ml-4 flex items-center gap-2">
+					<label for="page-size" class="text-sm font-medium text-gray-700 dark:text-gray-300">
+						Per page:
+					</label>
+					<select
+						id="page-size"
+						value={pageSize}
+						onchange={(e) => handlePageSizeChange(Number(e.currentTarget.value))}
+						class="px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"
+					>
+						{#each pageSizeOptions as size (size)}
+							<option value={size}>{size}</option>
+						{/each}
+					</select>
 				</div>
-			{/each}
+			</div>
 		</div>
 	{/if}
 </div>

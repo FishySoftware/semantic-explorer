@@ -4,20 +4,29 @@ use sqlx::{Pool, Postgres};
 use crate::transforms::collection::models::{
     CollectionTransform, CollectionTransformStats, ProcessedFile,
 };
+use semantic_explorer_core::models::PaginatedResponse;
+
+fn validate_sort_field(sort_by: &str) -> Result<String> {
+    match sort_by {
+        "title" | "is_enabled" | "created_at" | "updated_at" | "chunk_size" => {
+            Ok(sort_by.to_string())
+        }
+        _ => anyhow::bail!("Invalid sort field: {}", sort_by),
+    }
+}
+
+fn validate_sort_direction(direction: &str) -> Result<String> {
+    match direction.to_lowercase().as_str() {
+        "asc" | "desc" => Ok(direction.to_uppercase()),
+        _ => anyhow::bail!("Invalid sort direction: {}", direction),
+    }
+}
 
 const GET_COLLECTION_TRANSFORM_QUERY: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner, is_enabled,
            chunk_size, job_config, created_at, updated_at
     FROM collection_transforms
     WHERE owner = $1 AND collection_transform_id = $2
-"#;
-
-const GET_COLLECTION_TRANSFORMS_QUERY: &str = r#"
-    SELECT collection_transform_id, title, collection_id, dataset_id, owner, is_enabled,
-           chunk_size, job_config, created_at, updated_at
-    FROM collection_transforms
-    WHERE owner = $1
-    ORDER BY created_at DESC
 "#;
 
 const GET_COLLECTION_TRANSFORMS_FOR_COLLECTION_QUERY: &str = r#"
@@ -100,8 +109,18 @@ const CHECK_FILE_PROCESSED_QUERY: &str = r#"
     LIMIT 1
 "#;
 
-// CRUD operations
+const COUNT_COLLECTION_TRANSFORMS_QUERY: &str = "SELECT COUNT(*) as count FROM collection_transforms WHERE owner = $1";
 
+const GET_COLLECTION_TRANSFORMS_PAGINATED_QUERY: &str = r#"
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner, is_enabled,
+           chunk_size, job_config, created_at, updated_at
+    FROM collection_transforms
+    WHERE owner = $1
+    ORDER BY {field} {direction}
+    LIMIT $2 OFFSET $3
+"#;
+
+// CRUD operations
 pub async fn get_collection_transform(
     pool: &Pool<Postgres>,
     owner: &str,
@@ -115,15 +134,40 @@ pub async fn get_collection_transform(
     Ok(transform)
 }
 
-pub async fn get_collection_transforms(
+pub async fn get_collection_transforms_paginated(
     pool: &Pool<Postgres>,
     owner: &str,
-) -> Result<Vec<CollectionTransform>> {
-    let transforms = sqlx::query_as::<_, CollectionTransform>(GET_COLLECTION_TRANSFORMS_QUERY)
+    limit: i64,
+    offset: i64,
+    sort_by: &str,
+    sort_direction: &str,
+) -> Result<PaginatedResponse<CollectionTransform>> {
+    let sort_field = validate_sort_field(sort_by)?;
+    let sort_dir = validate_sort_direction(sort_direction)?;
+
+    let count_result: (i64,) = sqlx::query_as(COUNT_COLLECTION_TRANSFORMS_QUERY)
         .bind(owner)
+        .fetch_one(pool)
+        .await?;
+    let total_count = count_result.0;
+
+    let query_str = GET_COLLECTION_TRANSFORMS_PAGINATED_QUERY
+        .replace("{field}", &sort_field)
+        .replace("{direction}", &sort_dir);
+
+    let transforms = sqlx::query_as::<_, CollectionTransform>(&query_str)
+        .bind(owner)
+        .bind(limit)
+        .bind(offset)
         .fetch_all(pool)
         .await?;
-    Ok(transforms)
+
+    Ok(PaginatedResponse {
+        items: transforms,
+        total_count,
+        limit,
+        offset,
+    })
 }
 
 pub async fn get_collection_transforms_for_collection(

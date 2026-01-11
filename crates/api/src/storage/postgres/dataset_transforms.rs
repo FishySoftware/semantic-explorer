@@ -1,21 +1,28 @@
 use crate::embedded_datasets::EmbeddedDataset;
 use crate::transforms::dataset::models::{DatasetTransform, DatasetTransformStats};
 use anyhow::{Context, Result};
+use semantic_explorer_core::models::PaginatedResponse;
 use sqlx::{Pool, Postgres, Transaction};
+
+fn validate_sort_field(sort_by: &str) -> Result<String> {
+    match sort_by {
+        "title" | "is_enabled" | "created_at" | "updated_at" => Ok(sort_by.to_string()),
+        _ => anyhow::bail!("Invalid sort field: {}", sort_by),
+    }
+}
+
+fn validate_sort_direction(direction: &str) -> Result<String> {
+    match direction.to_lowercase().as_str() {
+        "asc" | "desc" => Ok(direction.to_uppercase()),
+        _ => anyhow::bail!("Invalid sort direction: {}", direction),
+    }
+}
 
 const GET_DATASET_TRANSFORM_QUERY: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner, is_enabled,
            job_config, created_at, updated_at
     FROM dataset_transforms
     WHERE owner = $1 AND dataset_transform_id = $2
-"#;
-
-const GET_DATASET_TRANSFORMS_QUERY: &str = r#"
-    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner, is_enabled,
-           job_config, created_at, updated_at
-    FROM dataset_transforms
-    WHERE owner = $1
-    ORDER BY created_at DESC
 "#;
 
 const GET_DATASET_TRANSFORMS_FOR_DATASET_QUERY: &str = r#"
@@ -56,6 +63,17 @@ const UPDATE_DATASET_TRANSFORM_QUERY: &str = r#"
 const DELETE_DATASET_TRANSFORM_QUERY: &str = r#"
     DELETE FROM dataset_transforms
     WHERE owner = $1 AND dataset_transform_id = $2
+"#;
+
+const COUNT_DATASET_TRANSFORMS_QUERY: &str = "SELECT COUNT(*) as count FROM dataset_transforms WHERE owner = $1";
+
+const GET_DATASET_TRANSFORMS_PAGINATED_QUERY: &str = r#"
+    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner, is_enabled,
+           job_config, created_at, updated_at
+    FROM dataset_transforms
+    WHERE owner = $1
+    ORDER BY {field} {direction}
+    LIMIT $2 OFFSET $3
 "#;
 
 const GET_DATASET_TRANSFORM_STATS_QUERY: &str = r#"
@@ -111,15 +129,40 @@ pub async fn get_dataset_transform(
     Ok(transform)
 }
 
-pub async fn get_dataset_transforms(
+pub async fn get_dataset_transforms_paginated(
     pool: &Pool<Postgres>,
     owner: &str,
-) -> Result<Vec<DatasetTransform>> {
-    let transforms = sqlx::query_as::<_, DatasetTransform>(GET_DATASET_TRANSFORMS_QUERY)
+    limit: i64,
+    offset: i64,
+    sort_by: &str,
+    sort_direction: &str,
+) -> Result<PaginatedResponse<DatasetTransform>> {
+    let sort_field = validate_sort_field(sort_by)?;
+    let sort_dir = validate_sort_direction(sort_direction)?;
+
+    let count_result: (i64,) = sqlx::query_as(COUNT_DATASET_TRANSFORMS_QUERY)
         .bind(owner)
+        .fetch_one(pool)
+        .await?;
+    let total_count = count_result.0;
+
+    let query_str = GET_DATASET_TRANSFORMS_PAGINATED_QUERY
+        .replace("{field}", &sort_field)
+        .replace("{direction}", &sort_dir);
+
+    let transforms = sqlx::query_as::<_, DatasetTransform>(&query_str)
+        .bind(owner)
+        .bind(limit)
+        .bind(offset)
         .fetch_all(pool)
         .await?;
-    Ok(transforms)
+
+    Ok(PaginatedResponse {
+        items: transforms,
+        total_count,
+        limit,
+        offset,
+    })
 }
 
 pub async fn get_dataset_transforms_for_dataset(

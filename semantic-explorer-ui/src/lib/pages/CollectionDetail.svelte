@@ -122,7 +122,8 @@
 			transformsLoading = true;
 			const response = await fetch('/api/collection-transforms');
 			if (response.ok) {
-				const allTransforms: CollectionTransform[] = await response.json();
+				const data = await response.json();
+				const allTransforms: CollectionTransform[] = Array.isArray(data) ? data : data.items || [];
 				collectionTransforms = allTransforms
 					.filter((t) => t.collection_id === collectionId)
 					.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
@@ -303,13 +304,13 @@
 	}
 
 	let filteredFiles = $derived(
-		paginatedFiles?.files.filter((file) => {
+		(paginatedFiles?.files || []).filter((file) => {
 			if (!searchQuery.trim()) return true;
 			const query = searchQuery.toLowerCase();
 			return (
 				file.key.toLowerCase().includes(query) || file.content_type?.toLowerCase().includes(query)
 			);
-		}) || []
+		})
 	);
 
 	function changePageSize(newSize: number) {

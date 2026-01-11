@@ -22,3 +22,4 @@ tracing-subscriber = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 reqwest = { workspace = true }
 once_cell = { workspace = true }
+utoipa = { workspace = true }
