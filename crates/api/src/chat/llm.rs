@@ -1,3 +1,4 @@
+use semantic_explorer_core::http_client::HTTP_CLIENT;
 use sqlx::{Pool, Postgres};
 
 use crate::storage::postgres::chat as chat_storage;
@@ -66,7 +67,7 @@ async fn call_openai_api(
 ) -> Result<String, String> {
     let api_key = api_key.ok_or_else(|| "API key not configured for OpenAI".to_string())?;
 
-    let client = reqwest::Client::new();
+    let client = &*HTTP_CLIENT;
 
     let request_body = serde_json::json!({
         "model": model,
@@ -118,7 +119,7 @@ async fn call_anthropic_api(
 ) -> Result<String, String> {
     let api_key = api_key.ok_or_else(|| "API key not configured for Anthropic".to_string())?;
 
-    let client = reqwest::Client::new();
+    let client = &*HTTP_CLIENT;
 
     let request_body = serde_json::json!({
         "model": model,
@@ -169,7 +170,7 @@ async fn call_cohere_api(
 ) -> Result<String, String> {
     let api_key = api_key.ok_or_else(|| "API key not configured for Cohere".to_string())?;
 
-    let client = reqwest::Client::new();
+    let client = &*HTTP_CLIENT;
 
     let request_body = serde_json::json!({
         "model": model,

@@ -16,6 +16,7 @@ pub struct AppConfig {
     pub s3: S3Config,
     pub server: ServerConfig,
     pub observability: ObservabilityConfig,
+    pub tls: TlsConfig,
 }
 
 /// Database configuration
@@ -78,6 +79,25 @@ pub enum LogFormat {
     Pretty,
 }
 
+/// TLS configuration for server and client certificates
+#[derive(Debug, Clone)]
+pub struct TlsConfig {
+    /// Enable TLS/SSL on the server
+    pub server_ssl_enabled: bool,
+    /// Path to server certificate file (PEM format)
+    pub server_cert_path: Option<String>,
+    /// Path to server private key file (PEM format)
+    pub server_key_path: Option<String>,
+    /// Enable mutual TLS for outbound HTTP clients
+    pub client_mtls_enabled: bool,
+    /// Path to client certificate file (PEM format)
+    pub client_cert_path: Option<String>,
+    /// Path to client private key file (PEM format)
+    pub client_key_path: Option<String>,
+    /// Path to CA certificate bundle for verifying server certificates
+    pub ca_cert_path: String,
+}
+
 impl AppConfig {
     /// Load configuration from environment variables.
     ///
@@ -91,6 +111,7 @@ impl AppConfig {
             s3: S3Config::from_env()?,
             server: ServerConfig::from_env()?,
             observability: ObservabilityConfig::from_env()?,
+            tls: TlsConfig::from_env()?,
         })
     }
 }
@@ -239,6 +260,55 @@ impl OidcConfig {
                 .unwrap_or_else(|_| "false".to_string())
                 .to_lowercase()
                 == "true",
+        })
+    }
+}
+
+impl TlsConfig {
+    pub fn from_env() -> Result<Self> {
+        let server_ssl_enabled = env::var("SERVER_SSL_ENABLED")
+            .unwrap_or_else(|_| "false".to_string())
+            .to_lowercase()
+            == "true";
+
+        let client_mtls_enabled = env::var("CLIENT_MTLS_ENABLED")
+            .unwrap_or_else(|_| "false".to_string())
+            .to_lowercase()
+            == "true";
+
+        let ca_cert_path =
+            env::var("TLS_CA_CERT_PATH").unwrap_or_else(|_| "/app/certs/ca-bundle.crt".to_string());
+
+        // Validate server SSL configuration
+        let (server_cert_path, server_key_path) = if server_ssl_enabled {
+            let cert_path = env::var("TLS_SERVER_CERT_PATH")
+                .context("TLS_SERVER_CERT_PATH is required when SERVER_SSL_ENABLED=true")?;
+            let key_path = env::var("TLS_SERVER_KEY_PATH")
+                .context("TLS_SERVER_KEY_PATH is required when SERVER_SSL_ENABLED=true")?;
+            (Some(cert_path), Some(key_path))
+        } else {
+            (None, None)
+        };
+
+        // Validate client mTLS configuration
+        let (client_cert_path, client_key_path) = if client_mtls_enabled {
+            let cert_path = env::var("TLS_CLIENT_CERT_PATH")
+                .context("TLS_CLIENT_CERT_PATH is required when CLIENT_MTLS_ENABLED=true")?;
+            let key_path = env::var("TLS_CLIENT_KEY_PATH")
+                .context("TLS_CLIENT_KEY_PATH is required when CLIENT_MTLS_ENABLED=true")?;
+            (Some(cert_path), Some(key_path))
+        } else {
+            (None, None)
+        };
+
+        Ok(Self {
+            server_ssl_enabled,
+            server_cert_path,
+            server_key_path,
+            client_mtls_enabled,
+            client_cert_path,
+            client_key_path,
+            ca_cert_path,
         })
     }
 }

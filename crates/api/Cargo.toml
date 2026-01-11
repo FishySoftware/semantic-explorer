@@ -44,7 +44,8 @@ mime_guess = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 reqwest = { workspace = true }
-once_cell = { workspace = true }
+rustls = { version = "0.23.36" }
+pem = { version = "3.0.6" }
 
 [target.'cfg(target_env = "musl")'.dependencies]
 mimalloc = { version = "0.1.48", features = ["v3"], default-features = false }

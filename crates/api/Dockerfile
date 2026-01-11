@@ -24,7 +24,7 @@ RUN cargo build --target x86_64-unknown-linux-musl --release -p semantic-explore
 RUN useradd -u 10001 appuser
 
 ##### Node Builder
-FROM node:25-bookworm AS node_builder
+FROM node:trixie-slim AS node_builder
 
 WORKDIR /usr/src
 
@@ -40,6 +40,9 @@ FROM scratch
 # Copy binary
 COPY --from=builder /usr/src/app/target/x86_64-unknown-linux-musl/release/semantic-explorer /semantic-explorer
 COPY --from=builder /etc/passwd /etc/passwd
+
+# Copy CA certificates from builder for TLS client verification
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /app/certs/ca-bundle.crt
 
 # Copy UI assets
 COPY --from=node_builder /usr/src/dist /semantic-explorer-ui

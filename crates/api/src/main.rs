@@ -43,6 +43,9 @@ async fn main() -> Result<()> {
     // Load centralized configuration - fail fast if required config is missing
     let config = AppConfig::from_env()?;
 
+    // Initialize HTTP client with TLS configuration
+    semantic_explorer_core::http_client::initialize(&config.tls)?;
+
     let prometheus = observability::init_observability()?;
     let hostname = config.server.hostname.clone();
     let port = config.server.port;
@@ -90,9 +93,7 @@ async fn main() -> Result<()> {
     // Initialize audit event database storage
     audit::events::init_db_pool(postgres_pool.clone());
 
-    info!("server running at {address}");
-
-    HttpServer::new(move || {
+    let server = HttpServer::new(move || {
         // Build CORS configuration based on allowed origins
         let cors = if cors_origins.is_empty() {
             // Development: allow only self
@@ -244,11 +245,35 @@ async fn main() -> Result<()> {
             .service(api::index)
             .service(api::pages)
             .service(api::get_current_user)
-    })
-    .bind((hostname, port))?
-    .shutdown_timeout(shutdown_timeout)
-    .run()
-    .await?;
+    });
+
+    // Bind server with optional TLS
+    let result = if config.tls.server_ssl_enabled {
+        let cert_path = config.tls.server_cert_path.clone().ok_or_else(|| {
+            anyhow::anyhow!("server_cert_path is required when SERVER_SSL_ENABLED=true")
+        })?;
+        let key_path = config.tls.server_key_path.clone().ok_or_else(|| {
+            anyhow::anyhow!("server_key_path is required when SERVER_SSL_ENABLED=true")
+        })?;
+
+        let rustls_config = load_tls_config(&cert_path, &key_path)?;
+
+        info!("server running at https://{}:{}", hostname, port);
+        server
+            .bind_rustls_0_23((hostname, port), rustls_config)?
+            .shutdown_timeout(shutdown_timeout)
+            .run()
+            .await
+    } else {
+        info!("server running at http://{}:{}", hostname, port);
+        server
+            .bind((hostname, port))?
+            .shutdown_timeout(shutdown_timeout)
+            .run()
+            .await
+    };
+
+    result?;
 
     info!("Shutting down gracefully...");
 
@@ -268,4 +293,72 @@ async fn main() -> Result<()> {
     info!("Server shutdown complete");
 
     Ok(())
+}
+
+/// Load rustls configuration from certificate and key files
+fn load_tls_config(cert_path: &str, key_path: &str) -> Result<rustls::ServerConfig> {
+    use std::fs;
+
+    // Load certificate
+    let cert_contents = fs::read_to_string(cert_path)
+        .map_err(|e| anyhow::anyhow!("Failed to read certificate file {}: {}", cert_path, e))?;
+
+    let cert_pem = pem::parse(&cert_contents)
+        .map_err(|e| anyhow::anyhow!("Failed to parse certificate PEM: {}", e))?;
+
+    if cert_pem.tag() != "CERTIFICATE" {
+        return Err(anyhow::anyhow!(
+            "Invalid certificate file: expected CERTIFICATE tag, got {}",
+            cert_pem.tag()
+        ));
+    }
+
+    let cert_der = cert_pem.contents().to_vec();
+    let cert_chain = vec![rustls::pki_types::CertificateDer::from(cert_der)];
+
+    // Load private key
+    let key_contents = fs::read_to_string(key_path)
+        .map_err(|e| anyhow::anyhow!("Failed to read key file {}: {}", key_path, e))?;
+
+    let key_pem = pem::parse(&key_contents)
+        .map_err(|e| anyhow::anyhow!("Failed to parse private key PEM: {}", e))?;
+
+    let key_der = key_pem.contents().to_vec();
+
+    // Support multiple key formats: PKCS#8, RSA, and EC
+    let private_key = match key_pem.tag() {
+        "PRIVATE KEY" => {
+            // PKCS#8 format
+            rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
+                key_der,
+            ))
+        }
+        "RSA PRIVATE KEY" => {
+            // PKCS#1 RSA format
+            rustls::pki_types::PrivateKeyDer::Pkcs1(rustls::pki_types::PrivatePkcs1KeyDer::from(
+                key_der,
+            ))
+        }
+        "EC PRIVATE KEY" => {
+            // SEC1 EC format
+            rustls::pki_types::PrivateKeyDer::Sec1(rustls::pki_types::PrivateSec1KeyDer::from(
+                key_der,
+            ))
+        }
+        tag => {
+            return Err(anyhow::anyhow!(
+                "Unsupported private key format: {}. Expected PRIVATE KEY, RSA PRIVATE KEY, or EC PRIVATE KEY",
+                tag
+            ));
+        }
+    };
+
+    // Build server config
+    let mut server_config = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(cert_chain, private_key)
+        .map_err(|e| anyhow::anyhow!("Invalid certificate or key: {}", e))?;
+
+    server_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    Ok(server_config)
 }

@@ -1,5 +1,5 @@
 pub mod config;
-pub mod load_test;
+pub mod http_client;
 pub mod models;
 pub mod nats;
 pub mod observability;
