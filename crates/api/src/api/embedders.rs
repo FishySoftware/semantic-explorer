@@ -1,14 +1,15 @@
 use actix_web::{
-    HttpResponse, Responder, delete, get, patch, post,
+    HttpResponse, Responder, ResponseError, delete, get, patch, post,
     web::{Data, Json, Path},
 };
-use actix_web_openidconnect::openid_middleware::Authenticated;
+use semantic_explorer_core::validation;
 use sqlx::{Pool, Postgres};
 
 use crate::{
-    auth::extract_username,
+    audit::{ResourceType, events},
+    auth::AuthenticatedUser,
     embedders::models::{CreateEmbedder, Embedder, UpdateEmbedder},
-    errors::not_found,
+    errors::ApiError,
     storage::postgres::embedders,
 };
 
@@ -27,20 +28,16 @@ pub(crate) struct TestEmbedderResponse {
     tag = "Embedders",
 )]
 #[get("/api/embedders")]
-#[tracing::instrument(name = "get_embedders", skip(auth, postgres_pool))]
+#[tracing::instrument(name = "get_embedders", skip(user, postgres_pool))]
 pub(crate) async fn get_embedders(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-    match embedders::get_embedders(&postgres_pool.into_inner(), &username).await {
+    match embedders::get_embedders(&postgres_pool.into_inner(), &user).await {
         Ok(embedders_list) => HttpResponse::Ok().json(embedders_list),
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch embedders");
-            HttpResponse::InternalServerError().body(format!("error fetching embedders: {e:?}"))
+            ApiError::Internal(format!("error fetching embedders: {:?}", e)).error_response()
         }
     }
 }
@@ -57,21 +54,20 @@ pub(crate) async fn get_embedders(
     tag = "Embedders",
 )]
 #[get("/api/embedders/{embedder_id}")]
-#[tracing::instrument(name = "get_embedder", skip(auth, postgres_pool))]
+#[tracing::instrument(name = "get_embedder", skip(user, postgres_pool))]
 pub(crate) async fn get_embedder(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     embedder_id: Path<i32>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-    match embedders::get_embedder(&postgres_pool.into_inner(), &username, *embedder_id).await {
-        Ok(embedder) => HttpResponse::Ok().json(embedder),
+    match embedders::get_embedder(&postgres_pool.into_inner(), &user, *embedder_id).await {
+        Ok(embedder) => {
+            events::resource_read(&user, ResourceType::Embedder, &embedder_id.to_string());
+            HttpResponse::Ok().json(embedder)
+        }
         Err(e) => {
             tracing::error!(error = %e, embedder_id = %embedder_id, "failed to fetch embedder");
-            not_found(format!("embedder not found: {e:?}"))
+            ApiError::NotFound(format!("embedder not found: {:?}", e)).error_response()
         }
     }
 }
@@ -86,23 +82,31 @@ pub(crate) async fn get_embedder(
     tag = "Embedders",
 )]
 #[post("/api/embedders")]
-#[tracing::instrument(name = "create_embedder", skip(auth, postgres_pool, create_embedder))]
+#[tracing::instrument(name = "create_embedder", skip(user, postgres_pool, create_embedder))]
 pub(crate) async fn create_embedder(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     create_embedder: Json<CreateEmbedder>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
     let payload = create_embedder.into_inner();
 
-    match embedders::create_embedder(&postgres_pool.into_inner(), &username, &payload).await {
-        Ok(embedder) => HttpResponse::Created().json(embedder),
+    // Validate input
+    if let Err(e) = validation::validate_title(&payload.name) {
+        return ApiError::Validation(e).error_response();
+    }
+
+    match embedders::create_embedder(&postgres_pool.into_inner(), &user, &payload).await {
+        Ok(embedder) => {
+            events::resource_created(
+                &user,
+                ResourceType::Embedder,
+                &embedder.embedder_id.to_string(),
+            );
+            HttpResponse::Created().json(embedder)
+        }
         Err(e) => {
             tracing::error!(error = %e, "failed to create embedder");
-            HttpResponse::InternalServerError().body(format!("error creating embedder: {e:?}"))
+            ApiError::Internal(format!("error creating embedder: {:?}", e)).error_response()
         }
     }
 }
@@ -120,29 +124,35 @@ pub(crate) async fn create_embedder(
     tag = "Embedders",
 )]
 #[patch("/api/embedders/{embedder_id}")]
-#[tracing::instrument(name = "update_embedder", skip(auth, postgres_pool, update_embedder))]
+#[tracing::instrument(name = "update_embedder", skip(user, postgres_pool, update_embedder))]
 pub(crate) async fn update_embedder(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     embedder_id: Path<i32>,
     update_embedder: Json<UpdateEmbedder>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
+    // Validate input if name is provided
+    if let Some(ref name) = update_embedder.name
+        && let Err(e) = validation::validate_title(name)
+    {
+        return ApiError::Validation(e).error_response();
+    }
+
     match embedders::update_embedder(
         &postgres_pool.into_inner(),
-        &username,
+        &user,
         *embedder_id,
         &update_embedder,
     )
     .await
     {
-        Ok(embedder) => HttpResponse::Ok().json(embedder),
+        Ok(embedder) => {
+            events::resource_updated(&user, ResourceType::Embedder, &embedder_id.to_string());
+            HttpResponse::Ok().json(embedder)
+        }
         Err(e) => {
             tracing::error!(error = %e, embedder_id = %embedder_id, "failed to update embedder");
-            HttpResponse::InternalServerError().body(format!("error updating embedder: {e:?}"))
+            ApiError::Internal(format!("error updating embedder: {:?}", e)).error_response()
         }
     }
 }
@@ -159,21 +169,20 @@ pub(crate) async fn update_embedder(
     tag = "Embedders",
 )]
 #[delete("/api/embedders/{embedder_id}")]
-#[tracing::instrument(name = "delete_embedder", skip(auth, postgres_pool))]
+#[tracing::instrument(name = "delete_embedder", skip(user, postgres_pool))]
 pub(crate) async fn delete_embedder(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     embedder_id: Path<i32>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-    match embedders::delete_embedder(&postgres_pool.into_inner(), &username, *embedder_id).await {
-        Ok(()) => HttpResponse::NoContent().finish(),
+    match embedders::delete_embedder(&postgres_pool.into_inner(), &user, *embedder_id).await {
+        Ok(()) => {
+            events::resource_deleted(&user, ResourceType::Embedder, &embedder_id.to_string());
+            HttpResponse::NoContent().finish()
+        }
         Err(e) => {
             tracing::error!(error = %e, embedder_id = %embedder_id, "failed to delete embedder");
-            HttpResponse::InternalServerError().body(format!("error deleting embedder: {e:?}"))
+            ApiError::Internal(format!("error deleting embedder: {:?}", e)).error_response()
         }
     }
 }
@@ -192,25 +201,20 @@ pub(crate) async fn delete_embedder(
     ),
 )]
 #[post("/api/embedders/{embedder_id}/test")]
-#[tracing::instrument(name = "test_embedder", skip(auth, postgres_pool), fields(embedder_id = %path.as_ref()))]
+#[tracing::instrument(name = "test_embedder", skip(user, postgres_pool), fields(embedder_id = %path.as_ref()))]
 pub(crate) async fn test_embedder(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
     let embedder_id = path.into_inner();
 
     // Fetch the embedder
     let embedder =
-        match embedders::get_embedder(&postgres_pool.into_inner(), &username, embedder_id).await {
+        match embedders::get_embedder(&postgres_pool.into_inner(), &user, embedder_id).await {
             Ok(e) => e,
             Err(e) => {
-                return not_found(format!("embedder not found: {}", e));
+                return ApiError::NotFound(format!("embedder not found: {}", e)).error_response();
             }
         };
 
@@ -378,11 +382,7 @@ pub(crate) async fn test_embedder(
                 error = %error,
                 "embedder test failed"
             );
-            HttpResponse::InternalServerError().json(TestEmbedderResponse {
-                success: false,
-                message: format!("embedder test failed: {}", error),
-                dimensions: None,
-            })
+            ApiError::Internal(format!("embedder test failed: {}", error)).error_response()
         }
     }
 }

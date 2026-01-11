@@ -219,6 +219,15 @@ The API service handles HTTP requests, authentication, and coordinates the syste
 | `PORT` | API server port | No | `8080` |
 | `STATIC_FILES_DIR` | Path to UI static files | No | `./semantic-explorer-ui/` |
 | `RUST_LOG` | Logging configuration | No | `info` |
+| `CORS_ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins | No | (self only) |
+| `RATE_LIMIT_PER_SECOND` | Rate limit requests per second | No | `10` |
+| `RATE_LIMIT_BURST_SIZE` | Rate limit burst size | No | `30` |
+| `SHUTDOWN_TIMEOUT_SECS` | Graceful shutdown timeout in seconds | No | `30` |
+| `DB_MIN_CONNECTIONS` | Minimum database pool connections | No | `1` |
+| `DB_MAX_CONNECTIONS` | Maximum database pool connections | No | `10` |
+| `DB_ACQUIRE_TIMEOUT_SECS` | Database connection acquire timeout | No | `30` |
+| `QDRANT_TIMEOUT_SECS` | Qdrant request timeout in seconds | No | `30` |
+| `QDRANT_CONNECT_TIMEOUT_SECS` | Qdrant connection timeout in seconds | No | `10` |
 
 ### Worker Collections
 
@@ -281,6 +290,42 @@ Interactive API documentation is available via Swagger UI at:
 ```
 http://localhost:8080/swagger-ui/
 ```
+
+### Health Check Endpoints
+
+The API provides dedicated health check endpoints for container orchestration:
+
+| Endpoint | Description | Use Case |
+|----------|-------------|----------|
+| `/health` | Simple health check, returns "up" | Basic availability check |
+| `/health/live` | Liveness probe | Kubernetes liveness probe - confirms process is running |
+| `/health/ready` | Readiness probe | Kubernetes readiness probe - checks all dependencies (Postgres, Qdrant, S3, NATS) |
+
+The `/health/ready` endpoint returns a JSON response with component status:
+
+```json
+{
+  "status": "healthy",
+  "version": "0.1.0",
+  "components": {
+    "postgres": { "status": "healthy", "latency_ms": 1.2 },
+    "qdrant": { "status": "healthy", "latency_ms": 2.5 },
+    "s3": { "status": "healthy", "latency_ms": 15.3 },
+    "nats": { "status": "healthy", "latency_ms": 0.8 }
+  }
+}
+```
+
+### Production Features
+
+The API includes several production-ready features:
+
+- **Rate Limiting**: Configurable per-second and burst rate limiting via `actix-governor`
+- **Request ID Propagation**: Unique `X-Request-Id` header added to all requests/responses for tracing
+- **Graceful Shutdown**: Configurable shutdown timeout with proper connection draining
+- **Structured Audit Logging**: Security-relevant events logged with user, action, and outcome
+- **Input Validation**: Protection against path traversal, injection attacks, and malformed input
+- **Centralized Configuration**: All settings loaded and validated at startup
 
 ## Development
 

@@ -100,7 +100,7 @@ api:
     targetMemoryUtilizationPercentage: 80
   livenessProbe:
     httpGet:
-      path: /health
+      path: /health/live
       port: 8080
     initialDelaySeconds: 30
     periodSeconds: 10
@@ -109,7 +109,7 @@ api:
     successThreshold: 1
   readinessProbe:
     httpGet:
-      path: /health
+      path: /health/ready
       port: 8080
     initialDelaySeconds: 10
     periodSeconds: 5
@@ -118,7 +118,7 @@ api:
     successThreshold: 1
   startupProbe:
     httpGet:
-      path: /health
+      path: /health/live
       port: 8080
     initialDelaySeconds: 0
     periodSeconds: 5
@@ -128,6 +128,15 @@ api:
   env:
     RUST_LOG: "warn,actix_web_prom=error,semantic_explorer=info"
     HOSTNAME: "0.0.0.0"
+    # Production settings
+    RATE_LIMIT_PER_SECOND: "10"
+    RATE_LIMIT_BURST_SIZE: "30"
+    SHUTDOWN_TIMEOUT_SECS: "30"
+    DB_MIN_CONNECTIONS: "2"
+    DB_MAX_CONNECTIONS: "20"
+    DB_ACQUIRE_TIMEOUT_SECS: "30"
+    QDRANT_TIMEOUT_SECS: "30"
+    QDRANT_CONNECT_TIMEOUT_SECS: "10"
   envFrom: []
   nodeSelector: {}
   tolerations: []

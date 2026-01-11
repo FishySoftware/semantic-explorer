@@ -11,8 +11,10 @@ pub(crate) async fn initialize_client(redirect_url: String) -> Result<ActixWebOp
         .to_lowercase()
         == "true";
     let should_auth = |req: &ServiceRequest| {
-        !req.path().eq_ignore_ascii_case("/metrics")
-            && !req.path().eq_ignore_ascii_case("/health")
+        let path = req.path();
+        // Exclude health check endpoints and metrics from auth
+        !path.eq_ignore_ascii_case("/metrics")
+            && !path.starts_with("/health")
             && req.method() != actix_web::http::Method::OPTIONS
     };
     ActixWebOpenId::builder(client_id, redirect_url, issuer_url)

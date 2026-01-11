@@ -1,4 +1,5 @@
-use crate::auth::extract_username;
+use crate::audit::{ResourceType, events};
+use crate::auth::AuthenticatedUser;
 use crate::errors::{bad_request, not_found};
 use crate::storage::postgres::{embedded_datasets, llms, visualization_transforms};
 use crate::transforms::visualization::models::{
@@ -6,10 +7,10 @@ use crate::transforms::visualization::models::{
     VisualizationTransform, VisualizationTransformStats,
 };
 use crate::transforms::visualization::scanner::trigger_visualization_transform_scan;
+use semantic_explorer_core::validation;
 
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpResponse, Responder, delete, get, patch, post};
-use actix_web_openidconnect::openid_middleware::Authenticated;
 use async_nats::Client as NatsClient;
 use serde::Deserialize;
 use sqlx::{Pool, Postgres};
@@ -37,16 +38,12 @@ fn default_limit() -> i64 {
     ),
 )]
 #[get("/api/visualization-transforms")]
-#[tracing::instrument(name = "get_visualization_transforms", skip(auth, postgres_pool))]
+#[tracing::instrument(name = "get_visualization_transforms", skip(user, postgres_pool))]
 pub async fn get_visualization_transforms(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-    match visualization_transforms::get_visualization_transforms(&postgres_pool, &username).await {
+    match visualization_transforms::get_visualization_transforms(&postgres_pool, &user).await {
         Ok(transforms) => HttpResponse::Ok().json(transforms),
         Err(e) => {
             error!("Failed to fetch visualization transforms: {}", e);
@@ -71,23 +68,25 @@ pub async fn get_visualization_transforms(
     ),
 )]
 #[get("/api/visualization-transforms/{id}")]
-#[tracing::instrument(name = "get_visualization_transform", skip(auth, postgres_pool), fields(visualization_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "get_visualization_transform", skip(user, postgres_pool), fields(visualization_transform_id = %path.as_ref()))]
 pub async fn get_visualization_transform(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
     let id = path.into_inner();
     match visualization_transforms::get_visualization_transform_by_id(&postgres_pool, id).await {
         Ok(Some(transform)) => {
-            if transform.owner != username {
+            if transform.owner != *user {
+                events::unauthorized_access(
+                    &user,
+                    ResourceType::Visualization,
+                    &id.to_string(),
+                    "user does not own this visualization transform",
+                );
                 return not_found("Visualization transform not found".to_string());
             }
+            events::resource_read(&user, ResourceType::Visualization, &id.to_string());
             HttpResponse::Ok().json(transform)
         }
         Ok(None) => not_found("Visualization transform not found".to_string()),
@@ -112,28 +111,24 @@ pub async fn get_visualization_transform(
     ),
 )]
 #[post("/api/visualization-transforms")]
-#[tracing::instrument(name = "create_visualization_transform", skip(auth, postgres_pool, nats_client, body), fields(title = %body.title))]
+#[tracing::instrument(name = "create_visualization_transform", skip(user, postgres_pool, nats_client, body), fields(title = %body.title))]
 pub async fn create_visualization_transform(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     nats_client: Data<NatsClient>,
     body: Json<CreateVisualizationTransform>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
+    // Validate input
+    if let Err(e) = validation::validate_title(&body.title) {
+        return bad_request(e);
+    }
 
     // Verify embedded dataset exists and belongs to user
-    match embedded_datasets::get_embedded_dataset(
-        &postgres_pool,
-        &username,
-        body.embedded_dataset_id,
-    )
-    .await
+    match embedded_datasets::get_embedded_dataset(&postgres_pool, &user, body.embedded_dataset_id)
+        .await
     {
         Ok(dataset) => {
-            if dataset.owner != username {
+            if dataset.owner != *user {
                 return bad_request("Embedded dataset not found or access denied");
             }
         }
@@ -147,9 +142,9 @@ pub async fn create_visualization_transform(
 
     // If LLM ID provided, verify it exists and belongs to user
     if let Some(llm_id) = body.llm_id {
-        match llms::get_llm(&postgres_pool, &username, llm_id).await {
+        match llms::get_llm(&postgres_pool, &user, llm_id).await {
             Ok(llm) => {
-                if llm.owner != username {
+                if llm.owner != *user {
                     return bad_request("LLM not found or access denied");
                 }
             }
@@ -188,7 +183,7 @@ pub async fn create_visualization_transform(
         &postgres_pool,
         &body.title,
         body.embedded_dataset_id,
-        &username,
+        &user,
         &visualization_config,
     )
     .await
@@ -205,7 +200,7 @@ pub async fn create_visualization_transform(
                 &postgres_pool,
                 &nats_client,
                 transform_id,
-                &username,
+                &user,
             )
             .await
             {
@@ -216,6 +211,11 @@ pub async fn create_visualization_transform(
                 // Don't fail the creation, just log the error
             }
 
+            events::resource_created(
+                &user,
+                ResourceType::Visualization,
+                &transform_id.to_string(),
+            );
             HttpResponse::Created().json(transform)
         }
         Err(e) => {
@@ -240,24 +240,26 @@ pub async fn create_visualization_transform(
     ),
 )]
 #[patch("/api/visualization-transforms/{id}")]
-#[tracing::instrument(name = "update_visualization_transform", skip(auth, postgres_pool, body), fields(visualization_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "update_visualization_transform", skip(user, postgres_pool, body), fields(visualization_transform_id = %path.as_ref()))]
 pub async fn update_visualization_transform(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<i32>,
     body: Json<UpdateVisualizationTransform>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
+    // Validate input if title is provided
+    if let Some(ref title) = body.title
+        && let Err(e) = validation::validate_title(title)
+    {
+        return bad_request(e);
+    }
 
     let id = path.into_inner();
 
     // Verify ownership
     match visualization_transforms::get_visualization_transform_by_id(&postgres_pool, id).await {
         Ok(Some(transform)) => {
-            if transform.owner != username {
+            if transform.owner != *user {
                 return not_found("Visualization transform not found".to_string());
             }
         }
@@ -279,7 +281,10 @@ pub async fn update_visualization_transform(
     )
     .await
     {
-        Ok(transform) => HttpResponse::Ok().json(transform),
+        Ok(transform) => {
+            events::resource_updated(&user, ResourceType::Visualization, &id.to_string());
+            HttpResponse::Ok().json(transform)
+        }
         Err(e) => {
             error!("Failed to update visualization transform: {}", e);
             HttpResponse::InternalServerError().json(serde_json::json!({
@@ -303,23 +308,18 @@ pub async fn update_visualization_transform(
     ),
 )]
 #[delete("/api/visualization-transforms/{id}")]
-#[tracing::instrument(name = "delete_visualization_transform", skip(auth, postgres_pool), fields(visualization_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "delete_visualization_transform", skip(user, postgres_pool), fields(visualization_transform_id = %path.as_ref()))]
 pub async fn delete_visualization_transform(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
     let id = path.into_inner();
 
     // Verify ownership
     match visualization_transforms::get_visualization_transform_by_id(&postgres_pool, id).await {
         Ok(Some(transform)) => {
-            if transform.owner != username {
+            if transform.owner != *user {
                 return not_found("Visualization transform not found".to_string());
             }
         }
@@ -333,7 +333,10 @@ pub async fn delete_visualization_transform(
     }
 
     match visualization_transforms::delete_visualization_transform(&postgres_pool, id).await {
-        Ok(()) => HttpResponse::NoContent().finish(),
+        Ok(()) => {
+            events::resource_deleted(&user, ResourceType::Visualization, &id.to_string());
+            HttpResponse::NoContent().finish()
+        }
         Err(e) => {
             error!("Failed to delete visualization transform: {}", e);
             HttpResponse::InternalServerError().json(serde_json::json!({
@@ -357,24 +360,19 @@ pub async fn delete_visualization_transform(
     ),
 )]
 #[post("/api/visualization-transforms/{id}/trigger")]
-#[tracing::instrument(name = "trigger_visualization_transform", skip(auth, postgres_pool, nats_client), fields(visualization_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "trigger_visualization_transform", skip(user, postgres_pool, nats_client), fields(visualization_transform_id = %path.as_ref()))]
 pub async fn trigger_visualization_transform(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     nats_client: Data<NatsClient>,
     path: Path<i32>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
     let id = path.into_inner();
 
     // Verify ownership
     match visualization_transforms::get_visualization_transform_by_id(&postgres_pool, id).await {
         Ok(Some(transform)) => {
-            if transform.owner != username {
+            if transform.owner != *user {
                 return not_found("Visualization transform not found".to_string());
             }
         }
@@ -387,7 +385,7 @@ pub async fn trigger_visualization_transform(
         }
     }
 
-    match trigger_visualization_transform_scan(&postgres_pool, &nats_client, id, &username).await {
+    match trigger_visualization_transform_scan(&postgres_pool, &nats_client, id, &user).await {
         Ok(()) => HttpResponse::Ok().json(serde_json::json!({
             "message": "Visualization transform triggered successfully"
         })),
@@ -414,23 +412,18 @@ pub async fn trigger_visualization_transform(
     ),
 )]
 #[get("/api/visualization-transforms/{id}/stats")]
-#[tracing::instrument(name = "get_visualization_transform_stats", skip(auth, postgres_pool), fields(visualization_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "get_visualization_transform_stats", skip(user, postgres_pool), fields(visualization_transform_id = %path.as_ref()))]
 pub async fn get_visualization_transform_stats(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
     let id = path.into_inner();
 
     // Verify ownership
     match visualization_transforms::get_visualization_transform_by_id(&postgres_pool, id).await {
         Ok(Some(transform)) => {
-            if transform.owner != username {
+            if transform.owner != *user {
                 return not_found("Visualization transform not found".to_string());
             }
         }
@@ -504,24 +497,19 @@ pub async fn get_visualization_transform_stats(
     ),
 )]
 #[get("/api/visualization-transforms/{id}/visualizations")]
-#[tracing::instrument(name = "get_visualizations", skip(auth, postgres_pool), fields(visualization_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "get_visualizations", skip(user, postgres_pool), fields(visualization_transform_id = %path.as_ref()))]
 pub async fn get_visualizations(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<i32>,
     pagination: Query<PaginationParams>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
     let id = path.into_inner();
 
     // Verify ownership
     match visualization_transforms::get_visualization_transform_by_id(&postgres_pool, id).await {
         Ok(Some(transform)) => {
-            if transform.owner != username {
+            if transform.owner != *user {
                 return not_found("Visualization transform not found".to_string());
             }
         }
@@ -567,24 +555,19 @@ pub async fn get_visualizations(
     ),
 )]
 #[get("/api/visualization-transforms/{id}/visualizations/{visualization_id}")]
-#[tracing::instrument(name = "get_visualization", skip(auth, postgres_pool), fields(visualization_transform_id = %path.0, visualization_id = %path.1))]
+#[tracing::instrument(name = "get_visualization", skip(user, postgres_pool), fields(visualization_transform_id = %path.0, visualization_id = %path.1))]
 pub async fn get_visualization(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<(i32, i32)>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
     let (transform_id, visualization_id) = path.into_inner();
 
     // Get visualization with owner check - ensures the visualization belongs to a transform owned by the user
     match visualization_transforms::get_visualization_with_owner(
         &postgres_pool,
         visualization_id,
-        &username,
+        &user,
     )
     .await
     {
@@ -593,10 +576,15 @@ pub async fn get_visualization(
             if visualization.visualization_transform_id != transform_id {
                 return not_found("Visualization not found for this transform".to_string());
             }
+            events::resource_read(
+                &user,
+                ResourceType::Visualization,
+                &visualization_id.to_string(),
+            );
             HttpResponse::Ok().json(visualization)
         }
         Err(e) => {
-            error!("Failed to fetch visualization for user {}: {}", username, e);
+            error!("Failed to fetch visualization for user {}: {}", *user, e);
             not_found("Visualization not found".to_string())
         }
     }
@@ -616,25 +604,19 @@ pub async fn get_visualization(
     ),
 )]
 #[get("/api/embedded-datasets/{id}/visualizations")]
-#[tracing::instrument(name = "get_visualizations_by_dataset", skip(auth, postgres_pool), fields(embedded_dataset_id = %path.as_ref()))]
+#[tracing::instrument(name = "get_visualizations_by_dataset", skip(user, postgres_pool), fields(embedded_dataset_id = %path.as_ref()))]
 pub async fn get_visualizations_by_dataset(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
     let embedded_dataset_id = path.into_inner();
 
     // Verify embedded dataset exists and belongs to user
-    match embedded_datasets::get_embedded_dataset(&postgres_pool, &username, embedded_dataset_id)
-        .await
+    match embedded_datasets::get_embedded_dataset(&postgres_pool, &user, embedded_dataset_id).await
     {
         Ok(dataset) => {
-            if dataset.owner != username {
+            if dataset.owner != *user {
                 return not_found("Embedded dataset not found".to_string());
             }
         }
@@ -649,7 +631,7 @@ pub async fn get_visualizations_by_dataset(
     match visualization_transforms::get_visualization_transforms_by_embedded_dataset(
         &postgres_pool,
         embedded_dataset_id,
-        &username,
+        &user,
     )
     .await
     {
@@ -678,25 +660,20 @@ pub async fn get_visualizations_by_dataset(
     ),
 )]
 #[get("/api/visualization-transforms/{id}/visualizations/{visualization_id}/download")]
-#[tracing::instrument(name = "download_visualization_html", skip(auth, postgres_pool, s3_client), fields(visualization_transform_id = %path.0, visualization_id = %path.1))]
+#[tracing::instrument(name = "download_visualization_html", skip(user, postgres_pool, s3_client), fields(visualization_transform_id = %path.0, visualization_id = %path.1))]
 pub async fn download_visualization_html(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     s3_client: Data<aws_sdk_s3::Client>,
     path: Path<(i32, i32)>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
     let (transform_id, visualization_id) = path.into_inner();
 
     // Get visualization with owner check - this verifies both the visualization exists and belongs to the user's transform
     let visualization = match visualization_transforms::get_visualization_with_owner(
         &postgres_pool,
         visualization_id,
-        &username,
+        &user,
     )
     .await
     {
@@ -708,7 +685,7 @@ pub async fn download_visualization_html(
             visualization
         }
         Err(e) => {
-            error!("Failed to fetch visualization for user {}: {}", username, e);
+            error!("Failed to fetch visualization for user {}: {}", *user, e);
             return not_found("Visualization not found".to_string());
         }
     };
@@ -763,22 +740,15 @@ pub async fn download_visualization_html(
     ),
 )]
 #[get("/api/visualizations/recent")]
-#[tracing::instrument(name = "get_recent_visualizations", skip(auth, postgres_pool))]
+#[tracing::instrument(name = "get_recent_visualizations", skip(user, postgres_pool))]
 pub async fn get_recent_visualizations(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     query: Query<PaginationParams>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
     let limit = query.limit.clamp(1, 100);
 
-    match visualization_transforms::get_recent_visualizations(&postgres_pool, &username, limit)
-        .await
-    {
+    match visualization_transforms::get_recent_visualizations(&postgres_pool, &user, limit).await {
         Ok(visualizations) => HttpResponse::Ok().json(visualizations),
         Err(e) => {
             error!("Failed to fetch recent visualizations: {}", e);

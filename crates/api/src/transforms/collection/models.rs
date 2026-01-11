@@ -43,13 +43,6 @@ pub struct UpdateCollectionTransform {
     pub job_config: Option<serde_json::Value>,
 }
 
-/// Request to trigger a Collection Transform manually
-#[allow(dead_code)]
-#[derive(Serialize, Deserialize, ToSchema, Debug, Clone)]
-pub struct TriggerCollectionTransformRequest {
-    pub collection_transform_id: i32,
-}
-
 /// Statistics for a Collection Transform
 #[derive(Serialize, ToSchema, FromRow, Debug, Clone)]
 pub struct CollectionTransformStats {
@@ -60,18 +53,6 @@ pub struct CollectionTransformStats {
     pub total_items_created: i64,
     #[schema(value_type = Option<String>, format = DateTime)]
     pub last_run_at: Option<DateTime<Utc>>,
-}
-
-/// Statistics with total file count from collection
-#[allow(dead_code)]
-#[derive(Serialize, ToSchema, Debug, Clone)]
-pub struct CollectionTransformStatsWithTotal {
-    pub collection_transform_id: i32,
-    pub total_files_in_collection: i64,
-    pub total_files_processed: i64,
-    pub successful_files: i64,
-    pub failed_files: i64,
-    pub total_items_created: i64,
 }
 
 /// Processed file record

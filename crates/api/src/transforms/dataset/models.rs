@@ -44,13 +44,6 @@ pub struct UpdateDatasetTransform {
     pub job_config: Option<serde_json::Value>,
 }
 
-/// Request to trigger a Dataset Transform manually
-#[allow(dead_code)]
-#[derive(Serialize, Deserialize, ToSchema, Debug, Clone)]
-pub struct TriggerDatasetTransformRequest {
-    pub dataset_transform_id: i32,
-}
-
 /// Aggregate statistics for a Dataset Transform (across all embedded datasets)
 #[derive(Serialize, ToSchema, Debug, Clone, FromRow)]
 pub struct DatasetTransformStats {
@@ -111,20 +104,4 @@ impl DatasetTransformStats {
     pub fn is_processing(&self) -> bool {
         self.processing_batches > 0
     }
-}
-
-/// Processed batch record for dataset transforms
-#[allow(dead_code)]
-#[derive(Serialize, ToSchema, FromRow, Debug, Clone)]
-pub struct ProcessedBatch {
-    pub id: i32,
-    pub transform_type: String, // 'dataset'
-    pub transform_id: i32,      // dataset_transform_id or embedded_dataset_id
-    pub file_key: String,       // batch file key
-    #[schema(value_type = String, format = DateTime)]
-    pub processed_at: DateTime<Utc>,
-    pub item_count: i32, // chunks embedded
-    pub process_status: String,
-    pub process_error: Option<String>,
-    pub processing_duration_ms: Option<i64>,
 }

@@ -1,13 +1,14 @@
-use crate::auth::extract_username;
+use crate::audit::{ResourceType, events};
+use crate::auth::AuthenticatedUser;
 use crate::errors::{bad_request, not_found};
 use crate::storage::postgres::{dataset_transforms, embedded_datasets};
 use crate::transforms::dataset::models::{
     CreateDatasetTransform, DatasetTransform, DatasetTransformStats, UpdateDatasetTransform,
 };
+use semantic_explorer_core::validation;
 
 use actix_web::web::{Data, Json, Path};
 use actix_web::{HttpResponse, Responder, delete, get, patch, post};
-use actix_web_openidconnect::openid_middleware::Authenticated;
 use async_nats::Client as NatsClient;
 use qdrant_client::Qdrant;
 use sqlx::{Pool, Postgres};
@@ -24,16 +25,12 @@ use uuid::Uuid;
     ),
 )]
 #[get("/api/dataset-transforms")]
-#[tracing::instrument(name = "get_dataset_transforms", skip(auth, postgres_pool))]
+#[tracing::instrument(name = "get_dataset_transforms", skip(user, postgres_pool))]
 pub async fn get_dataset_transforms(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-    match dataset_transforms::get_dataset_transforms(&postgres_pool, &username).await {
+    match dataset_transforms::get_dataset_transforms(&postgres_pool, &user).await {
         Ok(transforms) => HttpResponse::Ok().json(transforms),
         Err(e) => {
             error!("Failed to fetch dataset transforms: {}", e);
@@ -58,20 +55,18 @@ pub async fn get_dataset_transforms(
     ),
 )]
 #[get("/api/dataset-transforms/{id}")]
-#[tracing::instrument(name = "get_dataset_transform", skip(auth, postgres_pool), fields(dataset_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "get_dataset_transform", skip(user, postgres_pool), fields(dataset_transform_id = %path.as_ref()))]
 pub async fn get_dataset_transform(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-    match dataset_transforms::get_dataset_transform(&postgres_pool, &username, path.into_inner())
-        .await
-    {
-        Ok(transform) => HttpResponse::Ok().json(transform),
+    let id = path.into_inner();
+    match dataset_transforms::get_dataset_transform(&postgres_pool, &user, id).await {
+        Ok(transform) => {
+            events::resource_read(&user, ResourceType::Transform, &id.to_string());
+            HttpResponse::Ok().json(transform)
+        }
         Err(e) => {
             error!("Dataset transform not found: {}", e);
             not_found(format!("Dataset transform not found: {}", e))
@@ -91,18 +86,17 @@ pub async fn get_dataset_transform(
     ),
 )]
 #[post("/api/dataset-transforms")]
-#[tracing::instrument(name = "create_dataset_transform", skip(auth, postgres_pool, nats_client, body), fields(title = %body.title, embedder_count = %body.embedder_ids.len()))]
+#[tracing::instrument(name = "create_dataset_transform", skip(user, postgres_pool, nats_client, body), fields(title = %body.title, embedder_count = %body.embedder_ids.len()))]
 pub async fn create_dataset_transform(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     nats_client: Data<NatsClient>,
     body: Json<CreateDatasetTransform>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
+    // Validate input
+    if let Err(e) = validation::validate_title(&body.title) {
+        return bad_request(e);
+    }
     if body.embedder_ids.is_empty() {
         return bad_request("At least one embedder must be specified");
     }
@@ -117,7 +111,7 @@ pub async fn create_dataset_transform(
         &body.title,
         body.source_dataset_id,
         &body.embedder_ids,
-        &username,
+        &user,
         &job_config,
     )
     .await
@@ -125,10 +119,15 @@ pub async fn create_dataset_transform(
         Ok((transform, embedded_datasets)) => {
             // Enqueue scan as a background job instead of processing synchronously
             let dataset_transform_id = transform.dataset_transform_id;
+            events::resource_created(
+                &user,
+                ResourceType::Transform,
+                &dataset_transform_id.to_string(),
+            );
             let scan_job = semantic_explorer_core::models::DatasetTransformScanJob {
                 job_id: Uuid::new_v4(),
                 dataset_transform_id,
-                owner: username.clone(),
+                owner: user.to_string(),
             };
 
             if let Ok(payload) = serde_json::to_vec(&scan_job) {
@@ -183,28 +182,30 @@ pub async fn create_dataset_transform(
     ),
 )]
 #[patch("/api/dataset-transforms/{id}")]
-#[tracing::instrument(name = "update_dataset_transform", skip(auth, postgres_pool, body), fields(dataset_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "update_dataset_transform", skip(user, postgres_pool, body), fields(dataset_transform_id = %path.as_ref()))]
 pub async fn update_dataset_transform(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<i32>,
     body: Json<UpdateDatasetTransform>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
+    // Validate input if title is provided
+    if let Some(ref title) = body.title
+        && let Err(e) = validation::validate_title(title)
+    {
+        return bad_request(e);
+    }
     if let Some(ref embedder_ids) = body.embedder_ids
         && embedder_ids.is_empty()
     {
         return bad_request("At least one embedder must be specified");
     }
 
+    let id = path.into_inner();
     match dataset_transforms::update_dataset_transform(
         &postgres_pool,
-        &username,
-        path.into_inner(),
+        &user,
+        id,
         body.title.as_deref(),
         body.is_enabled,
         body.embedder_ids.as_deref(),
@@ -213,6 +214,7 @@ pub async fn update_dataset_transform(
     .await
     {
         Ok((transform, embedded_datasets)) => {
+            events::resource_updated(&user, ResourceType::Transform, &id.to_string());
             HttpResponse::Ok().json(serde_json::json!({
                 "transform": transform,
                 "embedded_datasets": embedded_datasets,
@@ -240,18 +242,13 @@ pub async fn update_dataset_transform(
     ),
 )]
 #[delete("/api/dataset-transforms/{id}")]
-#[tracing::instrument(name = "delete_dataset_transform", skip(auth, postgres_pool, qdrant_client), fields(dataset_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "delete_dataset_transform", skip(user, postgres_pool, qdrant_client), fields(dataset_transform_id = %path.as_ref()))]
 pub async fn delete_dataset_transform(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     qdrant_client: Data<Qdrant>,
     path: Path<i32>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
     let dataset_transform_id = path.into_inner();
 
     // Get all embedded datasets for this transform so we can delete their Qdrant collections
@@ -282,14 +279,17 @@ pub async fn delete_dataset_transform(
         }
     }
 
-    match dataset_transforms::delete_dataset_transform(
-        &postgres_pool,
-        &username,
-        dataset_transform_id,
-    )
-    .await
+    match dataset_transforms::delete_dataset_transform(&postgres_pool, &user, dataset_transform_id)
+        .await
     {
-        Ok(_) => HttpResponse::NoContent().finish(),
+        Ok(_) => {
+            events::resource_deleted(
+                &user,
+                ResourceType::Transform,
+                &dataset_transform_id.to_string(),
+            );
+            HttpResponse::NoContent().finish()
+        }
         Err(e) => {
             error!("Failed to delete dataset transform: {}", e);
             not_found(format!("Failed to delete dataset transform: {}", e))
@@ -311,25 +311,20 @@ pub async fn delete_dataset_transform(
     ),
 )]
 #[post("/api/dataset-transforms/{id}/trigger")]
-#[tracing::instrument(name = "trigger_dataset_transform", skip(auth, postgres_pool, nats_client, s3_client), fields(dataset_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "trigger_dataset_transform", skip(user, postgres_pool, nats_client, s3_client), fields(dataset_transform_id = %path.as_ref()))]
 pub async fn trigger_dataset_transform(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     nats_client: Data<NatsClient>,
     s3_client: Data<aws_sdk_s3::Client>,
     path: Path<i32>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
     let dataset_transform_id = path.into_inner();
 
     // Verify the transform exists
     let transform = match dataset_transforms::get_dataset_transform(
         &postgres_pool,
-        &username,
+        &user,
         dataset_transform_id,
     )
     .await
@@ -347,7 +342,7 @@ pub async fn trigger_dataset_transform(
         &nats_client,
         &s3_client,
         dataset_transform_id,
-        &username,
+        &user,
     )
     .await
     {
@@ -382,20 +377,15 @@ pub async fn trigger_dataset_transform(
     ),
 )]
 #[get("/api/dataset-transforms/{id}/stats")]
-#[tracing::instrument(name = "get_dataset_transform_stats", skip(auth, postgres_pool), fields(dataset_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "get_dataset_transform_stats", skip(user, postgres_pool), fields(dataset_transform_id = %path.as_ref()))]
 pub async fn get_dataset_transform_stats(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
     let dataset_transform_id = path.into_inner();
 
-    match dataset_transforms::get_dataset_transform(&postgres_pool, &username, dataset_transform_id)
+    match dataset_transforms::get_dataset_transform(&postgres_pool, &user, dataset_transform_id)
         .await
     {
         Ok(_) => {
@@ -462,20 +452,15 @@ pub async fn get_dataset_transform_stats(
     ),
 )]
 #[get("/api/datasets/{dataset_id}/transforms")]
-#[tracing::instrument(name = "get_dataset_transforms_for_dataset", skip(auth, postgres_pool), fields(dataset_id = %path.as_ref()))]
+#[tracing::instrument(name = "get_dataset_transforms_for_dataset", skip(user, postgres_pool), fields(dataset_id = %path.as_ref()))]
 pub async fn get_dataset_transforms_for_dataset(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
     match dataset_transforms::get_dataset_transforms_for_dataset(
         &postgres_pool,
-        &username,
+        &user,
         path.into_inner(),
     )
     .await
@@ -503,23 +488,18 @@ pub async fn get_dataset_transforms_for_dataset(
     ),
 )]
 #[get("/api/dataset-transforms/{id}/detailed-stats")]
-#[tracing::instrument(name = "get_dataset_transform_detailed_stats", skip(auth, postgres_pool), fields(dataset_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "get_dataset_transform_detailed_stats", skip(user, postgres_pool), fields(dataset_transform_id = %path.as_ref()))]
 pub async fn get_dataset_transform_detailed_stats(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
     let dataset_transform_id = path.into_inner();
 
     // Verify the transform exists and user has access
     let transform = match dataset_transforms::get_dataset_transform(
         &postgres_pool,
-        &username,
+        &user,
         dataset_transform_id,
     )
     .await

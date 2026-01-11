@@ -1,18 +1,17 @@
 use std::collections::{HashMap, HashSet};
 
 use actix_web::{
-    HttpResponse, Responder, post,
+    HttpResponse, Responder, ResponseError, post,
     web::{Data, Json},
 };
-use actix_web_openidconnect::openid_middleware::Authenticated;
 use futures_util::future;
 
 use qdrant_client::Qdrant;
 use sqlx::{Pool, Postgres};
 
 use crate::{
-    auth::extract_username,
-    errors::bad_request,
+    auth::AuthenticatedUser,
+    errors::ApiError,
     search::{
         aggregate_matches_to_documents,
         models::{EmbeddedDatasetSearchResults, SearchMode, SearchRequest, SearchResponse},
@@ -33,33 +32,29 @@ use crate::{
 #[post("/api/search")]
 #[tracing::instrument(
     name = "search",
-    skip(auth, qdrant_client, postgres_pool, search_request)
+    skip(user, qdrant_client, postgres_pool, search_request)
 )]
 pub(crate) async fn search(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     qdrant_client: Data<Qdrant>,
     postgres_pool: Data<Pool<Postgres>>,
     Json(search_request): Json<SearchRequest>,
 ) -> impl Responder {
     let start_time = std::time::Instant::now();
 
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
     if search_request.embedded_dataset_ids.is_empty() {
-        return bad_request("At least one embedded dataset must be selected");
+        return ApiError::BadRequest("At least one embedded dataset must be selected".to_string())
+            .error_response();
     }
 
     if search_request.query.trim().is_empty() {
-        return bad_request("Query cannot be empty");
+        return ApiError::BadRequest("Query cannot be empty".to_string()).error_response();
     }
 
     // Batch fetch all embedded datasets and embedders upfront to avoid N+1 queries
     let embedded_datasets_map = match embedded_datasets::get_embedded_datasets_with_details_batch(
         &postgres_pool,
-        &username,
+        &user,
         &search_request.embedded_dataset_ids,
     )
     .await
@@ -72,9 +67,8 @@ pub(crate) async fn search(
         }
         Err(e) => {
             tracing::error!("Failed to fetch embedded datasets in batch: {}", e);
-            return HttpResponse::InternalServerError().json(
-                serde_json::json!({"error": format!("Failed to fetch embedded datasets: {}", e)}),
-            );
+            return ApiError::Internal(format!("Failed to fetch embedded datasets: {}", e))
+                .error_response();
         }
     };
 
@@ -87,7 +81,7 @@ pub(crate) async fn search(
         .collect();
 
     let embedders_map =
-        match embedders::get_embedders_batch(&postgres_pool, &username, &embedder_ids).await {
+        match embedders::get_embedders_batch(&postgres_pool, &user, &embedder_ids).await {
             Ok(embs) => {
                 // Convert to HashMap for fast lookup
                 embs.into_iter()
@@ -96,9 +90,8 @@ pub(crate) async fn search(
             }
             Err(e) => {
                 tracing::error!("Failed to fetch embedders in batch: {}", e);
-                return HttpResponse::InternalServerError().json(
-                    serde_json::json!({"error": format!("Failed to fetch embedders: {}", e)}),
-                );
+                return ApiError::Internal(format!("Failed to fetch embedders: {}", e))
+                    .error_response();
             }
         };
 

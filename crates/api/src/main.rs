@@ -1,4 +1,5 @@
 mod api;
+mod audit;
 mod auth;
 mod chat;
 mod collections;
@@ -8,6 +9,7 @@ mod embedders;
 mod embedding;
 mod errors;
 mod llms;
+mod middleware;
 mod observability;
 mod search;
 mod storage;
@@ -19,7 +21,8 @@ use actix_multipart::form::MultipartFormConfig;
 use actix_web::{App, HttpServer, http::header, middleware::Compress, web};
 use anyhow::Result;
 use dotenvy::dotenv;
-use std::{env, path::PathBuf};
+use semantic_explorer_core::config::AppConfig;
+use std::path::PathBuf;
 use tracing::info;
 use utoipa::OpenApi;
 use utoipa_actix_web::AppExt;
@@ -37,23 +40,27 @@ struct ApiDoc;
 async fn main() -> Result<()> {
     dotenv().ok();
 
+    // Load centralized configuration - fail fast if required config is missing
+    let config = AppConfig::from_env()?;
+
     let prometheus = observability::init_observability()?;
-    let hostname = env::var("HOSTNAME").unwrap_or_else(|_| "localhost".to_string());
-    let port = env::var("PORT")
-        .unwrap_or_else(|_| "8080".to_string())
-        .parse()?;
+    let hostname = config.server.hostname.clone();
+    let port = config.server.port;
     let address = format!("http://{}:{}", hostname, port);
-    let static_files_directory = PathBuf::from(
-        env::var("STATIC_FILES_DIR").unwrap_or_else(|_| "./semantic-explorer-ui/".to_string()),
-    );
+    let static_files_directory = PathBuf::from(config.server.static_files_dir.clone());
+
+    // Graceful shutdown timeout from config or default 30 seconds
+    let shutdown_timeout = config.server.shutdown_timeout_secs.unwrap_or(30);
+
     let s3_client = storage::rustfs::initialize_client().await?;
-    let qdrant_client = storage::qdrant::initialize_client().await?;
-    let postgres_pool = storage::postgres::initialize_pool().await?;
+    let qdrant_client = storage::qdrant::initialize_client(&config.qdrant).await?;
+    let postgres_pool = storage::postgres::initialize_pool(&config.database).await?;
     let openid_client = auth::oidc::initialize_client(format!("{address}/auth_callback")).await?;
-    let nats_client = async_nats::connect(
-        &env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string()),
-    )
-    .await?;
+    let nats_client = async_nats::connect(&config.nats.url).await?;
+
+    // Keep references for graceful shutdown
+    let nats_shutdown = nats_client.clone();
+    let postgres_shutdown = postgres_pool.clone();
 
     semantic_explorer_core::nats::initialize_jetstream(&nats_client).await?;
 
@@ -63,6 +70,9 @@ async fn main() -> Result<()> {
         nats_client.clone(),
     )
     .await?;
+
+    // Clone CORS origins for use in closure
+    let cors_origins = config.server.cors_allowed_origins.clone();
 
     // Start scanners for each transform type
     let collection_scanner_handle = transforms::collection::scanner::initialize_scanner(
@@ -83,15 +93,40 @@ async fn main() -> Result<()> {
     info!("server running at {address}");
 
     HttpServer::new(move || {
+        // Build CORS configuration based on allowed origins
+        let cors = if cors_origins.is_empty() {
+            // Development: allow only self
+            Cors::default()
+                .allowed_origin(&address)
+                .allowed_methods(vec!["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+                .allowed_headers(vec![
+                    header::AUTHORIZATION,
+                    header::CONTENT_TYPE,
+                    header::ACCEPT,
+                ])
+                .supports_credentials()
+                .max_age(3600)
+        } else {
+            // Production: use configured origins
+            let mut cors = Cors::default()
+                .allowed_methods(vec!["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+                .allowed_headers(vec![
+                    header::AUTHORIZATION,
+                    header::CONTENT_TYPE,
+                    header::ACCEPT,
+                ])
+                .supports_credentials()
+                .max_age(3600);
+            for origin in &cors_origins {
+                cors = cors.allowed_origin(origin);
+            }
+            cors
+        };
+
         App::new()
             .wrap(prometheus.clone())
-            .wrap(
-                Cors::default()
-                    .allowed_origin(&address)
-                    .allowed_methods(vec!["GET", "POST", "PUT", "PATCH", "DELETE"])
-                    .allowed_headers(vec![header::AUTHORIZATION, header::CONTENT_TYPE])
-                    .max_age(3600),
-            )
+            .wrap(middleware::RequestIdMiddleware)
+            .wrap(cors)
             .wrap(Compress::default())
             .wrap(openid_client.get_middleware())
             .configure(openid_client.configure_open_id())
@@ -101,8 +136,8 @@ async fn main() -> Result<()> {
             .app_data(web::Data::new(nats_client.clone()))
             .app_data(
                 MultipartFormConfig::default()
-                    .total_limit(1024 * 1024 * 1024) // 1GB total
-                    .memory_limit(1024 * 1024 * 1024), // 1GB in memory
+                    .total_limit(100 * 1024 * 1024) // 100MB max per upload (in memory)
+                    .memory_limit(100 * 1024 * 1024), // 100MB in memory (no temp files)
             )
             .app_data(web::Data::new(static_files_directory.clone()))
             .into_utoipa_app()
@@ -201,21 +236,36 @@ async fn main() -> Result<()> {
                 SwaggerUi::new("/swagger-ui/{_:.*}").url("/api/openapi.json", api)
             })
             .into_app()
-            .service(api::health)
+            // Health check endpoints (must be outside OpenAPI to avoid auth)
+            .service(api::health::health)
+            .service(api::health::liveness)
+            .service(api::health::readiness)
             .service(api::base)
             .service(api::index)
             .service(api::pages)
             .service(api::get_current_user)
     })
     .bind((hostname, port))?
+    .shutdown_timeout(shutdown_timeout)
     .run()
     .await?;
 
+    info!("Shutting down gracefully...");
+
+    // Stop background scanners
     collection_scanner_handle.abort();
     dataset_scanner_handle.abort();
     // visualization_scanner_handle.abort();
 
-    info!("Server shutdown");
+    // Drain NATS client - flush pending messages
+    if let Err(e) = nats_shutdown.drain().await {
+        tracing::warn!(error = %e, "Failed to drain NATS client");
+    }
+
+    // Close database pool
+    postgres_shutdown.close().await;
+
+    info!("Server shutdown complete");
 
     Ok(())
 }

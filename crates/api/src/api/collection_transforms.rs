@@ -1,4 +1,5 @@
-use crate::auth::extract_username;
+use crate::audit::{ResourceType, events};
+use crate::auth::AuthenticatedUser;
 use crate::errors::{bad_request, not_found};
 use crate::storage::postgres::collection_transforms;
 use crate::transforms::collection::models::{
@@ -6,10 +7,10 @@ use crate::transforms::collection::models::{
     UpdateCollectionTransform,
 };
 use crate::transforms::collection::scanner::trigger_collection_transform_scan;
+use semantic_explorer_core::validation;
 
 use actix_web::web::{Data, Json, Path};
 use actix_web::{HttpResponse, Responder, delete, get, patch, post};
-use actix_web_openidconnect::openid_middleware::Authenticated;
 use async_nats::Client as NatsClient;
 use aws_sdk_s3::Client as S3Client;
 use sqlx::{Pool, Postgres};
@@ -25,16 +26,12 @@ use tracing::error;
     ),
 )]
 #[get("/api/collection-transforms")]
-#[tracing::instrument(name = "get_collection_transforms", skip(auth, postgres_pool))]
+#[tracing::instrument(name = "get_collection_transforms", skip(user, postgres_pool))]
 pub async fn get_collection_transforms(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-    match collection_transforms::get_collection_transforms(&postgres_pool, &username).await {
+    match collection_transforms::get_collection_transforms(&postgres_pool, &user).await {
         Ok(transforms) => HttpResponse::Ok().json(transforms),
         Err(e) => {
             error!("Failed to fetch collection transforms: {e:?}");
@@ -59,24 +56,18 @@ pub async fn get_collection_transforms(
     ),
 )]
 #[get("/api/collection-transforms/{id}")]
-#[tracing::instrument(name = "get_collection_transform", skip(auth, postgres_pool), fields(collection_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "get_collection_transform", skip(user, postgres_pool), fields(collection_transform_id = %path.as_ref()))]
 pub async fn get_collection_transform(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-    match collection_transforms::get_collection_transform(
-        &postgres_pool,
-        &username,
-        path.into_inner(),
-    )
-    .await
-    {
-        Ok(transform) => HttpResponse::Ok().json(transform),
+    let id = path.into_inner();
+    match collection_transforms::get_collection_transform(&postgres_pool, &user, id).await {
+        Ok(transform) => {
+            events::resource_read(&user, ResourceType::Transform, &id.to_string());
+            HttpResponse::Ok().json(transform)
+        }
         Err(e) => {
             error!("Collection transform not found: {}", e);
             not_found(format!("Collection transform not found: {}", e))
@@ -96,25 +87,25 @@ pub async fn get_collection_transform(
     ),
 )]
 #[post("/api/collection-transforms")]
-#[tracing::instrument(name = "create_collection_transform", skip(auth, postgres_pool, nats_client, s3_client, body), fields(title = %body.title))]
+#[tracing::instrument(name = "create_collection_transform", skip(user, postgres_pool, nats_client, s3_client, body), fields(title = %body.title))]
 pub async fn create_collection_transform(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     nats_client: Data<NatsClient>,
     s3_client: Data<S3Client>,
     body: Json<CreateCollectionTransform>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
+    // Validate input
+    if let Err(e) = validation::validate_title(&body.title) {
+        return bad_request(e);
+    }
 
     match collection_transforms::create_collection_transform(
         &postgres_pool,
         &body.title,
         body.collection_id,
         body.dataset_id,
-        &username,
+        &user,
         body.chunk_size,
         &body.job_config,
     )
@@ -128,7 +119,7 @@ pub async fn create_collection_transform(
                 &nats_client,
                 &s3_client,
                 collection_transform_id,
-                &username,
+                &user,
             )
             .await
             {
@@ -137,6 +128,11 @@ pub async fn create_collection_transform(
                     collection_transform_id, e
                 );
             }
+            events::resource_created(
+                &user,
+                ResourceType::Transform,
+                &collection_transform_id.to_string(),
+            );
             HttpResponse::Created().json(transform)
         }
         Err(e) => {
@@ -161,22 +157,25 @@ pub async fn create_collection_transform(
     ),
 )]
 #[patch("/api/collection-transforms/{id}")]
-#[tracing::instrument(name = "update_collection_transform", skip(auth, postgres_pool, body), fields(collection_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "update_collection_transform", skip(user, postgres_pool, body), fields(collection_transform_id = %path.as_ref()))]
 pub async fn update_collection_transform(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<i32>,
     body: Json<UpdateCollectionTransform>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
+    // Validate input if title is provided
+    if let Some(ref title) = body.title
+        && let Err(e) = validation::validate_title(title)
+    {
+        return bad_request(e);
+    }
 
+    let id = path.into_inner();
     match collection_transforms::update_collection_transform(
         &postgres_pool,
-        &username,
-        path.into_inner(),
+        &user,
+        id,
         body.title.as_deref(),
         body.is_enabled,
         body.chunk_size,
@@ -184,7 +183,10 @@ pub async fn update_collection_transform(
     )
     .await
     {
-        Ok(transform) => HttpResponse::Ok().json(transform),
+        Ok(transform) => {
+            events::resource_updated(&user, ResourceType::Transform, &id.to_string());
+            HttpResponse::Ok().json(transform)
+        }
         Err(e) => {
             error!("Failed to update collection transform: {}", e);
             not_found(format!("Failed to update collection transform: {}", e))
@@ -206,25 +208,18 @@ pub async fn update_collection_transform(
     ),
 )]
 #[delete("/api/collection-transforms/{id}")]
-#[tracing::instrument(name = "delete_collection_transform", skip(auth, postgres_pool), fields(collection_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "delete_collection_transform", skip(user, postgres_pool), fields(collection_transform_id = %path.as_ref()))]
 pub async fn delete_collection_transform(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
-    match collection_transforms::delete_collection_transform(
-        &postgres_pool,
-        &username,
-        path.into_inner(),
-    )
-    .await
-    {
-        Ok(_) => HttpResponse::NoContent().finish(),
+    let id = path.into_inner();
+    match collection_transforms::delete_collection_transform(&postgres_pool, &user, id).await {
+        Ok(_) => {
+            events::resource_deleted(&user, ResourceType::Transform, &id.to_string());
+            HttpResponse::NoContent().finish()
+        }
         Err(e) => {
             error!("Failed to delete collection transform: {}", e);
             not_found(format!("Failed to delete collection transform: {}", e))
@@ -246,22 +241,17 @@ pub async fn delete_collection_transform(
     ),
 )]
 #[post("/api/collection-transforms/{id}/trigger")]
-#[tracing::instrument(name = "trigger_collection_transform", skip(auth, postgres_pool), fields(collection_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "trigger_collection_transform", skip(user, postgres_pool), fields(collection_transform_id = %path.as_ref()))]
 pub async fn trigger_collection_transform(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
     let collection_transform_id = path.into_inner();
 
     match collection_transforms::get_collection_transform(
         &postgres_pool,
-        &username,
+        &user,
         collection_transform_id,
     )
     .await
@@ -291,22 +281,17 @@ pub async fn trigger_collection_transform(
     ),
 )]
 #[get("/api/collection-transforms/{id}/stats")]
-#[tracing::instrument(name = "get_collection_transform_stats", skip(auth, postgres_pool), fields(collection_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "get_collection_transform_stats", skip(user, postgres_pool), fields(collection_transform_id = %path.as_ref()))]
 pub async fn get_collection_transform_stats(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
     let collection_transform_id = path.into_inner();
 
     match collection_transforms::get_collection_transform(
         &postgres_pool,
-        &username,
+        &user,
         collection_transform_id,
     )
     .await
@@ -348,22 +333,17 @@ pub async fn get_collection_transform_stats(
     ),
 )]
 #[get("/api/collection-transforms/{id}/processed-files")]
-#[tracing::instrument(name = "get_processed_files", skip(auth, postgres_pool), fields(collection_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "get_processed_files", skip(user, postgres_pool), fields(collection_transform_id = %path.as_ref()))]
 pub async fn get_processed_files(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
     let collection_transform_id = path.into_inner();
 
     match collection_transforms::get_collection_transform(
         &postgres_pool,
-        &username,
+        &user,
         collection_transform_id,
     )
     .await
@@ -404,20 +384,15 @@ pub async fn get_processed_files(
     ),
 )]
 #[get("/api/collections/{collection_id}/transforms")]
-#[tracing::instrument(name = "get_collection_transforms_for_collection", skip(auth, postgres_pool), fields(collection_id = %path.as_ref()))]
+#[tracing::instrument(name = "get_collection_transforms_for_collection", skip(user, postgres_pool), fields(collection_id = %path.as_ref()))]
 pub async fn get_collection_transforms_for_collection(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
     match collection_transforms::get_collection_transforms_for_collection(
         &postgres_pool,
-        &username,
+        &user,
         path.into_inner(),
     )
     .await

@@ -19,15 +19,30 @@ services:
       - AWS_REGION=us-east-1
       - AWS_ENDPOINT_URL=http://127.0.0.1:9000
       - QDRANT_URL=http://localhost:6334
+      - QDRANT_TIMEOUT_SECS=30
+      - QDRANT_CONNECT_TIMEOUT_SECS=10
       - DATABASE_URL=postgresql://user:password@localhost:5432/explorer
+      - DB_MIN_CONNECTIONS=2
+      - DB_MAX_CONNECTIONS=20
+      - DB_ACQUIRE_TIMEOUT_SECS=30
       - OIDC_ISSUER_URL=http://localhost:5556/dex
       - OIDC_CLIENT_ID=semantic-explorer
       - OIDC_CLIENT_SECRET=ZXhhbXBsZS1hcHAtc2VjcmV0
       - NATS_URL=nats://localhost:4222
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
       - SERVICE_NAME=semantic-explorer
+      - RATE_LIMIT_PER_SECOND=10
+      - RATE_LIMIT_BURST_SIZE=30
+      - SHUTDOWN_TIMEOUT_SECS=30
+      # CORS_ALLOWED_ORIGINS=https://example.com,https://app.example.com
     ports:
       - "8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     network_mode: host
 
   worker-collections:

@@ -1,13 +1,14 @@
 use actix_web::{
-    HttpResponse, Responder, delete, get, patch, post,
+    HttpResponse, Responder, ResponseError, delete, get, patch, post,
     web::{Data, Json, Path},
 };
-use actix_web_openidconnect::openid_middleware::Authenticated;
+use semantic_explorer_core::validation;
 use sqlx::{Pool, Postgres};
 
 use crate::{
-    auth::extract_username,
-    errors::not_found,
+    audit::{ResourceType, events},
+    auth::AuthenticatedUser,
+    errors::ApiError,
     llms::models::{CreateLLM, LargeLanguageModel, UpdateLargeLanguageModel},
     storage::postgres::llms,
 };
@@ -20,20 +21,16 @@ use crate::{
     tag = "LLMs",
 )]
 #[get("/api/llms")]
-#[tracing::instrument(name = "get_llms", skip(auth, postgres_pool))]
+#[tracing::instrument(name = "get_llms", skip(user, postgres_pool))]
 pub(crate) async fn get_llms(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-    match llms::get_llms(&postgres_pool.into_inner(), &username).await {
+    match llms::get_llms(&postgres_pool.into_inner(), &user).await {
         Ok(llms_list) => HttpResponse::Ok().json(llms_list),
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch LLMs");
-            HttpResponse::InternalServerError().body(format!("error fetching LLMs: {e:?}"))
+            ApiError::Internal(format!("error fetching LLMs: {:?}", e)).error_response()
         }
     }
 }
@@ -50,21 +47,20 @@ pub(crate) async fn get_llms(
     tag = "LLMs",
 )]
 #[get("/api/llms/{llm_id}")]
-#[tracing::instrument(name = "get_llm", skip(auth, postgres_pool))]
+#[tracing::instrument(name = "get_llm", skip(user, postgres_pool))]
 pub(crate) async fn get_llm(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     llm_id: Path<i32>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-    match llms::get_llm(&postgres_pool.into_inner(), &username, *llm_id).await {
-        Ok(llm) => HttpResponse::Ok().json(llm),
+    match llms::get_llm(&postgres_pool.into_inner(), &user, *llm_id).await {
+        Ok(llm) => {
+            events::resource_read(&user, ResourceType::LlmProvider, &llm_id.to_string());
+            HttpResponse::Ok().json(llm)
+        }
         Err(e) => {
             tracing::error!(error = %e, llm_id = %llm_id, "failed to fetch LLM");
-            not_found(format!("LLM not found: {e:?}"))
+            ApiError::NotFound(format!("LLM not found: {:?}", e)).error_response()
         }
     }
 }
@@ -79,23 +75,27 @@ pub(crate) async fn get_llm(
     tag = "LLMs",
 )]
 #[post("/api/llms")]
-#[tracing::instrument(name = "create_llm", skip(auth, postgres_pool, create_llm))]
+#[tracing::instrument(name = "create_llm", skip(user, postgres_pool, create_llm))]
 pub(crate) async fn create_llm(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     create_llm: Json<CreateLLM>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
     let payload = create_llm.into_inner();
 
-    match llms::create_llm(&postgres_pool.into_inner(), &username, &payload).await {
-        Ok(llm) => HttpResponse::Created().json(llm),
+    // Validate input
+    if let Err(e) = validation::validate_title(&payload.name) {
+        return ApiError::Validation(e).error_response();
+    }
+
+    match llms::create_llm(&postgres_pool.into_inner(), &user, &payload).await {
+        Ok(llm) => {
+            events::resource_created(&user, ResourceType::LlmProvider, &llm.llm_id.to_string());
+            HttpResponse::Created().json(llm)
+        }
         Err(e) => {
             tracing::error!(error = %e, "failed to create LLM");
-            HttpResponse::InternalServerError().body(format!("error creating LLM: {e:?}"))
+            ApiError::Internal(format!("error creating LLM: {:?}", e)).error_response()
         }
     }
 }
@@ -113,22 +113,28 @@ pub(crate) async fn create_llm(
     tag = "LLMs",
 )]
 #[patch("/api/llms/{llm_id}")]
-#[tracing::instrument(name = "update_llm", skip(auth, postgres_pool, update_llm))]
+#[tracing::instrument(name = "update_llm", skip(user, postgres_pool, update_llm))]
 pub(crate) async fn update_llm(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     llm_id: Path<i32>,
     update_llm: Json<UpdateLargeLanguageModel>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-    match llms::update_llm(&postgres_pool.into_inner(), &username, *llm_id, &update_llm).await {
-        Ok(llm) => HttpResponse::Ok().json(llm),
+    // Validate input if name is provided
+    if let Some(ref name) = update_llm.name
+        && let Err(e) = validation::validate_title(name)
+    {
+        return ApiError::Validation(e).error_response();
+    }
+
+    match llms::update_llm(&postgres_pool.into_inner(), &user, *llm_id, &update_llm).await {
+        Ok(llm) => {
+            events::resource_updated(&user, ResourceType::LlmProvider, &llm_id.to_string());
+            HttpResponse::Ok().json(llm)
+        }
         Err(e) => {
             tracing::error!(error = %e, llm_id = %llm_id, "failed to update LLM");
-            HttpResponse::InternalServerError().body(format!("error updating LLM: {e:?}"))
+            ApiError::Internal(format!("error updating LLM: {:?}", e)).error_response()
         }
     }
 }
@@ -145,21 +151,20 @@ pub(crate) async fn update_llm(
     tag = "LLMs",
 )]
 #[delete("/api/llms/{llm_id}")]
-#[tracing::instrument(name = "delete_llm", skip(auth, postgres_pool))]
+#[tracing::instrument(name = "delete_llm", skip(user, postgres_pool))]
 pub(crate) async fn delete_llm(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     llm_id: Path<i32>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-    match llms::delete_llm(&postgres_pool.into_inner(), &username, *llm_id).await {
-        Ok(()) => HttpResponse::NoContent().finish(),
+    match llms::delete_llm(&postgres_pool.into_inner(), &user, *llm_id).await {
+        Ok(()) => {
+            events::resource_deleted(&user, ResourceType::LlmProvider, &llm_id.to_string());
+            HttpResponse::NoContent().finish()
+        }
         Err(e) => {
             tracing::error!(error = %e, llm_id = %llm_id, "failed to delete LLM");
-            HttpResponse::InternalServerError().body(format!("error deleting LLM: {e:?}"))
+            ApiError::Internal(format!("error deleting LLM: {:?}", e)).error_response()
         }
     }
 }

@@ -347,24 +347,6 @@ pub async fn record_processed_batch(
     Ok(())
 }
 
-#[allow(dead_code)]
-pub async fn update_embedded_dataset_last_processed_at(
-    pool: &Pool<Postgres>,
-    embedded_dataset_id: i32,
-) -> Result<()> {
-    sqlx::query(
-        r#"
-        UPDATE embedded_datasets
-        SET last_processed_at = NOW()
-        WHERE embedded_dataset_id = $1
-        "#,
-    )
-    .bind(embedded_dataset_id)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
 /// Update the last_processed_at timestamp to a specific value
 /// This prevents race conditions where items created between query and update are missed
 pub async fn update_embedded_dataset_last_processed_at_to(

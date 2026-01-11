@@ -1,14 +1,14 @@
 use actix_web::{
-    HttpResponse, Responder, delete, get, post,
+    HttpResponse, Responder, ResponseError, delete, get, post,
     web::{Data, Json, Path},
 };
-use actix_web_openidconnect::openid_middleware::Authenticated;
 use qdrant_client::Qdrant;
 use sqlx::Pool;
 use sqlx::Postgres;
 
 use crate::{
-    auth::extract_username,
+    audit::{ResourceType, events},
+    auth::AuthenticatedUser,
     chat::{
         llm,
         models::{
@@ -17,7 +17,7 @@ use crate::{
         },
         rag::{self},
     },
-    errors::not_found,
+    errors::ApiError,
     storage::postgres::chat,
 };
 
@@ -30,29 +30,27 @@ use crate::{
     tag = "Chat",
 )]
 #[post("/api/chat/sessions")]
-#[tracing::instrument(name = "create_chat_session", skip(auth, postgres_pool))]
+#[tracing::instrument(name = "create_chat_session", skip(user, postgres_pool))]
 pub(crate) async fn create_chat_session(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     request: Json<CreateChatSessionRequest>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
-    match chat::create_chat_session(&postgres_pool.into_inner(), &username, &request).await {
-        Ok(session) => HttpResponse::Created().json(ChatSessionResponse {
-            session_id: session.session_id,
-            embedded_dataset_id: session.embedded_dataset_id,
-            llm_id: session.llm_id,
-            title: session.title,
-            created_at: session.created_at,
-            updated_at: session.updated_at,
-        }),
+    match chat::create_chat_session(&postgres_pool.into_inner(), &user, &request).await {
+        Ok(session) => {
+            events::resource_created(&user, ResourceType::Session, &session.session_id);
+            HttpResponse::Created().json(ChatSessionResponse {
+                session_id: session.session_id,
+                embedded_dataset_id: session.embedded_dataset_id,
+                llm_id: session.llm_id,
+                title: session.title,
+                created_at: session.created_at,
+                updated_at: session.updated_at,
+            })
+        }
         Err(e) => {
             tracing::error!(error = %e, "failed to create chat session");
-            HttpResponse::InternalServerError().body(format!("error creating chat session: {e:?}"))
+            ApiError::Internal(format!("error creating chat session: {:?}", e)).error_response()
         }
     }
 }
@@ -65,17 +63,12 @@ pub(crate) async fn create_chat_session(
     tag = "Chat",
 )]
 #[get("/api/chat/sessions")]
-#[tracing::instrument(name = "get_chat_sessions", skip(auth, postgres_pool))]
+#[tracing::instrument(name = "get_chat_sessions", skip(user, postgres_pool))]
 pub(crate) async fn get_chat_sessions(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
-    match chat::get_chat_sessions(&postgres_pool.into_inner(), &username).await {
+    match chat::get_chat_sessions(&postgres_pool.into_inner(), &user).await {
         Ok(sessions) => {
             let sessions_response: Vec<ChatSessionResponse> = sessions
                 .into_iter()
@@ -94,7 +87,7 @@ pub(crate) async fn get_chat_sessions(
         }
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch chat sessions");
-            HttpResponse::InternalServerError().body(format!("error fetching sessions: {e:?}"))
+            ApiError::Internal(format!("error fetching sessions: {:?}", e)).error_response()
         }
     }
 }
@@ -111,29 +104,27 @@ pub(crate) async fn get_chat_sessions(
     tag = "Chat",
 )]
 #[get("/api/chat/sessions/{session_id}")]
-#[tracing::instrument(name = "get_chat_session", skip(auth, postgres_pool))]
+#[tracing::instrument(name = "get_chat_session", skip(user, postgres_pool))]
 pub(crate) async fn get_chat_session(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     session_id: Path<String>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
-    match chat::get_chat_session(&postgres_pool.into_inner(), &session_id, &username).await {
-        Ok(session) => HttpResponse::Ok().json(ChatSessionResponse {
-            session_id: session.session_id,
-            embedded_dataset_id: session.embedded_dataset_id,
-            llm_id: session.llm_id,
-            title: session.title,
-            created_at: session.created_at,
-            updated_at: session.updated_at,
-        }),
+    match chat::get_chat_session(&postgres_pool.into_inner(), &session_id, &user).await {
+        Ok(session) => {
+            events::resource_read(&user, ResourceType::Session, &session_id);
+            HttpResponse::Ok().json(ChatSessionResponse {
+                session_id: session.session_id,
+                embedded_dataset_id: session.embedded_dataset_id,
+                llm_id: session.llm_id,
+                title: session.title,
+                created_at: session.created_at,
+                updated_at: session.updated_at,
+            })
+        }
         Err(e) => {
             tracing::error!(error = %e, session_id = %session_id, "failed to fetch chat session");
-            not_found(format!("session not found: {e:?}"))
+            ApiError::NotFound(format!("session not found: {:?}", e)).error_response()
         }
     }
 }
@@ -150,22 +141,20 @@ pub(crate) async fn get_chat_session(
     tag = "Chat",
 )]
 #[delete("/api/chat/sessions/{session_id}")]
-#[tracing::instrument(name = "delete_chat_session", skip(auth, postgres_pool))]
+#[tracing::instrument(name = "delete_chat_session", skip(user, postgres_pool))]
 pub(crate) async fn delete_chat_session(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     session_id: Path<String>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
-    match chat::delete_chat_session(&postgres_pool.into_inner(), &session_id, &username).await {
-        Ok(()) => HttpResponse::NoContent().finish(),
+    match chat::delete_chat_session(&postgres_pool.into_inner(), &session_id, &user).await {
+        Ok(()) => {
+            events::resource_deleted(&user, ResourceType::Session, &session_id);
+            HttpResponse::NoContent().finish()
+        }
         Err(e) => {
             tracing::error!(error = %e, session_id = %session_id, "failed to delete chat session");
-            HttpResponse::InternalServerError().body(format!("error deleting session: {e:?}"))
+            ApiError::Internal(format!("error deleting session: {:?}", e)).error_response()
         }
     }
 }
@@ -182,18 +171,13 @@ pub(crate) async fn delete_chat_session(
     tag = "Chat",
 )]
 #[get("/api/chat/sessions/{session_id}/messages")]
-#[tracing::instrument(name = "get_chat_messages", skip(auth, postgres_pool))]
+#[tracing::instrument(name = "get_chat_messages", skip(user, postgres_pool))]
 pub(crate) async fn get_chat_messages(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     session_id: Path<String>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
-    match chat::get_chat_session(&postgres_pool, &session_id, &username).await {
+    match chat::get_chat_session(&postgres_pool, &session_id, &user).await {
         Ok(_) => {
             // Session exists and user owns it
             match chat::get_chat_messages(&postgres_pool, &session_id).await {
@@ -238,14 +222,13 @@ pub(crate) async fn get_chat_messages(
                 }
                 Err(e) => {
                     tracing::error!(error = %e, session_id = %session_id, "failed to fetch messages");
-                    HttpResponse::InternalServerError()
-                        .body(format!("error fetching messages: {e:?}"))
+                    ApiError::Internal(format!("error fetching messages: {:?}", e)).error_response()
                 }
             }
         }
         Err(e) => {
             tracing::error!(error = %e, session_id = %session_id, "session not found");
-            not_found(format!("session not found: {e:?}"))
+            ApiError::NotFound(format!("session not found: {:?}", e)).error_response()
         }
     }
 }
@@ -265,26 +248,21 @@ pub(crate) async fn get_chat_messages(
 #[post("/api/chat/sessions/{session_id}/messages")]
 #[tracing::instrument(
     name = "send_chat_message",
-    skip(auth, postgres_pool, request, qdrant_client)
+    skip(user, postgres_pool, request, qdrant_client)
 )]
 pub(crate) async fn send_chat_message(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     qdrant_client: Data<Qdrant>,
     session_id: Path<String>,
     request: Json<CreateChatMessageRequest>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
     // Verify session ownership and get session details
-    let session = match chat::get_chat_session(&postgres_pool, &session_id, &username).await {
+    let session = match chat::get_chat_session(&postgres_pool, &session_id, &user).await {
         Ok(s) => s,
         Err(e) => {
             tracing::error!(error = %e, session_id = %session_id, "session not found");
-            return not_found(format!("session not found: {e:?}"));
+            return ApiError::NotFound(format!("session not found: {:?}", e)).error_response();
         }
     };
 
@@ -293,7 +271,7 @@ pub(crate) async fn send_chat_message(
         chat::add_chat_message(&postgres_pool, &session_id, "user", &request.content, None).await
     {
         tracing::error!(error = %e, "failed to store user message");
-        return HttpResponse::InternalServerError().body(format!("error storing message: {e:?}"));
+        return ApiError::Internal(format!("error storing message: {:?}", e)).error_response();
     }
 
     // Retrieve relevant documents using RAG
@@ -351,8 +329,8 @@ pub(crate) async fn send_chat_message(
         Ok(msg) => msg,
         Err(e) => {
             tracing::error!(error = %e, "failed to store assistant message");
-            return HttpResponse::InternalServerError()
-                .body(format!("error storing assistant message: {e:?}"));
+            return ApiError::Internal(format!("error storing assistant message: {:?}", e))
+                .error_response();
         }
     };
 

@@ -62,6 +62,7 @@ pub(crate) fn init_observability() -> Result<PrometheusMetrics> {
         .endpoint("/metrics")
         .exclude("/")
         .exclude("/health")
+        .exclude_regex("/health/.*")
         .exclude("/metrics")
         .exclude("/swagger-ui")
         .exclude_regex("/swagger-ui/.*")
