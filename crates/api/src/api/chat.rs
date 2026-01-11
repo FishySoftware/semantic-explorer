@@ -1,5 +1,5 @@
 use actix_web::{
-    HttpResponse, Responder, ResponseError, delete, get, post,
+    HttpRequest, HttpResponse, Responder, ResponseError, delete, get, post,
     web::{Data, Json, Path},
 };
 use qdrant_client::Qdrant;
@@ -30,15 +30,21 @@ use crate::{
     tag = "Chat",
 )]
 #[post("/api/chat/sessions")]
-#[tracing::instrument(name = "create_chat_session", skip(user, postgres_pool))]
+#[tracing::instrument(name = "create_chat_session", skip(user, postgres_pool, req))]
 pub(crate) async fn create_chat_session(
     user: AuthenticatedUser,
+    req: HttpRequest,
     postgres_pool: Data<Pool<Postgres>>,
     request: Json<CreateChatSessionRequest>,
 ) -> impl Responder {
     match chat::create_chat_session(&postgres_pool.into_inner(), &user, &request).await {
         Ok(session) => {
-            events::resource_created(&user, ResourceType::Session, &session.session_id);
+            events::resource_created_with_request(
+                &req,
+                &user,
+                ResourceType::Session,
+                &session.session_id,
+            );
             HttpResponse::Created().json(ChatSessionResponse {
                 session_id: session.session_id,
                 embedded_dataset_id: session.embedded_dataset_id,
@@ -141,15 +147,16 @@ pub(crate) async fn get_chat_session(
     tag = "Chat",
 )]
 #[delete("/api/chat/sessions/{session_id}")]
-#[tracing::instrument(name = "delete_chat_session", skip(user, postgres_pool))]
+#[tracing::instrument(name = "delete_chat_session", skip(user, postgres_pool, req))]
 pub(crate) async fn delete_chat_session(
     user: AuthenticatedUser,
+    req: HttpRequest,
     postgres_pool: Data<Pool<Postgres>>,
     session_id: Path<String>,
 ) -> impl Responder {
     match chat::delete_chat_session(&postgres_pool.into_inner(), &session_id, &user).await {
         Ok(()) => {
-            events::resource_deleted(&user, ResourceType::Session, &session_id);
+            events::resource_deleted_with_request(&req, &user, ResourceType::Session, &session_id);
             HttpResponse::NoContent().finish()
         }
         Err(e) => {
@@ -248,10 +255,11 @@ pub(crate) async fn get_chat_messages(
 #[post("/api/chat/sessions/{session_id}/messages")]
 #[tracing::instrument(
     name = "send_chat_message",
-    skip(user, postgres_pool, request, qdrant_client)
+    skip(user, postgres_pool, request, qdrant_client, req)
 )]
 pub(crate) async fn send_chat_message(
     user: AuthenticatedUser,
+    req: HttpRequest,
     postgres_pool: Data<Pool<Postgres>>,
     qdrant_client: Data<Qdrant>,
     session_id: Path<String>,
@@ -273,6 +281,9 @@ pub(crate) async fn send_chat_message(
         tracing::error!(error = %e, "failed to store user message");
         return ApiError::Internal(format!("error storing message: {:?}", e)).error_response();
     }
+
+    // Track chat message sent
+    events::chat_message_sent(&req, &user, &session_id);
 
     // Retrieve relevant documents using RAG
     let mut rag_config = RAGConfig::default();

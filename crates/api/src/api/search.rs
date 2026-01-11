@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use actix_web::{
-    HttpResponse, Responder, ResponseError, post,
+    HttpRequest, HttpResponse, Responder, ResponseError, post,
     web::{Data, Json},
 };
 use futures_util::future;
@@ -10,6 +10,7 @@ use qdrant_client::Qdrant;
 use sqlx::{Pool, Postgres};
 
 use crate::{
+    audit::events,
     auth::AuthenticatedUser,
     errors::ApiError,
     search::{
@@ -32,10 +33,11 @@ use crate::{
 #[post("/api/search")]
 #[tracing::instrument(
     name = "search",
-    skip(user, qdrant_client, postgres_pool, search_request)
+    skip(user, qdrant_client, postgres_pool, search_request, req)
 )]
 pub(crate) async fn search(
     user: AuthenticatedUser,
+    req: HttpRequest,
     qdrant_client: Data<Qdrant>,
     postgres_pool: Data<Pool<Postgres>>,
     Json(search_request): Json<SearchRequest>,
@@ -50,6 +52,14 @@ pub(crate) async fn search(
     if search_request.query.trim().is_empty() {
         return ApiError::BadRequest("Query cannot be empty".to_string()).error_response();
     }
+
+    // Track search request
+    let dataset_ids: Vec<String> = search_request
+        .embedded_dataset_ids
+        .iter()
+        .map(|id| id.to_string())
+        .collect();
+    events::search_request(&req, &user, &dataset_ids);
 
     // Batch fetch all embedded datasets and embedders upfront to avoid N+1 queries
     let embedded_datasets_map = match embedded_datasets::get_embedded_datasets_with_details_batch(

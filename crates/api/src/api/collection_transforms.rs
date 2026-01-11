@@ -10,7 +10,7 @@ use crate::transforms::collection::scanner::trigger_collection_transform_scan;
 use semantic_explorer_core::validation;
 
 use actix_web::web::{Data, Json, Path};
-use actix_web::{HttpResponse, Responder, delete, get, patch, post};
+use actix_web::{HttpRequest, HttpResponse, Responder, delete, get, patch, post};
 use async_nats::Client as NatsClient;
 use aws_sdk_s3::Client as S3Client;
 use sqlx::{Pool, Postgres};
@@ -87,9 +87,10 @@ pub async fn get_collection_transform(
     ),
 )]
 #[post("/api/collection-transforms")]
-#[tracing::instrument(name = "create_collection_transform", skip(user, postgres_pool, nats_client, s3_client, body), fields(title = %body.title))]
+#[tracing::instrument(name = "create_collection_transform", skip(user, postgres_pool, nats_client, s3_client, body, req), fields(title = %body.title))]
 pub async fn create_collection_transform(
     user: AuthenticatedUser,
+    req: HttpRequest,
     postgres_pool: Data<Pool<Postgres>>,
     nats_client: Data<NatsClient>,
     s3_client: Data<S3Client>,
@@ -128,7 +129,8 @@ pub async fn create_collection_transform(
                     collection_transform_id, e
                 );
             }
-            events::resource_created(
+            events::resource_created_with_request(
+                &req,
                 &user,
                 ResourceType::Transform,
                 &collection_transform_id.to_string(),
@@ -208,16 +210,22 @@ pub async fn update_collection_transform(
     ),
 )]
 #[delete("/api/collection-transforms/{id}")]
-#[tracing::instrument(name = "delete_collection_transform", skip(user, postgres_pool), fields(collection_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "delete_collection_transform", skip(user, postgres_pool, req), fields(collection_transform_id = %path.as_ref()))]
 pub async fn delete_collection_transform(
     user: AuthenticatedUser,
+    req: HttpRequest,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
     let id = path.into_inner();
     match collection_transforms::delete_collection_transform(&postgres_pool, &user, id).await {
         Ok(_) => {
-            events::resource_deleted(&user, ResourceType::Transform, &id.to_string());
+            events::resource_deleted_with_request(
+                &req,
+                &user,
+                ResourceType::Transform,
+                &id.to_string(),
+            );
             HttpResponse::NoContent().finish()
         }
         Err(e) => {

@@ -1,5 +1,5 @@
 use actix_web::{
-    HttpResponse, Responder, ResponseError, delete, get, patch, post,
+    HttpRequest, HttpResponse, Responder, ResponseError, delete, get, patch, post,
     web::{Data, Json, Path},
 };
 use semantic_explorer_core::validation;
@@ -75,9 +75,10 @@ pub(crate) async fn get_llm(
     tag = "LLMs",
 )]
 #[post("/api/llms")]
-#[tracing::instrument(name = "create_llm", skip(user, postgres_pool, create_llm))]
+#[tracing::instrument(name = "create_llm", skip(user, postgres_pool, create_llm, req))]
 pub(crate) async fn create_llm(
     user: AuthenticatedUser,
+    req: HttpRequest,
     postgres_pool: Data<Pool<Postgres>>,
     create_llm: Json<CreateLLM>,
 ) -> impl Responder {
@@ -90,7 +91,12 @@ pub(crate) async fn create_llm(
 
     match llms::create_llm(&postgres_pool.into_inner(), &user, &payload).await {
         Ok(llm) => {
-            events::resource_created(&user, ResourceType::LlmProvider, &llm.llm_id.to_string());
+            events::resource_created_with_request(
+                &req,
+                &user,
+                ResourceType::LlmProvider,
+                &llm.llm_id.to_string(),
+            );
             HttpResponse::Created().json(llm)
         }
         Err(e) => {
@@ -151,15 +157,21 @@ pub(crate) async fn update_llm(
     tag = "LLMs",
 )]
 #[delete("/api/llms/{llm_id}")]
-#[tracing::instrument(name = "delete_llm", skip(user, postgres_pool))]
+#[tracing::instrument(name = "delete_llm", skip(user, postgres_pool, req))]
 pub(crate) async fn delete_llm(
     user: AuthenticatedUser,
+    req: HttpRequest,
     postgres_pool: Data<Pool<Postgres>>,
     llm_id: Path<i32>,
 ) -> impl Responder {
     match llms::delete_llm(&postgres_pool.into_inner(), &user, *llm_id).await {
         Ok(()) => {
-            events::resource_deleted(&user, ResourceType::LlmProvider, &llm_id.to_string());
+            events::resource_deleted_with_request(
+                &req,
+                &user,
+                ResourceType::LlmProvider,
+                &llm_id.to_string(),
+            );
             HttpResponse::NoContent().finish()
         }
         Err(e) => {

@@ -1,5 +1,5 @@
 use actix_web::{
-    HttpResponse, Responder, ResponseError, delete, get, patch, post,
+    HttpRequest, HttpResponse, Responder, ResponseError, delete, get, patch, post,
     web::{Data, Json, Path, Query},
 };
 
@@ -135,9 +135,10 @@ pub(crate) async fn get_dataset(
     tag = "Datasets",
 )]
 #[post("/api/datasets")]
-#[tracing::instrument(name = "create_dataset", skip(user, postgres_pool, create_dataset), fields(dataset_title = %create_dataset.title))]
+#[tracing::instrument(name = "create_dataset", skip(user, postgres_pool, create_dataset, req), fields(dataset_title = %create_dataset.title))]
 pub(crate) async fn create_dataset(
     user: AuthenticatedUser,
+    req: HttpRequest,
     postgres_pool: Data<Pool<Postgres>>,
     Json(create_dataset): Json<CreateDataset>,
 ) -> impl Responder {
@@ -171,7 +172,8 @@ pub(crate) async fn create_dataset(
         }
     };
 
-    events::resource_created(
+    events::resource_created_with_request(
+        &req,
         &user,
         ResourceType::Dataset,
         &dataset.dataset_id.to_string(),
@@ -252,9 +254,10 @@ pub(crate) async fn update_dataset(
     tag = "Datasets",
 )]
 #[delete("/api/datasets/{datasets_id}")]
-#[tracing::instrument(name = "delete_dataset", skip(user, postgres_pool, qdrant_client), fields(dataset_id = %dataset_id.as_ref()))]
+#[tracing::instrument(name = "delete_dataset", skip(user, postgres_pool, qdrant_client, req), fields(dataset_id = %dataset_id.as_ref()))]
 pub(crate) async fn delete_dataset(
     user: AuthenticatedUser,
+    req: HttpRequest,
     postgres_pool: Data<Pool<Postgres>>,
     qdrant_client: Data<Qdrant>,
     dataset_id: Path<i32>,
@@ -301,7 +304,12 @@ pub(crate) async fn delete_dataset(
 
     match datasets::delete_dataset(&postgres_pool, dataset_id, &user).await {
         Ok(_) => {
-            events::resource_deleted(&user, ResourceType::Dataset, &dataset_id.to_string());
+            events::resource_deleted_with_request(
+                &req,
+                &user,
+                ResourceType::Dataset,
+                &dataset_id.to_string(),
+            );
             HttpResponse::Ok().finish()
         }
         Err(e) => {

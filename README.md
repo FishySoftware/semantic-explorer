@@ -220,14 +220,15 @@ The API service handles HTTP requests, authentication, and coordinates the syste
 | `STATIC_FILES_DIR` | Path to UI static files | No | `./semantic-explorer-ui/` |
 | `RUST_LOG` | Logging configuration | No | `info` |
 | `CORS_ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins | No | (self only) |
-| `RATE_LIMIT_PER_SECOND` | Rate limit requests per second | No | `10` |
-| `RATE_LIMIT_BURST_SIZE` | Rate limit burst size | No | `30` |
 | `SHUTDOWN_TIMEOUT_SECS` | Graceful shutdown timeout in seconds | No | `30` |
 | `DB_MIN_CONNECTIONS` | Minimum database pool connections | No | `1` |
 | `DB_MAX_CONNECTIONS` | Maximum database pool connections | No | `10` |
 | `DB_ACQUIRE_TIMEOUT_SECS` | Database connection acquire timeout | No | `30` |
 | `QDRANT_TIMEOUT_SECS` | Qdrant request timeout in seconds | No | `30` |
 | `QDRANT_CONNECT_TIMEOUT_SECS` | Qdrant connection timeout in seconds | No | `10` |
+| `DB_IDLE_TIMEOUT_SECS` | Database connection idle timeout in seconds | No | `300` |
+| `DB_MAX_LIFETIME_SECS` | Maximum database connection lifetime in seconds | No | `1800` |
+| `LOG_FORMAT` | Log output format: `json` or `pretty` | No | `json` |
 
 ### Worker Collections
 

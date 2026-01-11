@@ -17,10 +17,6 @@ pub enum ApiError {
     /// Unauthorized access (401) - Ready for Phase 5.2 migration
     #[error("{0}")]
     Unauthorized(String),
-    /// Forbidden / access denied (403) - Ready for Phase 5.2 migration
-    #[allow(dead_code)] // Reserved for permission-based access control
-    #[error("{0}")]
-    Forbidden(String),
     /// Internal server error (500)
     #[error("{0}")]
     Internal(String),
@@ -38,7 +34,6 @@ impl ResponseError for ApiError {
             ApiError::NotFound(_) => StatusCode::NOT_FOUND,
             ApiError::BadRequest(_) => StatusCode::BAD_REQUEST,
             ApiError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
-            ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
             ApiError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::Validation(_) => StatusCode::BAD_REQUEST,

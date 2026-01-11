@@ -25,14 +25,6 @@ pub(crate) struct User {
 #[derive(Debug, Clone)]
 pub struct AuthenticatedUser(pub String);
 
-impl AuthenticatedUser {
-    /// Get the username
-    #[allow(dead_code)] // Available for handlers that need the username as &str
-    pub fn username(&self) -> &str {
-        &self.0
-    }
-}
-
 impl Deref for AuthenticatedUser {
     type Target = String;
 

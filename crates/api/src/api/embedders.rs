@@ -1,5 +1,5 @@
 use actix_web::{
-    HttpResponse, Responder, ResponseError, delete, get, patch, post,
+    HttpRequest, HttpResponse, Responder, ResponseError, delete, get, patch, post,
     web::{Data, Json, Path},
 };
 use semantic_explorer_core::validation;
@@ -82,9 +82,13 @@ pub(crate) async fn get_embedder(
     tag = "Embedders",
 )]
 #[post("/api/embedders")]
-#[tracing::instrument(name = "create_embedder", skip(user, postgres_pool, create_embedder))]
+#[tracing::instrument(
+    name = "create_embedder",
+    skip(user, postgres_pool, create_embedder, req)
+)]
 pub(crate) async fn create_embedder(
     user: AuthenticatedUser,
+    req: HttpRequest,
     postgres_pool: Data<Pool<Postgres>>,
     create_embedder: Json<CreateEmbedder>,
 ) -> impl Responder {
@@ -97,7 +101,8 @@ pub(crate) async fn create_embedder(
 
     match embedders::create_embedder(&postgres_pool.into_inner(), &user, &payload).await {
         Ok(embedder) => {
-            events::resource_created(
+            events::resource_created_with_request(
+                &req,
                 &user,
                 ResourceType::Embedder,
                 &embedder.embedder_id.to_string(),
@@ -169,15 +174,21 @@ pub(crate) async fn update_embedder(
     tag = "Embedders",
 )]
 #[delete("/api/embedders/{embedder_id}")]
-#[tracing::instrument(name = "delete_embedder", skip(user, postgres_pool))]
+#[tracing::instrument(name = "delete_embedder", skip(user, postgres_pool, req))]
 pub(crate) async fn delete_embedder(
     user: AuthenticatedUser,
+    req: HttpRequest,
     postgres_pool: Data<Pool<Postgres>>,
     embedder_id: Path<i32>,
 ) -> impl Responder {
     match embedders::delete_embedder(&postgres_pool.into_inner(), &user, *embedder_id).await {
         Ok(()) => {
-            events::resource_deleted(&user, ResourceType::Embedder, &embedder_id.to_string());
+            events::resource_deleted_with_request(
+                &req,
+                &user,
+                ResourceType::Embedder,
+                &embedder_id.to_string(),
+            );
             HttpResponse::NoContent().finish()
         }
         Err(e) => {

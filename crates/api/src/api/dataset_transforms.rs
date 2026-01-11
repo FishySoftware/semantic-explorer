@@ -8,7 +8,7 @@ use crate::transforms::dataset::models::{
 use semantic_explorer_core::validation;
 
 use actix_web::web::{Data, Json, Path};
-use actix_web::{HttpResponse, Responder, delete, get, patch, post};
+use actix_web::{HttpRequest, HttpResponse, Responder, delete, get, patch, post};
 use async_nats::Client as NatsClient;
 use qdrant_client::Qdrant;
 use sqlx::{Pool, Postgres};
@@ -86,9 +86,10 @@ pub async fn get_dataset_transform(
     ),
 )]
 #[post("/api/dataset-transforms")]
-#[tracing::instrument(name = "create_dataset_transform", skip(user, postgres_pool, nats_client, body), fields(title = %body.title, embedder_count = %body.embedder_ids.len()))]
+#[tracing::instrument(name = "create_dataset_transform", skip(user, postgres_pool, nats_client, body, req), fields(title = %body.title, embedder_count = %body.embedder_ids.len()))]
 pub async fn create_dataset_transform(
     user: AuthenticatedUser,
+    req: HttpRequest,
     postgres_pool: Data<Pool<Postgres>>,
     nats_client: Data<NatsClient>,
     body: Json<CreateDatasetTransform>,
@@ -119,7 +120,8 @@ pub async fn create_dataset_transform(
         Ok((transform, embedded_datasets)) => {
             // Enqueue scan as a background job instead of processing synchronously
             let dataset_transform_id = transform.dataset_transform_id;
-            events::resource_created(
+            events::resource_created_with_request(
+                &req,
                 &user,
                 ResourceType::Transform,
                 &dataset_transform_id.to_string(),
@@ -242,9 +244,10 @@ pub async fn update_dataset_transform(
     ),
 )]
 #[delete("/api/dataset-transforms/{id}")]
-#[tracing::instrument(name = "delete_dataset_transform", skip(user, postgres_pool, qdrant_client), fields(dataset_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "delete_dataset_transform", skip(user, postgres_pool, qdrant_client, req), fields(dataset_transform_id = %path.as_ref()))]
 pub async fn delete_dataset_transform(
     user: AuthenticatedUser,
+    req: HttpRequest,
     postgres_pool: Data<Pool<Postgres>>,
     qdrant_client: Data<Qdrant>,
     path: Path<i32>,
@@ -283,7 +286,8 @@ pub async fn delete_dataset_transform(
         .await
     {
         Ok(_) => {
-            events::resource_deleted(
+            events::resource_deleted_with_request(
+                &req,
                 &user,
                 ResourceType::Transform,
                 &dataset_transform_id.to_string(),

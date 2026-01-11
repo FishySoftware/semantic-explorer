@@ -7,7 +7,7 @@ use crate::embedded_datasets::{
 use crate::errors::{bad_request, not_found};
 use crate::storage::postgres::embedded_datasets;
 use actix_web::web::{Data, Json, Path, Query};
-use actix_web::{HttpResponse, Responder, delete, get, patch, post};
+use actix_web::{HttpRequest, HttpResponse, Responder, delete, get, patch, post};
 use qdrant_client::Qdrant;
 use qdrant_client::qdrant::GetPointsBuilder;
 use qdrant_client::qdrant::point_id::PointIdOptions;
@@ -123,9 +123,10 @@ pub async fn get_embedded_dataset(
     ),
 )]
 #[delete("/api/embedded-datasets/{id}")]
-#[tracing::instrument(name = "delete_embedded_dataset", skip(user, postgres_pool, qdrant_client), fields(embedded_dataset_id = %path.as_ref()))]
+#[tracing::instrument(name = "delete_embedded_dataset", skip(user, postgres_pool, qdrant_client, req), fields(embedded_dataset_id = %path.as_ref()))]
 pub async fn delete_embedded_dataset(
     user: AuthenticatedUser,
+    req: HttpRequest,
     postgres_pool: Data<Pool<Postgres>>,
     qdrant_client: Data<Qdrant>,
     path: Path<i32>,
@@ -170,7 +171,8 @@ pub async fn delete_embedded_dataset(
                 "Successfully deleted embedded dataset {} and Qdrant collection {}",
                 embedded_dataset_id, embedded_dataset.collection_name
             );
-            events::resource_deleted(
+            events::resource_deleted_with_request(
+                &req,
                 &user,
                 ResourceType::Dataset,
                 &embedded_dataset_id.to_string(),

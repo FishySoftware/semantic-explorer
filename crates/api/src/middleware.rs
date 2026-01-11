@@ -80,10 +80,3 @@ where
         })
     }
 }
-
-/// Extract request ID from request extensions.
-/// Part of Phase 4.3 - ready for handler integration.
-#[allow(dead_code)] // Public API for handlers that need explicit request ID access
-pub fn get_request_id(req: &actix_web::HttpRequest) -> Option<String> {
-    req.extensions().get::<RequestId>().map(|r| r.0.clone())
-}

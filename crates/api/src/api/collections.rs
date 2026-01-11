@@ -1,6 +1,6 @@
 use actix_multipart::form::MultipartForm;
 use actix_web::{
-    HttpResponse, Responder, ResponseError, delete, get, patch, post,
+    HttpRequest, HttpResponse, Responder, ResponseError, delete, get, patch, post,
     web::{self, Data, Json, Path},
 };
 use aws_sdk_s3::Client;
@@ -129,9 +129,10 @@ pub(crate) async fn search_collections(
     tag = "Collections",
 )]
 #[post("/api/collections")]
-#[tracing::instrument(name = "create_collection", skip(user, s3_client, postgres_pool, create_collection), fields(collection_title = %create_collection.title))]
+#[tracing::instrument(name = "create_collection", skip(user, s3_client, postgres_pool, create_collection, req), fields(collection_title = %create_collection.title))]
 pub(crate) async fn create_collections(
     user: AuthenticatedUser,
+    req: HttpRequest,
     s3_client: Data<Client>,
     postgres_pool: Data<Pool<Postgres>>,
     Json(create_collection): Json<CreateCollection>,
@@ -187,7 +188,8 @@ pub(crate) async fn create_collections(
         }
     };
 
-    events::resource_created(
+    events::resource_created_with_request(
+        &req,
         &user,
         ResourceType::Collection,
         &collection.collection_id.to_string(),
@@ -204,9 +206,10 @@ pub(crate) async fn create_collections(
     tag = "Collections",
 )]
 #[delete("/api/collections/{collection_id}")]
-#[tracing::instrument(name = "delete_collection", skip(user, s3_client, postgres_pool), fields(collection_id = %collection_id.as_ref()))]
+#[tracing::instrument(name = "delete_collection", skip(user, s3_client, postgres_pool, req), fields(collection_id = %collection_id.as_ref()))]
 pub(crate) async fn delete_collections(
     user: AuthenticatedUser,
+    req: HttpRequest,
     s3_client: Data<Client>,
     postgres_pool: Data<Pool<Postgres>>,
     collection_id: Path<i32>,
@@ -242,7 +245,12 @@ pub(crate) async fn delete_collections(
 
     match collections::delete_collection(&postgres_pool, collection_id, &user).await {
         Ok(_) => {
-            events::resource_deleted(&user, ResourceType::Collection, &collection_id.to_string());
+            events::resource_deleted_with_request(
+                &req,
+                &user,
+                ResourceType::Collection,
+                &collection_id.to_string(),
+            );
             HttpResponse::Ok().finish()
         }
         Err(e) => {

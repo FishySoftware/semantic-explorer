@@ -87,8 +87,8 @@ async fn main() -> Result<()> {
         s3_client.clone(),
     );
 
-    // let visualization_scanner_handle =
-    //     transforms::visualization::initialize_scanner(postgres_pool.clone(), nats_client.clone());
+    // Initialize audit event database storage
+    audit::events::init_db_pool(postgres_pool.clone());
 
     info!("server running at {address}");
 

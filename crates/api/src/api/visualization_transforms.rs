@@ -10,7 +10,7 @@ use crate::transforms::visualization::scanner::trigger_visualization_transform_s
 use semantic_explorer_core::validation;
 
 use actix_web::web::{Data, Json, Path, Query};
-use actix_web::{HttpResponse, Responder, delete, get, patch, post};
+use actix_web::{HttpRequest, HttpResponse, Responder, delete, get, patch, post};
 use async_nats::Client as NatsClient;
 use serde::Deserialize;
 use sqlx::{Pool, Postgres};
@@ -111,9 +111,10 @@ pub async fn get_visualization_transform(
     ),
 )]
 #[post("/api/visualization-transforms")]
-#[tracing::instrument(name = "create_visualization_transform", skip(user, postgres_pool, nats_client, body), fields(title = %body.title))]
+#[tracing::instrument(name = "create_visualization_transform", skip(user, postgres_pool, nats_client, body, req), fields(title = %body.title))]
 pub async fn create_visualization_transform(
     user: AuthenticatedUser,
+    req: HttpRequest,
     postgres_pool: Data<Pool<Postgres>>,
     nats_client: Data<NatsClient>,
     body: Json<CreateVisualizationTransform>,
@@ -211,7 +212,8 @@ pub async fn create_visualization_transform(
                 // Don't fail the creation, just log the error
             }
 
-            events::resource_created(
+            events::resource_created_with_request(
+                &req,
                 &user,
                 ResourceType::Visualization,
                 &transform_id.to_string(),
@@ -308,9 +310,10 @@ pub async fn update_visualization_transform(
     ),
 )]
 #[delete("/api/visualization-transforms/{id}")]
-#[tracing::instrument(name = "delete_visualization_transform", skip(user, postgres_pool), fields(visualization_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "delete_visualization_transform", skip(user, postgres_pool, req), fields(visualization_transform_id = %path.as_ref()))]
 pub async fn delete_visualization_transform(
     user: AuthenticatedUser,
+    req: HttpRequest,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
@@ -334,7 +337,12 @@ pub async fn delete_visualization_transform(
 
     match visualization_transforms::delete_visualization_transform(&postgres_pool, id).await {
         Ok(()) => {
-            events::resource_deleted(&user, ResourceType::Visualization, &id.to_string());
+            events::resource_deleted_with_request(
+                &req,
+                &user,
+                ResourceType::Visualization,
+                &id.to_string(),
+            );
             HttpResponse::NoContent().finish()
         }
         Err(e) => {

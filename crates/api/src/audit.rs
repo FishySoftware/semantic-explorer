@@ -4,17 +4,15 @@
 //! migration tasks. The utilities are ready for integration into handlers.
 
 use serde::Serialize;
+use sqlx::{Pool, Postgres};
 use std::time::SystemTime;
 use tracing::{info, warn};
 
 /// Audit event types for security-relevant operations
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
-#[allow(dead_code)] // Some variants reserved for future extensibility
 pub enum AuditEventType {
     /// User authentication events
-    AuthLogin,
-    AuthLogout,
     AuthFailed,
 
     /// Resource access events
@@ -23,9 +21,9 @@ pub enum AuditEventType {
     ResourceUpdate,
     ResourceDelete,
 
-    /// Administrative actions
-    AdminAction,
-    ConfigChange,
+    /// Data access events
+    ChatMessage,
+    SearchRequest,
 
     /// Security events
     UnauthorizedAccess,
@@ -35,7 +33,6 @@ pub enum AuditEventType {
 /// Resource types for audit logging
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
-#[allow(dead_code)] // Some variants reserved for future extensibility
 pub enum ResourceType {
     Collection,
     Dataset,
@@ -43,7 +40,6 @@ pub enum ResourceType {
     Transform,
     Visualization,
     LlmProvider,
-    User,
     Session,
 }
 
@@ -110,7 +106,6 @@ impl AuditEvent {
     }
 
     /// Add request ID for correlation
-    #[allow(dead_code)] // Available for handlers that need explicit request ID correlation
     pub fn with_request_id(mut self, request_id: impl Into<String>) -> Self {
         self.request_id = Some(request_id.into());
         self
@@ -175,6 +170,41 @@ impl AuditEvent {
             }
         }
     }
+
+    /// Store this audit event in the database for long-term retention and querying
+    pub async fn store(&self, pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO audit_events (
+                timestamp,
+                event_type,
+                outcome,
+                username,
+                request_id,
+                client_ip,
+                resource_type,
+                resource_id,
+                details
+            )
+            VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9
+            )
+            "#,
+        )
+        .bind(&self.timestamp)
+        .bind(format!("{:?}", self.event_type))
+        .bind(format!("{:?}", self.outcome))
+        .bind(&self.user)
+        .bind(&self.request_id)
+        .bind(&self.client_ip)
+        .bind(self.resource_type.as_ref().map(|rt| format!("{:?}", rt)))
+        .bind(&self.resource_id)
+        .bind(&self.details)
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
 }
 
 /// Convenience functions for common audit events
@@ -182,27 +212,33 @@ pub mod events {
     use super::*;
     use crate::middleware::RequestId;
     use actix_web::{HttpMessage, HttpRequest};
+    use std::sync::OnceLock;
+
+    // Global database pool for audit event storage
+    static AUDIT_DB_POOL: OnceLock<Pool<Postgres>> = OnceLock::new();
+
+    /// Initialize the audit database pool
+    /// Call this during application startup with the main database pool
+    pub fn init_db_pool(pool: Pool<Postgres>) {
+        let _ = AUDIT_DB_POOL.set(pool);
+    }
+
+    /// Get the audit database pool if initialized
+    fn get_db_pool() -> Option<&'static Pool<Postgres>> {
+        AUDIT_DB_POOL.get()
+    }
 
     /// Extract request ID from an HttpRequest if available
-    #[allow(dead_code)] // Available for handlers that need explicit request ID
     fn get_request_id(req: &HttpRequest) -> Option<String> {
         req.extensions().get::<RequestId>().map(|r| r.0.clone())
     }
 
-    /// Log a successful resource creation
-    pub fn resource_created(user: &str, resource_type: ResourceType, resource_id: &str) {
-        AuditEvent::new(AuditEventType::ResourceCreate, AuditOutcome::Success, user)
-            .with_resource(resource_type, resource_id)
-            .log();
-    }
-
     /// Log a successful resource creation with request context
-    #[allow(dead_code)] // Available for handlers that have access to HttpRequest
     pub fn resource_created_with_request(
+        req: &HttpRequest,
         user: &str,
         resource_type: ResourceType,
         resource_id: &str,
-        req: &HttpRequest,
     ) {
         let mut event =
             AuditEvent::new(AuditEventType::ResourceCreate, AuditOutcome::Success, user)
@@ -211,27 +247,88 @@ pub mod events {
             event = event.with_request_id(id);
         }
         event.log();
+        // Store event asynchronously in background
+        if let Some(pool) = get_db_pool() {
+            let event_clone = event.clone();
+            tokio::spawn(async move {
+                if let Err(e) = event_clone.store(pool).await {
+                    warn!(
+                        target: "audit",
+                        error = %e,
+                        "Failed to store audit event in database"
+                    );
+                }
+            });
+        }
     }
 
     /// Log a successful resource read
     pub fn resource_read(user: &str, resource_type: ResourceType, resource_id: &str) {
-        AuditEvent::new(AuditEventType::ResourceRead, AuditOutcome::Success, user)
-            .with_resource(resource_type, resource_id)
-            .log();
+        let event = AuditEvent::new(AuditEventType::ResourceRead, AuditOutcome::Success, user)
+            .with_resource(resource_type, resource_id);
+        event.log();
+        // Store event asynchronously in background
+        if let Some(pool) = get_db_pool() {
+            let event_clone = event.clone();
+            tokio::spawn(async move {
+                if let Err(e) = event_clone.store(pool).await {
+                    warn!(
+                        target: "audit",
+                        error = %e,
+                        "Failed to store audit event in database"
+                    );
+                }
+            });
+        }
     }
 
     /// Log a successful resource update
     pub fn resource_updated(user: &str, resource_type: ResourceType, resource_id: &str) {
-        AuditEvent::new(AuditEventType::ResourceUpdate, AuditOutcome::Success, user)
-            .with_resource(resource_type, resource_id)
-            .log();
+        let event = AuditEvent::new(AuditEventType::ResourceUpdate, AuditOutcome::Success, user)
+            .with_resource(resource_type, resource_id);
+        event.log();
+        // Store event asynchronously in background
+        if let Some(pool) = get_db_pool() {
+            let event_clone = event.clone();
+            tokio::spawn(async move {
+                if let Err(e) = event_clone.store(pool).await {
+                    warn!(
+                        target: "audit",
+                        error = %e,
+                        "Failed to store audit event in database"
+                    );
+                }
+            });
+        }
     }
 
-    /// Log a successful resource deletion
-    pub fn resource_deleted(user: &str, resource_type: ResourceType, resource_id: &str) {
-        AuditEvent::new(AuditEventType::ResourceDelete, AuditOutcome::Success, user)
-            .with_resource(resource_type, resource_id)
-            .log();
+    /// Log a successful resource deletion with request context
+    pub fn resource_deleted_with_request(
+        req: &HttpRequest,
+        user: &str,
+        resource_type: ResourceType,
+        resource_id: &str,
+    ) {
+        let mut event =
+            AuditEvent::new(AuditEventType::ResourceDelete, AuditOutcome::Success, user)
+                .with_resource(resource_type, resource_id);
+        if let Some(id) = get_request_id(req) {
+            event = event.with_request_id(id);
+        }
+        event.log();
+        // Store event asynchronously in background
+        if let Some(pool) = get_db_pool() {
+            let event_clone = event.clone();
+            tokio::spawn(async move {
+                if let Err(e) = event_clone.store(pool).await {
+                    warn!(
+                        target: "audit",
+                        error = %e,
+                        "Failed to store audit event in database"
+                    );
+                }
+            });
+        }
     }
 
     /// Log an authentication failure
@@ -242,6 +339,19 @@ pub mod events {
             event = event.with_client_ip(ip);
         }
         event.log();
+        // Store event asynchronously in background
+        if let Some(pool) = get_db_pool() {
+            let event_clone = event.clone();
+            tokio::spawn(async move {
+                if let Err(e) = event_clone.store(pool).await {
+                    warn!(
+                        target: "audit",
+                        error = %e,
+                        "Failed to store audit event in database"
+                    );
+                }
+            });
+        }
     }
 
     /// Log an unauthorized access attempt
@@ -251,24 +361,96 @@ pub mod events {
         resource_id: &str,
         reason: &str,
     ) {
-        AuditEvent::new(
+        let event = AuditEvent::new(
             AuditEventType::UnauthorizedAccess,
             AuditOutcome::Denied,
             user,
         )
         .with_resource(resource_type, resource_id)
-        .with_details(reason)
-        .log();
+        .with_details(reason);
+        event.log();
+        // Store event asynchronously in background
+        if let Some(pool) = get_db_pool() {
+            let event_clone = event.clone();
+            tokio::spawn(async move {
+                if let Err(e) = event_clone.store(pool).await {
+                    warn!(
+                        target: "audit",
+                        error = %e,
+                        "Failed to store audit event in database"
+                    );
+                }
+            });
+        }
     }
 
     /// Log a validation failure
     pub fn validation_failed(user: &str, field: &str, reason: &str) {
-        AuditEvent::new(
+        let event = AuditEvent::new(
             AuditEventType::ValidationFailed,
             AuditOutcome::Failure,
             user,
         )
-        .with_details(format!("{}: {}", field, reason))
-        .log();
+        .with_details(format!("{}: {}", field, reason));
+        event.log();
+        // Store event asynchronously in background
+        if let Some(pool) = get_db_pool() {
+            let event_clone = event.clone();
+            tokio::spawn(async move {
+                if let Err(e) = event_clone.store(pool).await {
+                    warn!(
+                        target: "audit",
+                        error = %e,
+                        "Failed to store audit event in database"
+                    );
+                }
+            });
+        }
+    }
+
+    /// Log a chat message
+    pub fn chat_message_sent(req: &HttpRequest, user: &str, session_id: &str) {
+        let mut event = AuditEvent::new(AuditEventType::ChatMessage, AuditOutcome::Success, user)
+            .with_resource(ResourceType::Session, session_id);
+        if let Some(request_id) = get_request_id(req) {
+            event = event.with_request_id(request_id);
+        }
+        event.log();
+        // Store event asynchronously in background
+        if let Some(pool) = get_db_pool() {
+            let event_clone = event.clone();
+            tokio::spawn(async move {
+                if let Err(e) = event_clone.store(pool).await {
+                    warn!(
+                        target: "audit",
+                        error = %e,
+                        "Failed to store audit event in database"
+                    );
+                }
+            });
+        }
+    }
+
+    /// Log a search request
+    pub fn search_request(req: &HttpRequest, user: &str, collection_ids: &[String]) {
+        let mut event = AuditEvent::new(AuditEventType::SearchRequest, AuditOutcome::Success, user)
+            .with_details(format!("collections: {}", collection_ids.join(", ")));
+        if let Some(request_id) = get_request_id(req) {
+            event = event.with_request_id(request_id);
+        }
+        event.log();
+        // Store event asynchronously in background
+        if let Some(pool) = get_db_pool() {
+            let event_clone = event.clone();
+            tokio::spawn(async move {
+                if let Err(e) = event_clone.store(pool).await {
+                    warn!(
+                        target: "audit",
+                        error = %e,
+                        "Failed to store audit event in database"
+                    );
+                }
+            });
+        }
     }
 }
