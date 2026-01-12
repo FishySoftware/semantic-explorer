@@ -34,7 +34,7 @@ class LLMProvider:
         logger.debug("LLM Provider ready for topic naming requests")
 
     async def generate_topic_name(
-        self, texts: List[str], llm_config: LLMConfig, max_tokens: int = 50
+        self, texts: List[str], llm_config: LLMConfig
     ) -> str:
         """
         Generate a topic name for cluster texts using the specified LLM.
@@ -43,8 +43,7 @@ class LLMProvider:
 
         Args:
             texts: Sample texts from the cluster (representative documents)
-            llm_config: LLM configuration with provider, model, and API key
-            max_tokens: Maximum response tokens
+            llm_config: LLM configuration with provider, model, API key, and config params
 
         Returns:
             Generated topic name (2-4 words)
@@ -55,9 +54,14 @@ class LLMProvider:
         request_start = time.time()
         self.request_count += 1
 
+        # Extract configuration with sensible defaults
+        max_tokens = llm_config.config.get("max_tokens", 50)
+        temperature = llm_config.config.get("temperature", 0.3)
+        samples_per_cluster = llm_config.config.get("samples_per_cluster", 5)
+
         logger.debug(
             f"LLM request #{self.request_count}: {llm_config.provider}/{llm_config.model} "
-            f"(texts: {len(texts)}, max_tokens: {max_tokens})"
+            f"(texts: {len(texts)}, max_tokens: {max_tokens}, temperature: {temperature})"
         )
 
         if not llm_config or not llm_config.api_key:
@@ -66,9 +70,13 @@ class LLMProvider:
 
         try:
             if llm_config.provider.lower() == "cohere":
-                result = await self._generate_cohere(texts, llm_config, max_tokens)
+                result = await self._generate_cohere(
+                    texts, llm_config, max_tokens, temperature, samples_per_cluster
+                )
             elif llm_config.provider.lower() == "openai":
-                result = await self._generate_openai(texts, llm_config, max_tokens)
+                result = await self._generate_openai(
+                    texts, llm_config, max_tokens, temperature, samples_per_cluster
+                )
             else:
                 logger.error(f"Unknown LLM provider: {llm_config.provider}")
                 raise ValueError(f"Unknown LLM provider: {llm_config.provider}")
@@ -87,7 +95,12 @@ class LLMProvider:
             raise
 
     async def _generate_cohere(
-        self, texts: List[str], llm_config: LLMConfig, max_tokens: int
+        self,
+        texts: List[str],
+        llm_config: LLMConfig,
+        max_tokens: int,
+        temperature: float,
+        samples_per_cluster: int,
     ) -> str:
         """
         Generate topic name using Cohere API.
@@ -100,15 +113,15 @@ class LLMProvider:
             client = cohere.ClientV2(api_key=llm_config.api_key)
             logger.debug("Cohere client initialized")
 
-            # Prepare sample texts for analysis (up to 5 representative texts)
-            sample_texts = texts[:5]
+            # Prepare sample texts for analysis
+            sample_texts = texts[:samples_per_cluster]
             samples_text = "\n".join(sample_texts)
 
             # Build prompt matching SAMPLE style
             prompt = (
                 f"These are representative texts from a document cluster:\n\n"
                 f"{samples_text}\n\n"
-                f"Provide a short, concise topic name (2-4 words) that captures the main theme. "
+                f"Provide a short, concise topic name (2-5 words) that captures the main theme. "
                 f"Respond with ONLY the topic name, nothing else."
             )
 
@@ -122,7 +135,7 @@ class LLMProvider:
                 model=llm_config.model or "command-r-plus",
                 messages=[UserChatMessageV2(role="user", content=prompt)],
                 max_tokens=max_tokens,
-                temperature=0.3,  # Lower temperature for consistency
+                temperature=temperature,
             )
 
             api_elapsed = time.time() - api_call_start
@@ -156,7 +169,12 @@ class LLMProvider:
             raise
 
     async def _generate_openai(
-        self, texts: List[str], llm_config: LLMConfig, max_tokens: int
+        self,
+        texts: List[str],
+        llm_config: LLMConfig,
+        max_tokens: int,
+        temperature: float,
+        samples_per_cluster: int,
     ) -> str:
         """
         Generate topic name using OpenAI API.
@@ -169,7 +187,7 @@ class LLMProvider:
             client = OpenAI(api_key=llm_config.api_key)
             logger.debug("OpenAI client initialized")
 
-            sample_texts = texts[:5]
+            sample_texts = texts[:samples_per_cluster]
             samples_text = "\n".join(sample_texts)
 
             prompt = (
@@ -189,7 +207,7 @@ class LLMProvider:
                 model=llm_config.model or "gpt-4",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=max_tokens,
-                temperature=0.3,  # Lower temperature for consistency
+                temperature=temperature,
             )
 
             api_elapsed = time.time() - api_call_start

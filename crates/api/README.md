@@ -21,14 +21,13 @@ The `semantic-explorer` API crate is the core HTTP server that orchestrates the 
 
 ### Enterprise Features  
 - 🛡️ **Row-Level Security** - Database-enforced access control via PostgreSQL RLS
-- 💾 **Request Caching** - Redis-based query result caching with TTL invalidation
 - 🌐 **HTTP Caching** - ETag and conditional request support (If-None-Match, If-Modified-Since)
 - ⚡ **Rate Limiting** - Token-bucket algorithm per user via Redis
-- 🔐 **Encryption** - AES-256 encryption for sensitive fields at rest
+- 🔐 **Encryption** - AES-256 encryption for API keys at rest (optional)
 - 🔄 **Idempotency** - Idempotent request handling via Redis deduplication
 - 📊 **Prometheus Metrics** - Real-time metrics export for monitoring (error rates, latency, costs)
 - 🔍 **Distributed Tracing** - OpenTelemetry integration for end-to-end tracing
-- 🏗️ **High Availability** - Connection pooling, replica read support, async workers
+- 🏗️ **High Availability** - Connection pooling, async workers, horizontal scaling
 
 ## 🏗️ Architecture
 
@@ -314,74 +313,113 @@ sequenceDiagram
 | `OIDC_CLIENT_ID` | string | OAuth2 client ID |
 | `OIDC_CLIENT_SECRET` | string | OAuth2 client secret |
 | `OIDC_ISSUER_URL` | string | OAuth2 issuer URL |
-| `OIDC_CALLBACK_URL` | string | Callback URL after login |
+| `OIDC_USE_PKCE` | boolean | Enable PKCE flow (default: false) |
 
-### Server Configuration
-
-| Variable | Type | Description |
-|----------|------|-------------|
-| `API_HOST` | string | Bind address (default: 0.0.0.0) |
-| `API_PORT` | integer | Listen port (default: 8000) |
-| `API_WORKERS` | integer | Worker threads (default: 4) |
-| `ENABLE_API_DOCS` | boolean | Enable OpenAPI docs |
-
-### Database
-
-| Variable | Type | Description |
-|----------|------|-------------|
-| `DATABASE_URL` | string | PostgreSQL connection string |
-| `DATABASE_REPLICA_URLS` | string | Comma-separated read replicas |
-
-### Storage
-
-| Variable | Type | Description |
-|----------|------|-------------|
-| `AWS_REGION` | string | S3 region |
-| `AWS_ACCESS_KEY_ID` | string | S3 access key |
-| `AWS_SECRET_ACCESS_KEY` | string | S3 secret key |
-| `S3_BUCKET` | string | S3 bucket name |
-| `S3_ENDPOINT` | string | S3 endpoint (empty for AWS) |
-
-### Vector Database
-
-| Variable | Type | Description |
-|----------|------|-------------|
-| `QDRANT_URL` | string | Qdrant URL |
-| `QDRANT_API_KEY` | string | Qdrant API key (optional) |
-| `QDRANT_QUANTIZATION_TYPE` | string | Quantization: none, scalar, product |
-
-### Message Queue
-
-| Variable | Type | Description |
-|----------|------|-------------|
-| `NATS_SERVER_URL` | string | NATS server URL |
-| `NATS_USERNAME` | string | NATS username (optional) |
-| `NATS_PASSWORD` | string | NATS password (optional) |
-| `ENABLE_NATS_TLS` | boolean | Enable TLS for NATS |
-| `NATS_REPLICAS` | integer | `3` | JetStream stream replication factor |
-
-### Encryption
+### Session Management
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `ENCRYPTION_MASTER_KEY` | string | **required** | 256-bit hex-encoded master encryption key (64 hex chars) |
+| `OIDC_SESSION_MANAGEMENT_ENABLED` | boolean | `true` | Enable session management |
+| `OIDC_SESSION_TIMEOUT_SECS` | integer | `3600` | Session expiration (seconds) |
+| `OIDC_INACTIVITY_TIMEOUT_SECS` | integer | `1800` | Inactivity timeout (seconds) |
+| `OIDC_MAX_CONCURRENT_SESSIONS` | integer | `5` | Max sessions per user |
+| `OIDC_REFRESH_TOKEN_ROTATION_ENABLED` | boolean | `true` | Enable refresh token rotation |
 
-### TLS/SSL
+### Server Configuration
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `HOSTNAME` | string | `localhost` | Bind hostname |
+| `PORT` | integer | `8080` | Listen port |
+| `STATIC_FILES_DIR` | string | `./semantic-explorer-ui/` | Static files directory |
+| `CORS_ALLOWED_ORIGINS` | string | `` | Comma-separated CORS origins |
+| `SHUTDOWN_TIMEOUT_SECS` | integer | `30` | Graceful shutdown timeout |
+
+### Database
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `DATABASE_URL` | string | **required** | PostgreSQL connection string |
+| `DB_MAX_CONNECTIONS` | integer | `15` | Max connection pool size |
+| `DB_MIN_CONNECTIONS` | integer | `2` | Min connection pool size |
+| `DB_ACQUIRE_TIMEOUT_SECS` | integer | `30` | Connection acquisition timeout |
+| `DB_IDLE_TIMEOUT_SECS` | integer | `300` | Idle connection timeout |
+| `DB_MAX_LIFETIME_SECS` | integer | `1800` | Max connection lifetime |
+
+### Storage (S3)
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `AWS_REGION` | string | **required** | S3 region |
+| `AWS_ACCESS_KEY_ID` | string | **required** | S3 access key |
+| `AWS_SECRET_ACCESS_KEY` | string | **required** | S3 secret key |
+| `AWS_ENDPOINT_URL` | string | **required** | S3 endpoint URL |
+| `S3_BUCKET_NAME` | string | **required** | S3 bucket for files |
+| `MAX_FILE_SIZE_MB` | integer | `100` | Max file size for processing |
+
+### Vector Database (Qdrant)
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `QDRANT_URL` | string | `http://localhost:6334` | Qdrant server URL |
+| `QDRANT_API_KEY` | string | *optional* | Qdrant API key |
+| `QDRANT_TIMEOUT_SECS` | integer | `30` | Request timeout |
+| `QDRANT_CONNECT_TIMEOUT_SECS` | integer | `10` | Connection timeout |
+| `QDRANT_QUANTIZATION_TYPE` | string | `none` | `none`, `scalar`, or `product` |
+
+### Message Queue (NATS)
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `NATS_URL` | string | `nats://localhost:4222` | NATS server URL |
+| `NATS_REPLICAS` | integer | `3` | JetStream replication factor |
+
+### Redis Cluster
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `REDIS_CLUSTER_NODES` | string | *required if rate limiting enabled* | Comma-separated Redis nodes |
+| `REDIS_POOL_SIZE` | integer | `10` | Connection pool size |
+| `REDIS_CONNECT_TIMEOUT_SECS` | integer | `5` | Connection timeout |
+
+### Rate Limiting
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `RATE_LIMIT_ENABLED` | boolean | `true` | Enable rate limiting |
+| `RATE_LIMIT_DEFAULT_REQUESTS_PER_MINUTE` | integer | `1000` | Default rate limit |
+| `RATE_LIMIT_SEARCH_REQUESTS_PER_MINUTE` | integer | `600` | Search rate limit |
+| `RATE_LIMIT_CHAT_REQUESTS_PER_MINUTE` | integer | `200` | Chat rate limit |
+| `RATE_LIMIT_TRANSFORM_REQUESTS_PER_MINUTE` | integer | `100` | Transform rate limit |
+| `RATE_LIMIT_TEST_REQUESTS_PER_MINUTE` | integer | `100` | Test endpoint rate limit |
+
+### Encryption (Optional)
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `ENCRYPTION_MASTER_KEY` | string | *optional* | 256-bit hex-encoded key for encrypting API keys (64 hex chars) |
+
+### TLS/SSL (Optional)
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `SERVER_SSL_ENABLED` | boolean | `false` | Enable server TLS |
-| `TLS_SERVER_CERT_PATH` | string | *conditional* | Server certificate |
-| `TLS_SERVER_KEY_PATH` | string | *conditional* | Server private key |
+| `TLS_SERVER_CERT_PATH` | string | *conditional* | Server certificate path (PEM) |
+| `TLS_SERVER_KEY_PATH` | string | *conditional* | Server private key path (PEM) |
+| `CLIENT_MTLS_ENABLED` | boolean | `false` | Enable client mTLS for outbound requests |
+| `TLS_CLIENT_CERT_PATH` | string | *conditional* | Client certificate path (PEM) |
+| `TLS_CLIENT_KEY_PATH` | string | *conditional* | Client private key path (PEM) |
+| `TLS_CA_CERT_PATH` | string | `/app/certs/ca-bundle.crt` | CA certificate bundle path |
 
 ### Observability
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `SERVICE_NAME` | string | `semantic-explorer` | Service name |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | string | `http://localhost:4317` | OTLP endpoint |
-| `LOG_FORMAT` | string | `json` | Log format |
-| `RUST_LOG` | string | `info` | Log level filter |
+| `SERVICE_NAME` | string | `semantic-explorer` | Service name for telemetry |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | string | `http://localhost:4317` | OTLP collector endpoint |
+| `LOG_FORMAT` | string | `json` | `json` or `pretty` |
+| `RUST_LOG` | string | `info` | Log level filter (e.g., `semantic_explorer=debug`) |
+
 
 ## Observability
 

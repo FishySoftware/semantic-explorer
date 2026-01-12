@@ -14,16 +14,16 @@ import signal
 import sys
 import time
 import uuid
+import nats
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
-
-import nats
-from dotenv import load_dotenv
+from aiohttp import web
 from nats.aio.msg import Msg
 from nats.aio.client import Client as NATSConnection
 from nats.js.api import ConsumerConfig
 from pydantic import ValidationError
+from dotenv import load_dotenv
 
 # Try to import aiohttp for health check server
 try:
@@ -51,6 +51,7 @@ try:
     )
     from .storage import S3Storage
     from .llm_namer import LLMProvider
+    from .observability import init_metrics, get_metrics
 except ImportError:
     # Fallback to absolute imports (for direct script execution)
     from processor import process_visualization_job
@@ -60,9 +61,13 @@ except ImportError:
     )
     from storage import S3Storage
     from llm_namer import LLMProvider
+    from observability import init_metrics, get_metrics
 
 # Initialize worker configuration first
 WORKER_ID = os.getenv("WORKER_ID", str(uuid.uuid4()))
+
+# Initialize observability first (before logging)
+metrics = init_metrics(WORKER_ID)
 
 # Configure structured JSON logging
 def configure_json_logging(worker_id: str):
@@ -197,18 +202,21 @@ async def initialize():
     s3_start = time.time()
     s3_storage = S3Storage()
     s3_elapsed = time.time() - s3_start
+    metrics.s3_init_duration.observe(s3_elapsed)
     logger.info(f"S3 storage initialized in {s3_elapsed:.3f}s")
 
     # Initialize LLM provider
     llm_start = time.time()
     llm_provider = LLMProvider()
     llm_elapsed = time.time() - llm_start
+    metrics.llm_init_duration.observe(llm_elapsed)
     logger.info(f"LLM provider initialized in {llm_elapsed:.3f}s")
 
     elapsed = time.time() - start_time
     logger.info(f"Worker initialization complete in {elapsed:.3f}s")
     health_state.is_ready = True
     health_state.last_job_time = time.time()
+    metrics.worker_ready.set(1)
 
 
 async def handle_job(
@@ -224,7 +232,9 @@ async def handle_job(
     """
     global active_jobs
     active_jobs += 1
+    metrics.active_jobs_gauge.set(active_jobs)
     job_start_time = time.time()
+    status = "completed"
 
     logger.info(
         f"Processing job {job.job_id} for transform {job.visualization_transform_id} "
@@ -285,6 +295,7 @@ async def handle_job(
             timeout=PROCESSING_TIMEOUT_SECS,
         )
         process_elapsed = time.time() - process_start
+        metrics.visualization_processing_duration.observe(process_elapsed)
         logger.info(f"Visualization processing completed in {process_elapsed:.3f}s")
 
         # Upload result to S3
@@ -299,6 +310,7 @@ async def handle_job(
             html_content=processed_result["html"],
         )
         s3_elapsed = time.time() - s3_start
+        metrics.visualization_s3_upload_duration.observe(s3_elapsed)
         logger.info(f"S3 upload completed in {s3_elapsed:.3f}s")
 
         # Calculate processing duration
@@ -312,6 +324,12 @@ async def handle_job(
         result.processing_duration_ms = processing_duration_ms
         result.stats_json = processed_result.get("stats", {})
 
+        # Record metrics
+        metrics.visualization_jobs_total.labels("completed").inc()
+        metrics.visualization_job_duration.observe((time.time() - job_start_time))
+        metrics.visualization_points_created.inc(result.point_count or 0)
+        metrics.visualization_clusters_created.inc(result.cluster_count or 0)
+
         job_elapsed = time.time() - job_start_time
         logger.info(
             f"Successfully completed job {job.job_id}: {result.point_count} points, "
@@ -323,6 +341,10 @@ async def handle_job(
         result.status = "failed"
         result.error_message = f"Processing timeout after {PROCESSING_TIMEOUT_SECS}s"
         job_elapsed = time.time() - job_start_time
+        metrics.visualization_jobs_total.labels("failed").inc()
+        metrics.visualization_job_duration.observe(job_elapsed)
+        metrics.visualization_job_failures_total.labels("timeout").inc()
+        status = "failed"
         logger.error(
             f"Job {job.job_id} timeout: {result.error_message} (elapsed: {job_elapsed:.3f}s)"
         )
@@ -330,6 +352,10 @@ async def handle_job(
         result.status = "failed"
         result.error_message = f"{type(e).__name__}: {str(e)}"
         job_elapsed = time.time() - job_start_time
+        metrics.visualization_jobs_total.labels("failed").inc()
+        metrics.visualization_job_duration.observe(job_elapsed)
+        metrics.visualization_job_failures_total.labels(type(e).__name__).inc()
+        status = "failed"
         logger.error(
             f"Job {job.job_id} failed: {result.error_message} (elapsed: {job_elapsed:.3f}s)",
             exc_info=True,
@@ -349,6 +375,7 @@ async def handle_job(
 
         # Acknowledge the message
         await msg.ack()
+        metrics.nats_messages_acked_total.inc()
         logger.debug(f"Acknowledged message for job {job.job_id}")
     except Exception as e:
         logger.error(
@@ -356,10 +383,12 @@ async def handle_job(
         )
         # Nack the message to retry
         await msg.nak()
+        metrics.nats_messages_nacked_total.inc()
         logger.warning(f"Nacked message for job {job.job_id} for retry")
     finally:
         # Update health state and decrement active jobs
         active_jobs -= 1
+        metrics.active_jobs_gauge.set(active_jobs)
         health_state.last_job_time = time.time()
         logger.debug(f"Job {job.job_id} completed, active jobs: {active_jobs}")
 
@@ -367,6 +396,7 @@ async def handle_job(
 async def message_handler(msg: Msg, nc: NATSConnection) -> None:
     """Handle incoming NATS messages."""
     handler_start = time.time()
+    metrics.nats_messages_received_total.inc()
     try:
         logger.debug(f"Received NATS message, parsing payload")
         # Parse the message payload
@@ -381,10 +411,14 @@ async def message_handler(msg: Msg, nc: NATSConnection) -> None:
         logger.error(f"Invalid job payload: {e}", exc_info=True)
         # Ack the message to avoid reprocessing invalid data
         await msg.ack()
+        metrics.nats_messages_acked_total.inc()
+        metrics.visualization_job_failures_total.labels("validation_error").inc()
         logger.info("Acknowledged invalid message to prevent reprocessing")
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse job JSON: {e}", exc_info=True)
         await msg.ack()
+        metrics.nats_messages_acked_total.inc()
+        metrics.visualization_job_failures_total.labels("json_decode_error").inc()
         logger.info("Acknowledged malformed message to prevent reprocessing")
     except Exception as e:
         handler_elapsed = time.time() - handler_start
@@ -393,6 +427,8 @@ async def message_handler(msg: Msg, nc: NATSConnection) -> None:
             exc_info=True,
         )
         await msg.nak()
+        metrics.nats_messages_nacked_total.inc()
+        metrics.visualization_job_failures_total.labels("unexpected_error").inc()
         logger.warning("Nacked message due to unexpected error")
 
 

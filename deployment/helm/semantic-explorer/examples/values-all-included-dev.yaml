@@ -1,0 +1,260 @@
+# Development Environment - All Services Included
+# This values file includes all dependencies for development/testing
+# Use with: helm install semantic-explorer . -f examples/values-all-included-dev.yaml
+
+global:
+  environment: development
+
+# API Service - Development
+api:
+  enabled: true
+  replicaCount: 1
+  image:
+    tag: "latest"
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  autoscaling:
+    enabled: false
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 15s
+
+# Worker Collections - Development
+worker-collections:
+  enabled: true
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 15s
+
+# Worker Datasets - Development
+worker-datasets:
+  enabled: true
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 15s
+
+# Worker Visualizations - Development
+worker-visualizations:
+  enabled: true
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+  autoscaling:
+    enabled: false
+
+# PostgreSQL - Development (CloudNativePG)
+postgresql:
+  enabled: true
+  primary:
+    persistence:
+      size: 10Gi
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  backup:
+    enabled: true
+    retentionDays: 7
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+
+# Redis Cluster - Development (redis-ha)
+redis:
+  enabled: true
+  replicas: 3
+  redis:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
+  sentinel:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+
+# NATS - Development
+nats:
+  enabled: true
+  config:
+    cluster:
+      enabled: true
+      replicas: 3
+    jetstream:
+      enabled: true
+      memoryStore:
+        maxSize: 1Gi
+      fileStore:
+        maxSize: 10Gi
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+
+# Qdrant - Development (Vector Database)
+qdrant:
+  enabled: true
+  replicas: 1
+  persistence:
+    size: 20Gi
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+
+# MinIO - Development (S3-compatible)
+minio:
+  enabled: true
+  mode: standalone
+  persistence:
+    size: 20Gi
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+# Dex - OIDC Provider
+dex:
+  enabled: true
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# OpenTelemetry Collector
+otel-collector:
+  enabled: true
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Grafana
+grafana:
+  enabled: true
+  replicas: 1
+  persistence:
+    enabled: true
+    size: 5Gi
+  datasources:
+    prometheus:
+      enabled: true
+      url: http://prometheus:9090
+    quickwit:
+      traces:
+        enabled: true
+        url: http://quickwit:7280
+      logs:
+        enabled: true
+        url: http://quickwit:7280
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Quickwit - Log & Trace Aggregation
+quickwit:
+  enabled: true
+  replicas: 1
+  persistence:
+    size: 20Gi
+  config:
+    indexer:
+      splits:
+        max_capacity_gb: 1
+    searcher:
+      warmup_num_splits: 2
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+
+# Prometheus (if using locally instead of operator)
+prometheus:
+  enabled: false  # Use Prometheus Operator instead for Kubernetes
+
+# Network Policy
+networkPolicy:
+  enabled: true
+  ingress:
+    fromIngress: true
+  egress:
+    toDns: true
+    toInternet: true

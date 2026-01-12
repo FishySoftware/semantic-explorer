@@ -240,7 +240,11 @@ workerCollections:
   podAnnotations: {}
   podLabels: {}
   metrics:
-    enabled: false
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 15s
+      scrapeTimeout: 5s
 
 # Worker Datasets Configuration
 workerDatasets:
@@ -302,7 +306,11 @@ workerDatasets:
   podAnnotations: {}
   podLabels: {}
   metrics:
-    enabled: false
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 15s
+      scrapeTimeout: 5s
 
 # Worker Visualizations Configuration (Python)
 workerVisualizationsPy:

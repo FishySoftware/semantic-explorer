@@ -3,6 +3,7 @@ receivers:
     protocols:
       grpc:
         endpoint: 0.0.0.0:4317
+        max_recv_msg_size_mib: 10  # Increase max message size to 10MB to handle large batches
       http:
         endpoint: 0.0.0.0:4318
 
@@ -54,8 +55,9 @@ receivers:
 
 processors:
   batch:
-    timeout: 10s
-    send_batch_size: 1024
+    timeout: 5s          # Reduce timeout to export more frequently
+    send_batch_size: 256 # Reduce batch size to prevent message overflow
+    send_batch_max_size: 512  # Max batch size before forced export
   
   memory_limiter:
     check_interval: 1s

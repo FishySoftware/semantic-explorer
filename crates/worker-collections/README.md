@@ -195,28 +195,28 @@ docker run \
 ### Environment Variables
 
 ```bash
-# Job Processing
-NATS_SERVER_URL=nats://localhost:4222
-NATS_CONSUMER_NAME=worker-collections
-NATS_BATCH_SIZE=10  # Process up to 10 jobs concurrently
+# NATS JetStream Configuration
+NATS_URL=nats://localhost:4222
 
-# Storage
-DATABASE_URL=postgresql://user:pass@localhost:5432/db
-S3_BUCKET=semantic-explorer-files
-S3_ENDPOINT=http://localhost:9000
-S3_REGION=us-east-1
-S3_ACCESS_KEY_ID=
-S3_SECRET_ACCESS_KEY=
+# AWS S3 Configuration
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=your-key
+AWS_SECRET_ACCESS_KEY=your-secret
+AWS_ENDPOINT_URL=http://localhost:9000
+S3_BUCKET_NAME=semantic-explorer-files
 
-# Chunking Defaults
-DEFAULT_CHUNK_SIZE=512
-DEFAULT_CHUNK_OVERLAP=50
-DEFAULT_CHUNK_STRATEGY=fixed_size  # fixed_size, semantic, sentence
+# Worker Configuration
+SERVICE_NAME=worker-collections     # Optional, defaults to worker-collections
+MAX_CONCURRENT_JOBS=10              # Number of jobs to process concurrently
 
-# Processing
-MAX_FILE_SIZE_MB=100
-EXTRACTION_TIMEOUT_SECS=60
-TEXT_ENCODING=utf-8
+# File Processing
+MAX_FILE_SIZE_MB=100                # Maximum file size to process
+
+# Observability
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+LOG_FORMAT=json
+RUST_LOG=worker_collections=debug
+```
 
 # Observability
 LOG_LEVEL=info

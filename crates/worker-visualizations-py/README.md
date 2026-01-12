@@ -475,7 +475,7 @@ export LOG_LEVEL="INFO"  # DEBUG, INFO, WARNING, ERROR
 ```bash
 # Create virtual environment
 python -m venv venv
-source venv/bin/activate  # or venv\Scripts\activate on Windows
+source venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt

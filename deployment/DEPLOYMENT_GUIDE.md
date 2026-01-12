@@ -422,49 +422,285 @@ lifecycle:
 
 ## Observability and Metrics
 
-### Metrics Endpoints
+### Overview
 
-All services export Prometheus metrics:
+The observability stack provides comprehensive monitoring of all semantic-explorer components:
 
+- **Prometheus** (port 9090): Metrics scraping and storage
+- **Grafana** (port 3000): Dashboards and visualization
+- **OTEL Collector** (port 4317, 4318): Trace/log aggregation
+- **Jaeger** (port 6831): Distributed tracing backend
+- **Quickwit** (port 7280-7281): Log and trace storage with search
+- **AlertManager** (port 9093): Alert routing and notifications
+
+All components are pre-configured and automatically scraped. **Deploy with `values-all-included-dev.yaml` or `values-all-included-prod.yaml` for complete observability stack.**
+
+### Metrics Collection
+
+**Prometheus scrape configuration** (auto-configured):
+- API server: 15s interval, `/metrics` endpoint on port 8080
+- worker-collections: 15s interval, `/metrics` endpoint on port 8080
+- worker-datasets: 15s interval, `/metrics` endpoint on port 8080
+- worker-visualizations-py: 15s interval, `/metrics` endpoint on port 9090
+- Infrastructure (PostgreSQL, Redis, NATS, Qdrant): 30s interval via exporters
+
+### Metrics by Service
+
+#### API Server (`http_*` metrics)
+
+```
+http_requests_total{method,path,status}
+  - Total HTTP requests across API endpoints
+  - Labels: method (GET/POST/etc), path, status (200/404/500/etc)
+  - Type: Counter
+
+http_request_duration_seconds{method,path,status}
+  - HTTP request latency distribution
+  - Use histogram quantiles for p50/p95/p99 latency
+  - Type: Histogram with 50ms-10s buckets
+
+http_requests_in_flight
+  - Currently processing HTTP requests (gauge)
+  - Type: Gauge
+
+sse_connections_active
+  - Active Server-Sent Events connections
+  - Type: Gauge
+```
+
+#### Transform Workers (`*_transform_jobs_*` metrics)
+
+**Collection Transform Worker (worker-collections):**
+```
+collection_transform_jobs_total{status}
+  - Total file extraction/chunk jobs processed
+  - Labels: status (success/failed)
+  
+collection_transform_jobs_duration_seconds
+  - Time spent processing extraction jobs
+  
+collection_transform_items_created
+  - Total chunks created from files
+  
+collection_transform_failures_total{error_type}
+  - Job failures by type (parsing/storage/validation/etc)
+```
+
+**Dataset Transform Worker (worker-datasets):**
+```
+dataset_transform_jobs_total{status}
+  - Total embedding generation jobs
+  
+dataset_transform_jobs_duration_seconds
+  - Time spent generating embeddings
+  
+dataset_transform_items_created
+  - Total vectors created
+  
+dataset_transform_failures_total{error_type}
+  - Job failures by type (embedder/qdrant/validation/etc)
+```
+
+**Visualization Transform Worker (worker-visualizations-py):**
+```
+visualization_jobs_total{status}
+  - Total visualization (UMAP/HDBSCAN) jobs
+  
+visualization_job_duration_seconds
+  - Time spent on clustering/layout computation
+  
+visualization_points_created
+  - Total data points laid out
+  
+visualization_clusters_created
+  - Total clusters identified
+  
+visualization_job_failures_total{error_type}
+  - Job failures by type (processing/s3/validation/etc)
+  
+visualization_s3_upload_duration_seconds
+  - Time to upload visualization results to S3
+```
+
+#### Database Metrics (`database_*`)
+
+```
+database_connection_pool_active
+  - Currently active database connections
+  
+database_connection_pool_idle
+  - Idle connections in pool
+  
+database_query_duration_seconds{operation,status}
+  - Database query latency (SELECT/INSERT/UPDATE/DELETE)
+  
+database_query_total{operation,status}
+  - Total database queries executed
+```
+
+#### Storage Metrics (`storage_*`)
+
+```
+storage_operation_duration_seconds{operation}
+  - S3/storage operation latency (get/put/delete/list)
+  
+storage_operation_total{operation,status}
+  - Total storage operations
+```
+
+#### Search Metrics (`search_*`)
+
+```
+search_request_total{endpoint}
+  - Total search requests (vector search/BM25/etc)
+  
+search_request_duration_seconds{endpoint}
+  - Search latency breakdown:
+    - search_embedder_duration_seconds (embedding generation)
+    - search_qdrant_query_duration_seconds (vector search query)
+
+search_request_failures_total
+  - Failed search requests
+```
+
+#### NATS Queue Metrics (`nats_*`)
+
+```
+nats_stream_messages{stream}
+  - Message count in each JetStream stream
+  - Streams: COLLECTION_TRANSFORMS, DATASET_TRANSFORMS, 
+    VISUALIZATION_TRANSFORMS, DLQ_TRANSFORMS, TRANSFORM_STATUS
+  
+nats_consumer_pending{stream,consumer}
+  - Pending (unacked) messages per consumer
+  - High values indicate backlog/slow processing
+  
+nats_message_latency_seconds{direction}
+  - Message publish/subscribe latency
+  - Directions: publish, subscribe
+```
+
+#### Worker Health Metrics
+
+```
+worker_job_retries_total{worker}
+  - Total job retries due to transient failures
+  
+worker_active_jobs{worker}
+  - Currently processing jobs (gauge)
+  
+worker_ready
+  - Worker readiness status (1=ready, 0=not ready)
+  - Used by health checks
+```
+
+### Grafana Dashboards
+
+Two fresh dashboards are pre-provisioned:
+
+**1. API & Workers Dashboard** (`01-api-workers.json`)
+- Request rate, latency (p95/p99), error rate
+- Per-worker job processing: rate, duration, item throughput
+- Queue backlog (NATS consumer pending)
+- Search performance: total time, embedder time, Qdrant query time
+- In-flight requests and active jobs
+
+**2. Infrastructure Dashboard** (`02-infrastructure.json`)
+- PostgreSQL: connection pool usage, query latency, query rate
+- NATS: stream message counts, consumer backlog, message latencies
+- Qdrant: API latency, request throughput
+- Storage: S3 operation latency and throughput
+
+**Access Dashboards:**
+
+Docker Compose:
 ```bash
-# API server metrics
-curl http://localhost:8080/metrics
+# After `docker-compose up -d`, visit:
+http://localhost:3000
+# Default: admin / admin
+# (change password immediately!)
+```
 
-# Available metrics:
-# - http_requests_total (by method, path, status)
-# - http_request_duration_seconds (request latency)
-# - database_query_duration_seconds (query latency)
-# - database_query_total (by operation, status)
-# - storage_operation_duration_seconds (S3 operations)
-# - worker_jobs_total (by worker, status)
-# - worker_job_duration_seconds
-# - nats_stream_messages (messages in stream)
-# - nats_consumer_pending (pending messages)
-# - search_request_duration_seconds
-# - sse_connections_active
+Kubernetes:
+```bash
+# Port forward to Grafana
+kubectl port-forward -n semantic-explorer svc/semantic-explorer-grafana 3000:3000
+
+# Visit http://localhost:3000
+```
+
+### Alert Rules
+
+Alert rules are configured in `deployment/alert_rules.yml` and cover:
+
+**API/HTTP Alerts:**
+- High error rate (>1% HTTP 5xx)
+- High latency (p99 > 1 second)
+- Slow database queries (>500ms)
+
+**Worker Alerts:**
+- High job failure rate (>5% failures)
+- Transform-specific failure rates (collections/datasets/visualizations)
+- Job processing timeout (jobs stuck for >1 hour)
+
+**Infrastructure Alerts:**
+- Database connection pool exhaustion
+- NATS queue backlog (>1000 pending messages)
+- Search latency high (>500ms)
+- SSE connection errors
+
+**View Alerts:**
+
+Docker Compose:
+```bash
+# AlertManager UI (if enabled)
+http://localhost:9093
+
+# Prometheus alerts
+http://localhost:9090/alerts
+```
+
+Kubernetes:
+```bash
+# Prometheus alerts
+kubectl port-forward -n semantic-explorer svc/prometheus 9090:9090
+http://localhost:9090/alerts
 ```
 
 ### Structured Logging
 
-All services output structured JSON logs compatible with log aggregation:
+All services output structured JSON logs for log aggregation:
 
 ```json
 {
   "timestamp": "2024-01-11T12:00:00Z",
   "level": "INFO",
-  "message": "API server started",
-  "service": "api",
+  "message": "Processing visualization job",
+  "service": "worker-visualizations-py",
   "version": "1.0.0",
-  "request_id": "550e8400-e29b-41d4-a716-446655440000"
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+  "job_id": "viz-123",
+  "duration_ms": 2500
 }
 ```
 
-Configure in Helm:
+**Configure logging:**
+
 ```yaml
 api:
   env:
     LOG_FORMAT: "json"
     RUST_LOG: "info,semantic_explorer=debug"
+
+workerCollections:
+  env:
+    LOG_FORMAT: "json"
+    RUST_LOG: "info,semantic_explorer_core=debug"
+
+workerDatasets:
+  env:
+    LOG_FORMAT: "json"
+    RUST_LOG: "info,semantic_explorer_core=debug"
 
 workerVisualizationsPy:
   env:
@@ -474,31 +710,173 @@ workerVisualizationsPy:
 
 ### Distributed Tracing
 
-OpenTelemetry traces exported to Quickwit (logs/traces) or Jaeger:
+OpenTelemetry traces are exported to Jaeger and Quickwit:
 
 ```yaml
 observability:
   otelCollector:
     enabled: true
-    config:
-      exporters:
-        otlp/quickwit:
-          endpoint: "quickwit:7281"
+    env:
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://localhost:4317"
 ```
 
 Each request includes:
-- `x-request-id` header with unique request ID
-- Trace context propagation across services
+- `traceparent` header (W3C Trace Context)
 - Span attributes for database, storage, API calls
+- Trace context propagation across services
 
-### Grafana Dashboards
+**Access Traces:**
 
-Pre-configured dashboards for:
-- **Application Metrics**: Request rates, latencies, errors
-- **Worker Metrics**: Job processing, concurrency, errors
-- **Database/NATS**: Connection pools, stream metrics
-- **Infrastructure**: Node resources, disk usage
-- **Health Check**: Liveness and readiness probe status
+Docker Compose:
+```bash
+# Jaeger UI (if enabled)
+http://localhost:16686
+
+# Quickwit UI (if enabled)
+http://localhost:7280
+```
+
+Kubernetes:
+```bash
+# Quickwit search
+kubectl port-forward -n semantic-explorer svc/quickwit 7280:7280
+http://localhost:7280
+```
+
+### Deployment Options
+
+Choose the appropriate values file for your deployment:
+
+**All-Included (Complete observability stack):**
+- `values-all-included-dev.yaml`: Local development (minimal resources)
+  - PostgreSQL 10Gi, Redis 3 nodes, NATS, Qdrant, MinIO, OTEL, Grafana, Quickwit
+  - 1 replica per service, 500m CPU, 512Mi memory per pod
+  - Use for: Local dev, testing, CI/CD pipelines
+
+- `values-all-included-prod.yaml`: Production with all services
+  - PostgreSQL 100Gi HA (3 replicas), Redis cluster, NATS with JetStream
+  - 4 replicas per service, generous resources (2-4 CPU, 2-8Gi memory)
+  - Pod Disruption Budgets, anti-affinity, autoscaling enabled
+  - Use for: Self-hosted production deployments
+
+**External Infrastructure (Managed services):**
+- `values-external-infra-dev.yaml`: Development with external services
+  - Only API + workers + Dex deployed
+  - Environment variables for: PostgreSQL, Redis, NATS, Qdrant, S3, OTEL endpoint
+  - Use for: Cloud dev environments (GCP CloudSQL, AWS RDS, etc.)
+
+- `values-external-infra-prod.yaml`: Production with external services
+  - 4 replicas, HA configurations, PDBs
+  - Extensive documentation for AWS/GCP/Azure equivalents
+  - Use for: Cloud production (managed PostgreSQL, Redis, S3, etc.)
+
+**Install with specific values:**
+
+```bash
+# Deploy all-included dev
+helm install semantic-explorer ./helm/semantic-explorer \
+  -f helm/semantic-explorer/examples/values-all-included-dev.yaml
+
+# Deploy external infra prod
+helm install semantic-explorer ./helm/semantic-explorer \
+  -f helm/semantic-explorer/examples/values-external-infra-prod.yaml \
+  --set externalInfra.databaseUrl="postgresql://user:pass@prod-db.com/dbname" \
+  --set externalInfra.s3Bucket="my-prod-bucket" \
+  --set externalInfra.natsUrl="nats://nats-prod.example.com:4222"
+```
+
+### Python Worker Metrics Specifics
+
+The `worker-visualizations-py` service exports Prometheus metrics on **port 9090**:
+
+```bash
+# Scrape metrics from Python worker
+curl http://worker-visualizations-py:9090/metrics
+
+# Includes all visualization_* metrics plus:
+# - OpenTelemetry instrumentation for requests library
+# - Python runtime metrics (gc, memory, thread count)
+# - Custom initialization timings (S3/LLM setup duration)
+```
+
+**Python worker OTEL configuration:**
+
+```python
+# Automatically initialized in src/observability.py
+# Sends traces to: http://localhost:6831 (Jaeger UDP)
+# Sends metrics to: Prometheus scrape on :9090
+# Sends logs to: stdout (JSON format)
+```
+
+### Performance Tuning
+
+**For high-throughput scenarios:**
+
+1. Increase Prometheus scrape interval (reduces cardinality):
+```yaml
+prometheus:
+  scrapeInterval: "30s"  # Reduce from default 15s
+```
+
+2. Configure metric retention:
+```yaml
+prometheus:
+  retention: "15d"  # Keep metrics for 15 days
+```
+
+3. Adjust worker concurrency (see Worker Concurrency Tuning section above)
+
+4. Monitor metric cardinality:
+```bash
+# Query Prometheus for metric cardinality
+curl 'http://prometheus:9090/api/v1/query?query=count({__name__=~".+"})'
+```
+
+### Troubleshooting Observability
+
+**Check if metrics are being scraped:**
+```bash
+# Prometheus targets page
+http://localhost:9090/targets
+
+# All targets should show "UP" with recent scrape time
+```
+
+**Verify dashboards are provisioned:**
+```bash
+# Docker Compose
+ls -la deployment/compose/grafana/provisioning/dashboards/
+
+# Kubernetes
+kubectl get configmap -n semantic-explorer | grep dashboard
+```
+
+**Check Python worker metrics:**
+```bash
+# Port forward to Python worker metrics
+kubectl port-forward -n semantic-explorer deployment/worker-visualizations-py 9090:9090
+
+# Scrape metrics
+curl http://localhost:9090/metrics | grep visualization_
+```
+
+**Validate alert rules:**
+```bash
+# Check Prometheus alert evaluation
+http://prometheus:9090/alerts
+
+# Look for your configured alerts; they should show pending/firing status
+```
+
+**Check OTEL connectivity:**
+```bash
+# View OTEL Collector logs
+kubectl logs -n semantic-explorer deployment/otel-collector | grep -i error
+
+# Check if traces are reaching Quickwit
+kubectl port-forward -n semantic-explorer svc/quickwit 7280:7280
+# Visit http://localhost:7280 and search for traces
+```
 
 ## NATS Stream Configuration
 

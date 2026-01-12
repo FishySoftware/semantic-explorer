@@ -1,0 +1,330 @@
+# Production Environment - All Services Included
+# This values file includes all dependencies with production-grade configurations
+# Use with: helm install semantic-explorer . -f examples/values-all-included-prod.yaml
+
+global:
+  environment: production
+
+# API Service - Production
+api:
+  enabled: true
+  replicaCount: 4
+  image:
+    tag: "latest"
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 2Gi
+    limits:
+      cpu: 4000m
+      memory: 4Gi
+  autoscaling:
+    enabled: true
+    minReplicas: 4
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 15s
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values:
+                    - semantic-explorer
+                    - api
+            topologyKey: kubernetes.io/hostname
+
+# Worker Collections - Production
+worker-collections:
+  enabled: true
+  replicaCount: 4
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 1Gi
+    limits:
+      cpu: 4000m
+      memory: 2Gi
+  autoscaling:
+    enabled: true
+    minReplicas: 4
+    maxReplicas: 8
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 15s
+
+# Worker Datasets - Production
+worker-datasets:
+  enabled: true
+  replicaCount: 4
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 2Gi
+    limits:
+      cpu: 4000m
+      memory: 8Gi
+  autoscaling:
+    enabled: true
+    minReplicas: 4
+    maxReplicas: 12
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 15s
+
+# Worker Visualizations - Production
+worker-visualizations:
+  enabled: true
+  replicaCount: 4
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 2Gi
+    limits:
+      cpu: 4000m
+      memory: 8Gi
+  autoscaling:
+    enabled: true
+    minReplicas: 4
+    maxReplicas: 12
+    targetCPUUtilizationPercentage: 70
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+
+# PostgreSQL - Production (CloudNativePG)
+postgresql:
+  enabled: true
+  replicas: 3
+  primary:
+    persistence:
+      size: 100Gi
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 2Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+  backup:
+    enabled: true
+    retentionDays: 30
+    destinationPath: s3://backups/postgresql
+  monitoring:
+    enabled: true
+  postgresql:
+    maxConnections: 100
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+
+# Redis Cluster - Production (redis-ha)
+redis:
+  enabled: true
+  replicas: 3
+  redis:
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+    persistence:
+      size: 10Gi
+  sentinel:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+
+# NATS - Production
+nats:
+  enabled: true
+  config:
+    cluster:
+      enabled: true
+      replicas: 3
+    jetstream:
+      enabled: true
+      memoryStore:
+        maxSize: 4Gi
+      fileStore:
+        maxSize: 100Gi
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+  persistence:
+    size: 50Gi
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+
+# Qdrant - Production (Vector Database)
+qdrant:
+  enabled: true
+  replicas: 3
+  persistence:
+    size: 200Gi
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 2Gi
+    limits:
+      cpu: 4000m
+      memory: 8Gi
+  cluster:
+    enabled: true
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+
+# MinIO - Production (S3-compatible)
+minio:
+  enabled: true
+  mode: distributed
+  replicas: 4
+  persistence:
+    size: 100Gi
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 2Gi
+    limits:
+      cpu: 4000m
+      memory: 4Gi
+  buckets:
+    - name: semantic-explorer
+      versioning: true
+      lifecycle:
+        - filter:
+            prefix: uploads/
+          expiration: 30
+
+# Dex - OIDC Provider
+dex:
+  enabled: true
+  replicas: 2
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+# OpenTelemetry Collector
+otel-collector:
+  enabled: true
+  replicas: 3
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+
+# Grafana
+grafana:
+  enabled: true
+  replicas: 2
+  persistence:
+    enabled: true
+    size: 10Gi
+  datasources:
+    prometheus:
+      enabled: true
+      url: http://prometheus:9090
+    quickwit:
+      traces:
+        enabled: true
+        url: http://quickwit:7280
+      logs:
+        enabled: true
+        url: http://quickwit:7280
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+# Quickwit - Log & Trace Aggregation
+quickwit:
+  enabled: true
+  replicas: 3
+  persistence:
+    size: 200Gi
+  config:
+    indexer:
+      splits:
+        max_capacity_gb: 10
+    searcher:
+      warmup_num_splits: 10
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 2Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+
+# Prometheus (if using locally instead of operator)
+prometheus:
+  enabled: false  # Use Prometheus Operator instead for Kubernetes
+
+# Network Policy
+networkPolicy:
+  enabled: true
+  ingress:
+    fromIngress: true
+  egress:
+    toDns: true
+    toInternet: true
