@@ -17,8 +17,12 @@ actix-multipart = { workspace = true }
 actix-files = { workspace = true }
 actix_web_openidconnect = { workspace = true }
 actix-web-prom = { workspace = true }
+redis = { workspace = true }
+thiserror = { workspace = true }
 async-nats = { workspace = true }
+async-stream = { workspace = true }
 futures-util = { workspace = true }
+tokio = { workspace = true }
 aws-sdk-s3 = { workspace = true }
 aws-config = { workspace = true }
 qdrant-client = { workspace = true }
@@ -38,10 +42,18 @@ opentelemetry-otlp = { workspace = true }
 opentelemetry-prometheus = { workspace = true }
 opentelemetry-appender-tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true }
+prometheus = { workspace = true }
 mime_guess = { workspace = true }
+mime = { workspace = true }
 uuid = { workspace = true }
+chrono = { workspace = true }
 reqwest = { workspace = true }
-once_cell = { workspace = true }
+regex = { workspace = true }
+infer = { workspace = true }
+zip = { workspace = true }
+rustls = { version = "0.23.36" }
+pem = { version = "3.0.6" }
+sha2 = {version = "0.10.9"}
 
 [target.'cfg(target_env = "musl")'.dependencies]
 mimalloc = { version = "0.1.48", features = ["v3"], default-features = false }
@@ -52,13 +64,3 @@ enum_glob_use = "deny"
 [lints.rust]
 unsafe_code = "forbid"
 
-[profile.dev]
-incremental = true
-
-[profile.release]
-opt-level = 3
-strip = "debuginfo"
-lto = true
-
-[features]
-deprecated_attributes = []

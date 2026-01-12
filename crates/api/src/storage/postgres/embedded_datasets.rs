@@ -1,4 +1,5 @@
 use anyhow::Result;
+use sqlx::types::chrono::{DateTime, Utc};
 use sqlx::{FromRow, Pool, Postgres, Transaction};
 
 use crate::embedded_datasets::{
@@ -16,14 +17,14 @@ const GET_EMBEDDED_DATASET_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
            owner, collection_name, created_at, updated_at, last_processed_at
     FROM embedded_datasets
-    WHERE owner = $1 AND embedded_dataset_id = $2
+    WHERE embedded_dataset_id = $1
 "#;
 
 const GET_EMBEDDED_DATASETS_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
            owner, collection_name, created_at, updated_at, last_processed_at
     FROM embedded_datasets
-    WHERE owner = $1
+    WHERE 1=1
     ORDER BY created_at DESC
 "#;
 
@@ -31,7 +32,7 @@ const GET_EMBEDDED_DATASETS_FOR_DATASET_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
            owner, collection_name, created_at, updated_at, last_processed_at
     FROM embedded_datasets
-    WHERE owner = $1 AND source_dataset_id = $2
+    WHERE source_dataset_id = $1
     ORDER BY created_at DESC
 "#;
 
@@ -98,8 +99,13 @@ const GET_EMBEDDED_DATASET_STATS_QUERY: &str = r#"
         COALESCE(COUNT(tpf.id), 0)::BIGINT as total_batches_processed,
         COALESCE(COUNT(tpf.id) FILTER (WHERE tpf.process_status = 'completed'), 0)::BIGINT as successful_batches,
         COALESCE(COUNT(tpf.id) FILTER (WHERE tpf.process_status = 'failed'), 0)::BIGINT as failed_batches,
+        COALESCE(COUNT(tpf.id) FILTER (WHERE tpf.process_status = 'processing'), 0)::BIGINT as processing_batches,
         COALESCE(SUM(tpf.item_count) FILTER (WHERE tpf.process_status = 'completed'), 0)::BIGINT as total_chunks_embedded,
-        COALESCE(SUM(tpf.item_count) FILTER (WHERE tpf.process_status = 'failed'), 0)::BIGINT as total_chunks_failed
+        COALESCE(SUM(tpf.item_count) FILTER (WHERE tpf.process_status = 'failed'), 0)::BIGINT as total_chunks_failed,
+        COALESCE(SUM(tpf.item_count) FILTER (WHERE tpf.process_status = 'processing'), 0)::BIGINT as total_chunks_processing,
+        MAX(tpf.processed_at) as last_run_at,
+        MIN(tpf.processed_at) FILTER (WHERE tpf.process_status = 'processing') as first_processing_at,
+        AVG(tpf.processing_duration_ms) FILTER (WHERE tpf.process_status = 'completed')::BIGINT as avg_processing_duration_ms
     FROM embedded_datasets ed
     LEFT JOIN transform_processed_files tpf ON tpf.transform_type = 'dataset' AND tpf.transform_id = ed.embedded_dataset_id
     WHERE ed.embedded_dataset_id = $1
@@ -137,6 +143,12 @@ const GET_EMBEDDED_DATASET_INFO_QUERY: &str = r#"
     SELECT collection_name, embedder_id FROM embedded_datasets WHERE embedded_dataset_id = $1
 "#;
 
+const UPDATE_EMBEDDED_DATASET_LAST_PROCESSED_AT_QUERY: &str = r#"
+    UPDATE embedded_datasets
+    SET last_processed_at = $2
+    WHERE embedded_dataset_id = $1
+"#;
+
 const GET_EMBEDDED_DATASET_WITH_DETAILS_BATCH: &str = r#"
         SELECT
             ed.embedded_dataset_id,
@@ -162,11 +174,15 @@ pub async fn get_embedded_dataset(
     owner: &str,
     embedded_dataset_id: i32,
 ) -> Result<EmbeddedDataset> {
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
     let embedded_dataset = sqlx::query_as::<_, EmbeddedDataset>(GET_EMBEDDED_DATASET_QUERY)
-        .bind(owner)
         .bind(embedded_dataset_id)
-        .fetch_one(pool)
+        .fetch_one(&mut *tx)
         .await?;
+
+    tx.commit().await?;
     Ok(embedded_dataset)
 }
 
@@ -174,10 +190,14 @@ pub async fn get_embedded_datasets(
     pool: &Pool<Postgres>,
     owner: &str,
 ) -> Result<Vec<EmbeddedDataset>> {
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
     let embedded_datasets = sqlx::query_as::<_, EmbeddedDataset>(GET_EMBEDDED_DATASETS_QUERY)
-        .bind(owner)
-        .fetch_all(pool)
+        .fetch_all(&mut *tx)
         .await?;
+
+    tx.commit().await?;
     Ok(embedded_datasets)
 }
 
@@ -186,12 +206,16 @@ pub async fn get_embedded_datasets_for_dataset(
     owner: &str,
     dataset_id: i32,
 ) -> Result<Vec<EmbeddedDataset>> {
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
     let embedded_datasets =
         sqlx::query_as::<_, EmbeddedDataset>(GET_EMBEDDED_DATASETS_FOR_DATASET_QUERY)
-            .bind(owner)
             .bind(dataset_id)
-            .fetch_all(pool)
+            .fetch_all(&mut *tx)
             .await?;
+
+    tx.commit().await?;
     Ok(embedded_datasets)
 }
 
@@ -212,12 +236,17 @@ pub async fn get_embedded_dataset_with_details(
     owner: &str,
     embedded_dataset_id: i32,
 ) -> Result<EmbeddedDatasetWithDetails> {
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
     let embedded_dataset =
         sqlx::query_as::<_, EmbeddedDatasetWithDetails>(GET_EMBEDDED_DATASET_WITH_DETAILS_QUERY)
             .bind(owner)
             .bind(embedded_dataset_id)
-            .fetch_one(pool)
+            .fetch_one(&mut *tx)
             .await?;
+
+    tx.commit().await?;
     Ok(embedded_dataset)
 }
 
@@ -231,13 +260,17 @@ pub async fn get_embedded_datasets_with_details_batch(
         return Ok(Vec::new());
     }
 
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
     let embedded_datasets =
         sqlx::query_as::<_, EmbeddedDatasetWithDetails>(GET_EMBEDDED_DATASET_WITH_DETAILS_BATCH)
             .bind(owner)
             .bind(embedded_dataset_ids.to_vec())
-            .fetch_all(pool)
+            .fetch_all(&mut *tx)
             .await?;
 
+    tx.commit().await?;
     Ok(embedded_datasets)
 }
 
@@ -246,11 +279,21 @@ pub async fn delete_embedded_dataset(
     owner: &str,
     embedded_dataset_id: i32,
 ) -> Result<()> {
-    get_embedded_dataset(pool, owner, embedded_dataset_id).await?;
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
+    // Verify ownership first
+    let _ = sqlx::query_as::<_, EmbeddedDataset>(GET_EMBEDDED_DATASET_QUERY)
+        .bind(embedded_dataset_id)
+        .fetch_one(&mut *tx)
+        .await?;
+
     sqlx::query(DELETE_EMBEDDED_DATASET_QUERY)
         .bind(embedded_dataset_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+
+    tx.commit().await?;
     Ok(())
 }
 
@@ -260,16 +303,22 @@ pub async fn update_embedded_dataset_title(
     embedded_dataset_id: i32,
     title: &str,
 ) -> Result<EmbeddedDataset> {
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
     let embedded_dataset =
         sqlx::query_as::<_, EmbeddedDataset>(UPDATE_EMBEDDED_DATASET_TITLE_QUERY)
             .bind(embedded_dataset_id)
             .bind(title)
             .bind(owner)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await?;
 
     match embedded_dataset {
-        Some(dataset) => Ok(dataset),
+        Some(dataset) => {
+            tx.commit().await?;
+            Ok(dataset)
+        }
         None => Err(anyhow::anyhow!(
             "Embedded dataset not found or not owned by this user"
         )),
@@ -285,6 +334,28 @@ pub async fn get_embedded_dataset_stats(
         .fetch_one(pool)
         .await?;
     Ok(stats)
+}
+
+pub async fn get_batch_embedded_dataset_stats(
+    pool: &Pool<Postgres>,
+    embedded_dataset_ids: &[i32],
+) -> Result<std::collections::HashMap<i32, EmbeddedDatasetStats>> {
+    use std::collections::HashMap;
+
+    let mut stats_map = HashMap::new();
+
+    for &id in embedded_dataset_ids {
+        match get_embedded_dataset_stats(pool, id).await {
+            Ok(stats) => {
+                stats_map.insert(id, stats);
+            }
+            Err(e) => {
+                tracing::warn!("Failed to get stats for embedded dataset {}: {}", id, e);
+            }
+        }
+    }
+
+    Ok(stats_map)
 }
 
 pub async fn get_processed_batches(
@@ -319,20 +390,18 @@ pub async fn record_processed_batch(
     Ok(())
 }
 
-pub async fn update_embedded_dataset_last_processed_at(
+/// Update the last_processed_at timestamp to a specific value
+/// This prevents race conditions where items created between query and update are missed
+pub async fn update_embedded_dataset_last_processed_at_to(
     pool: &Pool<Postgres>,
     embedded_dataset_id: i32,
+    timestamp: DateTime<Utc>,
 ) -> Result<()> {
-    sqlx::query(
-        r#"
-        UPDATE embedded_datasets
-        SET last_processed_at = NOW()
-        WHERE embedded_dataset_id = $1
-        "#,
-    )
-    .bind(embedded_dataset_id)
-    .execute(pool)
-    .await?;
+    sqlx::query(UPDATE_EMBEDDED_DATASET_LAST_PROCESSED_AT_QUERY)
+        .bind(embedded_dataset_id)
+        .bind(timestamp)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 

@@ -1,13 +1,5 @@
 use anyhow::Result;
-use once_cell::sync::Lazy;
-use std::time::Duration;
-
-static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
-        .expect("Failed to build HTTP client")
-});
+use semantic_explorer_core::http_client::HTTP_CLIENT;
 
 pub async fn generate_embedding(
     provider: &str,

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Table, TableBody, TableBodyCell, TableHead, TableHeadCell } from 'flowbite-svelte';
 	import { onMount } from 'svelte';
+	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import ActionMenu from '../components/ActionMenu.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import CreateCollectionTransformModal from '../components/CreateCollectionTransformModal.svelte';
@@ -38,6 +39,8 @@
 
 	let searchQuery = $state('');
 
+	let filteredCollections = $derived(collections);
+
 	let showCreateForm = $state(false);
 	let newTitle = $state('');
 	let newDetails = $state('');
@@ -63,11 +66,20 @@
 		try {
 			loading = true;
 			error = null;
-			const response = await fetch('/api/collections');
+			const params = new SvelteURLSearchParams();
+			if (searchQuery.trim()) {
+				params.append('q', searchQuery.trim());
+			}
+			const url = params.toString()
+				? `/api/collections/search?${params.toString()}`
+				: '/api/collections';
+			const response = await fetch(url);
 			if (!response.ok) {
 				throw new Error(`Failed to fetch collections: ${response.statusText}`);
 			}
-			collections = await response.json();
+			const data = await response.json();
+			// Handle both paginated and non-paginated responses
+			collections = Array.isArray(data) ? data : data.collections || [];
 		} catch (e) {
 			const message = formatError(e, 'Failed to fetch collections');
 			error = message;
@@ -153,22 +165,16 @@
 		}
 	}
 
+	// Refetch when search query changes
+	$effect(() => {
+		if (searchQuery !== undefined) {
+			fetchCollections();
+		}
+	});
+
 	onMount(() => {
 		fetchCollections();
 	});
-
-	let filteredCollections = $derived(
-		collections.filter((c) => {
-			if (!searchQuery.trim()) return true;
-			const query = searchQuery.toLowerCase();
-			return (
-				c.title.toLowerCase().includes(query) ||
-				c.details?.toLowerCase().includes(query) ||
-				c.tags.some((tag) => tag.toLowerCase().includes(query)) ||
-				c.owner.toLowerCase().includes(query)
-			);
-		})
-	);
 </script>
 
 <div class="max-w-7xl mx-auto">
@@ -274,7 +280,7 @@
 		</div>
 	{/if}
 
-	{#if !showCreateForm && collections.length > 0}
+	{#if !showCreateForm}
 		<div class="mb-4">
 			<div class="relative">
 				<input
@@ -440,7 +446,7 @@
 	onSuccess={() => {
 		transformModalOpen = false;
 		selectedCollectionForTransform = null;
-		toastStore.success('Transform created successfully');
-		fetchCollections();
+		// Redirect to datasets page to monitor transform progress
+		window.location.hash = '#/datasets';
 	}}
 />

@@ -1,29 +1,35 @@
 use crate::embedded_datasets::EmbeddedDataset;
-use crate::storage::postgres::datasets;
-use crate::transforms::dataset::{DatasetTransform, DatasetTransformStats};
+use crate::transforms::dataset::models::{DatasetTransform, DatasetTransformStats};
 use anyhow::{Context, Result};
+use semantic_explorer_core::models::PaginatedResponse;
 use sqlx::{Pool, Postgres, Transaction};
+
+fn validate_sort_field(sort_by: &str) -> Result<String> {
+    match sort_by {
+        "title" | "is_enabled" | "created_at" | "updated_at" => Ok(sort_by.to_string()),
+        _ => anyhow::bail!("Invalid sort field: {}", sort_by),
+    }
+}
+
+fn validate_sort_direction(direction: &str) -> Result<String> {
+    match direction.to_lowercase().as_str() {
+        "asc" | "desc" => Ok(direction.to_uppercase()),
+        _ => anyhow::bail!("Invalid sort direction: {}", direction),
+    }
+}
 
 const GET_DATASET_TRANSFORM_QUERY: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner, is_enabled,
            job_config, created_at, updated_at
     FROM dataset_transforms
-    WHERE owner = $1 AND dataset_transform_id = $2
-"#;
-
-const GET_DATASET_TRANSFORMS_QUERY: &str = r#"
-    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner, is_enabled,
-           job_config, created_at, updated_at
-    FROM dataset_transforms
-    WHERE owner = $1
-    ORDER BY created_at DESC
+    WHERE dataset_transform_id = $1
 "#;
 
 const GET_DATASET_TRANSFORMS_FOR_DATASET_QUERY: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner, is_enabled,
            job_config, created_at, updated_at
     FROM dataset_transforms
-    WHERE owner = $1 AND source_dataset_id = $2
+    WHERE source_dataset_id = $1
     ORDER BY created_at DESC
 "#;
 
@@ -49,29 +55,74 @@ const UPDATE_DATASET_TRANSFORM_QUERY: &str = r#"
         embedder_ids = COALESCE($5, embedder_ids),
         job_config = COALESCE($6, job_config),
         updated_at = NOW()
-    WHERE owner = $1 AND dataset_transform_id = $2
+    WHERE dataset_transform_id = $1
     RETURNING dataset_transform_id, title, source_dataset_id, embedder_ids, owner, is_enabled,
               job_config, created_at, updated_at
 "#;
 
 const DELETE_DATASET_TRANSFORM_QUERY: &str = r#"
     DELETE FROM dataset_transforms
-    WHERE owner = $1 AND dataset_transform_id = $2
+    WHERE dataset_transform_id = $1
+"#;
+
+const COUNT_DATASET_TRANSFORMS_QUERY: &str =
+    "SELECT COUNT(*) as count FROM dataset_transforms WHERE owner = $1";
+const COUNT_DATASET_TRANSFORMS_WITH_SEARCH_QUERY: &str =
+    "SELECT COUNT(*) as count FROM dataset_transforms WHERE title ILIKE $1 AND owner = $2";
+
+// Note: ORDER BY clause is built dynamically with validated identifiers
+// Column names cannot be parameterized in PostgreSQL, so we validate and use format!
+const GET_DATASET_TRANSFORMS_PAGINATED_BASE: &str = r#"
+    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner, is_enabled,
+           job_config, created_at, updated_at
+    FROM dataset_transforms
+    WHERE owner = $1
+"#;
+
+const GET_DATASET_TRANSFORMS_PAGINATED_WITH_SEARCH_BASE: &str = r#"
+    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner, is_enabled,
+           job_config, created_at, updated_at
+    FROM dataset_transforms
+    WHERE title ILIKE $1
+    AND owner = $2
 "#;
 
 const GET_DATASET_TRANSFORM_STATS_QUERY: &str = r#"
+    WITH unique_batches AS (
+        SELECT
+            ed.dataset_transform_id,
+            ed.embedded_dataset_id,
+            tpf.file_key,
+            MAX(tpf.item_count) as item_count,
+            MAX(tpf.process_status) as process_status,
+            MAX(tpf.processed_at) as processed_at,
+            MIN(tpf.processed_at) as first_processed_at
+        FROM transform_processed_files tpf
+        INNER JOIN embedded_datasets ed ON ed.embedded_dataset_id = tpf.transform_id
+        WHERE tpf.transform_type = 'dataset'
+        GROUP BY ed.dataset_transform_id, ed.embedded_dataset_id, tpf.file_key
+    ),
+    source_chunks AS (
+        SELECT COALESCE(SUM(jsonb_array_length(chunks)), 0)::BIGINT as chunk_count
+        FROM dataset_items
+        WHERE dataset_id = (SELECT source_dataset_id FROM dataset_transforms WHERE dataset_transform_id = $1)
+    )
     SELECT
         dt.dataset_transform_id,
         COALESCE(array_length(dt.embedder_ids, 1), 0)::INTEGER as embedder_count,
-        COALESCE(COUNT(tpf.id), 0)::BIGINT as total_batches_processed,
-        COALESCE(COUNT(tpf.id) FILTER (WHERE tpf.process_status = 'completed'), 0)::BIGINT as successful_batches,
-        COALESCE(COUNT(tpf.id) FILTER (WHERE tpf.process_status = 'failed'), 0)::BIGINT as failed_batches,
-        COALESCE(SUM(tpf.item_count) FILTER (WHERE tpf.process_status = 'completed'), 0)::BIGINT as total_chunks_embedded,
-        COALESCE(SUM(tpf.item_count) FILTER (WHERE tpf.process_status = 'failed'), 0)::BIGINT as total_chunks_failed,
-        MAX(tpf.processed_at) as last_run_at
+        COALESCE(COUNT(DISTINCT (ub.embedded_dataset_id, ub.file_key)), 0)::BIGINT as total_batches_processed,
+        COALESCE(COUNT(DISTINCT CASE WHEN ub.process_status = 'completed' THEN (ub.embedded_dataset_id, ub.file_key) END), 0)::BIGINT as successful_batches,
+        COALESCE(COUNT(DISTINCT CASE WHEN ub.process_status = 'failed' THEN (ub.embedded_dataset_id, ub.file_key) END), 0)::BIGINT as failed_batches,
+        COALESCE(COUNT(DISTINCT CASE WHEN ub.process_status = 'processing' THEN (ub.embedded_dataset_id, ub.file_key) END), 0)::BIGINT as processing_batches,
+        COALESCE(SUM(CASE WHEN ub.process_status = 'completed' THEN ub.item_count ELSE 0 END), 0)::BIGINT as total_chunks_embedded,
+        COALESCE(SUM(CASE WHEN ub.process_status = 'processing' THEN ub.item_count ELSE 0 END), 0)::BIGINT as total_chunks_processing,
+        COALESCE(SUM(CASE WHEN ub.process_status = 'failed' THEN ub.item_count ELSE 0 END), 0)::BIGINT as total_chunks_failed,
+        -- Multiply source chunks by embedder count to get total work across all embedders
+        (SELECT chunk_count FROM source_chunks) * COALESCE(array_length(dt.embedder_ids, 1), 1) as total_chunks_to_process,
+        MAX(ub.processed_at) as last_run_at,
+        MIN(CASE WHEN ub.process_status = 'processing' THEN ub.first_processed_at END) as first_processing_at
     FROM dataset_transforms dt
-    LEFT JOIN embedded_datasets ed ON ed.dataset_transform_id = dt.dataset_transform_id
-    LEFT JOIN transform_processed_files tpf ON tpf.transform_type = 'dataset' AND tpf.transform_id = ed.embedded_dataset_id
+    LEFT JOIN unique_batches ub ON ub.dataset_transform_id = dt.dataset_transform_id
     WHERE dt.dataset_transform_id = $1
     GROUP BY dt.dataset_transform_id, dt.embedder_ids
 "#;
@@ -81,23 +132,90 @@ pub async fn get_dataset_transform(
     owner: &str,
     dataset_transform_id: i32,
 ) -> Result<DatasetTransform> {
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
     let transform = sqlx::query_as::<_, DatasetTransform>(GET_DATASET_TRANSFORM_QUERY)
-        .bind(owner)
         .bind(dataset_transform_id)
-        .fetch_one(pool)
+        .fetch_one(&mut *tx)
         .await?;
+
+    tx.commit().await?;
     Ok(transform)
 }
 
-pub async fn get_dataset_transforms(
+pub async fn get_dataset_transforms_paginated(
     pool: &Pool<Postgres>,
     owner: &str,
-) -> Result<Vec<DatasetTransform>> {
-    let transforms = sqlx::query_as::<_, DatasetTransform>(GET_DATASET_TRANSFORMS_QUERY)
-        .bind(owner)
-        .fetch_all(pool)
-        .await?;
-    Ok(transforms)
+    limit: i64,
+    offset: i64,
+    sort_by: &str,
+    sort_direction: &str,
+    search: Option<&str>,
+) -> Result<PaginatedResponse<DatasetTransform>> {
+    // Validate identifiers against allowlist to prevent SQL injection
+    let sort_field = validate_sort_field(sort_by)?;
+    let sort_dir = validate_sort_direction(sort_direction)?;
+
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
+    let (total_count, transforms) = if let Some(search_term) = search {
+        let search_pattern = format!("%{}%", search_term);
+
+        let count_result: (i64,) = sqlx::query_as(COUNT_DATASET_TRANSFORMS_WITH_SEARCH_QUERY)
+            .bind(&search_pattern)
+            .bind(owner)
+            .fetch_one(&mut *tx)
+            .await?;
+        let total = count_result.0;
+
+        // Build query with validated identifiers (column names cannot be parameterized)
+        let query_str = format!(
+            "{} ORDER BY {} {} LIMIT $3 OFFSET $4",
+            GET_DATASET_TRANSFORMS_PAGINATED_WITH_SEARCH_BASE, sort_field, sort_dir
+        );
+
+        let items = sqlx::query_as::<_, DatasetTransform>(&query_str)
+            .bind(&search_pattern)
+            .bind(owner)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&mut *tx)
+            .await?;
+
+        (total, items)
+    } else {
+        let count_result: (i64,) = sqlx::query_as(COUNT_DATASET_TRANSFORMS_QUERY)
+            .bind(owner)
+            .fetch_one(&mut *tx)
+            .await?;
+        let total = count_result.0;
+
+        // Build query with validated identifiers (column names cannot be parameterized)
+        let query_str = format!(
+            "{} ORDER BY {} {} LIMIT $2 OFFSET $3",
+            GET_DATASET_TRANSFORMS_PAGINATED_BASE, sort_field, sort_dir
+        );
+
+        let items = sqlx::query_as::<_, DatasetTransform>(&query_str)
+            .bind(owner)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&mut *tx)
+            .await?;
+
+        (total, items)
+    };
+
+    tx.commit().await?;
+
+    Ok(PaginatedResponse {
+        items: transforms,
+        total_count,
+        limit,
+        offset,
+    })
 }
 
 pub async fn get_dataset_transforms_for_dataset(
@@ -105,12 +223,16 @@ pub async fn get_dataset_transforms_for_dataset(
     owner: &str,
     dataset_id: i32,
 ) -> Result<Vec<DatasetTransform>> {
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
     let transforms =
         sqlx::query_as::<_, DatasetTransform>(GET_DATASET_TRANSFORMS_FOR_DATASET_QUERY)
-            .bind(owner)
             .bind(dataset_id)
-            .fetch_all(pool)
+            .fetch_all(&mut *tx)
             .await?;
+
+    tx.commit().await?;
     Ok(transforms)
 }
 
@@ -130,6 +252,7 @@ pub async fn create_dataset_transform(
     job_config: &serde_json::Value,
 ) -> Result<(DatasetTransform, Vec<EmbeddedDataset>)> {
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
 
     // Step 1: Create the Dataset Transform
     let transform = sqlx::query_as::<_, DatasetTransform>(CREATE_DATASET_TRANSFORM_QUERY)
@@ -142,12 +265,7 @@ pub async fn create_dataset_transform(
         .await
         .context("Failed to create dataset transform")?;
 
-    // Step 2: Get the source dataset title
-    let source_dataset = datasets::get_dataset(pool, owner, source_dataset_id)
-        .await
-        .context("Failed to fetch source dataset for embedding")?;
-
-    // Step 3: Create N Embedded Datasets (one per embedder)
+    // Step 2: Create N Embedded Datasets (one per embedder)
     let mut embedded_datasets = Vec::new();
     for embedder_id in embedder_ids {
         let embedded_dataset = create_embedded_dataset_internal(
@@ -156,7 +274,7 @@ pub async fn create_dataset_transform(
             source_dataset_id,
             *embedder_id,
             owner,
-            &source_dataset.title,
+            &transform.title,
         )
         .await
         .context(format!(
@@ -183,10 +301,10 @@ pub async fn update_dataset_transform(
     job_config: Option<&serde_json::Value>,
 ) -> Result<(DatasetTransform, Vec<EmbeddedDataset>)> {
     let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
 
     // Update the Dataset Transform
     let transform = sqlx::query_as::<_, DatasetTransform>(UPDATE_DATASET_TRANSFORM_QUERY)
-        .bind(owner)
         .bind(dataset_transform_id)
         .bind(title)
         .bind(is_enabled)
@@ -197,7 +315,7 @@ pub async fn update_dataset_transform(
 
     // If embedder_ids was updated, sync embedded datasets
     let embedded_datasets = if embedder_ids.is_some() {
-        sync_embedded_datasets(&mut tx, pool, &transform).await?
+        sync_embedded_datasets(&mut tx, &transform).await?
     } else {
         // Just fetch existing embedded datasets
         get_embedded_datasets_for_transform_internal(&mut tx, dataset_transform_id).await?
@@ -213,12 +331,16 @@ pub async fn delete_dataset_transform(
     owner: &str,
     dataset_transform_id: i32,
 ) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
     // Cascading deletes will handle embedded datasets and processed files
     sqlx::query(DELETE_DATASET_TRANSFORM_QUERY)
-        .bind(owner)
         .bind(dataset_transform_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+
+    tx.commit().await?;
     Ok(())
 }
 
@@ -244,12 +366,12 @@ async fn create_embedded_dataset_internal(
     source_dataset_id: i32,
     embedder_id: i32,
     owner: &str,
-    source_dataset_title: &str,
+    dataset_transform_title: &str,
 ) -> Result<EmbeddedDataset> {
     // Import the create function from embedded_datasets module
     use crate::storage::postgres::embedded_datasets::create_embedded_dataset_in_transaction;
 
-    let title = format!("{source_dataset_title}-embedded");
+    let title = format!("{dataset_transform_title}-{embedder_id}");
     let collection_name = EmbeddedDataset::generate_collection_name(0, owner); // Will be updated with actual ID
 
     create_embedded_dataset_in_transaction(
@@ -268,14 +390,8 @@ async fn create_embedded_dataset_internal(
 /// Adds new embedded datasets for new embedders, removes for embedders no longer in the list
 async fn sync_embedded_datasets(
     tx: &mut Transaction<'_, Postgres>,
-    pool: &Pool<Postgres>,
     transform: &DatasetTransform,
 ) -> Result<Vec<EmbeddedDataset>> {
-    // Get the source dataset title
-    let source_dataset = datasets::get_dataset(pool, &transform.owner, transform.source_dataset_id)
-        .await
-        .context("Failed to fetch source dataset for syncing embeddings")?;
-
     // Get existing embedded datasets
     let existing =
         get_embedded_datasets_for_transform_internal(&mut *tx, transform.dataset_transform_id)
@@ -306,7 +422,7 @@ async fn sync_embedded_datasets(
             transform.source_dataset_id,
             embedder_id,
             &transform.owner,
-            &source_dataset.title,
+            &transform.title,
         )
         .await?;
     }

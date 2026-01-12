@@ -1,9 +1,8 @@
 use actix_web::{
-    HttpResponse, Responder, delete, get, patch, post,
-    web::{Data, Json, Path, Query},
+    HttpRequest, HttpResponse, Responder, ResponseError, delete, get, patch, post,
+    web::{self, Data, Json, Path, Query},
 };
 
-use actix_web_openidconnect::openid_middleware::Authenticated;
 use qdrant_client::{
     Qdrant,
     qdrant::{
@@ -16,17 +15,23 @@ use std::collections::HashMap;
 use tracing::error;
 
 use crate::{
-    auth::extract_username,
+    audit::{ResourceType, events},
+    auth::AuthenticatedUser,
     datasets::models::{
         CreateDataset, CreateDatasetItems, CreateDatasetItemsResponse, Dataset, DatasetItemChunks,
         DatasetWithStats, PaginatedDatasetItemSummaries, PaginatedDatasetItems, PaginationParams,
     },
     embedders::models::Embedder,
-    errors::{bad_request, not_found},
+    errors::ApiError,
     storage::postgres::{datasets, embedded_datasets, embedders},
 };
+use semantic_explorer_core::encryption::EncryptionService;
+use semantic_explorer_core::validation;
 
 #[utoipa::path(
+    params(
+        ("search" = Option<String>, Query, description = "Optional search term to filter datasets by title using ILIKE"),
+    ),
     responses(
         (status = 200, description = "OK", body = Vec<DatasetWithStats>),
         (status = 401, description = "Unauthorized"),
@@ -35,28 +40,42 @@ use crate::{
     tag = "Datasets",
 )]
 #[get("/api/datasets")]
-#[tracing::instrument(name = "get_datasets", skip(auth, postgres_pool))]
+#[tracing::instrument(name = "get_datasets", skip(user, postgres_pool, query))]
 pub(crate) async fn get_datasets(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
+    query: web::Query<HashMap<String, String>>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
     let pool = postgres_pool.into_inner();
+    let search_query = query.get("search").and_then(|s| {
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
 
     // Get datasets
-    let all_datasets = match datasets::get_datasets(&pool, &username).await {
-        Ok(datasets) => datasets,
-        Err(e) => {
-            return HttpResponse::InternalServerError()
-                .body(format!("error fetching datasets: {e:?}"));
-        }
+    let all_datasets = match search_query {
+        Some(q) => match datasets::get_datasets_with_search(&pool, &user, q).await {
+            Ok(datasets) => datasets,
+            Err(e) => {
+                return ApiError::Internal(format!("error fetching datasets: {:?}", e))
+                    .error_response();
+            }
+        },
+        None => match datasets::get_datasets(&pool, &user).await {
+            Ok(datasets) => datasets,
+            Err(e) => {
+                return ApiError::Internal(format!("error fetching datasets: {:?}", e))
+                    .error_response();
+            }
+        },
     };
 
     // Get stats
-    let stats = match datasets::get_dataset_stats(&pool, &username).await {
+    let stats = match datasets::get_dataset_stats(&pool, &user).await {
         Ok(stats) => stats,
         Err(e) => {
             error!("error fetching dataset stats: {e:?}");
@@ -107,24 +126,23 @@ pub(crate) async fn get_datasets(
     tag = "Datasets",
 )]
 #[get("/api/datasets/{dataset_id}")]
-#[tracing::instrument(name = "get_dataset", skip(auth, postgres_pool))]
+#[tracing::instrument(name = "get_dataset", skip(user, postgres_pool))]
 pub(crate) async fn get_dataset(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
     let dataset_id = path.into_inner();
     let pool = postgres_pool.into_inner();
 
-    match datasets::get_dataset(&pool, &username, dataset_id).await {
-        Ok(dataset) => HttpResponse::Ok().json(dataset),
+    match datasets::get_dataset(&pool, &user, dataset_id).await {
+        Ok(dataset) => {
+            events::resource_read(&user, ResourceType::Dataset, &dataset_id.to_string());
+            HttpResponse::Ok().json(dataset)
+        }
         Err(e) => {
             error!("Failed to fetch dataset {}: {}", dataset_id, e);
-            not_found(format!("Dataset not found: {}", e))
+            ApiError::NotFound(format!("Dataset not found: {}", e)).error_response()
         }
     }
 }
@@ -139,21 +157,31 @@ pub(crate) async fn get_dataset(
     tag = "Datasets",
 )]
 #[post("/api/datasets")]
-#[tracing::instrument(name = "create_dataset", skip(auth, postgres_pool, create_dataset), fields(dataset_title = %create_dataset.title))]
+#[tracing::instrument(name = "create_dataset", skip(user, postgres_pool, create_dataset, req), fields(dataset_title = %create_dataset.title))]
 pub(crate) async fn create_dataset(
-    auth: Authenticated,
+    user: AuthenticatedUser,
+    req: HttpRequest,
     postgres_pool: Data<Pool<Postgres>>,
     Json(create_dataset): Json<CreateDataset>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
+    // Input validation
+    if let Err(e) = validation::validate_title(&create_dataset.title) {
+        return ApiError::Validation(e).error_response();
+    }
+    if let Some(ref details) = create_dataset.details
+        && let Err(e) = validation::validate_description(details)
+    {
+        return ApiError::Validation(e).error_response();
+    }
+    if let Err(e) = validation::validate_tags(&create_dataset.tags) {
+        return ApiError::Validation(e).error_response();
+    }
+
     let dataset = match datasets::create_dataset(
         &postgres_pool.into_inner(),
         &create_dataset.title,
         create_dataset.details.as_deref(),
-        &username,
+        &user,
         &create_dataset.tags,
         create_dataset.is_public,
     )
@@ -161,11 +189,17 @@ pub(crate) async fn create_dataset(
     {
         Ok(dataset) => dataset,
         Err(e) => {
-            return HttpResponse::InternalServerError()
-                .body(format!("error creating dataset due to: {e:?}"));
+            return ApiError::Internal(format!("error creating dataset due to: {:?}", e))
+                .error_response();
         }
     };
 
+    events::resource_created_with_request(
+        &req,
+        &user,
+        ResourceType::Dataset,
+        &dataset.dataset_id.to_string(),
+    );
     HttpResponse::Created().json(dataset)
 }
 
@@ -180,21 +214,30 @@ pub(crate) async fn create_dataset(
     tag = "Datasets",
 )]
 #[patch("/api/datasets/{dataset_id}")]
-#[tracing::instrument(name = "update_dataset", skip(auth, postgres_pool, update_dataset), fields(dataset_id = %dataset_id.as_ref(), dataset_title = %update_dataset.title))]
+#[tracing::instrument(name = "update_dataset", skip(user, postgres_pool, update_dataset), fields(dataset_id = %dataset_id.as_ref(), dataset_title = %update_dataset.title))]
 pub(crate) async fn update_dataset(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     dataset_id: Path<i32>,
     Json(update_dataset): Json<CreateDataset>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
+    // Input validation
+    if let Err(e) = validation::validate_title(&update_dataset.title) {
+        return ApiError::Validation(e).error_response();
+    }
+    if let Some(ref details) = update_dataset.details
+        && let Err(e) = validation::validate_description(details)
+    {
+        return ApiError::Validation(e).error_response();
+    }
+    if let Err(e) = validation::validate_tags(&update_dataset.tags) {
+        return ApiError::Validation(e).error_response();
+    }
+
     let postgres_pool = postgres_pool.into_inner();
     let dataset_id = dataset_id.into_inner();
 
-    if datasets::get_dataset(&postgres_pool, &username, dataset_id)
+    if datasets::get_dataset(&postgres_pool, &user, dataset_id)
         .await
         .is_err()
     {
@@ -206,7 +249,7 @@ pub(crate) async fn update_dataset(
         dataset_id,
         &update_dataset.title,
         update_dataset.details.as_deref(),
-        &username,
+        &user,
         &update_dataset.tags,
         update_dataset.is_public,
     )
@@ -214,11 +257,12 @@ pub(crate) async fn update_dataset(
     {
         Ok(dataset) => dataset,
         Err(e) => {
-            return HttpResponse::InternalServerError()
-                .body(format!("error updating dataset due to: {e:?}"));
+            return ApiError::Internal(format!("error updating dataset due to: {:?}", e))
+                .error_response();
         }
     };
 
+    events::resource_updated(&user, ResourceType::Dataset, &dataset_id.to_string());
     HttpResponse::Ok().json(dataset)
 }
 
@@ -232,31 +276,28 @@ pub(crate) async fn update_dataset(
     tag = "Datasets",
 )]
 #[delete("/api/datasets/{datasets_id}")]
-#[tracing::instrument(name = "delete_dataset", skip(auth, postgres_pool, qdrant_client), fields(dataset_id = %dataset_id.as_ref()))]
+#[tracing::instrument(name = "delete_dataset", skip(user, postgres_pool, qdrant_client, req), fields(dataset_id = %dataset_id.as_ref()))]
 pub(crate) async fn delete_dataset(
-    auth: Authenticated,
+    user: AuthenticatedUser,
+    req: HttpRequest,
     postgres_pool: Data<Pool<Postgres>>,
     qdrant_client: Data<Qdrant>,
     dataset_id: Path<i32>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
     let postgres_pool = postgres_pool.into_inner();
     let dataset_id = dataset_id.into_inner();
 
-    if datasets::get_dataset(&postgres_pool, &username, dataset_id)
+    if datasets::get_dataset(&postgres_pool, &user, dataset_id)
         .await
         .is_err()
     {
-        return not_found("Dataset not found");
+        return ApiError::NotFound("Dataset not found".to_string()).error_response();
     };
 
     // Get all embedded datasets for this dataset so we can delete their Qdrant collections
     let embedded_datasets = match embedded_datasets::get_embedded_datasets_for_dataset(
         &postgres_pool,
-        &username,
+        &user,
         dataset_id,
     )
     .await
@@ -264,8 +305,8 @@ pub(crate) async fn delete_dataset(
         Ok(datasets) => datasets,
         Err(e) => {
             error!("Failed to fetch embedded datasets for deletion: {}", e);
-            return HttpResponse::InternalServerError()
-                .body(format!("error fetching embedded datasets due to: {e:?}"));
+            return ApiError::Internal(format!("error fetching embedded datasets due to: {:?}", e))
+                .error_response();
         }
     };
 
@@ -283,10 +324,19 @@ pub(crate) async fn delete_dataset(
         }
     }
 
-    match datasets::delete_dataset(&postgres_pool, dataset_id, &username).await {
-        Ok(_) => HttpResponse::Ok().finish(),
-        Err(e) => HttpResponse::InternalServerError()
-            .body(format!("error deleting dataset due to: {e:?}")),
+    match datasets::delete_dataset(&postgres_pool, dataset_id, &user).await {
+        Ok(_) => {
+            events::resource_deleted_with_request(
+                &req,
+                &user,
+                ResourceType::Dataset,
+                &dataset_id.to_string(),
+            );
+            HttpResponse::Ok().finish()
+        }
+        Err(e) => {
+            ApiError::Internal(format!("error deleting dataset due to: {:?}", e)).error_response()
+        }
     }
 }
 
@@ -304,24 +354,21 @@ pub(crate) async fn delete_dataset(
     tag = "Datasets",
 )]
 #[post("/api/datasets/{dataset_id}/items")]
-#[tracing::instrument(name = "upload_to_dataset", skip(auth, postgres_pool, payload), fields(dataset_id = %dataset_id.as_ref(), item_count = payload.items.len()))]
+#[tracing::instrument(name = "upload_to_dataset", skip(user, postgres_pool, payload), fields(dataset_id = %dataset_id.as_ref(), item_count = payload.items.len()))]
 pub(crate) async fn upload_to_dataset(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     dataset_id: Path<i32>,
     Json(payload): Json<CreateDatasetItems>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
     let postgres_pool = postgres_pool.into_inner();
     let dataset_id = dataset_id.into_inner();
 
-    let dataset = match datasets::get_dataset(&postgres_pool, &username, dataset_id).await {
+    let dataset = match datasets::get_dataset(&postgres_pool, &user, dataset_id).await {
         Ok(dataset) => dataset,
         Err(_) => {
-            return bad_request(format!("dataset '{dataset_id}' does not exists"));
+            return ApiError::BadRequest(format!("dataset '{}' does not exist", dataset_id))
+                .error_response();
         }
     };
 
@@ -342,8 +389,8 @@ pub(crate) async fn upload_to_dataset(
             ),
             Err(e) => {
                 error!("error batch uploading items to dataset '{dataset_id}': {e:?}");
-                return HttpResponse::InternalServerError()
-                    .body(format!("failed to upload items: {e}"));
+                return ApiError::Internal(format!("failed to upload items: {}", e))
+                    .error_response();
             }
         };
 
@@ -365,27 +412,25 @@ pub(crate) async fn upload_to_dataset(
     tag = "Datasets",
 )]
 #[get("/api/datasets/{dataset_id}/items")]
-#[tracing::instrument(name = "get_dataset_items", skip(auth, postgres_pool, params), fields(dataset_id = %dataset_id.as_ref()))]
+#[tracing::instrument(name = "get_dataset_items", skip(user, postgres_pool, params), fields(dataset_id = %dataset_id.as_ref()))]
 pub(crate) async fn get_dataset_items(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     dataset_id: Path<i32>,
     Query(params): Query<PaginationParams>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
     let postgres_pool = postgres_pool.into_inner();
     let dataset_id = dataset_id.into_inner();
 
-    if datasets::get_dataset(&postgres_pool, &username, dataset_id)
+    if datasets::get_dataset(&postgres_pool, &user, dataset_id)
         .await
         .is_err()
     {
-        return bad_request(format!(
-            "dataset '{dataset_id}' does not exist or access denied"
-        ));
+        return ApiError::BadRequest(format!(
+            "dataset '{}' does not exist or access denied",
+            dataset_id
+        ))
+        .error_response();
     }
 
     let page = params.page.max(0);
@@ -395,8 +440,8 @@ pub(crate) async fn get_dataset_items(
     {
         Ok(items) => items,
         Err(e) => {
-            return HttpResponse::InternalServerError()
-                .body(format!("error fetching dataset items: {e:?}"));
+            return ApiError::Internal(format!("error fetching dataset items: {:?}", e))
+                .error_response();
         }
     };
 
@@ -404,8 +449,8 @@ pub(crate) async fn get_dataset_items(
         Ok(count) => count,
         Err(e) => {
             error!("error counting dataset items: {e:?}");
-            return HttpResponse::InternalServerError()
-                .body(format!("error counting dataset items: {e:?}"));
+            return ApiError::Internal(format!("error counting dataset items: {:?}", e))
+                .error_response();
         }
     };
 
@@ -425,6 +470,7 @@ pub(crate) async fn get_dataset_items(
         ("dataset_id" = i32, Path, description = "The dataset ID"),
         ("page" = i64, Query, description = "Page number (0-indexed)"),
         ("page_size" = i64, Query, description = "Number of items per page"),
+        ("search" = Option<String>, Query, description = "Optional search term to filter items by title"),
     ),
     responses(
         (status = 200, description = "OK", body = PaginatedDatasetItemSummaries),
@@ -435,56 +481,88 @@ pub(crate) async fn get_dataset_items(
     tag = "Datasets",
 )]
 #[get("/api/datasets/{dataset_id}/items-summary")]
-#[tracing::instrument(name = "get_dataset_items_summary", skip(auth, postgres_pool, params), fields(dataset_id = %dataset_id.as_ref()))]
+#[tracing::instrument(name = "get_dataset_items_summary", skip(user, postgres_pool, params), fields(dataset_id = %dataset_id.as_ref()))]
 pub(crate) async fn get_dataset_items_summary(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     dataset_id: Path<i32>,
     Query(params): Query<PaginationParams>,
 ) -> impl Responder {
     use crate::datasets::models::PaginatedDatasetItemSummaries;
 
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
     let postgres_pool = postgres_pool.into_inner();
     let dataset_id = dataset_id.into_inner();
 
-    if datasets::get_dataset(&postgres_pool, &username, dataset_id)
+    if datasets::get_dataset(&postgres_pool, &user, dataset_id)
         .await
         .is_err()
     {
-        return bad_request(format!(
-            "dataset '{dataset_id}' does not exist or access denied"
-        ));
+        return ApiError::BadRequest(format!(
+            "dataset '{}' does not exist or access denied",
+            dataset_id
+        ))
+        .error_response();
     }
 
     let page = params.page.max(0);
     let page_size = params.page_size.clamp(1, 100);
+    let search_query = params
+        .search
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
 
-    let items = match datasets::get_dataset_items_summary(
-        &postgres_pool,
-        dataset_id,
-        page,
-        page_size,
-    )
-    .await
-    {
-        Ok(items) => items,
-        Err(e) => {
-            return HttpResponse::InternalServerError()
-                .body(format!("error fetching dataset items: {e:?}"));
+    let items = match search_query {
+        Some(query) => {
+            match datasets::get_dataset_items_summary_with_search(
+                &postgres_pool,
+                dataset_id,
+                page,
+                page_size,
+                query,
+            )
+            .await
+            {
+                Ok(items) => items,
+                Err(e) => {
+                    return ApiError::Internal(format!("error fetching dataset items: {:?}", e))
+                        .error_response();
+                }
+            }
+        }
+        None => {
+            match datasets::get_dataset_items_summary(&postgres_pool, dataset_id, page, page_size)
+                .await
+            {
+                Ok(items) => items,
+                Err(e) => {
+                    return ApiError::Internal(format!("error fetching dataset items: {:?}", e))
+                        .error_response();
+                }
+            }
         }
     };
 
-    let total_count = match datasets::count_dataset_items(&postgres_pool, dataset_id).await {
-        Ok(count) => count,
-        Err(e) => {
-            error!("error counting dataset items: {e:?}");
-            return HttpResponse::InternalServerError()
-                .body(format!("error counting dataset items: {e:?}"));
+    let total_count = match search_query {
+        Some(query) => {
+            match datasets::count_dataset_items_with_search(&postgres_pool, dataset_id, query).await
+            {
+                Ok(count) => count,
+                Err(e) => {
+                    error!("error counting dataset items: {e:?}");
+                    return ApiError::Internal(format!("error counting dataset items: {:?}", e))
+                        .error_response();
+                }
+            }
         }
+        None => match datasets::count_dataset_items(&postgres_pool, dataset_id).await {
+            Ok(count) => count,
+            Err(e) => {
+                error!("error counting dataset items: {e:?}");
+                return ApiError::Internal(format!("error counting dataset items: {:?}", e))
+                    .error_response();
+            }
+        },
     };
 
     let has_more = (page + 1) * page_size < total_count;
@@ -512,33 +590,30 @@ pub(crate) async fn get_dataset_items_summary(
     tag = "Datasets",
 )]
 #[get("/api/datasets/{dataset_id}/items/{item_id}/chunks")]
-#[tracing::instrument(name = "get_dataset_item_chunks", skip(auth, postgres_pool, path))]
+#[tracing::instrument(name = "get_dataset_item_chunks", skip(user, postgres_pool, path))]
 pub(crate) async fn get_dataset_item_chunks(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<(i32, i32)>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
     let postgres_pool = postgres_pool.into_inner();
     let (dataset_id, item_id) = path.into_inner();
 
-    if datasets::get_dataset(&postgres_pool, &username, dataset_id)
+    if datasets::get_dataset(&postgres_pool, &user, dataset_id)
         .await
         .is_err()
     {
-        return not_found("Dataset not found or access denied");
+        return ApiError::NotFound("Dataset not found or access denied".to_string())
+            .error_response();
     }
 
     match datasets::get_dataset_item_chunks(&postgres_pool, dataset_id, item_id).await {
         Ok(Some(chunks)) => HttpResponse::Ok().json(chunks),
-        Ok(None) => not_found("Item not found"),
+        Ok(None) => ApiError::NotFound("Item not found".to_string()).error_response(),
         Err(e) => {
             error!("error fetching dataset item chunks: {e:?}");
-            HttpResponse::InternalServerError()
-                .body(format!("error fetching dataset item chunks: {e:?}"))
+            ApiError::Internal(format!("error fetching dataset item chunks: {:?}", e))
+                .error_response()
         }
     }
 }
@@ -556,25 +631,22 @@ pub(crate) async fn get_dataset_item_chunks(
     tag = "Datasets",
 )]
 #[delete("/api/datasets/{dataset_id}/items/{item_id}")]
-#[tracing::instrument(name = "delete_dataset_item", skip(auth, postgres_pool, qdrant_client))]
+#[tracing::instrument(name = "delete_dataset_item", skip(user, postgres_pool, qdrant_client))]
 pub(crate) async fn delete_dataset_item(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     qdrant_client: Data<Qdrant>,
     path: Path<(i32, i32)>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
     let postgres_pool = postgres_pool.into_inner();
     let (dataset_id, item_id) = path.into_inner();
 
-    if datasets::get_dataset(&postgres_pool, &username, dataset_id)
+    if datasets::get_dataset(&postgres_pool, &user, dataset_id)
         .await
         .is_err()
     {
-        return not_found("Dataset not found or access denied");
+        return ApiError::NotFound("Dataset not found or access denied".to_string())
+            .error_response();
     }
 
     let deleted_item =
@@ -582,15 +654,15 @@ pub(crate) async fn delete_dataset_item(
             Ok(item) => item,
             Err(e) => {
                 error!("error deleting dataset item from database: {e:?}");
-                return HttpResponse::InternalServerError()
-                    .body(format!("error deleting dataset item: {e:?}"));
+                return ApiError::Internal(format!("error deleting dataset item: {:?}", e))
+                    .error_response();
             }
         };
 
     // Get embedded datasets for this dataset to find collections to clean up
     let embedded_datasets_list = match embedded_datasets::get_embedded_datasets_for_dataset(
         &postgres_pool,
-        &username,
+        &user,
         dataset_id,
     )
     .await
@@ -663,35 +735,31 @@ pub(crate) struct DatasetEmbedders {
     tag = "Datasets",
 )]
 #[get("/api/datasets/embedders")]
-#[tracing::instrument(name = "get_datasets_embedders", skip(auth, postgres_pool))]
+#[tracing::instrument(name = "get_datasets_embedders", skip(user, postgres_pool, encryption))]
 pub(crate) async fn get_datasets_embedders(
-    auth: Authenticated,
+    user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
+    encryption: Data<EncryptionService>,
 ) -> impl Responder {
-    let username = match extract_username(&auth) {
-        Ok(username) => username,
-        Err(e) => return e,
-    };
-
     let pool = postgres_pool.into_inner();
 
     // Get all datasets for the user
-    let all_datasets = match datasets::get_datasets(&pool, &username).await {
+    let all_datasets = match datasets::get_datasets(&pool, &user).await {
         Ok(datasets) => datasets,
         Err(e) => {
             error!("error fetching datasets: {e:?}");
-            return HttpResponse::InternalServerError()
-                .body(format!("error fetching datasets: {e:?}"));
+            return ApiError::Internal(format!("error fetching datasets: {:?}", e))
+                .error_response();
         }
     };
 
     // Get all embedders to look up names
-    let all_embedders = match embedders::get_embedders(&pool, &username).await {
+    let all_embedders = match embedders::get_embedders(&pool, &user, &encryption).await {
         Ok(embedders) => embedders,
         Err(e) => {
             error!("error fetching embedders: {e:?}");
-            return HttpResponse::InternalServerError()
-                .body(format!("error fetching embedders: {e:?}"));
+            return ApiError::Internal(format!("error fetching embedders: {:?}", e))
+                .error_response();
         }
     };
 
@@ -706,7 +774,7 @@ pub(crate) async fn get_datasets_embedders(
     for dataset in all_datasets {
         let embedded_datasets_list = match embedded_datasets::get_embedded_datasets_for_dataset(
             &pool,
-            &username,
+            &user,
             dataset.dataset_id,
         )
         .await

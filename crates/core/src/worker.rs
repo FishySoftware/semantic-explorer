@@ -20,6 +20,7 @@ use tracing_subscriber::{
     EnvFilter, Layer, Registry as TracingRegistry, layer::SubscriberExt, util::SubscriberInitExt,
 };
 
+use crate::config::NatsConfig;
 use crate::observability;
 
 /// Configuration for worker initialization
@@ -168,7 +169,9 @@ where
 
     info!("Using JetStream mode for reliable message delivery");
 
-    crate::nats::initialize_jetstream(&nats_client).await?;
+    // Initialize NATS configuration
+    let nats_config = NatsConfig::from_env()?;
+    crate::nats::initialize_jetstream(&nats_client, &nats_config).await?;
 
     // Start NATS metrics collector
     crate::nats::start_metrics_collector(nats_client.clone()).await?;

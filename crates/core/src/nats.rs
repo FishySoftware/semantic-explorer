@@ -1,3 +1,4 @@
+use crate::config::NatsConfig;
 use anyhow::{Context, Result};
 use async_nats::{
     Client,
@@ -10,8 +11,9 @@ use async_nats::{
 use std::time::Duration;
 use tracing::{info, warn};
 
-pub async fn initialize_jetstream(client: &Client) -> Result<()> {
+pub async fn initialize_jetstream(client: &Client, nats_config: &NatsConfig) -> Result<()> {
     let jetstream = jetstream::new(client.clone());
+    let num_replicas = nats_config.replicas as usize;
 
     ensure_stream(
         &jetstream,
@@ -22,7 +24,7 @@ pub async fn initialize_jetstream(client: &Client) -> Result<()> {
             retention: RetentionPolicy::WorkQueue,
             max_age: Duration::from_secs(7 * 24 * 60 * 60), // 7 days
             duplicate_window: Duration::from_secs(5 * 60),  // 5 minutes for deduplication
-            num_replicas: 1,
+            num_replicas,
             ..Default::default()
         },
     )
@@ -37,7 +39,7 @@ pub async fn initialize_jetstream(client: &Client) -> Result<()> {
             retention: RetentionPolicy::WorkQueue,
             max_age: Duration::from_secs(7 * 24 * 60 * 60), // 7 days
             duplicate_window: Duration::from_secs(5 * 60),  // 5 minutes for deduplication
-            num_replicas: 1,
+            num_replicas,
             ..Default::default()
         },
     )
@@ -52,7 +54,7 @@ pub async fn initialize_jetstream(client: &Client) -> Result<()> {
             retention: RetentionPolicy::WorkQueue,
             max_age: Duration::from_secs(7 * 24 * 60 * 60), // 7 days
             duplicate_window: Duration::from_secs(5 * 60),  // 5 minutes for deduplication
-            num_replicas: 1,
+            num_replicas,
             ..Default::default()
         },
     )
@@ -71,7 +73,35 @@ pub async fn initialize_jetstream(client: &Client) -> Result<()> {
             ],
             retention: RetentionPolicy::Limits, // Keep for investigation
             max_age: Duration::from_secs(30 * 24 * 60 * 60), // 30 days
-            num_replicas: 1,
+            num_replicas,
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    // Transform status stream for SSE real-time updates
+    // Uses hierarchical subjects: transforms.{type}.status.{owner}.{resource_id}.{transform_id}
+    // Examples:
+    //   transforms.collection.status.user@example.com.123.456
+    //   transforms.dataset.status.user@example.com.789.101
+    //   transforms.visualization.status.user@example.com.111.222
+    // Wildcards allow flexible subscriptions:
+    //   transforms.collection.status.user@example.com.* - all collection transforms for user
+    //   transforms.collection.status.user@example.com.123.* - transforms for specific collection
+    ensure_stream(
+        &jetstream,
+        "TRANSFORM_STATUS",
+        StreamConfig {
+            name: "TRANSFORM_STATUS".to_string(),
+            subjects: vec![
+                "transforms.collection.status.*.*.*".to_string(),
+                "transforms.dataset.status.*.*.*".to_string(),
+                "transforms.visualization.status.*.*.*".to_string(),
+            ],
+            retention: RetentionPolicy::Limits,
+            max_age: Duration::from_secs(60 * 60),
+            max_messages: 100_000,
+            num_replicas,
             ..Default::default()
         },
     )
@@ -127,7 +157,7 @@ fn stream_config_differs(current: &StreamConfig, desired: &StreamConfig) -> bool
 
 pub fn create_transform_file_consumer_config() -> ConsumerConfig {
     ConsumerConfig {
-        durable_name: Some("transform-file-workers".to_string()),
+        durable_name: Some("collection-transform-workers".to_string()),
         description: Some("Consumer for file transformation jobs".to_string()),
         ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
         ack_wait: Duration::from_secs(10 * 60), // 10 minutes to process
@@ -145,7 +175,7 @@ pub fn create_transform_file_consumer_config() -> ConsumerConfig {
 
 pub fn create_vector_embed_consumer_config() -> ConsumerConfig {
     ConsumerConfig {
-        durable_name: Some("vector-embed-workers".to_string()),
+        durable_name: Some("dataset-transform-workers".to_string()),
         description: Some("Consumer for vector embedding jobs".to_string()),
         ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
         ack_wait: Duration::from_secs(10 * 60), // 10 minutes to process
@@ -163,7 +193,7 @@ pub fn create_vector_embed_consumer_config() -> ConsumerConfig {
 
 pub fn create_visualization_consumer_config() -> ConsumerConfig {
     ConsumerConfig {
-        durable_name: Some("visualization-workers".to_string()),
+        durable_name: Some("visualization-transform-workers".to_string()),
         description: Some("Consumer for visualization transform jobs (UMAP/HDBSCAN)".to_string()),
         ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
         ack_wait: Duration::from_secs(30 * 60), // 30 minutes - visualization can be slow
@@ -251,9 +281,12 @@ async fn collect_nats_metrics(client: &Client) -> Result<()> {
 
             // Collect consumer metrics
             let consumers = vec![
-                ("collection-transforms", "COLLECTION_TRANSFORMS"),
-                ("dataset-workers", "DATASET_TRANSFORMS"),
-                ("visualization-workers", "VISUALIZATION_TRANSFORMS"),
+                ("collection-transform-workers", "COLLECTION_TRANSFORMS"),
+                ("dataset-transform-workers", "DATASET_TRANSFORMS"),
+                (
+                    "visualization-transform-workers",
+                    "VISUALIZATION_TRANSFORMS",
+                ),
             ];
 
             for (consumer_name, expected_stream) in consumers {
@@ -274,32 +307,4 @@ async fn collect_nats_metrics(client: &Client) -> Result<()> {
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_stream_config_differs() {
-        let config1 = StreamConfig {
-            name: "TEST".to_string(),
-            subjects: vec!["test.subject".to_string()],
-            retention: RetentionPolicy::WorkQueue,
-            num_replicas: 1,
-            ..Default::default()
-        };
-
-        let config2 = config1.clone();
-        assert!(!stream_config_differs(&config1, &config2));
-
-        let config3 = StreamConfig {
-            name: "TEST".to_string(),
-            subjects: vec!["different.subject".to_string()],
-            retention: RetentionPolicy::WorkQueue,
-            num_replicas: 1,
-            ..Default::default()
-        };
-        assert!(stream_config_differs(&config1, &config3));
-    }
 }

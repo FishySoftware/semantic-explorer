@@ -4,16 +4,18 @@ use crate::storage::postgres::{embedded_datasets, embedders};
 use qdrant_client::qdrant::SearchPointsBuilder;
 use qdrant_client::qdrant::value::Kind;
 use qdrant_client::{Qdrant, qdrant::point_id::PointIdOptions};
+use semantic_explorer_core::encryption::EncryptionService;
 use sqlx::{Pool, Postgres};
 use tracing::{debug, error, instrument, warn};
 
-#[instrument(name = "retrieve_documents", skip(postgres_pool, qdrant_client), fields(embedded_dataset_id, query_len = query.len()))]
+#[instrument(name = "retrieve_documents", skip(postgres_pool, qdrant_client, encryption), fields(embedded_dataset_id, query_len = query.len()))]
 pub async fn retrieve_documents(
     postgres_pool: &Pool<Postgres>,
     qdrant_client: &Qdrant,
     embedded_dataset_id: i32,
     query: &str,
     config: &RAGConfig,
+    encryption: &EncryptionService,
 ) -> Result<Vec<RetrievedDocument>, String> {
     // Fetch embedded dataset info (collection name and embedder ID)
     let dataset_info =
@@ -27,8 +29,8 @@ pub async fn retrieve_documents(
     let collection_name = dataset_info.collection_name;
     let embedder_id = dataset_info.embedder_id;
 
-    // Fetch embedder configuration
-    let embedder_config = embedders::get_embedder_config(postgres_pool, embedder_id)
+    // Fetch embedder configuration (api_key is decrypted by storage layer)
+    let embedder_config = embedders::get_embedder_config(postgres_pool, embedder_id, encryption)
         .await
         .map_err(|e| {
             error!(error = %e, "failed to get embedder config");
@@ -37,7 +39,7 @@ pub async fn retrieve_documents(
 
     let embedder_provider = embedder_config.provider;
     let embedder_base_url = embedder_config.base_url;
-    let embedder_api_key = embedder_config.api_key;
+    let embedder_api_key = embedder_config.api_key_encrypted;
     let embedder_config_value = embedder_config.config;
     let _dimensions = embedder_config.dimensions;
     debug!(collection = %collection_name, embedder_id = embedder_id, "retrieving documents from Qdrant");
@@ -180,19 +182,52 @@ pub fn build_context(documents: &[RetrievedDocument]) -> String {
     for (idx, doc) in documents.iter().enumerate() {
         let chunk_num = idx + 1;
         let item_title = doc.item_title.as_deref().unwrap_or("unknown");
-        // Use push_str with pre-formatted strings instead of format! to reduce allocations
-        context.push_str("[Chunk ");
-        context.push_str(&chunk_num.to_string());
-        context.push_str("] - ");
-        context.push_str(item_title);
-        context.push_str("\nSimilarity Score: ");
-        context.push_str(&format!("{:.2}", doc.similarity_score));
-        context.push_str("\nContent: ");
-        context.push_str(&doc.text);
+        // Format document chunk with injection protection delimiters
+        let formatted_chunk = crate::chat::prompt_injection::format_document_chunk(
+            chunk_num,
+            item_title,
+            doc.similarity_score,
+            &doc.text,
+        );
+        context.push_str(&formatted_chunk);
         context.push_str("\n\n");
     }
 
     context
+}
+
+/// Replace "Chunk N" references in LLM response with actual document titles
+/// This transforms the response from using generic chunk numbers to user-facing document titles
+pub fn replace_chunk_references(content: &str, documents: &[RetrievedDocument]) -> String {
+    use regex::Regex;
+
+    // Create a mapping from chunk number to item title
+    let chunk_to_title: std::collections::HashMap<usize, String> = documents
+        .iter()
+        .enumerate()
+        .map(|(idx, doc)| {
+            let chunk_num = idx + 1;
+            let title = doc.item_title.as_deref().unwrap_or("Unknown Source");
+            (chunk_num, title.to_string())
+        })
+        .collect();
+
+    // Replace "Chunk N" with actual titles using regex
+    // Matches patterns like "Chunk 1", "Chunk 2", etc.
+    let re = Regex::new(r"Chunk (\d+)").unwrap();
+    let result = re.replace_all(content, |caps: &regex::Captures| {
+        let chunk_num_str = &caps[1];
+        if let Ok(chunk_num) = chunk_num_str.parse::<usize>() {
+            chunk_to_title
+                .get(&chunk_num)
+                .cloned()
+                .unwrap_or_else(|| format!("Chunk {}", chunk_num))
+        } else {
+            caps[0].to_string()
+        }
+    });
+
+    result.to_string()
 }
 
 #[cfg(test)]
@@ -220,6 +255,47 @@ mod tests {
         assert!(context.contains("Score: 0.95"));
         assert!(context.contains("test_item"));
         assert!(context.contains("This is a test document"));
+    }
+
+    #[test]
+    fn test_replace_chunk_references() {
+        let docs = vec![
+            RetrievedDocument {
+                document_id: Some("doc1".to_string()),
+                text: "Content 1".to_string(),
+                similarity_score: 0.95,
+                item_title: Some("Document A".to_string()),
+            },
+            RetrievedDocument {
+                document_id: Some("doc2".to_string()),
+                text: "Content 2".to_string(),
+                similarity_score: 0.85,
+                item_title: Some("Document B".to_string()),
+            },
+        ];
+
+        let content = "According to Chunk 1, this is true. Also, Chunk 2 confirms it.";
+        let result = replace_chunk_references(content, &docs);
+
+        assert_eq!(
+            result,
+            "According to Document A, this is true. Also, Document B confirms it."
+        );
+    }
+
+    #[test]
+    fn test_replace_chunk_references_no_title() {
+        let docs = vec![RetrievedDocument {
+            document_id: Some("doc1".to_string()),
+            text: "Content".to_string(),
+            similarity_score: 0.95,
+            item_title: None,
+        }];
+
+        let content = "According to Chunk 1, this is true.";
+        let result = replace_chunk_references(content, &docs);
+
+        assert_eq!(result, "According to Unknown Source, this is true.");
     }
 
     #[test]

@@ -8,9 +8,12 @@ use std::time::Duration;
 use tracing::{error, info};
 use uuid::Uuid;
 
+use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::models::{DatasetTransformJob, EmbedderConfig, VectorDatabaseConfig};
 use semantic_explorer_core::storage::{DocumentUpload, ensure_bucket_exists, upload_document};
 
+use crate::auth::AuthenticatedUser;
+use crate::embedded_datasets::EmbeddedDataset;
 use crate::storage::postgres::dataset_transforms::{
     get_active_dataset_transforms, get_dataset_transform,
 };
@@ -18,19 +21,26 @@ use crate::storage::postgres::datasets;
 use crate::storage::postgres::embedded_datasets;
 use crate::storage::postgres::embedders;
 use crate::storage::rustfs;
+use crate::transforms::dataset::models::DatasetTransform;
 
 /// Initialize the background scanner for dataset transforms
 pub(crate) fn initialize_scanner(
     postgres_pool: Pool<Postgres>,
     nats_client: NatsClient,
     s3_client: S3Client,
+    encryption: EncryptionService,
 ) -> JoinHandle<()> {
     spawn(async move {
         let mut interval = interval(Duration::from_secs(10)); // Check for new dataset transform jobs every 10 seconds
         loop {
             interval.tick().await;
-            if let Err(e) =
-                scan_active_dataset_transforms(&postgres_pool, &nats_client, &s3_client).await
+            if let Err(e) = scan_active_dataset_transforms(
+                &postgres_pool,
+                &nats_client,
+                &s3_client,
+                &encryption,
+            )
+            .await
             {
                 error!("Error scanning dataset transforms: {}", e);
             }
@@ -43,12 +53,14 @@ async fn scan_active_dataset_transforms(
     pool: &Pool<Postgres>,
     nats: &NatsClient,
     s3: &S3Client,
+    encryption: &EncryptionService,
 ) -> Result<()> {
     let transforms = get_active_dataset_transforms(pool).await?;
     info!("Scanning {} active dataset transforms", transforms.len());
 
     for transform in transforms {
-        if let Err(e) = process_dataset_transform_scan(pool, nats, s3, &transform).await {
+        if let Err(e) = process_dataset_transform_scan(pool, nats, s3, &transform, encryption).await
+        {
             error!(
                 "Failed to process dataset transform scan for {}: {}",
                 transform.dataset_transform_id, e
@@ -60,14 +72,15 @@ async fn scan_active_dataset_transforms(
 
 #[tracing::instrument(
     name = "process_dataset_transform_scan",
-    skip(pool, nats, s3, transform),
+    skip(pool, nats, s3, transform, encryption),
     fields(dataset_transform_id = %transform.dataset_transform_id, embedder_count = %transform.embedder_ids.len())
 )]
 async fn process_dataset_transform_scan(
     pool: &Pool<Postgres>,
     nats: &NatsClient,
     s3: &S3Client,
-    transform: &crate::transforms::dataset::DatasetTransform,
+    transform: &DatasetTransform,
+    encryption: &EncryptionService,
 ) -> Result<()> {
     info!(
         "Starting dataset transform scan for {} with {} embedders",
@@ -115,9 +128,10 @@ async fn process_dataset_transform_scan(
     let mut total_jobs = 0;
 
     for embedded_dataset in embedded_datasets_list {
-        // Get embedder configuration
+        // Get embedder configuration (convert owner to AuthenticatedUser for storage layer)
+        let user = AuthenticatedUser(transform.owner.clone());
         let embedder =
-            embedders::get_embedder(pool, &transform.owner, embedded_dataset.embedder_id).await?;
+            embedders::get_embedder(pool, &user, embedded_dataset.embedder_id, encryption).await?;
 
         let embedder_config = EmbedderConfig {
             provider: embedder.provider.clone(),
@@ -274,8 +288,8 @@ async fn create_batches_from_dataset_items(
     pool: &Pool<Postgres>,
     s3: &S3Client,
     nats: &NatsClient,
-    transform: &crate::transforms::dataset::DatasetTransform,
-    embedded_dataset: &crate::embedded_datasets::EmbeddedDataset,
+    transform: &DatasetTransform,
+    embedded_dataset: &EmbeddedDataset,
     embedder_config: &EmbedderConfig,
     vector_db_config: &VectorDatabaseConfig,
     bucket: &str,
@@ -306,10 +320,15 @@ async fn create_batches_from_dataset_items(
         return Ok(0);
     }
 
+    // Capture the max updated_at timestamp from items we're about to process
+    // This prevents race conditions where items created between query and watermark update are missed
+    let max_item_timestamp = items.iter().filter_map(|item| item.updated_at).max();
+
     info!(
-        "Embedded dataset {} found {} items with new/modified chunks",
+        "Embedded dataset {} found {} items with new/modified chunks, max_timestamp: {:?}",
         embedded_dataset.embedded_dataset_id,
-        items.len()
+        items.len(),
+        max_item_timestamp
     );
 
     // Convert dataset items to batch items (one per chunk)
@@ -421,11 +440,15 @@ async fn create_batches_from_dataset_items(
         jobs_created, embedded_dataset.embedded_dataset_id
     );
 
-    // Update the last_processed_at timestamp now that we've processed these items
-    if jobs_created > 0 {
-        embedded_datasets::update_embedded_dataset_last_processed_at(
+    // Update the last_processed_at timestamp to the max item timestamp we processed
+    // This prevents race conditions where items created between query and update are missed
+    if jobs_created > 0
+        && let Some(max_ts) = max_item_timestamp
+    {
+        embedded_datasets::update_embedded_dataset_last_processed_at_to(
             pool,
             embedded_dataset.embedded_dataset_id,
+            max_ts,
         )
         .await?;
     }
@@ -436,7 +459,7 @@ async fn create_batches_from_dataset_items(
 /// Trigger a dataset transform scan immediately
 #[tracing::instrument(
     name = "trigger_dataset_transform_scan",
-    skip(pool, nats, s3),
+    skip(pool, nats, s3, encryption),
     fields(dataset_transform_id = %dataset_transform_id)
 )]
 pub async fn trigger_dataset_transform_scan(
@@ -445,6 +468,7 @@ pub async fn trigger_dataset_transform_scan(
     s3: &S3Client,
     dataset_transform_id: i32,
     owner: &str,
+    encryption: &EncryptionService,
 ) -> Result<()> {
     info!(
         "Triggering dataset transform scan for {}",
@@ -455,7 +479,7 @@ pub async fn trigger_dataset_transform_scan(
     let transform = get_dataset_transform(pool, owner, dataset_transform_id).await?;
 
     // Process the scan immediately
-    process_dataset_transform_scan(pool, nats, s3, &transform).await?;
+    process_dataset_transform_scan(pool, nats, s3, &transform, encryption).await?;
 
     info!(
         "Triggered dataset transform scan for {}",

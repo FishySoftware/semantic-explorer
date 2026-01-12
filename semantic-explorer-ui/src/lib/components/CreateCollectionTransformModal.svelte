@@ -8,7 +8,7 @@
 		open?: boolean;
 		collectionId?: number | null;
 		collectionTitle?: string | null;
-		onSuccess?: () => void;
+		onSuccess?: (_transformId: number, _transformTitle: string) => void;
 	}
 
 	interface Collection {
@@ -50,14 +50,18 @@
 	let datasetTransformWipeCollection = $state(false);
 
 	$effect(() => {
-		if (open && collectionId !== null) {
-			selectedCollectionId = collectionId;
-			// Use provided collectionTitle if available, otherwise look it up
-			const title =
-				collectionTitle || collections.find((c) => c.collection_id === collectionId)?.title;
-			if (title) {
-				newDatasetName = `${title}-dataset`;
-				transformTitle = `${title}-transform`;
+		if (open) {
+			// Refetch collections when modal opens to ensure we have latest file counts
+			fetchCollections();
+			if (collectionId !== null) {
+				selectedCollectionId = collectionId;
+				// Use provided collectionTitle if available, otherwise look it up
+				const title =
+					collectionTitle || collections.find((c) => c.collection_id === collectionId)?.title;
+				if (title) {
+					newDatasetName = `${title}-dataset`;
+					transformTitle = `${title}-transform`;
+				}
 			}
 		}
 	});
@@ -73,13 +77,13 @@
 
 	// Extraction strategy
 	let extractionStrategy = $state('plain_text');
-	let preserveFormatting = $state(false);
+	let preserveFormatting = $state(true);
 	let extractTables = $state(true);
 	let tableFormat = $state('plain_text');
-	let preserveHeadings = $state(false);
+	let preserveHeadings = $state(true);
 	let headingFormat = $state('plain_text');
-	let preserveLists = $state(false);
-	let preserveCodeBlocks = $state(false);
+	let preserveLists = $state(true);
+	let preserveCodeBlocks = $state(true);
 
 	// Update table and heading format when extraction strategy changes
 	$effect(() => {
@@ -262,6 +266,10 @@
 				throw new Error(`Failed to create transform: ${response.statusText} - ${errorText}`);
 			}
 
+			const createdTransform = await response.json();
+			const createdTransformId = createdTransform.collection_transform_id;
+			const createdTransformTitle = createdTransform.title;
+
 			// Create dataset transform if auto-create is enabled
 			if (autoCreateDatasetTransform && selectedDatasetTransformEmbedderIds.length > 0) {
 				const datasetTransformResponse = await fetch('/api/dataset-transforms', {
@@ -285,7 +293,7 @@
 
 			toastStore.success('Transform created successfully');
 			resetForm();
-			onSuccess?.();
+			onSuccess?.(createdTransformId, createdTransformTitle);
 		} catch (e) {
 			const message = formatError(e, 'Failed to create transform');
 			error = message;
@@ -347,7 +355,7 @@
 			</div>
 		{/if}
 
-		<div class="space-y-4 max-h-[70vh] overflow-y-auto">
+		<div class="p-4 space-y-4 max-h-[70vh] overflow-y-auto">
 			<!-- Title -->
 			<div>
 				<label

@@ -49,9 +49,9 @@
         {
             "label": "Run Worker Visualizations",
             "type": "shell",
-            "command": "set -a && source .env && set +a && source .scripts/activate_build_env.sh && cargo run",
+            "command": "set -a && source .env && set +a && source venv/bin/activate && python src/main.py",
             "options": {
-                "cwd": "${workspaceFolder}/crates/worker-visualizations"
+                "cwd": "${workspaceFolder}/crates/worker-visualizations-py"
             },
             "presentation": {
                 "reveal": "always",

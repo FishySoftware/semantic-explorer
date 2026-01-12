@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Table, TableBody, TableBodyCell, TableHead, TableHeadCell } from 'flowbite-svelte';
 	import { onMount } from 'svelte';
+	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import ActionMenu from '../components/ActionMenu.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import CreateDatasetTransformModal from '../components/CreateDatasetTransformModal.svelte';
@@ -62,7 +63,12 @@
 		try {
 			loading = true;
 			error = null;
-			const response = await fetch('/api/datasets');
+			const params = new SvelteURLSearchParams();
+			if (searchQuery.trim()) {
+				params.append('search', searchQuery.trim());
+			}
+			const url = params.toString() ? `/api/datasets?${params.toString()}` : '/api/datasets';
+			const response = await fetch(url);
 			if (!response.ok) {
 				throw new Error(`Failed to fetch datasets: ${response.statusText}`);
 			}
@@ -179,22 +185,15 @@
 		}
 	}
 
-	onMount(() => {
+	// Refetch when search query changes
+	$effect(() => {
+		searchQuery;
 		fetchDatasets();
 	});
 
-	let filteredDatasets = $derived(
-		datasets.filter((d) => {
-			if (!searchQuery.trim()) return true;
-			const query = searchQuery.toLowerCase();
-			return (
-				d.title.toLowerCase().includes(query) ||
-				d.details?.toLowerCase().includes(query) ||
-				d.tags.some((tag) => tag.toLowerCase().includes(query)) ||
-				d.owner.toLowerCase().includes(query)
-			);
-		})
-	);
+	onMount(() => {
+		fetchDatasets();
+	});
 </script>
 
 <div class="max-w-7xl mx-auto">
@@ -307,7 +306,7 @@
 		</div>
 	{/if}
 
-	{#if !showCreateForm && datasets.length > 0}
+	{#if !showCreateForm}
 		<div class="mb-4">
 			<div class="relative">
 				<input
@@ -359,16 +358,6 @@
 				Create your first dataset
 			</button>
 		</div>
-	{:else if filteredDatasets.length === 0}
-		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-8 text-center">
-			<p class="text-gray-500 dark:text-gray-400 mb-4">No datasets match your search</p>
-			<button
-				onclick={() => (searchQuery = '')}
-				class="text-blue-600 dark:text-blue-400 hover:underline"
-			>
-				Clear search
-			</button>
-		</div>
 	{:else}
 		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
 			<Table hoverable striped>
@@ -381,7 +370,7 @@
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Actions</TableHeadCell>
 				</TableHead>
 				<TableBody>
-					{#each filteredDatasets as dataset (dataset.dataset_id)}
+					{#each datasets as dataset (dataset.dataset_id)}
 						<tr class="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50">
 							<TableBodyCell class="px-4 py-2">
 								<div>
@@ -492,7 +481,7 @@
 	onSuccess={() => {
 		transformModalOpen = false;
 		selectedDatasetForTransform = null;
-		toastStore.success('Transform created successfully');
-		fetchDatasets();
+		// Redirect to embedded datasets page to monitor transform progress
+		window.location.hash = '#/embedded-datasets';
 	}}
 />

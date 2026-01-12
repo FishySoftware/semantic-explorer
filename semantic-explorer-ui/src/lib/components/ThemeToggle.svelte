@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Button, Dropdown, DropdownItem } from 'flowbite-svelte';
-	import { SunSolid, MoonSolid, DesktopPcSolid } from 'flowbite-svelte-icons';
+	import { DesktopPcSolid, MoonSolid, SunSolid } from 'flowbite-svelte-icons';
 	import { getTheme, setTheme, type Theme } from '../utils/theme';
 
 	let currentTheme = $state<Theme>(getTheme());
@@ -24,7 +24,7 @@
 
 <div class="flex items-center">
 	<Button
-		class="inline-flex items-center rounded-lg text-sm p-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700"
+		class="inline-flex items-center rounded-lg text-sm p-2cursor-pointer"
 		size="sm"
 		id="theme-menu-button"
 	>
@@ -37,11 +37,14 @@
 		{/if}
 	</Button>
 
-	<Dropdown triggeredBy="#theme-menu-button" class="w-36">
+	<Dropdown
+		triggeredBy="#theme-menu-button"
+		class="w-36 bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 list-none"
+	>
 		{#each ['light', 'dark', 'system'] as theme (theme)}
 			<DropdownItem
 				onclick={() => selectTheme(theme as Theme)}
-				class="flex items-center justify-between"
+				class="flex items-center justify-between text-gray-900 dark:text-white hover:bg-gray-50 dark:hover:bg-gray-700 list-none"
 			>
 				<span class="flex items-center gap-2">
 					{#if theme === 'light'}

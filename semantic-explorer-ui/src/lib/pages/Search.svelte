@@ -210,7 +210,31 @@
 		}
 	}
 
-	onMount(() => {
+	onMount(async () => {
+		const hashParts = window.location.hash.split('?');
+		if (hashParts.length > 1) {
+			const params = new URLSearchParams(hashParts[1]);
+			const embeddedDatasetIdsParam = params.get('embedded_dataset_ids');
+
+			if (embeddedDatasetIdsParam) {
+				const datasetIds = embeddedDatasetIdsParam
+					.split(',')
+					.map((id) => parseInt(id.trim(), 10))
+					.filter((id) => !isNaN(id));
+
+				await fetchData();
+
+				datasetIds.forEach((id) => {
+					if (allEmbeddedDatasets.some((ed) => ed.embedded_dataset_id === id)) {
+						selectedEmbeddedDatasetIds.add(id);
+					}
+				});
+
+				window.history.replaceState(null, '', '#/search');
+				return;
+			}
+		}
+
 		fetchData();
 	});
 </script>
@@ -508,12 +532,14 @@
 												<div
 													class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:border-blue-400 dark:hover:border-blue-600 transition-colors"
 												>
-													<div class="flex items-start justify-between mb-3">
-														<div class="flex-1">
+													<div class="flex items-start justify-between gap-4 mb-3">
+														<div class="flex-1 min-w-0">
 															<div class="text-xs font-medium text-gray-500 dark:text-gray-400">
 																Document #{idx + 1}
 															</div>
-															<div class="text-sm font-semibold text-gray-900 dark:text-white mt-1">
+															<div
+																class="text-sm font-semibold text-gray-900 dark:text-white mt-1 wrap-break-word break-all"
+															>
 																📄 {document.item_title}
 															</div>
 															<div
@@ -543,7 +569,7 @@
 															Best matching chunk:
 														</div>
 														<p
-															class="text-sm text-gray-900 dark:text-gray-100 leading-relaxed whitespace-pre-wrap line-clamp-4"
+															class="text-sm text-gray-900 dark:text-gray-100 leading-relaxed whitespace-pre-wrap"
 														>
 															{document.best_chunk.text}
 														</p>
@@ -604,14 +630,14 @@
 												<div
 													class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:border-blue-400 dark:hover:border-blue-600 transition-colors"
 												>
-													<div class="flex items-start justify-between mb-3">
-														<div class="flex-1">
+													<div class="flex items-start justify-between gap-4 mb-3">
+														<div class="flex-1 min-w-0">
 															<div class="text-xs font-medium text-gray-500 dark:text-gray-400">
 																Chunk #{match.metadata.chunk_index || idx + 1}
 															</div>
 															{#if match.metadata.item_title}
 																<div
-																	class="text-sm font-semibold text-gray-900 dark:text-white mt-1"
+																	class="text-sm font-semibold text-gray-900 dark:text-white mt-1 wrap-break-word break-all"
 																>
 																	{match.metadata.item_title}
 																</div>

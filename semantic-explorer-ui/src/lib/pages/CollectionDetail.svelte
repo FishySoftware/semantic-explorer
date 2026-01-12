@@ -1,12 +1,21 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import ApiExamples from '../ApiExamples.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import CreateCollectionTransformModal from '../components/CreateCollectionTransformModal.svelte';
 	import TabPanel from '../components/TabPanel.svelte';
 	import TransformsList from '../components/TransformsList.svelte';
+	import UploadProgressPanel from '../components/UploadProgressPanel.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
+	import { createSSEConnection, type SSEConnection } from '../utils/sse';
+
+	interface FileStatus {
+		name: string;
+		status: 'pending' | 'uploading' | 'completed' | 'failed';
+		progress: number;
+		error?: string;
+	}
 
 	interface CollectionFile {
 		key: string;
@@ -83,7 +92,27 @@
 	let currentPageIndex = $state(0);
 	let totalCount = $state<number | null>(null);
 
-	let searchQuery = $state('');
+	function getInitialSearchQuery(): string {
+		if (typeof window === 'undefined') return '';
+		const hashParts = window.location.hash.split('?');
+		if (hashParts.length > 1) {
+			const params = new SvelteURLSearchParams(hashParts[1]);
+			const searchParam = params.get('search');
+			if (searchParam) {
+				// Remove the search param from the URL
+				params.delete('search');
+				const newQueryString = params.toString();
+				const hashBase = hashParts[0];
+				const newHash = newQueryString ? `${hashBase}?${newQueryString}` : hashBase;
+				window.history.replaceState(null, '', newHash);
+				return decodeURIComponent(searchParam);
+			}
+		}
+		return '';
+	}
+
+	let searchQuery = $state(getInitialSearchQuery());
+	let searchTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	let uploading = $state(false);
 	let uploadProgress = $state<{
@@ -92,11 +121,48 @@
 		currentBatch: number;
 		totalBatches: number;
 	} | null>(null);
+	let fileStatuses = $state<FileStatus[]>([]);
 	let fileInputRef = $state<HTMLInputElement | undefined>();
 	let updatingPublic = $state(false);
+	let uploadPollInterval: ReturnType<typeof setInterval> | null = null;
+
+	// SSE connection for real-time transform status updates
+	let sseConnection: SSEConnection | null = null;
 
 	onMount(async () => {
 		await Promise.all([fetchCollection(), fetchFiles(), fetchCollectionTransforms()]);
+		connectSSE();
+	});
+
+	onDestroy(() => {
+		sseConnection?.disconnect();
+		if (searchTimeout) {
+			clearTimeout(searchTimeout);
+		}
+	});
+
+	function connectSSE() {
+		sseConnection = createSSEConnection({
+			url: `/api/collection-transforms/stream?collection_id=${collectionId}`,
+			onStatus: (data: unknown) => {
+				const status = data as { collection_transform_id?: number };
+				if (status.collection_transform_id) {
+					// Refresh stats for this transform
+					fetchCollectionTransformStats(status.collection_transform_id);
+				}
+			},
+			onMaxRetriesReached: () => {
+				console.warn('SSE connection lost for collection transforms');
+			},
+		});
+	}
+
+	$effect(() => {
+		return () => {
+			if (uploadPollInterval) {
+				clearInterval(uploadPollInterval);
+			}
+		};
 	});
 
 	async function fetchCollectionTransforms() {
@@ -104,7 +170,8 @@
 			transformsLoading = true;
 			const response = await fetch('/api/collection-transforms');
 			if (response.ok) {
-				const allTransforms: CollectionTransform[] = await response.json();
+				const data = await response.json();
+				const allTransforms: CollectionTransform[] = Array.isArray(data) ? data : data.items || [];
 				collectionTransforms = allTransforms
 					.filter((t) => t.collection_id === collectionId)
 					.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
@@ -285,14 +352,24 @@
 	}
 
 	let filteredFiles = $derived(
-		paginatedFiles?.files.filter((file) => {
+		(paginatedFiles?.files || []).filter((file) => {
 			if (!searchQuery.trim()) return true;
 			const query = searchQuery.toLowerCase();
 			return (
 				file.key.toLowerCase().includes(query) || file.content_type?.toLowerCase().includes(query)
 			);
-		}) || []
+		})
 	);
+
+	// When there's a search filter, only show Next button if there are more filtered results than current page can show
+	let canGoToNextPage = $derived.by(() => {
+		if (searchQuery.trim()) {
+			// If filtering, only allow next if we have more filtered items than current page size
+			return filteredFiles.length > (currentPage + 1) * pageSize;
+		}
+		// Otherwise use server-side pagination indicator
+		return paginatedFiles?.has_more ?? false;
+	});
 
 	function changePageSize(newSize: number) {
 		pageSize = newSize;
@@ -341,66 +418,141 @@
 		}
 
 		uploading = true;
-		const allCompleted: string[] = [];
-		const allFailed: string[] = [];
+		uploadProgress = {
+			completed: 0,
+			total: files.length,
+			currentBatch: 1,
+			totalBatches: Math.ceil(files.length / 1), // Upload one file at a time to prevent UI blocking
+		};
+
+		// Initialize file statuses
+		fileStatuses = Array.from(files).map((file) => ({
+			name: file.name,
+			status: 'pending',
+			progress: 0,
+		}));
+
+		// Start polling for file list updates while uploading
+		startUploadPolling();
+
 		const fileArray = Array.from(files);
-		const totalFiles = fileArray.length;
-		const batchSize = 20;
-		const totalBatches = Math.ceil(totalFiles / batchSize);
+		const completedFiles: string[] = [];
+		const failedFiles: string[] = [];
 
 		try {
-			for (let i = 0; i < totalFiles; i += batchSize) {
-				const batch = fileArray.slice(i, i + batchSize);
-				const currentBatch = Math.floor(i / batchSize) + 1;
+			// Upload files one at a time to prevent blocking and allow real-time feedback
+			for (let i = 0; i < fileArray.length; i++) {
+				const file = fileArray[i];
+				const fileIndex = fileStatuses.findIndex((f) => f.name === file.name);
 
-				uploadProgress = {
-					completed: allCompleted.length + allFailed.length,
-					total: totalFiles,
-					currentBatch,
-					totalBatches,
-				};
-
-				const formData = new FormData();
-				batch.forEach((file) => {
-					formData.append('files', file);
-				});
-
-				const response = await fetch(`/api/collections/${collectionId}/files`, {
-					method: 'POST',
-					body: formData,
-				});
-
-				if (!response.ok) {
-					batch.forEach((file) => allFailed.push(file.name));
-					continue;
+				if (fileIndex >= 0) {
+					fileStatuses[fileIndex].status = 'uploading';
+					fileStatuses[fileIndex].progress = 0;
+					fileStatuses = fileStatuses; // Trigger reactivity
 				}
 
-				const result = await response.json();
-				allCompleted.push(...result.completed);
-				allFailed.push(...result.failed);
+				const formData = new FormData();
+				formData.append('files', file);
+
+				try {
+					const response = await fetch(`/api/collections/${collectionId}/files`, {
+						method: 'POST',
+						body: formData,
+					});
+
+					if (!response.ok) {
+						throw new Error(`HTTP ${response.status}`);
+					}
+
+					const result = await response.json();
+
+					if (result.completed && result.completed.length > 0) {
+						completedFiles.push(...result.completed);
+						if (fileIndex >= 0) {
+							fileStatuses[fileIndex].status = 'completed';
+							fileStatuses[fileIndex].progress = 100;
+						}
+					} else if (result.failed && result.failed.length > 0) {
+						failedFiles.push(...result.failed);
+						if (fileIndex >= 0) {
+							fileStatuses[fileIndex].status = 'failed';
+							fileStatuses[fileIndex].error = 'Upload failed';
+						}
+					}
+				} catch (e) {
+					failedFiles.push(file.name);
+					if (fileIndex >= 0) {
+						fileStatuses[fileIndex].status = 'failed';
+						fileStatuses[fileIndex].error = formatError(e, 'Upload error');
+					}
+				}
+
+				// Update progress
+				uploadProgress = {
+					completed: completedFiles.length + failedFiles.length,
+					total: fileArray.length,
+					currentBatch: Math.min(1, Math.ceil((i + 1) / 1)),
+					totalBatches: 1,
+				};
+
+				fileStatuses = fileStatuses; // Trigger reactivity
+
+				// Small delay between file uploads to allow UI updates
+				await new Promise((resolve) => setTimeout(resolve, 100));
 			}
 
-			if (allCompleted.length > 0) {
+			// Stop polling and fetch final file list
+			stopUploadPolling();
+			await fetchFiles();
+
+			// Show success/failure summary
+			if (completedFiles.length > 0) {
 				currentPage = 0;
 				currentPageIndex = 0;
 				paginationHistory = [null];
 				totalCount = null;
-				await fetchFiles();
+
 				toastStore.success(
-					`Successfully uploaded ${allCompleted.length} file${allCompleted.length === 1 ? '' : 's'}`
+					`Successfully uploaded ${completedFiles.length} file${completedFiles.length === 1 ? '' : 's'}`
 				);
 			}
 
-			if (allFailed.length > 0) {
+			if (failedFiles.length > 0) {
 				toastStore.warning(
-					`Failed to upload ${allFailed.length} file${allFailed.length === 1 ? '' : 's'}`
+					`Failed to upload ${failedFiles.length} file${failedFiles.length === 1 ? '' : 's'}`
 				);
 			}
 		} catch (e) {
 			toastStore.error(formatError(e, 'Failed to upload files'));
 		} finally {
 			uploading = false;
-			uploadProgress = null;
+			stopUploadPolling();
+			// Keep the status panel visible for a moment after completion
+			setTimeout(() => {
+				uploadProgress = null;
+				fileStatuses = [];
+			}, 2000);
+		}
+	}
+
+	function startUploadPolling() {
+		// Poll every 1 second to refresh the file list while uploading
+		if (uploadPollInterval) {
+			clearInterval(uploadPollInterval);
+		}
+
+		uploadPollInterval = setInterval(() => {
+			// Fetch files in background without blocking
+			fetchFiles().catch(() => {
+				// Silently ignore polling errors
+			});
+		}, 1000);
+	}
+
+	function stopUploadPolling() {
+		if (uploadPollInterval) {
+			clearInterval(uploadPollInterval);
+			uploadPollInterval = null;
 		}
 	}
 
@@ -566,25 +718,8 @@
 								</div>
 							</div>
 
-							{#if uploading && uploadProgress}
-								<div
-									class="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg"
-								>
-									<div class="flex items-center justify-between mb-2">
-										<span class="text-sm font-medium text-blue-700 dark:text-blue-400">
-											Uploading batch {uploadProgress.currentBatch} of {uploadProgress.totalBatches}
-										</span>
-										<span class="text-sm text-blue-600 dark:text-blue-400">
-											{uploadProgress.completed} / {uploadProgress.total} files processed
-										</span>
-									</div>
-									<div class="w-full bg-blue-200 dark:bg-blue-900 rounded-full h-2.5">
-										<div
-											class="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
-											style="width: {(uploadProgress.completed / uploadProgress.total) * 100}%"
-										></div>
-									</div>
-								</div>
+							{#if uploadProgress}
+								<UploadProgressPanel {uploadProgress} {fileStatuses} isUploading={uploading} />
 							{/if}
 						</div>
 
@@ -793,7 +928,7 @@
 											</span>
 											<button
 												onclick={goToNextPage}
-												disabled={!paginatedFiles.has_more}
+												disabled={!canGoToNextPage}
 												class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm text-gray-700 dark:text-gray-300"
 											>
 												Next
@@ -954,7 +1089,7 @@
 	collectionTitle={collection?.title}
 	onSuccess={() => {
 		transformModalOpen = false;
-		toastStore.success('Transform created successfully');
-		fetchCollectionTransforms();
+		// Redirect to datasets page to monitor transform progress
+		window.location.hash = '#/datasets';
 	}}
 />

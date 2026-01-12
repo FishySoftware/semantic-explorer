@@ -4,27 +4,30 @@ pub(crate) mod datasets;
 pub(crate) mod embedders;
 pub(crate) mod llms;
 
+pub(crate) mod auth;
 pub(crate) mod collection_transforms;
+pub(crate) mod dataset_transform_batches;
 pub(crate) mod dataset_transforms;
 pub(crate) mod embedded_datasets;
+pub(crate) mod rls;
 pub(crate) mod visualization_transforms;
-
-use std::time::Duration;
 
 use actix_web::rt::{spawn, time::interval};
 use anyhow::Result;
+use semantic_explorer_core::config::DatabaseConfig;
 use semantic_explorer_core::observability::update_database_pool_stats;
 use sqlx::{Pool, Postgres, postgres::PgPoolOptions};
+use std::time::Duration;
 
-pub(crate) async fn initialize_pool() -> Result<Pool<Postgres>> {
-    let url = std::env::var("DATABASE_URL")?;
+pub(crate) async fn initialize_pool(config: &DatabaseConfig) -> Result<Pool<Postgres>> {
     let pool = PgPoolOptions::new()
-        .max_connections(50)
-        .min_connections(15)
-        .acquire_timeout(Duration::from_secs(5))
-        .idle_timeout(Duration::from_secs(300))
-        .max_lifetime(Duration::from_secs(1800))
-        .connect(&url)
+        .max_connections(config.max_connections)
+        .min_connections(config.min_connections)
+        .acquire_timeout(config.acquire_timeout)
+        .idle_timeout(config.idle_timeout)
+        .max_lifetime(config.max_lifetime)
+        .test_before_acquire(true) // Verify connection health
+        .connect(&config.url)
         .await?;
     sqlx::migrate!("src/storage/postgres/migrations")
         .run(&pool)

@@ -104,6 +104,9 @@ spec:
         - name: dashboard-worker-metrics
           mountPath: /var/lib/grafana/dashboards/worker-metrics.json
           subPath: worker-metrics.json
+        - name: dashboard-health-check
+          mountPath: /var/lib/grafana/dashboards/health-check-dashboard.json
+          subPath: health-check-dashboard.json
         {{- end }}
       volumes:
       - name: data
@@ -134,5 +137,8 @@ spec:
       - name: dashboard-worker-metrics
         configMap:
           name: {{ include "semantic-explorer.fullname" . }}-grafana-dashboard-worker-metrics
+      - name: dashboard-health-check
+        configMap:
+          name: {{ include "semantic-explorer.fullname" . }}-grafana-dashboard-health-check
       {{- end }}
 {{- end }}

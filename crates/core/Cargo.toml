@@ -13,11 +13,6 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 opentelemetry = { workspace = true }
 async-nats = { workspace = true }
-reqwest = { workspace = true }
-rust-stemmers = { workspace = true }
-stop-words = { workspace = true }
-unicode-segmentation = { workspace = true }
-async-trait = { workspace = true }
 tokio = { workspace = true }
 futures-util = { workspace = true }
 opentelemetry_sdk = { workspace = true }
@@ -25,3 +20,10 @@ opentelemetry-otlp = { workspace = true }
 opentelemetry-appender-tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-opentelemetry = { workspace = true }
+reqwest = { workspace = true }
+once_cell = { workspace = true }
+utoipa = { workspace = true }
+aes-gcm = { workspace = true }
+rand = { workspace = true }
+base64 = { workspace = true }
+hex = { workspace = true }

@@ -26,11 +26,16 @@ async fn main() -> Result<()> {
     };
 
     // Configure and run worker
+    let max_concurrent_jobs = std::env::var("MAX_CONCURRENT_JOBS")
+        .unwrap_or_else(|_| "10".to_string())
+        .parse::<usize>()
+        .unwrap_or(10);
+
     let config = worker::WorkerConfig {
         service_name,
         stream_name: "DATASET_TRANSFORMS".to_string(),
         consumer_config: semantic_explorer_core::nats::create_vector_embed_consumer_config(),
-        max_concurrent_jobs: 100,
+        max_concurrent_jobs,
     };
 
     worker::run_worker(config, context, job::process_vector_job).await

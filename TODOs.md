@@ -1,2 +1,0 @@
-- Enhance Chat page with streaming responses and better UX
-- Set up fresh visualization worker with toponymy 

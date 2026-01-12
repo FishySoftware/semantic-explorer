@@ -40,8 +40,8 @@
 				window.location.hash = `#/collections/${newResource.collection_id}/details`;
 			} else if (resourceType === 'datasets' && newResource.dataset_id) {
 				window.location.hash = `#/datasets/${newResource.dataset_id}/details`;
-			} else if (resourceType === 'embedders' && newResource.name) {
-				window.location.hash = `#/embedders?name=${encodeURIComponent(newResource.name)}`;
+			} else if (resourceType === 'embedders' && newResource.embedder_id) {
+				window.location.hash = `#/embedders/${newResource.embedder_id}/details`;
 			} else if (resourceType === 'llms' && newResource.name) {
 				window.location.hash = `#/llms?name=${encodeURIComponent(newResource.name)}`;
 			}

@@ -44,6 +44,14 @@
 				};
 			}
 
+			// Check if currently processing
+			if (stats.is_processing || stats.processing_batches > 0) {
+				return {
+					label: 'Processing',
+					color: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 animate-pulse',
+				};
+			}
+
 			// If there are failed batches or failed chunks, show partial success or error
 			if (stats.failed_batches > 0 || stats.total_chunks_failed > 0) {
 				if (stats.successful_batches === 0) {
@@ -72,6 +80,14 @@
 				return {
 					label: 'Never run',
 					color: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200',
+				};
+			}
+
+			// Check if currently processing (has processing files)
+			if (stats.processing_files > 0) {
+				return {
+					label: 'Processing',
+					color: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 animate-pulse',
 				};
 			}
 
@@ -129,13 +145,18 @@
 			const stats = transform.last_run_stats;
 			if (!stats) return 'No runs yet';
 
-			const totalChunks = (stats.total_chunks_embedded ?? 0) + (stats.total_chunks_failed ?? 0);
-			const successRate =
-				totalChunks > 0
-					? (((stats.total_chunks_embedded ?? 0) / totalChunks) * 100).toFixed(1)
-					: '0';
+			const totalChunks = stats.total_chunks_to_process ?? 0;
+			const embedded = stats.total_chunks_embedded ?? 0;
 
-			return `${stats.total_chunks_embedded ?? 0}/${totalChunks} chunks (${successRate}% success) • ${stats.successful_batches ?? 0}/${stats.total_batches_processed ?? 0} batches`;
+			// If processing, show processing count
+			if (stats.is_processing || stats.processing_batches > 0) {
+				const processingBatches = stats.processing_batches ?? 0;
+				return `${embedded}/${totalChunks} chunks embedded • ${processingBatches} batches processing`;
+			}
+
+			const successRate = totalChunks > 0 ? ((embedded / totalChunks) * 100).toFixed(1) : '0';
+
+			return `${embedded}/${totalChunks} chunks (${successRate}% complete) • ${stats.successful_batches ?? 0}/${stats.total_batches_processed ?? 0} batches`;
 		} else if (type === 'collection') {
 			const stats = transform.last_run_stats;
 			if (!stats) return 'No runs yet';
@@ -231,7 +252,7 @@
 			<p class="text-sm text-gray-600 dark:text-gray-400">Loading transforms...</p>
 		</div>
 	</div>
-{:else if transforms.length === 0}
+{:else if !transforms || transforms.length === 0}
 	<div class="text-center py-8 text-gray-500 dark:text-gray-400">
 		<p>No transforms yet</p>
 	</div>

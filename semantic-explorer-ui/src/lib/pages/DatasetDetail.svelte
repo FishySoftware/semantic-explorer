@@ -1,11 +1,14 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
+	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import ApiExamples from '../ApiExamples.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import CreateDatasetTransformModal from '../components/CreateDatasetTransformModal.svelte';
+	import DatasetTransformProgressPanel from '../components/DatasetTransformProgressPanel.svelte';
 	import TabPanel from '../components/TabPanel.svelte';
 	import TransformsList from '../components/TransformsList.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
+	import { createSSEConnection, type SSEConnection } from '../utils/sse';
 
 	interface Dataset {
 		dataset_id: number;
@@ -119,15 +122,34 @@
 		{ id: 'embeddings', label: 'Embeddings', icon: '🧬' },
 	];
 
+	// Dataset Transform Progress state
+	let activeTransformProgress = $state<{
+		id: number;
+		title: string;
+		startedAt: string;
+		embedders: number[];
+	} | null>(null);
+	let transformProgressStats = $state<Record<string, any> | null>(null);
+	let transformProgressPollInterval: ReturnType<typeof setInterval> | null = null;
+
+	// SSE connection for real-time transform status updates
+	let datasetSSE: SSEConnection | null = null;
+
 	// Initialize search query from hash URL parameter early
 	function getInitialSearchQuery(): string {
 		if (typeof window === 'undefined') return '';
 		const hashParts = window.location.hash.split('?');
 		if (hashParts.length > 1) {
-			const params = new URLSearchParams(hashParts[1]);
-			const queryParam = params.get('q');
-			if (queryParam) {
-				return decodeURIComponent(queryParam);
+			const params = new SvelteURLSearchParams(hashParts[1]);
+			const searchParam = params.get('search');
+			if (searchParam) {
+				// Remove the search param from the URL
+				params.delete('search');
+				const newQueryString = params.toString();
+				const hashBase = hashParts[0];
+				const newHash = newQueryString ? `${hashBase}?${newQueryString}` : hashBase;
+				window.history.replaceState(null, '', newHash);
+				return decodeURIComponent(searchParam);
 			}
 		}
 		return '';
@@ -135,6 +157,7 @@
 
 	// Search state
 	let searchQuery = $state(getInitialSearchQuery());
+	let searchFetchTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	// Delete state
 	let deletingItem = $state<number | null>(null);
@@ -238,6 +261,23 @@
 				const stats = await response.json();
 				datasetTransformStatsMap.set(transformId, stats);
 				datasetTransformStatsMap = datasetTransformStatsMap; // Trigger reactivity
+
+				// Check if this transform is currently processing and we're not already tracking it
+				if (stats.is_processing && !activeTransformProgress) {
+					// Find the transform to get its title
+					const transform = datasetTransforms.find((t) => t.dataset_transform_id === transformId);
+					if (transform) {
+						console.info(`Detected active transform ${transformId}, resuming progress tracking`);
+						activeTransformProgress = {
+							id: transformId,
+							title: transform.title,
+							startedAt: stats.first_processing_at || new Date().toISOString(),
+							embedders: transform.embedder_ids,
+						};
+						transformProgressStats = stats;
+						startTransformProgressPolling();
+					}
+				}
 			}
 		} catch (e) {
 			console.error(e);
@@ -251,7 +291,10 @@
 			// Fetch collection transforms (Collection → this Dataset)
 			const collectionResponse = await fetch('/api/collection-transforms');
 			if (collectionResponse.ok) {
-				const allCollectionTransforms: CollectionTransform[] = await collectionResponse.json();
+				const collectionData = await collectionResponse.json();
+				const allCollectionTransforms: CollectionTransform[] = Array.isArray(collectionData)
+					? collectionData
+					: collectionData.items || [];
 				collectionTransforms = allCollectionTransforms
 					.filter((t) => t.dataset_id === datasetId)
 					.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
@@ -265,7 +308,10 @@
 			// Fetch dataset transforms (this Dataset → Embedded Datasets)
 			const datasetResponse = await fetch('/api/dataset-transforms');
 			if (datasetResponse.ok) {
-				const allDatasetTransforms: DatasetTransform[] = await datasetResponse.json();
+				const datasetData = await datasetResponse.json();
+				const allDatasetTransforms: DatasetTransform[] = Array.isArray(datasetData)
+					? datasetData
+					: datasetData.items || [];
 				datasetTransforms = allDatasetTransforms
 					.filter((t) => t.source_dataset_id === datasetId)
 					.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
@@ -279,7 +325,10 @@
 			// Fetch embedded datasets (created from this Dataset)
 			const embeddedResponse = await fetch('/api/embedded-datasets');
 			if (embeddedResponse.ok) {
-				const allEmbeddedDatasets: EmbeddedDataset[] = await embeddedResponse.json();
+				const embeddedData = await embeddedResponse.json();
+				const allEmbeddedDatasets: EmbeddedDataset[] = Array.isArray(embeddedData)
+					? embeddedData
+					: embeddedData.items || [];
 				embeddedDatasets = allEmbeddedDatasets
 					.filter((ed) => ed.source_dataset_id === datasetId)
 					.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
@@ -300,13 +349,109 @@
 		}
 	}
 
+	async function handleTransformCreated(transformId: number, transformTitle: string) {
+		// Set up progress tracking for the newly created transform
+		activeTransformProgress = {
+			id: transformId,
+			title: transformTitle,
+			startedAt: new Date().toISOString(),
+			embedders: [],
+		};
+
+		// Start polling for progress
+		startTransformProgressPolling();
+
+		// Refresh transforms list after a short delay to show the new one
+		setTimeout(() => {
+			fetchDatasetTransforms();
+		}, 1000);
+	}
+
+	async function fetchTransformProgressStats() {
+		if (!activeTransformProgress) return;
+
+		try {
+			const response = await fetch(`/api/dataset-transforms/${activeTransformProgress.id}/stats`);
+			if (!response.ok) {
+				const errorText = await response.text();
+				console.error(
+					`Failed to fetch stats: ${response.status} ${response.statusText}`,
+					errorText
+				);
+				return;
+			}
+
+			const stats = await response.json();
+			transformProgressStats = stats;
+
+			// Also update the stats map for the transforms list
+			datasetTransformStatsMap.set(activeTransformProgress.id, stats);
+			datasetTransformStatsMap = datasetTransformStatsMap;
+
+			console.debug('Transform stats:', {
+				batches: stats.total_batches_processed,
+				processing_batches: stats.processing_batches,
+				embedded: stats.total_chunks_embedded,
+				total: stats.total_chunks_to_process,
+				status: stats.status,
+				is_processing: stats.is_processing,
+			});
+
+			// Check if the transform is complete (any terminal state)
+			const terminalStatuses = ['completed', 'completed_with_errors', 'failed', 'idle'];
+			if (terminalStatuses.includes(stats.status) || !stats.is_processing) {
+				console.info(
+					`Transform ${stats.status}, is_processing=${stats.is_processing}, stopping polling`
+				);
+				stopTransformProgressPolling();
+				// Refresh the transforms list to get final state
+				fetchDatasetTransforms();
+				// Keep showing the progress panel for 3 more seconds, then auto-dismiss
+				setTimeout(() => {
+					activeTransformProgress = null;
+					transformProgressStats = null;
+				}, 3000);
+			}
+		} catch (e) {
+			console.error('Failed to fetch transform progress:', e);
+			// Stop polling on persistent errors to avoid spam
+			if (e instanceof TypeError) {
+				console.error('TypeError in fetch, stopping polling');
+				stopTransformProgressPolling();
+			}
+		}
+	}
+
+	function startTransformProgressPolling() {
+		if (transformProgressPollInterval) {
+			clearInterval(transformProgressPollInterval);
+		}
+
+		// Poll every 1 second for updates
+		transformProgressPollInterval = setInterval(() => {
+			fetchTransformProgressStats();
+		}, 1000);
+	}
+
+	function stopTransformProgressPolling() {
+		if (transformProgressPollInterval) {
+			clearInterval(transformProgressPollInterval);
+			transformProgressPollInterval = null;
+		}
+	}
+
 	async function fetchItems() {
 		try {
 			itemsLoading = true;
 			itemsError = null;
-			const response = await fetch(
-				`/api/datasets/${datasetId}/items-summary?page=${currentPage}&page_size=${pageSize}`
-			);
+			const params = new SvelteURLSearchParams({
+				page: currentPage.toString(),
+				page_size: pageSize.toString(),
+			});
+			if (searchQuery.trim()) {
+				params.append('search', searchQuery.trim());
+			}
+			const response = await fetch(`/api/datasets/${datasetId}/items-summary?${params.toString()}`);
 			if (!response.ok) {
 				throw new Error(`Failed to fetch items: ${response.statusText}`);
 			}
@@ -400,38 +545,35 @@
 		};
 	}
 
-	// Filtered items based on search (title only)
-	let filteredItems = $derived(
-		paginatedItems?.items.filter((item) => {
-			if (!searchQuery.trim()) return true;
-			const query = searchQuery.toLowerCase();
-			return item.title.toLowerCase().includes(query);
-		}) || []
-	);
-
 	// Reset to page 0 when search query changes
 	$effect(() => {
-		searchQuery;
-		currentPage = 0;
-	});
-
-	// Refetch items when current page changes
-	$effect(() => {
-		currentPage;
-		fetchItems();
-	});
-
-	// Update URL when search query changes
-	$effect(() => {
-		if (typeof window !== 'undefined') {
-			const hashBase = window.location.hash.split('?')[0];
-			if (searchQuery.trim()) {
-				const newHash = `${hashBase}?q=${encodeURIComponent(searchQuery)}`;
-				window.history.replaceState(null, '', newHash);
-			} else {
-				window.history.replaceState(null, '', hashBase);
-			}
+		// Access searchQuery to create the dependency
+		if (searchQuery !== undefined) {
+			currentPage = 0;
 		}
+	});
+
+	// Refetch items when current page or search query changes (debounced)
+	$effect(() => {
+		// Access both variables to create dependencies
+		if (currentPage !== undefined && searchQuery !== undefined) {
+			// Clear any pending fetch
+			if (searchFetchTimeout) {
+				clearTimeout(searchFetchTimeout);
+			}
+
+			// Debounce the fetch by 500ms to avoid excessive API calls during rapid typing
+			searchFetchTimeout = setTimeout(() => {
+				fetchItems();
+			}, 500);
+		}
+
+		// Cleanup function
+		return () => {
+			if (searchFetchTimeout) {
+				clearTimeout(searchFetchTimeout);
+			}
+		};
 	});
 
 	function requestDeleteItem(item: DatasetItemSummary) {
@@ -468,10 +610,44 @@
 		}
 	}
 
+	function connectSSE() {
+		// Connect to dataset transforms stream (for transforms that process this dataset)
+		// Dataset transforms use source_dataset_id in their subject for filtering
+		datasetSSE = createSSEConnection({
+			url: `/api/dataset-transforms/stream?dataset_id=${datasetId}`,
+			onStatus: (data: unknown) => {
+				const status = data as { dataset_transform_id?: number };
+				if (status.dataset_transform_id) {
+					fetchDatasetTransformStats(status.dataset_transform_id);
+				}
+			},
+			onMaxRetriesReached: () => {
+				console.warn('SSE connection lost for dataset transforms');
+			},
+		});
+	}
+
 	onMount(() => {
 		fetchDataset();
 		fetchDatasetTransforms();
-		// fetchItems will be called by the $effect watching currentPage
+		connectSSE();
+		fetchItems();
+
+		return () => {
+			// Cleanup polling on unmount
+			stopTransformProgressPolling();
+			if (searchFetchTimeout) {
+				clearTimeout(searchFetchTimeout);
+			}
+		};
+	});
+
+	onDestroy(() => {
+		datasetSSE?.disconnect();
+		// Clean up any pending search fetch
+		if (searchFetchTimeout) {
+			clearTimeout(searchFetchTimeout);
+		}
 	});
 </script>
 
@@ -555,6 +731,19 @@
 				</div>
 			</div>
 
+			{#if activeTransformProgress && transformProgressStats}
+				<DatasetTransformProgressPanel
+					datasetTransformId={activeTransformProgress.id}
+					title={activeTransformProgress.title}
+					sourceDatasetTitle={dataset?.title || 'Unknown Dataset'}
+					overallStatus={transformProgressStats.status || 'processing'}
+					totalItemsProcessed={transformProgressStats.total_chunks_embedded || 0}
+					totalItems={transformProgressStats.total_chunks_to_process || 0}
+					startedAt={activeTransformProgress.startedAt}
+					embedderProgresses={transformProgressStats.embedders || []}
+				/>
+			{/if}
+
 			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-4">
 				<TabPanel {tabs} activeTabId={activeTab} onChange={(tabId: string) => (activeTab = tabId)}>
 					{#snippet children(tabId)}
@@ -579,7 +768,7 @@
 									</div>
 								</div>
 
-								{#if paginatedItems && paginatedItems.items.length > 0}
+								{#if (paginatedItems && paginatedItems.items.length > 0) || searchQuery.trim()}
 									<div class="px-6 pt-4 pb-4">
 										<div class="relative">
 											<input
@@ -640,20 +829,22 @@
 												d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
 											></path>
 										</svg>
-										<p class="text-gray-500 dark:text-gray-400 mb-2">No items yet</p>
-										<p class="text-sm text-gray-400 dark:text-gray-500">
-											Upload data via the API below to populate this dataset
-										</p>
-									</div>
-								{:else if paginatedItems && filteredItems.length === 0}
-									<div class="p-12 text-center">
-										<p class="text-gray-500 dark:text-gray-400 mb-4">No items match your search</p>
-										<button
-											onclick={() => (searchQuery = '')}
-											class="text-blue-600 dark:text-blue-400 hover:underline"
-										>
-											Clear search
-										</button>
+										{#if searchQuery.trim()}
+											<p class="text-gray-500 dark:text-gray-400 mb-2">
+												No results match the search term
+											</p>
+											<button
+												onclick={() => (searchQuery = '')}
+												class="text-blue-600 dark:text-blue-400 hover:underline"
+											>
+												Clear search
+											</button>
+										{:else}
+											<p class="text-gray-500 dark:text-gray-400 mb-2">No items yet</p>
+											<p class="text-sm text-gray-400 dark:text-gray-500">
+												Upload data via the API below to populate this dataset
+											</p>
+										{/if}
 									</div>
 								{:else if paginatedItems}
 									<div class="overflow-x-auto">
@@ -687,7 +878,7 @@
 											<tbody
 												class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700"
 											>
-												{#each filteredItems as item (item.item_id)}
+												{#each paginatedItems.items as item (item.item_id)}
 													<tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
 														<td
 															class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400"
@@ -1054,7 +1245,7 @@
 																<button
 																	onclick={() => {
 																		if (typeof window !== 'undefined') {
-																			window.location.hash = '/embedded-datasets';
+																			window.location.hash = `/embedded-datasets/${embedded.embedded_dataset_id}/details`;
 																		}
 																	}}
 																	class="text-sm font-semibold text-blue-700 dark:text-blue-300 hover:underline text-left"
@@ -1141,9 +1332,11 @@
 <CreateDatasetTransformModal
 	bind:open={datasetTransformModalOpen}
 	{datasetId}
-	onSuccess={() => {
+	onSuccess={(transformId, transformTitle) => {
 		datasetTransformModalOpen = false;
-		toastStore.success('Transform created successfully');
-		fetchDatasetTransforms();
+		// Start tracking progress for the new transform
+		handleTransformCreated(transformId, transformTitle);
+		// Switch to transforms tab to show progress
+		activeTab = 'transforms';
 	}}
 />

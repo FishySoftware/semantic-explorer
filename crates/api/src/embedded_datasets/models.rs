@@ -49,8 +49,15 @@ pub struct EmbeddedDatasetStats {
     pub total_batches_processed: i64,
     pub successful_batches: i64,
     pub failed_batches: i64,
+    pub processing_batches: i64,
     pub total_chunks_embedded: i64,
     pub total_chunks_failed: i64,
+    pub total_chunks_processing: i64,
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub last_run_at: Option<DateTime<Utc>>,
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub first_processing_at: Option<DateTime<Utc>>,
+    pub avg_processing_duration_ms: Option<i64>,
 }
 
 /// Processed batch for this embedded dataset

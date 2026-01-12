@@ -48,6 +48,7 @@
 		role: string;
 		content: string;
 		documents_retrieved: number | null;
+		status: string; // 'complete', 'incomplete', 'error'
 		created_at: string;
 		retrieved_documents?: RetrievedDocument[];
 	}
@@ -83,13 +84,26 @@
 	let createSessionError = $state<string | null>(null);
 
 	let messageInput = $state('');
-	let sendingMessage = $state(false);
 	let messageError = $state<string | null>(null);
+
+	// Streaming state
+	let isGenerating = $state(false);
+	let queuedAction: (() => Promise<void>) | null = $state(null);
+	let streamingProgress = $state<{
+		messageId: number;
+		charCount: number;
+		elapsedSeconds: number;
+	} | null>(null);
+	let streamingStatus = $state<'connecting' | 'retrieving' | 'generating' | null>(null);
 
 	// RAG Configuration
 	let maxChunks = $state(20);
 	let minSimilarityScore = $state(0.2);
 	let showRagSettings = $state(false);
+
+	// LLM Configuration
+	let temperature = $state(0.7);
+	let maxTokens = $state(2000);
 
 	// Track expanded state of retrieved documents per message (collapsed by default)
 	let expandedDocs = $state<Record<number, boolean>>({});
@@ -147,19 +161,8 @@
 			creatingSession = true;
 			createSessionError = null;
 
-			// Generate default title if not provided
-			const title =
-				newSessionTitle.trim() ||
-				(() => {
-					const now = new Date();
-					const year = now.getFullYear();
-					const month = String(now.getMonth() + 1).padStart(2, '0');
-					const day = String(now.getDate()).padStart(2, '0');
-					const hours = String(now.getHours()).padStart(2, '0');
-					const minutes = String(now.getMinutes()).padStart(2, '0');
-					const seconds = String(now.getSeconds()).padStart(2, '0');
-					return `chat-session-${year}${month}${day}-${hours}${minutes}${seconds}`;
-				})();
+			// Use the title that's already pre-filled (or trim if edited)
+			const title = newSessionTitle.trim();
 
 			const response = await fetch('/api/chat/sessions', {
 				method: 'POST',
@@ -214,65 +217,312 @@
 		}
 	}
 
-	async function sendMessage() {
-		if (!messageInput.trim() || !currentSession) {
+	async function sendMessageStreaming() {
+		if (!messageInput.trim() || !currentSession || isGenerating) {
 			return;
 		}
 
 		try {
-			sendingMessage = true;
+			isGenerating = true;
+			streamingStatus = 'connecting';
 			messageError = null;
 
-			const response = await fetch(`/api/chat/sessions/${currentSession.session_id}/messages`, {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
+			const userMessageId = Date.now();
+			const userContent = messageInput;
+			messageInput = ''; // Clear input immediately (optimistic)
+
+			// Add user message optimistically
+			currentMessages = [
+				...currentMessages,
+				{
+					message_id: userMessageId,
+					role: 'user',
+					content: userContent,
+					documents_retrieved: null,
+					status: 'complete',
+					created_at: new Date().toISOString(),
 				},
-				body: JSON.stringify({
-					content: messageInput,
-					max_context_documents: maxChunks,
-					min_similarity_score: minSimilarityScore,
-				}),
+			];
+
+			// Add placeholder assistant message
+			const assistantPlaceholderId = Date.now() + 1;
+			currentMessages = [
+				...currentMessages,
+				{
+					message_id: assistantPlaceholderId,
+					role: 'assistant',
+					content: '',
+					documents_retrieved: 0,
+					status: 'incomplete',
+					created_at: new Date().toISOString(),
+					retrieved_documents: [],
+				},
+			];
+
+			// Use fetch with POST for streaming
+			const response = await fetch(
+				`/api/chat/sessions/${currentSession.session_id}/messages/stream`,
+				{
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+					},
+					body: JSON.stringify({
+						content: userContent,
+						max_context_documents: maxChunks,
+						min_similarity_score: minSimilarityScore,
+						temperature: temperature,
+						max_tokens: maxTokens,
+					}),
+				}
+			);
+
+			if (!response.ok) {
+				throw new Error(`HTTP error! status: ${response.status}`);
+			}
+
+			let accumulatedContent = '';
+			let actualMessageId: number | null = null;
+			let retrievedDocs: RetrievedDocument[] = [];
+
+			// Process the streaming response
+			const reader = response.body?.getReader();
+			if (!reader) {
+				throw new Error('Response body is not readable');
+			}
+
+			const decoder = new TextDecoder();
+			let buffer = '';
+
+			let currentEventType = '';
+
+			while (true) {
+				const { done, value } = await reader.read();
+				if (done) break;
+
+				buffer += decoder.decode(value, { stream: true });
+				const lines = buffer.split('\n');
+
+				// Keep the last incomplete line in the buffer
+				buffer = lines.pop() || '';
+
+				for (const line of lines) {
+					// Track the event type from 'event:' lines (standard SSE format)
+					if (line.startsWith('event:')) {
+						currentEventType = line.substring(6).trim();
+						continue;
+					}
+
+					if (!line.startsWith('data:')) continue;
+
+					const data_str = line.substring(5).trim();
+					if (!data_str) continue;
+
+					try {
+						const data = JSON.parse(data_str);
+						// Use the event type from the 'event:' line, or fall back to data.type for compatibility
+						const eventType = currentEventType || data.type;
+						// Reset for next event
+						currentEventType = '';
+
+						if (eventType === 'connected') {
+							streamingStatus = 'retrieving';
+						} else if (eventType === 'retrieval_complete') {
+							actualMessageId = data.message_id;
+							retrievedDocs = data.documents || [];
+							if (data.text) {
+								accumulatedContent += data.text;
+							}
+
+							// Update placeholder with actual message ID and documents
+							currentMessages = currentMessages.map((msg) =>
+								msg.message_id === assistantPlaceholderId
+									? {
+											...msg,
+											message_id: actualMessageId!,
+											retrieved_documents: retrievedDocs,
+											documents_retrieved: retrievedDocs.length,
+											content: accumulatedContent,
+										}
+									: msg
+							) as ChatMessage[];
+							streamingStatus = 'generating';
+							// Initialize progress immediately
+							streamingProgress = {
+								messageId: actualMessageId!,
+								charCount: 0,
+								elapsedSeconds: 0,
+							};
+						} else if (eventType === 'content') {
+							const chunk = data.content || data.text || '';
+							accumulatedContent += chunk;
+							currentMessages = currentMessages.map((msg) =>
+								msg.message_id === (actualMessageId || assistantPlaceholderId)
+									? { ...msg, content: accumulatedContent }
+									: msg
+							);
+						} else if (eventType === 'progress') {
+							streamingProgress = {
+								messageId: data.message_id,
+								charCount: data.char_count,
+								elapsedSeconds: data.elapsed_seconds,
+							};
+						} else if (eventType === 'complete') {
+							const finalContent = data.content || accumulatedContent;
+							currentMessages = currentMessages.map((msg) =>
+								msg.message_id === data.message_id
+									? { ...msg, status: 'complete', content: finalContent }
+									: msg
+							);
+
+							streamingProgress = null;
+							streamingStatus = null;
+							isGenerating = false;
+
+							// Execute queued action if any
+							if (queuedAction) {
+								const action = queuedAction;
+								queuedAction = null;
+								action();
+							}
+						} else if (eventType === 'error') {
+							const error = data.error || 'Streaming error occurred';
+							messageError = error;
+							toastStore.error(error);
+
+							// Update message status to error
+							if (actualMessageId) {
+								currentMessages = currentMessages.map((msg) =>
+									msg.message_id === actualMessageId ? { ...msg, status: 'error' } : msg
+								);
+							}
+
+							streamingProgress = null;
+							streamingStatus = null;
+							isGenerating = false;
+						}
+					} catch (e) {
+						console.error('Error parsing SSE data:', e, 'Line:', line);
+					}
+				}
+			}
+
+			// Process any remaining data in the buffer after stream ends
+			if (buffer.trim()) {
+				console.log('Processing remaining buffer:', buffer);
+				const remainingLines = buffer.split('\n');
+				for (const line of remainingLines) {
+					if (line.startsWith('event:')) {
+						currentEventType = line.substring(6).trim();
+					} else if (line.startsWith('data:')) {
+						const data_str = line.substring(5).trim();
+						if (data_str) {
+							try {
+								const data = JSON.parse(data_str);
+								const eventType = currentEventType || data.type;
+								console.log('Remaining SSE event:', eventType, data);
+
+								if (eventType === 'content') {
+									const chunk = data.content || data.text || '';
+									accumulatedContent += chunk;
+								} else if (eventType === 'complete') {
+									currentMessages = currentMessages.map((msg) =>
+										msg.message_id === data.message_id
+											? { ...msg, status: 'complete', content: accumulatedContent }
+											: msg
+									);
+								}
+							} catch (e) {
+								console.error('Error parsing remaining SSE data:', e);
+							}
+						}
+						currentEventType = '';
+					}
+				}
+			}
+
+			// Ensure cleanup happens after stream ends
+			console.log('Stream ended. Final accumulated content length:', accumulatedContent.length);
+			if (isGenerating) {
+				// Stream ended without a complete event, update UI anyway
+				if (actualMessageId) {
+					currentMessages = currentMessages.map((msg) =>
+						msg.message_id === actualMessageId
+							? { ...msg, status: 'complete', content: accumulatedContent }
+							: msg
+					);
+				}
+				isGenerating = false;
+				streamingStatus = null;
+				streamingProgress = null;
+			}
+		} catch (error) {
+			messageError = error instanceof Error ? error.message : 'An error occurred';
+			toastStore.error(messageError);
+			isGenerating = false;
+			streamingStatus = null;
+			streamingProgress = null;
+		}
+	}
+
+	async function regenerateMessage(messageId: number) {
+		if (isGenerating) {
+			// Queue the regeneration
+			queuedAction = () => regenerateMessage(messageId);
+			toastStore.info('Regeneration queued - will start when current generation completes');
+			return;
+		}
+
+		try {
+			isGenerating = true;
+			messageError = null;
+
+			// Update message status to incomplete
+			currentMessages = currentMessages.map((msg) =>
+				msg.message_id === messageId ? { ...msg, status: 'incomplete', content: '' } : msg
+			);
+
+			const response = await fetch(`/api/chat/messages/${messageId}/regenerate?stream=false`, {
+				method: 'POST',
 			});
 
 			if (!response.ok) {
-				throw new Error(`Failed to send message: ${response.statusText}`);
+				throw new Error(`Failed to regenerate message: ${response.statusText}`);
 			}
 
 			const result = await response.json();
 
-			// Add user message
-			currentMessages = [
-				...currentMessages,
-				{
-					message_id: currentMessages.length + 1,
-					role: 'user',
-					content: messageInput,
-					documents_retrieved: null,
-					created_at: new Date().toISOString(),
-				},
-			];
+			// Update message with new content
+			currentMessages = currentMessages.map((msg) =>
+				msg.message_id === messageId
+					? {
+							...msg,
+							content: result.content,
+							status: 'complete',
+							retrieved_documents: result.retrieved_documents || [],
+						}
+					: msg
+			);
 
-			// Add assistant message with retrieved documents
-			currentMessages = [
-				...currentMessages,
-				{
-					message_id: currentMessages.length + 1,
-					role: 'assistant',
-					content: result.content,
-					documents_retrieved: result.documents_retrieved,
-					created_at: new Date().toISOString(),
-					retrieved_documents: result.retrieved_documents || [],
-				},
-			];
-
-			messageInput = '';
+			toastStore.success('Message regenerated successfully');
 		} catch (e) {
-			const message = formatError(e, 'Failed to send message');
+			const message = formatError(e, 'Failed to regenerate message');
 			messageError = message;
 			toastStore.error(message);
+
+			// Update message status to error
+			currentMessages = currentMessages.map((msg) =>
+				msg.message_id === messageId ? { ...msg, status: 'error' } : msg
+			);
 		} finally {
-			sendingMessage = false;
+			isGenerating = false;
+
+			// Execute queued action if any
+			if (queuedAction) {
+				const action = queuedAction;
+				queuedAction = null;
+				action();
+			}
 		}
 	}
 
@@ -309,6 +559,17 @@
 		}
 	}
 
+	function generateDefaultTitle(): string {
+		const now = new Date();
+		const year = now.getFullYear();
+		const month = String(now.getMonth() + 1).padStart(2, '0');
+		const day = String(now.getDate()).padStart(2, '0');
+		const hours = String(now.getHours()).padStart(2, '0');
+		const minutes = String(now.getMinutes()).padStart(2, '0');
+		const seconds = String(now.getSeconds()).padStart(2, '0');
+		return `chat-session-${year}${month}${day}-${hours}${minutes}${seconds}`;
+	}
+
 	function resetCreateForm() {
 		showCreateForm = false;
 		newSessionTitle = '';
@@ -333,18 +594,22 @@
 	): Promise<string> {
 		let processedContent = content;
 
-		// Replace chunk references with actual filenames
 		if (retrievedDocs && retrievedDocs.length > 0) {
-			// Create a map of chunk index to item title
-			const chunkToTitle: Record<number, string> = {};
-			retrievedDocs.forEach((doc, idx) => {
-				chunkToTitle[idx + 1] = doc.item_title || `Chunk ${idx + 1}`;
-			});
+			// Get all unique document titles
+			const titles = new Set(
+				retrievedDocs.map((doc) => doc.item_title).filter((title): title is string => !!title)
+			);
 
-			// Replace Chunk X references with actual item titles
-			processedContent = processedContent.replace(/Chunk (\d+)/g, (match, chunkNum) => {
-				const num = parseInt(chunkNum);
-				return chunkToTitle[num] || match;
+			// Apply blue styling to each title when it appears in the content
+			titles.forEach((title) => {
+				// Escape special regex characters in title
+				const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+				// Replace title with styled version, but only in text (not in URLs or markdown links)
+				const regex = new RegExp(`(?<!\\[)\\b${escapedTitle}\\b(?![\\]\\(])`, 'g');
+				processedContent = processedContent.replace(
+					regex,
+					`**<span style="color: rgb(37 99 235)">${title}</span>**`
+				);
 			});
 		}
 
@@ -364,7 +629,38 @@
 		return div.innerHTML;
 	}
 
+	function getDeduplicatedReferences(
+		retrievedDocs: RetrievedDocument[]
+	): Array<{ title: string; count: number }> {
+		const refMap: Record<string, number> = {};
+		retrievedDocs.forEach((doc) => {
+			const title = doc.item_title || 'Unknown';
+			refMap[title] = (refMap[title] || 0) + 1;
+		});
+		return Object.entries(refMap)
+			.map(([title, count]) => ({ title, count }))
+			.sort((a, b) => b.count - a.count);
+	}
+
 	onMount(() => {
+		// Parse URL parameters for preset values
+		const hashParts = window.location.hash.split('?');
+		if (hashParts.length > 1) {
+			const params = new URLSearchParams(hashParts[1]);
+			const embeddedDatasetIdParam = params.get('embedded_dataset_id');
+
+			if (embeddedDatasetIdParam) {
+				const datasetId = parseInt(embeddedDatasetIdParam, 10);
+				if (!isNaN(datasetId)) {
+					newSessionEmbeddedDatasetId = datasetId;
+					showCreateForm = true;
+
+					// Clear the URL parameter after applying
+					window.history.replaceState(null, '', '#/chat');
+				}
+			}
+		}
+
 		fetchSessions();
 		fetchEmbeddedDatasets();
 		fetchLLMs();
@@ -387,6 +683,15 @@
 					resetCreateForm();
 				} else {
 					showCreateForm = true;
+					// Pre-fill the title with a generated default
+					newSessionTitle = generateDefaultTitle();
+					// Auto-select first items
+					if (embeddedDatasets.length > 0 && !newSessionEmbeddedDatasetId) {
+						newSessionEmbeddedDatasetId = embeddedDatasets[0].embedded_dataset_id;
+					}
+					if (llms.length > 0 && !newSessionLLMId) {
+						newSessionLLMId = llms[0].llm_id;
+					}
 				}
 			}}
 			class="mx-4 my-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
@@ -407,7 +712,7 @@
 						id="session-title"
 						type="text"
 						bind:value={newSessionTitle}
-						placeholder="My conversation..."
+						placeholder="Title of the chat session"
 						class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 					/>
 				</div>
@@ -552,26 +857,92 @@
 									{#if message.role === 'user'}
 										<p class="text-sm">{message.content}</p>
 									{:else}
-										<div class="prose prose-sm dark:prose-invert max-w-none">
-											{#await renderMarkdown(message.content, message.retrieved_documents) then html}
-												{@html html}
-											{/await}
-										</div>
+										{#if message.content}
+											<div class="prose prose-sm dark:prose-invert max-w-none">
+												{#await renderMarkdown(message.content, message.retrieved_documents) then html}
+													{@html html}
+												{/await}
+											</div>
+										{:else if message.status === 'incomplete' && isGenerating}
+											<!-- Show loading state while streaming but no content yet -->
+											<div class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+												<svg
+													class="animate-spin h-4 w-4"
+													xmlns="http://www.w3.org/2000/svg"
+													fill="none"
+													viewBox="0 0 24 24"
+												>
+													<circle
+														class="opacity-25"
+														cx="12"
+														cy="12"
+														r="10"
+														stroke="currentColor"
+														stroke-width="4"
+													></circle>
+													<path
+														class="opacity-75"
+														fill="currentColor"
+														d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+													></path>
+												</svg>
+												<span>Thinking...</span>
+											</div>
+										{/if}
+										{#if message.status === 'incomplete' && !isGenerating}
+											<!-- Only show retry/complete button when NOT actively generating -->
+											<div class="mt-3 pt-3 border-t border-current">
+												<button
+													onclick={() => regenerateMessage(message.message_id)}
+													disabled={isGenerating}
+													class="text-xs px-3 py-1 bg-yellow-500 hover:bg-yellow-600 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+												>
+													⚡ Complete
+												</button>
+												<span class="ml-2 text-xs opacity-70">Generation incomplete</span>
+											</div>
+										{:else if message.status === 'error'}
+											<div class="mt-3 pt-3 border-t border-current">
+												<button
+													onclick={() => regenerateMessage(message.message_id)}
+													disabled={isGenerating}
+													class="text-xs px-3 py-1 bg-yellow-500 hover:bg-yellow-600 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+												>
+													🔄 Retry
+												</button>
+												<span class="ml-2 text-xs text-red-400">Generation failed</span>
+											</div>
+										{/if}
 									{/if}
-									{#if message.role === 'assistant' && message.retrieved_documents && message.retrieved_documents.length > 0}
-										<div class="mt-3 pt-3 border-t border-current opacity-75">
+									{#if message.role === 'assistant' && message.retrieved_documents && message.retrieved_documents.length > 0 && message.status === 'complete'}
+										<div class="mt-3 pt-3 border-t border-gray-400 dark:border-gray-500">
+											<div class="text-xs font-semibold mb-2 text-gray-600 dark:text-gray-300">
+												References
+											</div>
+											<div class="space-y-1.5">
+												{#each getDeduplicatedReferences(message.retrieved_documents) as ref (ref.title)}
+													<div class="flex items-center gap-2">
+														<a
+															href="#/datasets/{embeddedDatasets.find(
+																(d) => d.embedded_dataset_id === currentSession?.embedded_dataset_id
+															)?.source_dataset_id}/details?search={encodeURIComponent(ref.title)}"
+															class="text-blue-600 dark:text-blue-400 hover:underline font-semibold text-xs"
+														>
+															{ref.title}
+														</a>
+														<span class="text-gray-500 dark:text-gray-400 text-xs"
+															>× {ref.count}</span
+														>
+													</div>
+												{/each}
+											</div>
 											<button
 												onclick={() => {
 													expandedDocs[message.message_id] = !expandedDocs[message.message_id];
 												}}
-												class="flex items-center justify-between w-full text-xs font-semibold mb-2 hover:opacity-80 transition-opacity"
+												class="flex items-center justify-between w-full text-xs font-semibold mt-3 hover:opacity-80 transition-opacity text-gray-600 dark:text-gray-300"
 											>
-												<span>
-													Retrieved {message.documents_retrieved} chunk{message.documents_retrieved !==
-													1
-														? 's'
-														: ''}
-												</span>
+												<span>Retrieved Chunks ({message.retrieved_documents.length})</span>
 												<span class="ml-2">
 													{expandedDocs[message.message_id] === true ? '▼' : '▶'}
 												</span>
@@ -614,7 +985,7 @@
 					</div>
 				{/if}
 
-				<!-- RAG Settings -->
+				<!-- Chat Settings -->
 				<div class="mb-4">
 					<button
 						onclick={() => {
@@ -623,7 +994,7 @@
 						class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors"
 					>
 						<span>{showRagSettings ? '▼' : '▶'}</span>
-						<span>RAG Settings</span>
+						<span>Chat Settings</span>
 					</button>
 
 					{#if showRagSettings}
@@ -677,9 +1048,107 @@
 							<p class="text-xs text-gray-500 dark:text-gray-400 mt-3">
 								Control how many chunks are retrieved and the minimum similarity score threshold.
 							</p>
+
+							<hr class="my-4 border-gray-200 dark:border-gray-600" />
+
+							<div class="grid grid-cols-2 gap-4">
+								<div>
+									<label
+										for="temperature"
+										class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+									>
+										Temperature: <span class="font-bold">{temperature.toFixed(2)}</span>
+									</label>
+									<input
+										id="temperature"
+										type="range"
+										min="0"
+										max="2"
+										step="0.1"
+										bind:value={temperature}
+										class="slider w-full"
+									/>
+									<div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-1">
+										<span>0.0 (Precise)</span>
+										<span>2.0 (Creative)</span>
+									</div>
+								</div>
+								<div>
+									<label
+										for="max-tokens"
+										class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+									>
+										Max Tokens: <span class="font-bold">{maxTokens}</span>
+									</label>
+									<input
+										id="max-tokens"
+										type="number"
+										min="100"
+										max="8000"
+										step="100"
+										bind:value={maxTokens}
+										class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+									/>
+									<div class="text-xs text-gray-500 dark:text-gray-400 mt-1">100-8000 tokens</div>
+								</div>
+							</div>
+							<p class="text-xs text-gray-500 dark:text-gray-400 mt-3">
+								Control the LLM response creativity and maximum length.
+							</p>
 						</div>
 					{/if}
 				</div>
+
+				{#if queuedAction}
+					<div
+						class="mb-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg"
+					>
+						<p class="text-sm text-yellow-600 dark:text-yellow-400">
+							⏳ Regeneration queued - will start when current generation completes
+						</p>
+					</div>
+				{/if}
+
+				{#if streamingStatus}
+					<div
+						class="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg"
+					>
+						<div class="flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400">
+							<svg
+								class="animate-spin h-4 w-4"
+								xmlns="http://www.w3.org/2000/svg"
+								fill="none"
+								viewBox="0 0 24 24"
+							>
+								<circle
+									class="opacity-25"
+									cx="12"
+									cy="12"
+									r="10"
+									stroke="currentColor"
+									stroke-width="4"
+								></circle>
+								<path
+									class="opacity-75"
+									fill="currentColor"
+									d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+								></path>
+							</svg>
+							{#if streamingStatus === 'connecting'}
+								<span>Connecting to server...</span>
+							{:else if streamingStatus === 'retrieving'}
+								<span>Retrieving relevant documents...</span>
+							{:else if streamingStatus === 'generating'}
+								<span>
+									Generating response...
+									{#if streamingProgress}
+										({streamingProgress.charCount} chars, {streamingProgress.elapsedSeconds}s)
+									{/if}
+								</span>
+							{/if}
+						</div>
+					</div>
+				{/if}
 
 				<div class="flex gap-3">
 					<input
@@ -688,19 +1157,19 @@
 						onkeydown={(e) => {
 							if (e.key === 'Enter' && !e.shiftKey) {
 								e.preventDefault();
-								sendMessage();
+								sendMessageStreaming();
 							}
 						}}
 						placeholder="Type your message... (Enter to send)"
-						disabled={sendingMessage}
+						disabled={isGenerating}
 						class="flex-1 px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 disabled:opacity-50"
 					/>
 					<button
-						onclick={sendMessage}
-						disabled={!messageInput.trim() || sendingMessage}
+						onclick={sendMessageStreaming}
+						disabled={!messageInput.trim() || isGenerating}
 						class="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors"
 					>
-						{sendingMessage ? 'Sending...' : 'Send'}
+						{isGenerating ? 'Generating...' : 'Send'}
 					</button>
 				</div>
 			</div>

@@ -214,6 +214,8 @@ pub(crate) struct PaginationParams {
     pub(crate) page: i64,
     #[serde(default = "default_page_size")]
     pub(crate) page_size: i64,
+    #[serde(default)]
+    pub(crate) search: Option<String>,
 }
 
 fn default_page_size() -> i64 {
