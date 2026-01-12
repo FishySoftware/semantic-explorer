@@ -4,6 +4,7 @@ use actix_web::{
     HttpRequest, HttpResponse, Responder, ResponseError, delete, get, patch, post,
     web::{self, Data, Json, Path},
 };
+use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::validation;
 use sqlx::{Pool, Postgres};
 
@@ -26,10 +27,11 @@ use crate::{
     tag = "LLMs",
 )]
 #[get("/api/llms")]
-#[tracing::instrument(name = "get_llms", skip(user, postgres_pool, query))]
+#[tracing::instrument(name = "get_llms", skip(user, postgres_pool, query, encryption))]
 pub(crate) async fn get_llms(
     user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
+    encryption: Data<EncryptionService>,
     query: web::Query<HashMap<String, String>>,
 ) -> impl Responder {
     let search_query = query.get("search").and_then(|s| {
@@ -42,14 +44,18 @@ pub(crate) async fn get_llms(
     });
 
     match search_query {
-        Some(q) => match llms::get_llms_with_search(&postgres_pool.into_inner(), &user, q).await {
-            Ok(llms_list) => HttpResponse::Ok().json(llms_list),
-            Err(e) => {
-                tracing::error!(error = %e, "failed to fetch LLMs");
-                ApiError::Internal(format!("error fetching LLMs: {:?}", e)).error_response()
+        Some(q) => {
+            match llms::get_llms_with_search(&postgres_pool.into_inner(), &user, q, &encryption)
+                .await
+            {
+                Ok(llms_list) => HttpResponse::Ok().json(llms_list),
+                Err(e) => {
+                    tracing::error!(error = %e, "failed to fetch LLMs");
+                    ApiError::Internal(format!("error fetching LLMs: {:?}", e)).error_response()
+                }
             }
-        },
-        None => match llms::get_llms(&postgres_pool.into_inner(), &user).await {
+        }
+        None => match llms::get_llms(&postgres_pool.into_inner(), &user, &encryption).await {
             Ok(llms_list) => HttpResponse::Ok().json(llms_list),
             Err(e) => {
                 tracing::error!(error = %e, "failed to fetch LLMs");
@@ -71,13 +77,14 @@ pub(crate) async fn get_llms(
     tag = "LLMs",
 )]
 #[get("/api/llms/{llm_id}")]
-#[tracing::instrument(name = "get_llm", skip(user, postgres_pool))]
+#[tracing::instrument(name = "get_llm", skip(user, postgres_pool, encryption))]
 pub(crate) async fn get_llm(
     user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
+    encryption: Data<EncryptionService>,
     llm_id: Path<i32>,
 ) -> impl Responder {
-    match llms::get_llm(&postgres_pool.into_inner(), &user, *llm_id).await {
+    match llms::get_llm(&postgres_pool.into_inner(), &user, *llm_id, &encryption).await {
         Ok(llm) => {
             events::resource_read(&user, ResourceType::LlmProvider, &llm_id.to_string());
             HttpResponse::Ok().json(llm)
@@ -99,11 +106,15 @@ pub(crate) async fn get_llm(
     tag = "LLMs",
 )]
 #[post("/api/llms")]
-#[tracing::instrument(name = "create_llm", skip(user, postgres_pool, create_llm, req))]
+#[tracing::instrument(
+    name = "create_llm",
+    skip(user, postgres_pool, create_llm, req, encryption)
+)]
 pub(crate) async fn create_llm(
     user: AuthenticatedUser,
     req: HttpRequest,
     postgres_pool: Data<Pool<Postgres>>,
+    encryption: Data<EncryptionService>,
     create_llm: Json<CreateLLM>,
 ) -> impl Responder {
     let payload = create_llm.into_inner();
@@ -113,7 +124,7 @@ pub(crate) async fn create_llm(
         return ApiError::Validation(e).error_response();
     }
 
-    match llms::create_llm(&postgres_pool.into_inner(), &user, &payload).await {
+    match llms::create_llm(&postgres_pool.into_inner(), &user, &payload, &encryption).await {
         Ok(llm) => {
             events::resource_created_with_request(
                 &req,
@@ -143,10 +154,11 @@ pub(crate) async fn create_llm(
     tag = "LLMs",
 )]
 #[patch("/api/llms/{llm_id}")]
-#[tracing::instrument(name = "update_llm", skip(user, postgres_pool, update_llm))]
+#[tracing::instrument(name = "update_llm", skip(user, postgres_pool, update_llm, encryption))]
 pub(crate) async fn update_llm(
     user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
+    encryption: Data<EncryptionService>,
     llm_id: Path<i32>,
     update_llm: Json<UpdateLargeLanguageModel>,
 ) -> impl Responder {
@@ -157,9 +169,38 @@ pub(crate) async fn update_llm(
         return ApiError::Validation(e).error_response();
     }
 
-    match llms::update_llm(&postgres_pool.into_inner(), &user, *llm_id, &update_llm).await {
+    match llms::update_llm(
+        &postgres_pool.into_inner(),
+        &user,
+        *llm_id,
+        &update_llm,
+        &encryption,
+    )
+    .await
+    {
         Ok(llm) => {
             events::resource_updated(&user, ResourceType::LlmProvider, &llm_id.to_string());
+
+            // Audit log configuration changes if sensitive fields were updated
+            if let Some(api_key) = &update_llm.api_key
+                && !api_key.is_empty()
+            {
+                crate::audit::events::configuration_changed(
+                    &user.0,
+                    ResourceType::LlmProvider,
+                    &llm_id.to_string(),
+                    "api_key",
+                );
+            }
+            if update_llm.name.is_some() {
+                crate::audit::events::configuration_changed(
+                    &user.0,
+                    ResourceType::LlmProvider,
+                    &llm_id.to_string(),
+                    "name",
+                );
+            }
+
             HttpResponse::Ok().json(llm)
         }
         Err(e) => {

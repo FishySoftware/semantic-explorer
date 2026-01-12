@@ -2,6 +2,7 @@ use actix_web::{
     HttpRequest, HttpResponse, Responder, ResponseError, delete, get, patch, post,
     web::{Data, Json, Path},
 };
+use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::validation;
 use sqlx::{Pool, Postgres};
 
@@ -28,12 +29,13 @@ pub(crate) struct TestEmbedderResponse {
     tag = "Embedders",
 )]
 #[get("/api/embedders")]
-#[tracing::instrument(name = "get_embedders", skip(user, postgres_pool))]
+#[tracing::instrument(name = "get_embedders", skip(user, postgres_pool, encryption))]
 pub(crate) async fn get_embedders(
     user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
+    encryption: Data<EncryptionService>,
 ) -> impl Responder {
-    match embedders::get_embedders(&postgres_pool.into_inner(), &user).await {
+    match embedders::get_embedders(&postgres_pool.into_inner(), &user, &encryption).await {
         Ok(embedders_list) => HttpResponse::Ok().json(embedders_list),
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch embedders");
@@ -54,13 +56,21 @@ pub(crate) async fn get_embedders(
     tag = "Embedders",
 )]
 #[get("/api/embedders/{embedder_id}")]
-#[tracing::instrument(name = "get_embedder", skip(user, postgres_pool))]
+#[tracing::instrument(name = "get_embedder", skip(user, postgres_pool, encryption))]
 pub(crate) async fn get_embedder(
     user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
+    encryption: Data<EncryptionService>,
     embedder_id: Path<i32>,
 ) -> impl Responder {
-    match embedders::get_embedder(&postgres_pool.into_inner(), &user, *embedder_id).await {
+    match embedders::get_embedder(
+        &postgres_pool.into_inner(),
+        &user,
+        *embedder_id,
+        &encryption,
+    )
+    .await
+    {
         Ok(embedder) => {
             events::resource_read(&user, ResourceType::Embedder, &embedder_id.to_string());
             HttpResponse::Ok().json(embedder)
@@ -84,12 +94,13 @@ pub(crate) async fn get_embedder(
 #[post("/api/embedders")]
 #[tracing::instrument(
     name = "create_embedder",
-    skip(user, postgres_pool, create_embedder, req)
+    skip(user, postgres_pool, create_embedder, req, encryption)
 )]
 pub(crate) async fn create_embedder(
     user: AuthenticatedUser,
     req: HttpRequest,
     postgres_pool: Data<Pool<Postgres>>,
+    encryption: Data<EncryptionService>,
     create_embedder: Json<CreateEmbedder>,
 ) -> impl Responder {
     let payload = create_embedder.into_inner();
@@ -99,7 +110,9 @@ pub(crate) async fn create_embedder(
         return ApiError::Validation(e).error_response();
     }
 
-    match embedders::create_embedder(&postgres_pool.into_inner(), &user, &payload).await {
+    match embedders::create_embedder(&postgres_pool.into_inner(), &user, &payload, &encryption)
+        .await
+    {
         Ok(embedder) => {
             events::resource_created_with_request(
                 &req,
@@ -129,10 +142,14 @@ pub(crate) async fn create_embedder(
     tag = "Embedders",
 )]
 #[patch("/api/embedders/{embedder_id}")]
-#[tracing::instrument(name = "update_embedder", skip(user, postgres_pool, update_embedder))]
+#[tracing::instrument(
+    name = "update_embedder",
+    skip(user, postgres_pool, update_embedder, encryption)
+)]
 pub(crate) async fn update_embedder(
     user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
+    encryption: Data<EncryptionService>,
     embedder_id: Path<i32>,
     update_embedder: Json<UpdateEmbedder>,
 ) -> impl Responder {
@@ -148,11 +165,33 @@ pub(crate) async fn update_embedder(
         &user,
         *embedder_id,
         &update_embedder,
+        &encryption,
     )
     .await
     {
         Ok(embedder) => {
             events::resource_updated(&user, ResourceType::Embedder, &embedder_id.to_string());
+
+            // Audit log configuration changes if sensitive fields were updated
+            if let Some(api_key) = &update_embedder.api_key
+                && !api_key.is_empty()
+            {
+                crate::audit::events::configuration_changed(
+                    &user.0,
+                    ResourceType::Embedder,
+                    &embedder_id.to_string(),
+                    "api_key",
+                );
+            }
+            if update_embedder.name.is_some() {
+                crate::audit::events::configuration_changed(
+                    &user.0,
+                    ResourceType::Embedder,
+                    &embedder_id.to_string(),
+                    "name",
+                );
+            }
+
             HttpResponse::Ok().json(embedder)
         }
         Err(e) => {
@@ -212,17 +251,20 @@ pub(crate) async fn delete_embedder(
     ),
 )]
 #[post("/api/embedders/{embedder_id}/test")]
-#[tracing::instrument(name = "test_embedder", skip(user, postgres_pool), fields(embedder_id = %path.as_ref()))]
+#[tracing::instrument(name = "test_embedder", skip(user, postgres_pool, encryption), fields(embedder_id = %path.as_ref()))]
 pub(crate) async fn test_embedder(
     user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
+    encryption: Data<EncryptionService>,
     path: Path<i32>,
 ) -> impl Responder {
     let embedder_id = path.into_inner();
 
-    // Fetch the embedder
+    // Fetch the embedder (api_key is decrypted by storage layer)
     let embedder =
-        match embedders::get_embedder(&postgres_pool.into_inner(), &user, embedder_id).await {
+        match embedders::get_embedder(&postgres_pool.into_inner(), &user, embedder_id, &encryption)
+            .await
+        {
             Ok(e) => e,
             Err(e) => {
                 return ApiError::NotFound(format!("embedder not found: {}", e)).error_response();

@@ -17,6 +17,7 @@ actix-multipart = { workspace = true }
 actix-files = { workspace = true }
 actix_web_openidconnect = { workspace = true }
 actix-web-prom = { workspace = true }
+redis = { workspace = true }
 thiserror = { workspace = true }
 async-nats = { workspace = true }
 async-stream = { workspace = true }
@@ -41,14 +42,18 @@ opentelemetry-otlp = { workspace = true }
 opentelemetry-prometheus = { workspace = true }
 opentelemetry-appender-tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true }
+prometheus = { workspace = true }
 mime_guess = { workspace = true }
 mime = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 reqwest = { workspace = true }
 regex = { workspace = true }
+infer = { workspace = true }
+zip = { workspace = true }
 rustls = { version = "0.23.36" }
 pem = { version = "3.0.6" }
+sha2 = {version = "0.10.9"}
 
 [target.'cfg(target_env = "musl")'.dependencies]
 mimalloc = { version = "0.1.48", features = ["v3"], default-features = false }
@@ -59,5 +64,3 @@ enum_glob_use = "deny"
 [lints.rust]
 unsafe_code = "forbid"
 
-[features]
-deprecated_attributes = []

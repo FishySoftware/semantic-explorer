@@ -26,14 +26,14 @@ const GET_COLLECTION_TRANSFORM_QUERY: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner, is_enabled,
            chunk_size, job_config, created_at, updated_at
     FROM collection_transforms
-    WHERE owner = $1 AND collection_transform_id = $2
+    WHERE collection_transform_id = $1
 "#;
 
 const GET_COLLECTION_TRANSFORMS_FOR_COLLECTION_QUERY: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner, is_enabled,
            chunk_size, job_config, created_at, updated_at
     FROM collection_transforms
-    WHERE owner = $1 AND collection_id = $2
+    WHERE collection_id = $1
     ORDER BY created_at DESC
 "#;
 
@@ -59,14 +59,14 @@ const UPDATE_COLLECTION_TRANSFORM_QUERY: &str = r#"
         chunk_size = COALESCE($5, chunk_size),
         job_config = COALESCE($6, job_config),
         updated_at = NOW()
-    WHERE owner = $1 AND collection_transform_id = $2
+    WHERE collection_transform_id = $1
     RETURNING collection_transform_id, title, collection_id, dataset_id, owner, is_enabled,
               chunk_size, job_config, created_at, updated_at
 "#;
 
 const DELETE_COLLECTION_TRANSFORM_QUERY: &str = r#"
     DELETE FROM collection_transforms
-    WHERE owner = $1 AND collection_transform_id = $2
+    WHERE collection_transform_id = $1
 "#;
 
 const GET_COLLECTION_TRANSFORM_STATS_QUERY: &str = r#"
@@ -112,7 +112,7 @@ const CHECK_FILE_PROCESSED_QUERY: &str = r#"
 const COUNT_COLLECTION_TRANSFORMS_QUERY: &str =
     "SELECT COUNT(*) as count FROM collection_transforms WHERE owner = $1";
 const COUNT_COLLECTION_TRANSFORMS_WITH_SEARCH_QUERY: &str =
-    "SELECT COUNT(*) as count FROM collection_transforms WHERE owner = $1 AND title ILIKE $2";
+    "SELECT COUNT(*) as count FROM collection_transforms WHERE title ILIKE $1 AND owner = $2";
 
 // Note: ORDER BY clause is built dynamically with validated identifiers
 // Column names cannot be parameterized in PostgreSQL, so we validate and use format!
@@ -127,7 +127,8 @@ const GET_COLLECTION_TRANSFORMS_PAGINATED_WITH_SEARCH_BASE: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner, is_enabled,
            chunk_size, job_config, created_at, updated_at
     FROM collection_transforms
-    WHERE owner = $1 AND title ILIKE $2
+    WHERE title ILIKE $1
+    AND owner = $2
 "#;
 
 // CRUD operations
@@ -136,11 +137,15 @@ pub async fn get_collection_transform(
     owner: &str,
     collection_transform_id: i32,
 ) -> Result<CollectionTransform> {
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
     let transform = sqlx::query_as::<_, CollectionTransform>(GET_COLLECTION_TRANSFORM_QUERY)
-        .bind(owner)
         .bind(collection_transform_id)
-        .fetch_one(pool)
+        .fetch_one(&mut *tx)
         .await?;
+
+    tx.commit().await?;
     Ok(transform)
 }
 
@@ -157,13 +162,16 @@ pub async fn get_collection_transforms_paginated(
     let sort_field = validate_sort_field(sort_by)?;
     let sort_dir = validate_sort_direction(sort_direction)?;
 
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
     let (total_count, transforms) = if let Some(search_term) = search {
         let search_pattern = format!("%{}%", search_term);
 
         let count_result: (i64,) = sqlx::query_as(COUNT_COLLECTION_TRANSFORMS_WITH_SEARCH_QUERY)
-            .bind(owner)
             .bind(&search_pattern)
-            .fetch_one(pool)
+            .bind(owner)
+            .fetch_one(&mut *tx)
             .await?;
         let total = count_result.0;
 
@@ -174,18 +182,18 @@ pub async fn get_collection_transforms_paginated(
         );
 
         let items = sqlx::query_as::<_, CollectionTransform>(&query_str)
-            .bind(owner)
             .bind(&search_pattern)
+            .bind(owner)
             .bind(limit)
             .bind(offset)
-            .fetch_all(pool)
+            .fetch_all(&mut *tx)
             .await?;
 
         (total, items)
     } else {
         let count_result: (i64,) = sqlx::query_as(COUNT_COLLECTION_TRANSFORMS_QUERY)
             .bind(owner)
-            .fetch_one(pool)
+            .fetch_one(&mut *tx)
             .await?;
         let total = count_result.0;
 
@@ -199,11 +207,13 @@ pub async fn get_collection_transforms_paginated(
             .bind(owner)
             .bind(limit)
             .bind(offset)
-            .fetch_all(pool)
+            .fetch_all(&mut *tx)
             .await?;
 
         (total, items)
     };
+
+    tx.commit().await?;
 
     Ok(PaginatedResponse {
         items: transforms,
@@ -218,12 +228,16 @@ pub async fn get_collection_transforms_for_collection(
     owner: &str,
     collection_id: i32,
 ) -> Result<Vec<CollectionTransform>> {
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
     let transforms =
         sqlx::query_as::<_, CollectionTransform>(GET_COLLECTION_TRANSFORMS_FOR_COLLECTION_QUERY)
-            .bind(owner)
             .bind(collection_id)
-            .fetch_all(pool)
+            .fetch_all(&mut *tx)
             .await?;
+
+    tx.commit().await?;
     Ok(transforms)
 }
 
@@ -246,6 +260,9 @@ pub async fn create_collection_transform(
     chunk_size: i32,
     job_config: &serde_json::Value,
 ) -> Result<CollectionTransform> {
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
     let transform = sqlx::query_as::<_, CollectionTransform>(CREATE_COLLECTION_TRANSFORM_QUERY)
         .bind(title)
         .bind(collection_id)
@@ -253,8 +270,10 @@ pub async fn create_collection_transform(
         .bind(owner)
         .bind(chunk_size)
         .bind(job_config)
-        .fetch_one(pool)
+        .fetch_one(&mut *tx)
         .await?;
+
+    tx.commit().await?;
     Ok(transform)
 }
 
@@ -267,15 +286,19 @@ pub async fn update_collection_transform(
     chunk_size: Option<i32>,
     job_config: Option<&serde_json::Value>,
 ) -> Result<CollectionTransform> {
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
     let transform = sqlx::query_as::<_, CollectionTransform>(UPDATE_COLLECTION_TRANSFORM_QUERY)
-        .bind(owner)
         .bind(collection_transform_id)
         .bind(title)
         .bind(is_enabled)
         .bind(chunk_size)
         .bind(job_config)
-        .fetch_one(pool)
+        .fetch_one(&mut *tx)
         .await?;
+
+    tx.commit().await?;
     Ok(transform)
 }
 
@@ -284,11 +307,15 @@ pub async fn delete_collection_transform(
     owner: &str,
     collection_transform_id: i32,
 ) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
     sqlx::query(DELETE_COLLECTION_TRANSFORM_QUERY)
-        .bind(owner)
         .bind(collection_transform_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+
+    tx.commit().await?;
     Ok(())
 }
 

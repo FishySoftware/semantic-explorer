@@ -3,6 +3,7 @@ use actix_web::{
     web::{Data, Path, Query},
 };
 use aws_sdk_s3::Client;
+use semantic_explorer_core::encryption::EncryptionService;
 use serde::Deserialize;
 use sqlx::{Pool, Postgres};
 
@@ -111,14 +112,20 @@ pub(crate) async fn get_recent_public_datasets(
     tag = "Marketplace",
 )]
 #[get("/api/marketplace/embedders/recent")]
-#[tracing::instrument(name = "get_recent_public_embedders", skip(_user, postgres_pool))]
+#[tracing::instrument(
+    name = "get_recent_public_embedders",
+    skip(_user, postgres_pool, encryption)
+)]
 pub(crate) async fn get_recent_public_embedders(
     _user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
+    encryption: Data<EncryptionService>,
     Query(query): Query<RecentCollectionsQuery>,
 ) -> impl Responder {
     let limit = query.limit.unwrap_or(5);
-    match embedders::get_recent_public_embedders(&postgres_pool.into_inner(), limit).await {
+    match embedders::get_recent_public_embedders(&postgres_pool.into_inner(), limit, &encryption)
+        .await
+    {
         Ok(embedders_list) => HttpResponse::Ok().json(embedders_list),
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch recent public embedders");
@@ -139,14 +146,18 @@ pub(crate) async fn get_recent_public_embedders(
     tag = "Marketplace",
 )]
 #[get("/api/marketplace/llms/recent")]
-#[tracing::instrument(name = "get_recent_public_llms", skip(_user, postgres_pool))]
+#[tracing::instrument(
+    name = "get_recent_public_llms",
+    skip(_user, postgres_pool, encryption)
+)]
 pub(crate) async fn get_recent_public_llms(
     _user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
+    encryption: Data<EncryptionService>,
     Query(query): Query<RecentCollectionsQuery>,
 ) -> impl Responder {
     let limit = query.limit.unwrap_or(5);
-    match llms::get_recent_public_llms(&postgres_pool.into_inner(), limit).await {
+    match llms::get_recent_public_llms(&postgres_pool.into_inner(), limit, &encryption).await {
         Ok(llms_list) => HttpResponse::Ok().json(llms_list),
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch recent public LLMs");
@@ -186,12 +197,13 @@ pub(crate) async fn get_public_datasets(
     tag = "Marketplace",
 )]
 #[get("/api/marketplace/embedders")]
-#[tracing::instrument(name = "get_public_embedders", skip(_user, postgres_pool))]
+#[tracing::instrument(name = "get_public_embedders", skip(_user, postgres_pool, encryption))]
 pub(crate) async fn get_public_embedders(
     _user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
+    encryption: Data<EncryptionService>,
 ) -> impl Responder {
-    match embedders::get_public_embedders(&postgres_pool.into_inner()).await {
+    match embedders::get_public_embedders(&postgres_pool.into_inner(), &encryption).await {
         Ok(embedders_list) => HttpResponse::Ok().json(embedders_list),
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch public embedders");
@@ -208,12 +220,13 @@ pub(crate) async fn get_public_embedders(
     tag = "Marketplace",
 )]
 #[get("/api/marketplace/llms")]
-#[tracing::instrument(name = "get_public_llms", skip(_user, postgres_pool))]
+#[tracing::instrument(name = "get_public_llms", skip(_user, postgres_pool, encryption))]
 pub(crate) async fn get_public_llms(
     _user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
+    encryption: Data<EncryptionService>,
 ) -> impl Responder {
-    match llms::get_public_llms(&postgres_pool.into_inner()).await {
+    match llms::get_public_llms(&postgres_pool.into_inner(), &encryption).await {
         Ok(llms_list) => HttpResponse::Ok().json(llms_list),
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch public LLMs");
@@ -234,12 +247,13 @@ pub(crate) async fn get_public_llms(
     tag = "Marketplace",
 )]
 #[post("/api/marketplace/collections/{collection_id}/grab")]
-#[tracing::instrument(name = "grab_collection", skip(user, s3_client, postgres_pool))]
+#[tracing::instrument(name = "grab_collection", skip(user, s3_client, postgres_pool, req))]
 pub(crate) async fn grab_collection(
     user: AuthenticatedUser,
     s3_client: Data<Client>,
     postgres_pool: Data<Pool<Postgres>>,
     collection_id: Path<i32>,
+    req: actix_web::HttpRequest,
 ) -> impl Responder {
     match collections::grab_public_collection(
         &postgres_pool.into_inner(),
@@ -249,7 +263,16 @@ pub(crate) async fn grab_collection(
     )
     .await
     {
-        Ok(collection) => HttpResponse::Created().json(collection),
+        Ok(collection) => {
+            // Audit log the marketplace grab
+            crate::audit::events::marketplace_grab(
+                &req,
+                &user.0,
+                crate::audit::ResourceType::Collection,
+                &collection_id.to_string(),
+            );
+            HttpResponse::Created().json(collection)
+        }
         Err(e) => {
             tracing::error!(error = %e, collection_id = %collection_id, "failed to grab collection");
             ApiError::Internal(format!("error grabbing collection: {:?}", e)).error_response()
@@ -269,14 +292,24 @@ pub(crate) async fn grab_collection(
     tag = "Marketplace",
 )]
 #[post("/api/marketplace/datasets/{dataset_id}/grab")]
-#[tracing::instrument(name = "grab_dataset", skip(user, postgres_pool))]
+#[tracing::instrument(name = "grab_dataset", skip(user, postgres_pool, req))]
 pub(crate) async fn grab_dataset(
     user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     dataset_id: Path<i32>,
+    req: actix_web::HttpRequest,
 ) -> impl Responder {
     match datasets::grab_public_dataset(&postgres_pool.into_inner(), &user, *dataset_id).await {
-        Ok(dataset) => HttpResponse::Created().json(dataset),
+        Ok(dataset) => {
+            // Audit log the marketplace grab
+            crate::audit::events::marketplace_grab(
+                &req,
+                &user.0,
+                crate::audit::ResourceType::Dataset,
+                &dataset_id.to_string(),
+            );
+            HttpResponse::Created().json(dataset)
+        }
         Err(e) => {
             tracing::error!(error = %e, dataset_id = %dataset_id, "failed to grab dataset");
             ApiError::Internal(format!("error grabbing dataset: {:?}", e)).error_response()
@@ -296,14 +329,32 @@ pub(crate) async fn grab_dataset(
     tag = "Marketplace",
 )]
 #[post("/api/marketplace/embedders/{embedder_id}/grab")]
-#[tracing::instrument(name = "grab_embedder", skip(user, postgres_pool))]
+#[tracing::instrument(name = "grab_embedder", skip(user, postgres_pool, encryption, req))]
 pub(crate) async fn grab_embedder(
     user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
+    encryption: Data<EncryptionService>,
     embedder_id: Path<i32>,
+    req: actix_web::HttpRequest,
 ) -> impl Responder {
-    match embedders::grab_public_embedder(&postgres_pool.into_inner(), &user, *embedder_id).await {
-        Ok(embedder) => HttpResponse::Created().json(embedder),
+    match embedders::grab_public_embedder(
+        &postgres_pool.into_inner(),
+        &user,
+        *embedder_id,
+        &encryption,
+    )
+    .await
+    {
+        Ok(embedder) => {
+            // Audit log the marketplace grab
+            crate::audit::events::marketplace_grab(
+                &req,
+                &user.0,
+                crate::audit::ResourceType::Embedder,
+                &embedder_id.to_string(),
+            );
+            HttpResponse::Created().json(embedder)
+        }
         Err(e) => {
             tracing::error!(error = %e, embedder_id = %embedder_id, "failed to grab embedder");
             ApiError::Internal(format!("error grabbing embedder: {:?}", e)).error_response()
@@ -323,14 +374,25 @@ pub(crate) async fn grab_embedder(
     tag = "Marketplace",
 )]
 #[post("/api/marketplace/llms/{llm_id}/grab")]
-#[tracing::instrument(name = "grab_llm", skip(user, postgres_pool))]
+#[tracing::instrument(name = "grab_llm", skip(user, postgres_pool, encryption, req))]
 pub(crate) async fn grab_llm(
     user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
+    encryption: Data<EncryptionService>,
     llm_id: Path<i32>,
+    req: actix_web::HttpRequest,
 ) -> impl Responder {
-    match llms::grab_public_llm(&postgres_pool.into_inner(), &user, *llm_id).await {
-        Ok(llm) => HttpResponse::Created().json(llm),
+    match llms::grab_public_llm(&postgres_pool.into_inner(), &user, *llm_id, &encryption).await {
+        Ok(llm) => {
+            // Audit log the marketplace grab
+            crate::audit::events::marketplace_grab(
+                &req,
+                &user.0,
+                crate::audit::ResourceType::LlmProvider,
+                &llm_id.to_string(),
+            );
+            HttpResponse::Created().json(llm)
+        }
         Err(e) => {
             tracing::error!(error = %e, llm_id = %llm_id, "failed to grab LLM");
             ApiError::Internal(format!("error grabbing LLM: {:?}", e)).error_response()

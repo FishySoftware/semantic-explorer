@@ -5,6 +5,7 @@ use std::time::Instant;
 use uuid::Uuid;
 
 use crate::chat::models::{ChatMessage, ChatSession, CreateChatSessionRequest, RetrievedDocument};
+use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::observability::record_database_query;
 
 const CREATE_SESSION_QUERY: &str = r#"
@@ -22,7 +23,7 @@ const GET_SESSION_QUERY: &str = r#"
 const GET_SESSIONS_QUERY: &str = r#"
     SELECT session_id, owner, embedded_dataset_id, llm_id, title, created_at, updated_at
     FROM chat_sessions
-    WHERE owner = $1
+    WHERE 1=1
     ORDER BY updated_at DESC
 "#;
 
@@ -48,7 +49,7 @@ const UPDATE_MESSAGE_CONTENT_STATUS_QUERY: &str = r#"
     SET content = $2, status = $3
     WHERE message_id = $1
     AND session_id IN (
-        SELECT session_id FROM chat_sessions WHERE owner = $4
+        SELECT session_id FROM chat_sessions WHERE 1=1
     )
     RETURNING message_id, session_id, role, content, documents_retrieved, status, created_at
 "#;
@@ -58,7 +59,7 @@ const UPDATE_MESSAGE_STATUS_QUERY: &str = r#"
     SET status = $2
     WHERE message_id = $1
     AND session_id IN (
-        SELECT session_id FROM chat_sessions WHERE owner = $3
+        SELECT session_id FROM chat_sessions WHERE 1=1
     )
     RETURNING message_id, session_id, role, content, documents_retrieved, status, created_at
 "#;
@@ -68,12 +69,12 @@ const GET_MESSAGE_BY_ID_QUERY: &str = r#"
     FROM chat_messages
     WHERE message_id = $1
     AND session_id IN (
-        SELECT session_id FROM chat_sessions WHERE owner = $2
+        SELECT session_id FROM chat_sessions WHERE 1=1
     )
 "#;
 
 const GET_LLM_DETAILS_QUERY: &str = r#"
-    SELECT name, provider, base_url, config->>'model' as model, api_key
+    SELECT name, provider, base_url, config->>'model' as model, api_key_encrypted
     FROM llms
     WHERE llm_id = $1
 "#;
@@ -105,20 +106,25 @@ pub(crate) async fn create_chat_session(
         format!("chat-session-{}", now.format("%Y%m%d-%H%M%S"))
     });
 
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
     let result = sqlx::query_as::<_, ChatSession>(CREATE_SESSION_QUERY)
         .bind(&session_id)
         .bind(owner)
         .bind(request.embedded_dataset_id)
         .bind(request.llm_id)
         .bind(&title)
-        .fetch_one(pool)
+        .fetch_one(&mut *tx)
         .await;
 
     let duration = start.elapsed().as_secs_f64();
     let success = result.is_ok();
     record_database_query("INSERT", "chat_sessions", duration, success);
 
-    Ok(result?)
+    let session = result?;
+    tx.commit().await?;
+    Ok(session)
 }
 
 #[tracing::instrument(name = "database.get_chat_session", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner = %owner))]
@@ -128,17 +134,23 @@ pub(crate) async fn get_chat_session(
     owner: &str,
 ) -> Result<ChatSession> {
     let start = Instant::now();
+
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
     let result = sqlx::query_as::<_, ChatSession>(GET_SESSION_QUERY)
         .bind(session_id)
         .bind(owner)
-        .fetch_one(pool)
+        .fetch_one(&mut *tx)
         .await;
 
     let duration = start.elapsed().as_secs_f64();
     let success = result.is_ok();
     record_database_query("SELECT", "chat_sessions", duration, success);
 
-    Ok(result?)
+    let session = result?;
+    tx.commit().await?;
+    Ok(session)
 }
 
 #[tracing::instrument(name = "database.get_chat_sessions", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner = %owner))]
@@ -147,16 +159,21 @@ pub(crate) async fn get_chat_sessions(
     owner: &str,
 ) -> Result<Vec<ChatSession>> {
     let start = Instant::now();
+
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
     let result = sqlx::query_as::<_, ChatSession>(GET_SESSIONS_QUERY)
-        .bind(owner)
-        .fetch_all(pool)
+        .fetch_all(&mut *tx)
         .await;
 
     let duration = start.elapsed().as_secs_f64();
     let success = result.is_ok();
     record_database_query("SELECT", "chat_sessions", duration, success);
 
-    Ok(result?)
+    let sessions = result?;
+    tx.commit().await?;
+    Ok(sessions)
 }
 
 #[tracing::instrument(name = "database.delete_chat_session", skip(pool), fields(database.system = "postgresql", database.operation = "DELETE", owner = %owner))]
@@ -166,10 +183,14 @@ pub(crate) async fn delete_chat_session(
     owner: &str,
 ) -> Result<()> {
     let start = Instant::now();
+
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
     let result = sqlx::query(DELETE_SESSION_QUERY)
         .bind(session_id)
         .bind(owner)
-        .execute(pool)
+        .execute(&mut *tx)
         .await;
 
     let duration = start.elapsed().as_secs_f64();
@@ -177,6 +198,7 @@ pub(crate) async fn delete_chat_session(
     record_database_query("DELETE", "chat_sessions", duration, success);
 
     result?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -224,9 +246,10 @@ pub(crate) async fn get_chat_messages(
     Ok(result?)
 }
 
-#[tracing::instrument(name = "database.get_llm_details", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT"))]
+#[tracing::instrument(name = "database.get_llm_details", skip(pool, encryption), fields(database.system = "postgresql", database.operation = "SELECT"))]
 pub(crate) async fn get_llm_details(
     pool: &Pool<Postgres>,
+    encryption: &EncryptionService,
     llm_id: i32,
 ) -> Result<(String, String, String, String, Option<String>)> {
     let start = Instant::now();
@@ -241,7 +264,19 @@ pub(crate) async fn get_llm_details(
     let success = result.is_ok();
     record_database_query("SELECT", "llms", duration, success);
 
-    result?.ok_or_else(|| anyhow::anyhow!("LLM not found"))
+    let (name, provider, base_url, model, encrypted_api_key) =
+        result?.ok_or_else(|| anyhow::anyhow!("LLM not found"))?;
+
+    // Decrypt the API key
+    let decrypted_api_key = if let Some(ref encrypted_key) = encrypted_api_key
+        && !encrypted_key.is_empty()
+    {
+        Some(encryption.decrypt(encrypted_key)?)
+    } else {
+        None
+    };
+
+    Ok((name, provider, base_url, model, decrypted_api_key))
 }
 
 #[tracing::instrument(name = "database.store_retrieved_documents", skip(pool, documents), fields(database.system = "postgresql", database.operation = "INSERT", count = documents.len()))]
@@ -257,8 +292,12 @@ pub(crate) async fn store_retrieved_documents(
     }
 
     // Batch insert using UNNEST for better performance
-    // Process in chunks to avoid parameter limits
-    //TODO: make chunk size configurable if needed
+    // NOTE: Batch size (500) tuned for PostgreSQL parameter limits and performance.
+    // - PostgreSQL max parameters: 65,535 (we use ~5 per document)
+    // - Larger batches = fewer round trips but more memory
+    // - Smaller batches = more round trips but less memory per batch
+    // - 500 is a good balance: ~2,500 params, allows ~26 full batches per max
+    // FUTURE: Make configurable via ChatConfig if workload characteristics change
     const BATCH_SIZE: usize = 500;
 
     for chunk in documents.chunks(BATCH_SIZE) {
@@ -332,19 +371,24 @@ pub(crate) async fn update_message_content_and_status(
     owner: &str,
 ) -> Result<ChatMessage> {
     let start = Instant::now();
+
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
     let result = sqlx::query_as::<_, ChatMessage>(UPDATE_MESSAGE_CONTENT_STATUS_QUERY)
         .bind(message_id)
         .bind(content)
         .bind(status)
-        .bind(owner)
-        .fetch_one(pool)
+        .fetch_one(&mut *tx)
         .await;
 
     let duration = start.elapsed().as_secs_f64();
     let success = result.is_ok();
     record_database_query("UPDATE", "chat_messages", duration, success);
 
-    Ok(result?)
+    let message = result?;
+    tx.commit().await?;
+    Ok(message)
 }
 
 #[tracing::instrument(name = "database.update_message_status", skip(pool), fields(database.system = "postgresql", database.operation = "UPDATE", owner = %owner))]
@@ -355,18 +399,23 @@ pub(crate) async fn update_message_status(
     owner: &str,
 ) -> Result<ChatMessage> {
     let start = Instant::now();
+
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
     let result = sqlx::query_as::<_, ChatMessage>(UPDATE_MESSAGE_STATUS_QUERY)
         .bind(message_id)
         .bind(status)
-        .bind(owner)
-        .fetch_one(pool)
+        .fetch_one(&mut *tx)
         .await;
 
     let duration = start.elapsed().as_secs_f64();
     let success = result.is_ok();
     record_database_query("UPDATE", "chat_messages", duration, success);
 
-    Ok(result?)
+    let message = result?;
+    tx.commit().await?;
+    Ok(message)
 }
 
 #[tracing::instrument(name = "database.get_message_by_id", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner = %owner))]
@@ -376,15 +425,20 @@ pub(crate) async fn get_message_by_id(
     owner: &str,
 ) -> Result<ChatMessage> {
     let start = Instant::now();
+
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
     let result = sqlx::query_as::<_, ChatMessage>(GET_MESSAGE_BY_ID_QUERY)
         .bind(message_id)
-        .bind(owner)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *tx)
         .await;
 
     let duration = start.elapsed().as_secs_f64();
     let success = result.is_ok();
     record_database_query("SELECT", "chat_messages", duration, success);
 
-    result?.ok_or_else(|| anyhow::anyhow!("Message not found"))
+    let message = result?.ok_or_else(|| anyhow::anyhow!("Message not found"))?;
+    tx.commit().await?;
+    Ok(message)
 }

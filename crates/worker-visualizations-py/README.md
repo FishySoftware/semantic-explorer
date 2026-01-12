@@ -159,8 +159,10 @@ sequenceDiagram
 | `AWS_ENDPOINT_URL` | string | **required** | S3 endpoint URL |
 | `PROCESSING_TIMEOUT_SECS` | integer | `3600` | Job timeout (1 hour default) |
 | `WORKER_ID` | string | UUID | Unique worker identifier |
-| `LOG_LEVEL` | string | `INFO` | Python logging level |
+| `LOG_LEVEL` | string | `INFO` | Python logging level (DEBUG, INFO, WARNING, ERROR) |
+| `LOG_FORMAT` | string | `json` | Log format (json for structured logging) |
 | `MAX_CONCURRENT_JOBS` | integer | `3` | Maximum concurrent jobs |
+| `HEALTH_CHECK_PORT` | integer | `8081` | Port for health check HTTP server |
 
 ## Job Message Format
 
@@ -347,6 +349,124 @@ Progress updates are published to NATS for frontend consumption:
 | `clustering` | 55-70% | HDBSCAN processing |
 | `naming_clusters` | 72-85% | LLM API calls |
 | `generating_html` | 88-100% | Datamapplot rendering |
+
+## Health Checks and Graceful Shutdown
+
+The worker implements Kubernetes-compatible health checks and graceful shutdown handling:
+
+### Health Check Endpoints
+
+A health check HTTP server runs on port 8081 (configurable via `HEALTH_CHECK_PORT`):
+
+#### Liveness Probe
+```bash
+curl http://localhost:8081/health
+# Returns 200 OK if worker process is running
+```
+
+**Use case**: Kubernetes liveness probe - restart pod if this fails
+
+#### Readiness Probe
+```bash
+curl http://localhost:8081/ready
+# Returns 200 OK if worker is ready to accept jobs
+# Returns 503 Service Unavailable if:
+#   - Worker is processing a job that exceeded max wait time
+#   - Recent errors indicate worker is degraded
+```
+
+**Use case**: Kubernetes readiness probe - remove from service if this fails
+
+### Kubernetes Configuration
+
+Example Kubernetes pod specification:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: visualization-worker
+spec:
+  containers:
+  - name: worker
+    image: visualization-worker:latest
+    ports:
+    - containerPort: 8081
+      name: health
+
+    # Liveness: restart if worker process dies
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: health
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+
+    # Readiness: remove from service if degraded
+    readinessProbe:
+      httpGet:
+        path: /ready
+        port: health
+      initialDelaySeconds: 15
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 2
+
+    # Graceful shutdown
+    terminationGracePeriodSeconds: 300  # Wait up to 5 minutes
+    lifecycle:
+      preStop:
+        exec:
+          command: ["/bin/sh", "-c", "sleep 5"]  # Give load balancer time to stop routing
+```
+
+### Graceful Shutdown
+
+When the worker receives SIGTERM or SIGINT:
+
+1. **Signal handling**: Acknowledges the termination signal
+2. **Stop accepting jobs**: No new jobs are dequeued from NATS
+3. **Complete in-flight jobs**: Waits for all active jobs to finish (max 5 minutes)
+4. **Clean shutdown**: Closes NATS connection and exits
+5. **Timeout protection**: Force exits after 5 minutes even if jobs are still running
+
+**Implementation details**:
+- Catches SIGTERM/SIGINT signals via `signal.signal()`
+- Uses asyncio.Event to coordinate graceful shutdown
+- Active job counter tracks in-flight work
+- Waits with timeout to prevent hanging
+
+### Structured Logging
+
+The worker outputs structured JSON logs for centralized log aggregation (ELK, Datadog, etc.):
+
+```json
+{
+  "timestamp": "2024-01-11T12:00:00Z",
+  "level": "INFO",
+  "logger": "main",
+  "message": "Starting visualization worker",
+  "worker_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+}
+```
+
+**Configuration**:
+```bash
+# Enable structured JSON logging (default)
+export LOG_FORMAT="json"
+
+# Optional: set log level
+export LOG_LEVEL="INFO"  # DEBUG, INFO, WARNING, ERROR
+```
+
+**Log format**: Each log entry includes:
+- `timestamp`: ISO 8601 timestamp
+- `level`: Log level (DEBUG, INFO, WARNING, ERROR)
+- `logger`: Logger name (main, processor, storage, etc.)
+- `message`: Human-readable message
+- `context`: Additional structured fields (job_id, error_type, etc.)
 
 ## Running
 

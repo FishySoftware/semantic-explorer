@@ -1,4 +1,5 @@
 use futures_util::Stream;
+use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::http_client::HTTP_CLIENT;
 use sqlx::{Pool, Postgres};
 
@@ -7,25 +8,42 @@ use crate::storage::postgres::chat as chat_storage;
 const SYSTEM_PROMPT: &str = "You are a helpful assistant that answers questions based on the provided context. When answering, always cite the specific chunk number (e.g., 'According to Chunk 1' or 'As mentioned in Chunk 2 and Chunk 3') to reference where your information comes from. If the context doesn't contain relevant information to answer the question, say so explicitly.";
 
 /// Generate an LLM response with RAG context
-#[tracing::instrument(name = "generate_llm_response", skip(postgres_pool, query, context))]
+#[tracing::instrument(
+    name = "generate_llm_response",
+    skip(postgres_pool, query, context, encryption)
+)]
 pub(crate) async fn generate_response(
     postgres_pool: &Pool<Postgres>,
+    encryption: &EncryptionService,
     llm_id: i32,
     query: &str,
     context: &str,
     temperature: Option<f32>,
     max_tokens: Option<i32>,
 ) -> Result<String, String> {
+    // Check for injection attempts in user query
+    if let Some(reason) = crate::chat::prompt_injection::detect_injection_attempt(query) {
+        tracing::warn!(
+            llm_id = llm_id,
+            reason = %reason,
+            "rejecting request due to injection attempt detection"
+        );
+        return Err(format!("query rejected: {}", reason));
+    }
+
     // Fetch LLM details from database
     let (name, provider, base_url, model, api_key) =
-        chat_storage::get_llm_details(postgres_pool, llm_id)
+        chat_storage::get_llm_details(postgres_pool, encryption, llm_id)
             .await
             .map_err(|e| format!("database error: {e}"))?;
+
+    // Sanitize user input to prevent injection
+    let sanitized_query = crate::chat::prompt_injection::sanitize_user_input(query);
 
     // Build the prompt with RAG context
     let user_prompt = format!(
         "{}\n---\n\nQuestion: {}\n\nPlease provide a helpful answer based on the context above. Remember to cite specific chunk numbers when referencing information.",
-        context, query
+        context, sanitized_query
     );
 
     let temperature = temperature.unwrap_or(0.7).clamp(0.0, 2.0);
@@ -72,6 +90,15 @@ pub(crate) async fn generate_response(
             return Err(format!("unsupported LLM provider: {}", provider));
         }
     };
+
+    // Validate response for injection indicators
+    if crate::chat::prompt_injection::validate_response(&response_text) {
+        tracing::warn!(
+            llm_id = llm_id,
+            response_len = response_text.len(),
+            "LLM response contains suspicious patterns that may indicate successful injection"
+        );
+    }
 
     tracing::debug!(llm_name = %name, "generated LLM response");
     Ok(response_text)
@@ -249,10 +276,11 @@ async fn call_cohere_api(
 /// Generate a streaming LLM response with RAG context
 #[tracing::instrument(
     name = "generate_llm_response_stream",
-    skip(postgres_pool, query, context)
+    skip(postgres_pool, query, context, encryption)
 )]
 pub(crate) async fn generate_response_stream(
     postgres_pool: &Pool<Postgres>,
+    encryption: &EncryptionService,
     llm_id: i32,
     query: &str,
     context: &str,
@@ -261,7 +289,7 @@ pub(crate) async fn generate_response_stream(
 ) -> Result<impl Stream<Item = Result<String, String>>, String> {
     // Fetch LLM details from database
     let (name, provider, base_url, model, api_key) =
-        chat_storage::get_llm_details(postgres_pool, llm_id)
+        chat_storage::get_llm_details(postgres_pool, encryption, llm_id)
             .await
             .map_err(|e| format!("database error: {e}"))?;
 

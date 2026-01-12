@@ -7,6 +7,7 @@ use crate::transforms::collection::models::{
     UpdateCollectionTransform,
 };
 use crate::transforms::collection::scanner::trigger_collection_transform_scan;
+use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::models::PaginatedResponse;
 use semantic_explorer_core::validation;
 
@@ -16,7 +17,7 @@ use async_nats::Client as NatsClient;
 use aws_sdk_s3::Client as S3Client;
 use serde::Deserialize;
 use sqlx::{Pool, Postgres};
-use tracing::{error, info};
+use tracing::error;
 
 #[derive(Deserialize, Debug)]
 pub struct SortParams {
@@ -132,13 +133,14 @@ pub async fn get_collection_transform(
     ),
 )]
 #[post("/api/collection-transforms")]
-#[tracing::instrument(name = "create_collection_transform", skip(user, postgres_pool, nats_client, s3_client, body, req), fields(title = %body.title))]
+#[tracing::instrument(name = "create_collection_transform", skip(user, postgres_pool, nats_client, s3_client, encryption, body, req), fields(title = %body.title))]
 pub async fn create_collection_transform(
     user: AuthenticatedUser,
     req: HttpRequest,
     postgres_pool: Data<Pool<Postgres>>,
     nats_client: Data<NatsClient>,
     s3_client: Data<S3Client>,
+    encryption: Data<EncryptionService>,
     body: Json<CreateCollectionTransform>,
 ) -> impl Responder {
     // Validate input
@@ -166,6 +168,7 @@ pub async fn create_collection_transform(
                 &s3_client,
                 collection_transform_id,
                 &user,
+                &encryption,
             )
             .await
             {
@@ -512,8 +515,6 @@ pub async fn stream_collection_transform_status(
                 return;
             }
         };
-
-        info!("SSE client connected to collection transforms stream (subject: {})", subject);
 
         // Send initial connection message
         yield Ok::<_, actix_web::Error>(actix_web::web::Bytes::from("event: connected\ndata: {\"status\":\"connected\"}\n\n"));

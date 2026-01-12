@@ -1,0 +1,148 @@
+# Prometheus Configuration for Semantic Explorer
+# Monitors all services in the stack with comprehensive metrics collection
+
+global:
+  scrape_interval: 15s           # Scrape every 15 seconds
+  evaluation_interval: 15s       # Evaluate rules every 15 seconds
+  external_labels:
+    monitor: 'semantic-explorer'
+    environment: 'development'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+# Load rules once and periodically evaluate them
+rule_files:
+  - 'alert_rules.yml'
+
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Semantic Explorer API
+  - job_name: 'semantic-explorer-api'
+    static_configs:
+      - targets: ['localhost:8000']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - target_label: service
+        replacement: 'api'
+
+  # Worker - Collections
+  - job_name: 'worker-collections'
+    static_configs:
+      - targets: ['localhost:8001']  # Assuming worker metrics on 8001
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    relabel_configs:
+      - target_label: service
+        replacement: 'worker-collections'
+
+  # Worker - Datasets
+  - job_name: 'worker-datasets'
+    static_configs:
+      - targets: ['localhost:8002']  # Assuming worker metrics on 8002
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    relabel_configs:
+      - target_label: service
+        replacement: 'worker-datasets'
+
+  # Worker - Visualizations
+  - job_name: 'worker-visualizations'
+    static_configs:
+      - targets: ['localhost:8003']  # Assuming worker metrics on 8003
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    relabel_configs:
+      - target_label: service
+        replacement: 'worker-visualizations'
+
+  # PostgreSQL Exporter
+  - job_name: 'postgresql'
+    static_configs:
+      - targets: ['localhost:9187']  # postgres_exporter default port
+    scrape_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - target_label: service
+        replacement: 'postgresql'
+
+  # Redis Exporter
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['localhost:9121']  # redis_exporter default port
+    scrape_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - target_label: service
+        replacement: 'redis'
+
+  # Qdrant Vector Database
+  - job_name: 'qdrant'
+    static_configs:
+      - targets: ['localhost:6334']  # Qdrant HTTP API
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+    relabel_configs:
+      - target_label: service
+        replacement: 'qdrant'
+
+  # NATS Server
+  - job_name: 'nats'
+    static_configs:
+      - targets: ['localhost:8222']  # NATS monitoring port
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    relabel_configs:
+      - target_label: service
+        replacement: 'nats'
+
+  # Grafana
+  - job_name: 'grafana'
+    static_configs:
+      - targets: ['localhost:3000']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+    relabel_configs:
+      - target_label: service
+        replacement: 'grafana'
+
+  # Node Exporter (if running on Linux/macOS)
+  - job_name: 'node'
+    static_configs:
+      - targets: ['localhost:9100']
+    scrape_interval: 30s
+    relabel_configs:
+      - target_label: service
+        replacement: 'system'
+
+  # Docker Daemon (if using Docker)
+  - job_name: 'docker'
+    static_configs:
+      - targets: ['localhost:9323']
+    scrape_interval: 30s
+    relabel_configs:
+      - target_label: service
+        replacement: 'docker'
+
+  # Pushgateway (for batch jobs)
+  - job_name: 'pushgateway'
+    static_configs:
+      - targets: ['localhost:9091']
+    scrape_interval: 30s
+    honor_labels: true
+    relabel_configs:
+      - target_label: service
+        replacement: 'pushgateway'

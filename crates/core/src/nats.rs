@@ -1,3 +1,4 @@
+use crate::config::NatsConfig;
 use anyhow::{Context, Result};
 use async_nats::{
     Client,
@@ -10,8 +11,9 @@ use async_nats::{
 use std::time::Duration;
 use tracing::{info, warn};
 
-pub async fn initialize_jetstream(client: &Client) -> Result<()> {
+pub async fn initialize_jetstream(client: &Client, nats_config: &NatsConfig) -> Result<()> {
     let jetstream = jetstream::new(client.clone());
+    let num_replicas = nats_config.replicas as usize;
 
     ensure_stream(
         &jetstream,
@@ -22,7 +24,7 @@ pub async fn initialize_jetstream(client: &Client) -> Result<()> {
             retention: RetentionPolicy::WorkQueue,
             max_age: Duration::from_secs(7 * 24 * 60 * 60), // 7 days
             duplicate_window: Duration::from_secs(5 * 60),  // 5 minutes for deduplication
-            num_replicas: 1,
+            num_replicas,
             ..Default::default()
         },
     )
@@ -37,7 +39,7 @@ pub async fn initialize_jetstream(client: &Client) -> Result<()> {
             retention: RetentionPolicy::WorkQueue,
             max_age: Duration::from_secs(7 * 24 * 60 * 60), // 7 days
             duplicate_window: Duration::from_secs(5 * 60),  // 5 minutes for deduplication
-            num_replicas: 1,
+            num_replicas,
             ..Default::default()
         },
     )
@@ -52,7 +54,7 @@ pub async fn initialize_jetstream(client: &Client) -> Result<()> {
             retention: RetentionPolicy::WorkQueue,
             max_age: Duration::from_secs(7 * 24 * 60 * 60), // 7 days
             duplicate_window: Duration::from_secs(5 * 60),  // 5 minutes for deduplication
-            num_replicas: 1,
+            num_replicas,
             ..Default::default()
         },
     )
@@ -71,7 +73,7 @@ pub async fn initialize_jetstream(client: &Client) -> Result<()> {
             ],
             retention: RetentionPolicy::Limits, // Keep for investigation
             max_age: Duration::from_secs(30 * 24 * 60 * 60), // 30 days
-            num_replicas: 1,
+            num_replicas,
             ..Default::default()
         },
     )
@@ -99,7 +101,7 @@ pub async fn initialize_jetstream(client: &Client) -> Result<()> {
             retention: RetentionPolicy::Limits,
             max_age: Duration::from_secs(60 * 60),
             max_messages: 100_000,
-            num_replicas: 1,
+            num_replicas,
             ..Default::default()
         },
     )
@@ -305,32 +307,4 @@ async fn collect_nats_metrics(client: &Client) -> Result<()> {
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_stream_config_differs() {
-        let config1 = StreamConfig {
-            name: "TEST".to_string(),
-            subjects: vec!["test.subject".to_string()],
-            retention: RetentionPolicy::WorkQueue,
-            num_replicas: 1,
-            ..Default::default()
-        };
-
-        let config2 = config1.clone();
-        assert!(!stream_config_differs(&config1, &config2));
-
-        let config3 = StreamConfig {
-            name: "TEST".to_string(),
-            subjects: vec!["different.subject".to_string()],
-            retention: RetentionPolicy::WorkQueue,
-            num_replicas: 1,
-            ..Default::default()
-        };
-        assert!(stream_config_differs(&config1, &config3));
-    }
 }

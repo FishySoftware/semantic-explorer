@@ -39,7 +39,6 @@ spec:
       {{- end }}
   {{- end }}
 {{- end }}
----
 {{- if .Values.workerCollections.autoscaling.enabled }}
 apiVersion: {{ include "semantic-explorer.hpa.apiVersion" . }}
 kind: HorizontalPodAutoscaler
@@ -81,7 +80,6 @@ spec:
       {{- end }}
   {{- end }}
 {{- end }}
----
 {{- if .Values.workerDatasets.autoscaling.enabled }}
 apiVersion: {{ include "semantic-explorer.hpa.apiVersion" . }}
 kind: HorizontalPodAutoscaler
@@ -122,7 +120,7 @@ spec:
       targetAverageUtilization: {{ .Values.workerDatasets.autoscaling.targetMemoryUtilizationPercentage }}
       {{- end }}
   {{- end }}
-{{- end }}---
+{{- end }}
 {{- if .Values.workerVisualizationsPy.autoscaling.enabled }}
 apiVersion: {{ include "semantic-explorer.hpa.apiVersion" . }}
 kind: HorizontalPodAutoscaler

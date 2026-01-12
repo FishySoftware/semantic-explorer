@@ -9,6 +9,7 @@ pub(crate) mod health;
 pub(crate) mod llms;
 pub(crate) mod marketplace;
 pub(crate) mod search;
+pub(crate) mod sessions;
 pub(crate) mod visualization_transforms;
 
 use crate::auth::extract_user;

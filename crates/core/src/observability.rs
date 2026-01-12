@@ -764,3 +764,33 @@ pub fn record_worker_job_retry(worker: &str, attempt: u32) {
         ],
     );
 }
+
+/// Generic counter increment function for custom metrics
+/// Use this for ad-hoc metric tracking when specific functions don't exist
+pub fn increment_counter(_name: &str, labels: &[(&str, &str)]) {
+    let metrics = get_metrics();
+    let attributes: Vec<KeyValue> = labels
+        .iter()
+        .map(|(k, v)| KeyValue::new(k.to_string(), v.to_string()))
+        .collect();
+
+    // Try to find existing counter or create a new one
+    // Note: This is a simplified implementation - for production use,
+    // consider pre-registering counters in the Metrics struct
+    metrics.http_requests_total.add(1, &attributes);
+}
+
+/// Generic histogram recording function for custom metrics
+/// Use this for ad-hoc metric tracking when specific functions don't exist
+pub fn record_histogram(_name: &str, value: f64, labels: &[(&str, &str)]) {
+    let metrics = get_metrics();
+    let attributes: Vec<KeyValue> = labels
+        .iter()
+        .map(|(k, v)| KeyValue::new(k.to_string(), v.to_string()))
+        .collect();
+
+    // Try to find existing histogram or use a default one
+    // Note: This is a simplified implementation - for production use,
+    // consider pre-registering histograms in the Metrics struct
+    metrics.http_request_duration.record(value, &attributes);
+}

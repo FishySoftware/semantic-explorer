@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import os
+import signal
 import sys
 import time
 import uuid
@@ -23,6 +24,13 @@ from nats.aio.msg import Msg
 from nats.aio.client import Client as NATSConnection
 from nats.js.api import ConsumerConfig
 from pydantic import ValidationError
+
+# Try to import aiohttp for health check server
+try:
+    from aiohttp import web
+    HAS_AIOHTTP = True
+except ImportError:
+    HAS_AIOHTTP = False
 
 # Load environment variables from .env file
 # Look for .env in the parent directory (crates/worker-visualizations-py/)
@@ -53,13 +61,51 @@ except ImportError:
     from storage import S3Storage
     from llm_namer import LLMProvider
 
-# Configure logging
-log_level = os.getenv("LOG_LEVEL", "INFO")
-logging.basicConfig(
-    level=getattr(logging, log_level),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
+# Initialize worker configuration first
+WORKER_ID = os.getenv("WORKER_ID", str(uuid.uuid4()))
+
+# Configure structured JSON logging
+def configure_json_logging(worker_id: str):
+    """Configure JSON structured logging for production."""
+    log_level = os.getenv("LOG_LEVEL", "INFO")
+    log_format = os.getenv("LOG_FORMAT", "json").lower()
+
+    # Create logger
+    logger_instance = logging.getLogger()
+    logger_instance.setLevel(getattr(logging, log_level))
+
+    # Remove default handlers
+    for handler in logger_instance.handlers[:]:
+        logger_instance.removeHandler(handler)
+
+    handler = logging.StreamHandler(sys.stdout)
+
+    if log_format == "json":
+        # JSON structured logging formatter
+        class JSONFormatter(logging.Formatter):
+            def format(self, record):
+                log_obj = {
+                    "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+                    "level": record.levelname,
+                    "logger": record.name,
+                    "message": record.getMessage(),
+                    "worker_id": worker_id,
+                }
+                if record.exc_info:
+                    log_obj["exception"] = self.formatException(record.exc_info)
+                return json.dumps(log_obj)
+
+        handler.setFormatter(JSONFormatter())
+    else:
+        # Human-readable format for development
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        )
+
+    logger_instance.addHandler(handler)
+    return logger_instance
+
+logger = configure_json_logging(WORKER_ID)
 
 # Configuration
 NATS_URL = os.getenv("NATS_URL", "nats://localhost:4222")
@@ -67,11 +113,77 @@ NATS_SUBJECT = "workers.visualization-transform"
 NATS_DURABLE_CONSUMER = "visualization-transform-workers"
 RESULT_SUBJECT = "worker.result.visualization"
 PROCESSING_TIMEOUT_SECS = int(os.getenv("PROCESSING_TIMEOUT_SECS", "3600"))
-WORKER_ID = os.getenv("WORKER_ID", str(uuid.uuid4()))
+HEALTH_CHECK_PORT = int(os.getenv("HEALTH_CHECK_PORT", "8081"))
 
 # Global state
 s3_storage: Optional[S3Storage] = None
 llm_provider: Optional[LLMProvider] = None
+shutdown_event: asyncio.Event = asyncio.Event()
+active_jobs = 0
+
+
+# Health check state
+class HealthCheckState:
+    """Maintains health check state for Kubernetes probes."""
+    is_ready = False
+    last_job_time = time.time()
+    error_message: Optional[str] = None
+
+
+health_state = HealthCheckState()
+
+
+async def health_check_handler(request):
+    """Handle liveness probe request."""
+    return web.Response(text="OK", status=200)
+
+
+async def readiness_check_handler(request):
+    """Handle readiness probe request."""
+    if not health_state.is_ready:
+        return web.Response(text="Not ready: worker not initialized", status=503)
+
+    # Check if worker has become unresponsive (no jobs processed in 5 minutes)
+    time_since_last_job = time.time() - health_state.last_job_time
+    if time_since_last_job > 300:  # 5 minutes
+        return web.Response(
+            text=f"Not ready: no activity for {time_since_last_job:.0f}s",
+            status=503
+        )
+
+    if health_state.error_message:
+        return web.Response(text=f"Not ready: {health_state.error_message}", status=503)
+
+    return web.Response(text="Ready", status=200)
+
+
+async def start_health_check_server():
+    """Start health check HTTP server for Kubernetes probes."""
+    if not HAS_AIOHTTP:
+        logger.warning("aiohttp not installed; health check server will not start")
+        return None
+
+    app = web.Application()
+    app.router.add_get("/health", health_check_handler)
+    app.router.add_get("/ready", readiness_check_handler)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", HEALTH_CHECK_PORT)
+    await site.start()
+    logger.info(f"Health check server started on port {HEALTH_CHECK_PORT}")
+    return runner
+
+
+def setup_signal_handlers():
+    """Setup signal handlers for graceful shutdown."""
+    def handle_signal(signum, frame):
+        sig_name = signal.Signals(signum).name
+        logger.info(f"Received {sig_name} signal, initiating graceful shutdown")
+        shutdown_event.set()
+
+    signal.signal(signal.SIGTERM, handle_signal)
+    signal.signal(signal.SIGINT, handle_signal)
 
 
 async def initialize():
@@ -95,6 +207,8 @@ async def initialize():
 
     elapsed = time.time() - start_time
     logger.info(f"Worker initialization complete in {elapsed:.3f}s")
+    health_state.is_ready = True
+    health_state.last_job_time = time.time()
 
 
 async def handle_job(
@@ -108,7 +222,10 @@ async def handle_job(
         msg: NATS message
         job: Parsed visualization transform job
     """
+    global active_jobs
+    active_jobs += 1
     job_start_time = time.time()
+
     logger.info(
         f"Processing job {job.job_id} for transform {job.visualization_transform_id} "
         f"(visualization {job.visualization_id}, owner: {job.owner}, embedded_dataset: {job.embedded_dataset_id})"
@@ -240,6 +357,11 @@ async def handle_job(
         # Nack the message to retry
         await msg.nak()
         logger.warning(f"Nacked message for job {job.job_id} for retry")
+    finally:
+        # Update health state and decrement active jobs
+        active_jobs -= 1
+        health_state.last_job_time = time.time()
+        logger.debug(f"Job {job.job_id} completed, active jobs: {active_jobs}")
 
 
 async def message_handler(msg: Msg, nc: NATSConnection) -> None:
@@ -281,10 +403,20 @@ async def main():
         f"Starting visualization worker (PID: {os.getpid()}, Worker ID: {WORKER_ID})"
     )
 
+    # Setup signal handlers for graceful shutdown
+    setup_signal_handlers()
+
     init_start = time.time()
     await initialize()
     init_elapsed = time.time() - init_start
     logger.info(f"Initialization phase completed in {init_elapsed:.3f}s")
+
+    # Start health check server
+    health_runner = None
+    try:
+        health_runner = await start_health_check_server()
+    except Exception as e:
+        logger.warning(f"Failed to start health check server: {e}")
 
     nc: Optional[NATSConnection] = None
     message_count = 0
@@ -327,6 +459,11 @@ async def main():
         # Message loop
         logger.info("Worker started, waiting for jobs...")
         async for msg in sub.messages:
+            # Check if shutdown was requested
+            if shutdown_event.is_set():
+                logger.info(f"Shutdown requested, stopping message processing after {message_count} messages")
+                break
+
             message_count += 1
             logger.debug(f"Received message #{message_count} from queue")
             # Create a task for message handling to allow concurrent processing
@@ -338,15 +475,35 @@ async def main():
         logger.error(f"Fatal error in main loop: {e}", exc_info=True)
         sys.exit(1)
     finally:
+        # Gracefully wait for active jobs to complete
+        if active_jobs > 0:
+            logger.info(f"Waiting for {active_jobs} active jobs to complete...")
+            max_wait = 300  # 5 minutes max wait for jobs
+            wait_start = time.time()
+            while active_jobs > 0 and (time.time() - wait_start) < max_wait:
+                await asyncio.sleep(1)
+
+            if active_jobs > 0:
+                logger.warning(f"{active_jobs} jobs still active after {max_wait}s timeout")
+            else:
+                logger.info("All active jobs completed")
+
+        # Close NATS connection
         if nc is not None:
             logger.debug("Closing NATS connection")
             await nc.close()
             logger.info("NATS connection closed")
 
+        # Shutdown health check server
+        if health_runner is not None:
+            logger.debug("Shutting down health check server")
+            await health_runner.cleanup()
+            logger.info("Health check server shut down")
+
         total_elapsed = time.time() - main_start
         logger.info(
             f"Worker stopped (processed {message_count} messages, "
-            f"total runtime: {total_elapsed:.3f}s)"
+            f"{active_jobs} jobs still active, total runtime: {total_elapsed:.3f}s)"
         )
 
 

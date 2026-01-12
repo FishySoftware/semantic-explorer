@@ -367,9 +367,6 @@ pub struct VisualizationTransformResult {
     pub stats_json: Option<serde_json::Value>,
 }
 
-#[deprecated(note = "Use VisualizationTransformResult instead")]
-pub type VisualizationResult = VisualizationTransformResult;
-
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PaginatedResponse<T: ToSchema> {
     pub items: Vec<T>,

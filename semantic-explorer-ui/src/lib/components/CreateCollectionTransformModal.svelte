@@ -50,14 +50,18 @@
 	let datasetTransformWipeCollection = $state(false);
 
 	$effect(() => {
-		if (open && collectionId !== null) {
-			selectedCollectionId = collectionId;
-			// Use provided collectionTitle if available, otherwise look it up
-			const title =
-				collectionTitle || collections.find((c) => c.collection_id === collectionId)?.title;
-			if (title) {
-				newDatasetName = `${title}-dataset`;
-				transformTitle = `${title}-transform`;
+		if (open) {
+			// Refetch collections when modal opens to ensure we have latest file counts
+			fetchCollections();
+			if (collectionId !== null) {
+				selectedCollectionId = collectionId;
+				// Use provided collectionTitle if available, otherwise look it up
+				const title =
+					collectionTitle || collections.find((c) => c.collection_id === collectionId)?.title;
+				if (title) {
+					newDatasetName = `${title}-dataset`;
+					transformTitle = `${title}-transform`;
+				}
 			}
 		}
 	});

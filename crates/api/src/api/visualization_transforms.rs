@@ -7,6 +7,7 @@ use crate::transforms::visualization::models::{
     VisualizationTransform, VisualizationTransformStats,
 };
 use crate::transforms::visualization::scanner::trigger_visualization_transform_scan;
+use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::models::PaginatedResponse;
 use semantic_explorer_core::validation;
 
@@ -158,12 +159,13 @@ pub async fn get_visualization_transform(
     ),
 )]
 #[post("/api/visualization-transforms")]
-#[tracing::instrument(name = "create_visualization_transform", skip(user, postgres_pool, nats_client, body, req), fields(title = %body.title))]
+#[tracing::instrument(name = "create_visualization_transform", skip(user, postgres_pool, nats_client, body, req, encryption), fields(title = %body.title))]
 pub async fn create_visualization_transform(
     user: AuthenticatedUser,
     req: HttpRequest,
     postgres_pool: Data<Pool<Postgres>>,
     nats_client: Data<NatsClient>,
+    encryption: Data<EncryptionService>,
     body: Json<CreateVisualizationTransform>,
 ) -> impl Responder {
     // Validate input
@@ -190,7 +192,7 @@ pub async fn create_visualization_transform(
 
     // If LLM ID provided, verify it exists and belongs to user
     if let Some(llm_id) = body.llm_id {
-        match llms::get_llm(&postgres_pool, &user, llm_id).await {
+        match llms::get_llm(&postgres_pool, &user, llm_id, &encryption).await {
             Ok(llm) => {
                 if llm.owner != *user {
                     return bad_request("LLM not found or access denied");
@@ -249,6 +251,7 @@ pub async fn create_visualization_transform(
                 &nats_client,
                 transform_id,
                 &user,
+                &encryption,
             )
             .await
             {
@@ -324,6 +327,7 @@ pub async fn update_visualization_transform(
     match visualization_transforms::update_visualization_transform(
         &postgres_pool,
         id,
+        &user,
         body.title.as_deref(),
         body.is_enabled,
         body.visualization_config.as_ref(),
@@ -382,7 +386,8 @@ pub async fn delete_visualization_transform(
         }
     }
 
-    match visualization_transforms::delete_visualization_transform(&postgres_pool, id).await {
+    match visualization_transforms::delete_visualization_transform(&postgres_pool, id, &user).await
+    {
         Ok(()) => {
             events::resource_deleted_with_request(
                 &req,
@@ -415,11 +420,12 @@ pub async fn delete_visualization_transform(
     ),
 )]
 #[post("/api/visualization-transforms/{id}/trigger")]
-#[tracing::instrument(name = "trigger_visualization_transform", skip(user, postgres_pool, nats_client), fields(visualization_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "trigger_visualization_transform", skip(user, postgres_pool, nats_client, encryption), fields(visualization_transform_id = %path.as_ref()))]
 pub async fn trigger_visualization_transform(
     user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     nats_client: Data<NatsClient>,
+    encryption: Data<EncryptionService>,
     path: Path<i32>,
 ) -> impl Responder {
     let id = path.into_inner();
@@ -440,7 +446,9 @@ pub async fn trigger_visualization_transform(
         }
     }
 
-    match trigger_visualization_transform_scan(&postgres_pool, &nats_client, id, &user).await {
+    match trigger_visualization_transform_scan(&postgres_pool, &nats_client, id, &user, &encryption)
+        .await
+    {
         Ok(()) => HttpResponse::Ok().json(serde_json::json!({
             "message": "Visualization transform triggered successfully"
         })),

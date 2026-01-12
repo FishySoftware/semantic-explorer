@@ -20,6 +20,7 @@ use crate::{
     },
     storage::postgres::{embedded_datasets, embedders},
 };
+use semantic_explorer_core::encryption::EncryptionService;
 
 #[utoipa::path(
     request_body = SearchRequest,
@@ -33,13 +34,14 @@ use crate::{
 #[post("/api/search")]
 #[tracing::instrument(
     name = "search",
-    skip(user, qdrant_client, postgres_pool, search_request, req)
+    skip(user, qdrant_client, postgres_pool, search_request, req, encryption)
 )]
 pub(crate) async fn search(
     user: AuthenticatedUser,
     req: HttpRequest,
     qdrant_client: Data<Qdrant>,
     postgres_pool: Data<Pool<Postgres>>,
+    encryption: Data<EncryptionService>,
     Json(search_request): Json<SearchRequest>,
 ) -> impl Responder {
     let start_time = std::time::Instant::now();
@@ -91,7 +93,9 @@ pub(crate) async fn search(
         .collect();
 
     let embedders_map =
-        match embedders::get_embedders_batch(&postgres_pool, &user, &embedder_ids).await {
+        match embedders::get_embedders_batch(&postgres_pool, &user, &embedder_ids, &encryption)
+            .await
+        {
             Ok(embs) => {
                 // Convert to HashMap for fast lookup
                 embs.into_iter()

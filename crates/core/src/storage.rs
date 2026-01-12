@@ -2,14 +2,21 @@ use crate::observability::record_storage_operation;
 use anyhow::{Context, Result, bail};
 use aws_config::{BehaviorVersion, Region};
 use aws_sdk_s3::{Client, config::Credentials};
+use once_cell::sync::Lazy;
 use serde::Serialize;
 use std::{env, time::Instant};
 use tracing::warn;
 
-// Maximum file size for in-memory processing: 100MB
+// Maximum file size for in-memory processing
 // Files larger than this should be rejected to prevent OOM
-// TODO: Make this configurable if needed
-const MAX_FILE_SIZE_BYTES: i64 = 100 * 1024 * 1024;
+// Configurable via MAX_FILE_SIZE_MB environment variable (default: 100MB)
+static MAX_FILE_SIZE_BYTES: Lazy<i64> = Lazy::new(|| {
+    let mb = env::var("MAX_FILE_SIZE_MB")
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(100);
+    mb * 1024 * 1024
+});
 
 #[derive(Debug, Clone)]
 pub struct DocumentUpload {
@@ -202,10 +209,11 @@ pub async fn get_file(client: &Client, bucket: &str, key: &str) -> Result<Vec<u8
 }
 
 /// Get file with size validation to prevent OOM on large files
-/// Returns error if file exceeds MAX_FILE_SIZE_BYTES (100MB)
+/// Returns error if file exceeds MAX_FILE_SIZE_BYTES (configurable via MAX_FILE_SIZE_MB env var)
 #[tracing::instrument(name = "s3.get_file_with_size_check", skip(client), fields(storage.system = "s3", bucket = %bucket, key = %key))]
 pub async fn get_file_with_size_check(client: &Client, bucket: &str, key: &str) -> Result<Vec<u8>> {
     let start = Instant::now();
+    let max_size = *MAX_FILE_SIZE_BYTES;
 
     // First, check file size using head_object
     let head_result = client
@@ -218,18 +226,18 @@ pub async fn get_file_with_size_check(client: &Client, bucket: &str, key: &str) 
 
     let file_size = head_result.content_length().unwrap_or(0);
 
-    if file_size > MAX_FILE_SIZE_BYTES {
+    if file_size > max_size {
         let duration = start.elapsed().as_secs_f64();
         record_storage_operation("download", duration, None, false);
         warn!(
             file_size_mb = file_size / (1024 * 1024),
-            max_size_mb = MAX_FILE_SIZE_BYTES / (1024 * 1024),
+            max_size_mb = max_size / (1024 * 1024),
             "File exceeds maximum size limit"
         );
         bail!(
             "File size ({} MB) exceeds maximum limit of {} MB. Large file processing is not supported.",
             file_size / (1024 * 1024),
-            MAX_FILE_SIZE_BYTES / (1024 * 1024)
+            max_size / (1024 * 1024)
         );
     }
 

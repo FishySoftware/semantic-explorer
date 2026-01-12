@@ -1,22 +1,36 @@
-# semantic-explorer
+# API Crate - Semantic Explorer REST Server
 
-Primary REST API server for the Semantic Explorer platform, providing HTTP endpoints for document management, embedding configuration, semantic search, and chat with documents.
+Production-grade REST API server built with Actix-web providing comprehensive document management, semantic search, and RAG chat capabilities with enterprise security features.
 
-## Overview
+## 📋 Overview
 
-The `semantic-explorer` crate is the main API binary that orchestrates the entire platform, handling:
+The `semantic-explorer` API crate is the core HTTP server that orchestrates the entire platform. It handles:
 
-- User authentication via OpenID Connect (OIDC)
-- Collection and dataset management
-- File upload and extraction pipeline orchestration
-- Embedder and LLM provider configuration
-- Semantic search across embedded datasets
-- Chat with documents using RAG (Retrieval-Augmented Generation)
-- Real-time transform status via Server-Sent Events (SSE)
-- Comprehensive audit logging
-- OpenAPI documentation
+### Core Features
+- 🔐 **OIDC Authentication** - OAuth2/OIDC integration with automatic token refresh and multi-session support
+- 📁 **Collection Management** - Create, update, delete document collections with hierarchical organization
+- 📊 **Dataset Operations** - Build structured datasets with chunking, deduplication, and metadata extraction
+- 🔍 **Semantic Search** - Vector similarity search with quantized embeddings, metadata filtering, and result ranking
+- 💬 **RAG Chat** - Chat with document collections using retrieval-augmented generation (RAG)
+- 🎯 **Multi-LLM Support** - Compare results across OpenAI, Anthropic, local models
+- 🔧 **Embedder Configuration** - Manage multiple embedding models and providers (OpenAI, Cohere, local)
+- 📝 **Transform Orchestration** - Coordinate document extraction, embedding, visualization pipelines
+- 📡 **Real-time Updates** - Server-Sent Events (SSE) for monitoring transform progress
+- 📊 **Comprehensive Audit Logging** - Immutable audit trail of all operations via NATS
+- 📈 **OpenAPI Documentation** - Auto-generated API docs at `/api/openapi.json`
 
-## Architecture
+### Enterprise Features  
+- 🛡️ **Row-Level Security** - Database-enforced access control via PostgreSQL RLS
+- 💾 **Request Caching** - Redis-based query result caching with TTL invalidation
+- 🌐 **HTTP Caching** - ETag and conditional request support (If-None-Match, If-Modified-Since)
+- ⚡ **Rate Limiting** - Token-bucket algorithm per user via Redis
+- 🔐 **Encryption** - AES-256 encryption for sensitive fields at rest
+- 🔄 **Idempotency** - Idempotent request handling via Redis deduplication
+- 📊 **Prometheus Metrics** - Real-time metrics export for monitoring (error rates, latency, costs)
+- 🔍 **Distributed Tracing** - OpenTelemetry integration for end-to-end tracing
+- 🏗️ **High Availability** - Connection pooling, replica read support, async workers
+
+## 🏗️ Architecture
 
 ```mermaid
 graph TB
@@ -266,6 +280,13 @@ sequenceDiagram
 | POST | `/api/chat/sessions/{id}/messages/stream` | Stream response (SSE) |
 | POST | `/api/chat/messages/{id}/regenerate` | Regenerate response |
 
+### Authentication Sessions
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/auth/sessions` | List user's active login sessions |
+| DELETE | `/api/auth/sessions/{session_id}` | Revoke specific session |
+| DELETE | `/api/auth/sessions` | Revoke all sessions (logout everywhere) |
+
 ### Marketplace
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -288,52 +309,62 @@ sequenceDiagram
 
 ### Authentication (OIDC)
 
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `OIDC_CLIENT_ID` | string | **required** | OAuth2 client ID |
-| `OIDC_CLIENT_SECRET` | string | **required** | OAuth2 client secret |
-| `OIDC_ISSUER_URL` | string | **required** | OAuth2 issuer URL |
-| `OIDC_USE_PKCE` | boolean | `false` | Enable PKCE flow |
+| Variable | Type | Description |
+|----------|------|-------------|
+| `OIDC_CLIENT_ID` | string | OAuth2 client ID |
+| `OIDC_CLIENT_SECRET` | string | OAuth2 client secret |
+| `OIDC_ISSUER_URL` | string | OAuth2 issuer URL |
+| `OIDC_CALLBACK_URL` | string | Callback URL after login |
 
 ### Server Configuration
 
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `HOSTNAME` | string | `localhost` | Bind address |
-| `PORT` | integer | `8080` | Listen port |
-| `STATIC_FILES_DIR` | string | `./semantic-explorer-ui/` | UI static files |
-| `CORS_ALLOWED_ORIGINS` | string | *empty* | Comma-separated CORS origins |
-| `SHUTDOWN_TIMEOUT_SECS` | integer | `30` | Graceful shutdown timeout |
+| Variable | Type | Description |
+|----------|------|-------------|
+| `API_HOST` | string | Bind address (default: 0.0.0.0) |
+| `API_PORT` | integer | Listen port (default: 8000) |
+| `API_WORKERS` | integer | Worker threads (default: 4) |
+| `ENABLE_API_DOCS` | boolean | Enable OpenAPI docs |
 
 ### Database
 
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `DATABASE_URL` | string | **required** | PostgreSQL connection string |
-| `DB_MAX_CONNECTIONS` | integer | `50` | Max pool connections |
-| `DB_MIN_CONNECTIONS` | integer | `2` | Min pool connections |
+| Variable | Type | Description |
+|----------|------|-------------|
+| `DATABASE_URL` | string | PostgreSQL connection string |
+| `DATABASE_REPLICA_URLS` | string | Comma-separated read replicas |
 
 ### Storage
 
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `AWS_REGION` | string | **required** | S3 region |
-| `AWS_ACCESS_KEY_ID` | string | **required** | S3 access key |
-| `AWS_SECRET_ACCESS_KEY` | string | **required** | S3 secret key |
-| `AWS_ENDPOINT_URL` | string | **required** | S3 endpoint |
+| Variable | Type | Description |
+|----------|------|-------------|
+| `AWS_REGION` | string | S3 region |
+| `AWS_ACCESS_KEY_ID` | string | S3 access key |
+| `AWS_SECRET_ACCESS_KEY` | string | S3 secret key |
+| `S3_BUCKET` | string | S3 bucket name |
+| `S3_ENDPOINT` | string | S3 endpoint (empty for AWS) |
 
 ### Vector Database
 
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `QDRANT_URL` | string | `http://localhost:6334` | Qdrant URL |
-| `QDRANT_API_KEY` | string | *optional* | Qdrant API key |
+| Variable | Type | Description |
+|----------|------|-------------|
+| `QDRANT_URL` | string | Qdrant URL |
+| `QDRANT_API_KEY` | string | Qdrant API key (optional) |
+| `QDRANT_QUANTIZATION_TYPE` | string | Quantization: none, scalar, product |
 
 ### Message Queue
 
+| Variable | Type | Description |
+|----------|------|-------------|
+| `NATS_SERVER_URL` | string | NATS server URL |
+| `NATS_USERNAME` | string | NATS username (optional) |
+| `NATS_PASSWORD` | string | NATS password (optional) |
+| `ENABLE_NATS_TLS` | boolean | Enable TLS for NATS |
+| `NATS_REPLICAS` | integer | `3` | JetStream stream replication factor |
+
+### Encryption
+
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `NATS_URL` | string | `nats://localhost:4222` | NATS URL |
+| `ENCRYPTION_MASTER_KEY` | string | **required** | 256-bit hex-encoded master encryption key (64 hex chars) |
 
 ### TLS/SSL
 
@@ -459,6 +490,84 @@ See the Helm chart in `/deployment/helm/semantic-explorer/`.
 - **CORS**: Configurable cross-origin resource sharing
 - **Input Validation**: Type-safe request validation
 - **SQL Injection Prevention**: Parameterized queries via sqlx
+- **API Key Encryption**: AES-256-GCM encryption at rest for API keys
+
+## API Key Encryption
+
+All API keys for embedders and LLMs are encrypted at rest using AES-256-GCM encryption.
+
+### How It Works
+
+1. **User provides API key** via POST `/api/embedders` or POST `/api/llms`:
+   ```json
+   {
+     "name": "My OpenAI Config",
+     "provider": "openai",
+     "api_key": "sk-proj-abc123..."
+   }
+   ```
+
+2. **Server encrypts the key**:
+   - Uses master key from `ENCRYPTION_MASTER_KEY` environment variable
+   - Generates random 12-byte nonce
+   - Encrypts plaintext using AES-256-GCM
+   - Stores as base64: `base64(nonce || ciphertext)`
+
+3. **Key is never exposed**:
+   - Client never receives the plaintext key
+   - When needed, server decrypts internally before calling external APIs
+   - Audit logs don't contain plaintext keys
+
+### Encryption Master Key Setup
+
+**Required for production deployment**:
+
+```bash
+# Generate a new 256-bit key (run once)
+openssl rand -hex 32
+# Output: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a
+
+# Set as environment variable
+export ENCRYPTION_MASTER_KEY="a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a"
+```
+
+**Recommended**:
+- Store the key in AWS Secrets Manager, HashiCorp Vault, or similar
+- Never commit to version control
+- Rotate periodically and implement key rotation migrations
+- Restrict access to secret management system
+
+### Database Schema
+
+API keys are stored in the `api_key_encrypted` column of embedders and llms tables:
+
+```sql
+-- embedders table
+CREATE TABLE embedders (
+  ...
+  api_key_encrypted TEXT, -- base64(nonce || ciphertext) from AES-256-GCM
+  ...
+)
+
+-- llms table
+CREATE TABLE llms (
+  ...
+  api_key_encrypted TEXT, -- base64(nonce || ciphertext) from AES-256-GCM
+  ...
+)
+```
+
+### Development Mode
+
+If `ENCRYPTION_MASTER_KEY` is not set, the API will:
+1. Log a warning that encryption is disabled
+2. Still start successfully (for development)
+3. In production, this will cause startup failure (recommended)
+
+To enable encryption in development:
+```bash
+export ENCRYPTION_MASTER_KEY=$(openssl rand -hex 32)
+```
 
 ## License
 

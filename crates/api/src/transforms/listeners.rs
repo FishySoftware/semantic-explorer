@@ -10,6 +10,8 @@ use semantic_explorer_core::models::{
 };
 use semantic_explorer_core::storage::get_file_with_size_check;
 
+use semantic_explorer_core::encryption::EncryptionService;
+
 use crate::datasets::models::ChunkWithMetadata;
 use crate::storage::postgres::collection_transforms;
 use crate::storage::postgres::dataset_transform_batches::{self, CreateBatchRequest};
@@ -27,6 +29,7 @@ struct TransformContext {
     postgres_pool: Pool<Postgres>,
     s3_client: S3Client,
     nats_client: NatsClient,
+    encryption: EncryptionService,
 }
 
 /// Status update payload for SSE streams
@@ -90,11 +93,13 @@ pub(crate) async fn start_result_listeners(
     postgres_pool: Pool<Postgres>,
     s3_client: S3Client,
     nats_client: NatsClient,
+    encryption: EncryptionService,
 ) -> Result<()> {
     let context = TransformContext {
         postgres_pool: postgres_pool.clone(),
         s3_client: s3_client.clone(),
         nats_client: nats_client.clone(),
+        encryption,
     };
 
     start_file_result_listener(context.clone(), nats_client.clone());
@@ -851,6 +856,7 @@ fn start_dataset_transform_scan_listener(context: TransformContext, nats_client:
                     let postgres_pool = context.postgres_pool.clone();
                     let s3_client = context.s3_client.clone();
                     let nats = nats_client.clone();
+                    let encryption = context.encryption.clone();
                     let owner = job.owner.clone();
                     let dataset_transform_id = job.dataset_transform_id;
 
@@ -861,6 +867,7 @@ fn start_dataset_transform_scan_listener(context: TransformContext, nats_client:
                             &s3_client,
                             dataset_transform_id,
                             &owner,
+                            &encryption,
                         )
                         .await
                         {

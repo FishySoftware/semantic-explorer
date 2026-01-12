@@ -2,6 +2,9 @@ dependencies:
 - name: cloudnative-pg
   repository: https://cloudnative-pg.github.io/charts
   version: 0.21.6
+- name: redis-ha
+  repository: https://dandydeveloper.github.io/charts
+  version: 4.35.5
 - name: nats
   repository: https://nats-io.github.io/k8s/helm/charts/
   version: 1.2.11
@@ -11,5 +14,5 @@ dependencies:
 - name: minio
   repository: https://charts.min.io/
   version: 5.2.0
-digest: sha256:22a0b74bca9520f9203f200b77f0015acef77fdf17de59043ef35574a890c974
-generated: "2026-01-04T18:11:51.775569369-05:00"
+digest: sha256:461e6c21e5502a31926c6f0aea67e131dfa02f83cd242d30878b9b1a22be0509
+generated: "2026-01-12T09:43:12.874803768-05:00"

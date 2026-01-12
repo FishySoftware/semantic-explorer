@@ -8,8 +8,10 @@ use std::time::Duration;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
+use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::models::{CollectionTransformJob, EmbedderConfig};
 
+use crate::auth::AuthenticatedUser;
 use crate::storage::postgres::collection_transforms::{
     get_active_collection_transforms, get_collection_transform, get_processed_files,
 };
@@ -22,13 +24,19 @@ pub(crate) fn initialize_scanner(
     postgres_pool: Pool<Postgres>,
     nats_client: NatsClient,
     s3_client: S3Client,
+    encryption: EncryptionService,
 ) -> JoinHandle<()> {
     spawn(async move {
         let mut interval = interval(Duration::from_secs(60));
         loop {
             interval.tick().await;
-            if let Err(e) =
-                scan_active_collection_transforms(&postgres_pool, &nats_client, &s3_client).await
+            if let Err(e) = scan_active_collection_transforms(
+                &postgres_pool,
+                &nats_client,
+                &s3_client,
+                &encryption,
+            )
+            .await
             {
                 error!("Error scanning collection transforms: {}", e);
             }
@@ -41,12 +49,15 @@ async fn scan_active_collection_transforms(
     pool: &Pool<Postgres>,
     nats: &NatsClient,
     s3: &S3Client,
+    encryption: &EncryptionService,
 ) -> Result<()> {
     let transforms = get_active_collection_transforms(pool).await?;
     info!("Scanning {} active collection transforms", transforms.len());
 
     for transform in transforms {
-        if let Err(e) = process_collection_transform_scan(pool, nats, s3, &transform).await {
+        if let Err(e) =
+            process_collection_transform_scan(pool, nats, s3, &transform, encryption).await
+        {
             error!(
                 "Failed to process collection transform scan for {}: {}",
                 transform.collection_transform_id, e
@@ -61,6 +72,7 @@ async fn get_embedder_config_for_chunking(
     pool: &Pool<Postgres>,
     owner: &str,
     chunking_config: &serde_json::Value,
+    encryption: &EncryptionService,
 ) -> Result<Option<EmbedderConfig>> {
     // Check if semantic chunking is configured
     let strategy = chunking_config
@@ -89,8 +101,9 @@ async fn get_embedder_config_for_chunking(
         }
     };
 
-    // Fetch the embedder
-    let embedder = embedders::get_embedder(pool, owner, embedder_id).await?;
+    // Fetch the embedder (convert owner to AuthenticatedUser for storage layer)
+    let user = AuthenticatedUser(owner.to_string());
+    let embedder = embedders::get_embedder(pool, &user, embedder_id, encryption).await?;
 
     Ok(Some(EmbedderConfig {
         provider: embedder.provider,
@@ -109,7 +122,7 @@ async fn get_embedder_config_for_chunking(
 
 #[tracing::instrument(
     name = "process_collection_transform_scan",
-    skip(pool, nats, s3, transform),
+    skip(pool, nats, s3, transform, encryption),
     fields(collection_transform_id = %transform.collection_transform_id)
 )]
 async fn process_collection_transform_scan(
@@ -117,6 +130,7 @@ async fn process_collection_transform_scan(
     nats: &NatsClient,
     s3: &S3Client,
     transform: &CollectionTransform,
+    encryption: &EncryptionService,
 ) -> Result<()> {
     info!(
         "Starting collection scan for collection transform {}",
@@ -159,18 +173,24 @@ async fn process_collection_transform_scan(
         });
 
     // Get embedder config if semantic chunking is used
-    let embedder_config =
-        match get_embedder_config_for_chunking(pool, &transform.owner, &chunking_config).await {
-            Ok(config) => config,
-            Err(e) => {
-                // Record config error - this affects all files
-                warn!(
-                    "Collection transform {} has invalid chunking config: {}. Skipping.",
-                    transform.collection_transform_id, e
-                );
-                return Err(e);
-            }
-        };
+    let embedder_config = match get_embedder_config_for_chunking(
+        pool,
+        &transform.owner,
+        &chunking_config,
+        encryption,
+    )
+    .await
+    {
+        Ok(config) => config,
+        Err(e) => {
+            // Record config error - this affects all files
+            warn!(
+                "Collection transform {} has invalid chunking config: {}. Skipping.",
+                transform.collection_transform_id, e
+            );
+            return Err(e);
+        }
+    };
 
     let mut continuation_token: Option<String> = None;
     let mut files_found = 0;
@@ -242,7 +262,7 @@ async fn process_collection_transform_scan(
 /// Trigger a collection transform scan immediately
 #[tracing::instrument(
     name = "trigger_collection_transform_scan",
-    skip(pool, nats, s3),
+    skip(pool, nats, s3, encryption),
     fields(collection_transform_id = %collection_transform_id)
 )]
 pub async fn trigger_collection_transform_scan(
@@ -251,6 +271,7 @@ pub async fn trigger_collection_transform_scan(
     s3: &S3Client,
     collection_transform_id: i32,
     owner: &str,
+    encryption: &EncryptionService,
 ) -> Result<()> {
     info!(
         "Triggering collection transform scan for {}",
@@ -261,7 +282,7 @@ pub async fn trigger_collection_transform_scan(
     let transform = get_collection_transform(pool, owner, collection_transform_id).await?;
 
     // Process the scan immediately
-    process_collection_transform_scan(pool, nats, s3, &transform).await?;
+    process_collection_transform_scan(pool, nats, s3, &transform, encryption).await?;
 
     info!(
         "Triggered collection transform scan for {}",

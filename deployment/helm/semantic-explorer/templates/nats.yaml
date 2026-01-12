@@ -41,6 +41,8 @@ spec:
         {{- if .Values.nats.config.cluster.enabled }}
         - "-cluster"
         - "nats://0.0.0.0:6222"
+        - "-cluster_name"
+        - "{{ include "semantic-explorer.fullname" . }}-nats-cluster"
         - "-routes"
         - "nats://{{ include "semantic-explorer.fullname" . }}-nats:6222"
         {{- end }}

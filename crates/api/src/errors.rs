@@ -1,6 +1,38 @@
 use actix_web::{HttpResponse, ResponseError, http::StatusCode};
-use serde_json::json;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use thiserror::Error;
+
+/// Standardized API error response structure
+///
+/// This format is consistent across all API endpoints and includes:
+/// - error: The error type/category
+/// - message: User-friendly error message
+/// - details: Optional structured details (not exposed in production)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorResponse {
+    pub error: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
+}
+
+impl ErrorResponse {
+    /// Create a new error response with basic information
+    pub fn new(error: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            error: error.into(),
+            message: message.into(),
+            details: None,
+        }
+    }
+}
+
+impl std::fmt::Display for ErrorResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
 
 /// Unified API error type for consistent error handling across all endpoints.
 ///
@@ -42,8 +74,21 @@ impl ResponseError for ApiError {
 
     fn error_response(&self) -> HttpResponse {
         let status = self.status_code();
+
+        let (error_type, message) = match self {
+            ApiError::NotFound(msg) => ("NotFound", msg.clone()),
+            ApiError::BadRequest(msg) => ("BadRequest", msg.clone()),
+            ApiError::Unauthorized(msg) => ("Unauthorized", msg.clone()),
+            ApiError::Internal(msg) => ("InternalServerError", msg.clone()),
+            ApiError::Database(e) => ("DatabaseError", e.to_string()),
+            ApiError::Validation(e) => ("ValidationError", e.to_string()),
+        };
+
+        let response = ErrorResponse::new(error_type, message);
+
         HttpResponse::build(status).json(json!({
-            "error": self.to_string(),
+            "error": response.error,
+            "message": response.message,
             "status": status.as_u16()
         }))
     }
@@ -64,32 +109,41 @@ impl From<anyhow::Error> for ApiError {
     }
 }
 
-// ============================================================================
-// Legacy helper functions for backward compatibility during migration
-// These can be removed once all handlers are migrated to use ApiError
-// ============================================================================
-
-/// Create a standardized JSON error response
-pub(crate) fn error_response(
+/// Create a standardized JSON error response with all standard fields
+pub(crate) fn error_response_with_status(
     status: actix_web::http::StatusCode,
+    error_type: impl Into<String>,
     message: impl std::fmt::Display,
 ) -> HttpResponse {
+    let error_type = error_type.into();
+    let message = message.to_string();
+
     HttpResponse::build(status).json(json!({
-        "error": message.to_string()
+        "error": error_type,
+        "message": message,
+        "status": status.as_u16()
     }))
 }
 
-/// Create a Bad Request JSON response
+/// Create a Bad Request (400) JSON response with standardized format
 pub(crate) fn bad_request(message: impl std::fmt::Display) -> HttpResponse {
-    error_response(actix_web::http::StatusCode::BAD_REQUEST, message)
+    error_response_with_status(
+        actix_web::http::StatusCode::BAD_REQUEST,
+        "BadRequest",
+        message,
+    )
 }
 
-/// Create a Not Found JSON response
+/// Create a Not Found (404) JSON response with standardized format
 pub(crate) fn not_found(message: impl std::fmt::Display) -> HttpResponse {
-    error_response(actix_web::http::StatusCode::NOT_FOUND, message)
+    error_response_with_status(actix_web::http::StatusCode::NOT_FOUND, "NotFound", message)
 }
 
-/// Create an Unauthorized JSON response
+/// Create an Unauthorized (401) JSON response with standardized format
 pub(crate) fn unauthorized(message: impl std::fmt::Display) -> HttpResponse {
-    error_response(actix_web::http::StatusCode::UNAUTHORIZED, message)
+    error_response_with_status(
+        actix_web::http::StatusCode::UNAUTHORIZED,
+        "Unauthorized",
+        message,
+    )
 }

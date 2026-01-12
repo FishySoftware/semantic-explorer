@@ -4,10 +4,12 @@ use sqlx::{Pool, Postgres, types::chrono::Utc};
 use tracing::{debug, info};
 use uuid::Uuid;
 
+use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::models::{
     LLMConfig, VectorDatabaseConfig, VisualizationConfig, VisualizationTransformJob,
 };
 
+use crate::auth::AuthenticatedUser;
 use crate::storage::postgres::{embedded_datasets, llms, visualization_transforms};
 
 /// Trigger a visualization transform scan manually
@@ -16,6 +18,7 @@ pub async fn trigger_visualization_transform_scan(
     nats: &NatsClient,
     visualization_transform_id: i32,
     owner: &str,
+    encryption: &EncryptionService,
 ) -> Result<()> {
     info!(
         "Manually triggering visualization transform scan for ID: {}",
@@ -161,9 +164,10 @@ pub async fn trigger_visualization_transform_scan(
 
     let topic_naming_llm_id = visualization_config.topic_naming_llm_id;
 
-    // Get LLM config if specified
+    // Get LLM config if specified (convert owner to AuthenticatedUser for storage layer)
     let llm_config = if let Some(llm_id) = topic_naming_llm_id {
-        let llm = llms::get_llm(pool, owner, llm_id).await?;
+        let user = AuthenticatedUser(owner.to_string());
+        let llm = llms::get_llm(pool, &user, llm_id, encryption).await?;
 
         // Log LLM config details for debugging
         let has_api_key = llm.api_key.is_some();

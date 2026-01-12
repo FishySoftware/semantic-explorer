@@ -263,9 +263,9 @@
 		window.location.hash = `#/visualization-transforms/${transform.visualization_transform_id}`;
 	}
 
-	function handleEditVisualizationTransform(_transform: any) {
-		// TODO: Implement edit modal
-		toastStore.info('Edit functionality coming soon');
+	function handleEditVisualizationTransform(transform: any) {
+		// Navigate to visualization-transforms page with edit parameter
+		window.location.hash = `#/visualization-transforms?edit=${transform.visualization_transform_id}`;
 	}
 
 	function handleTriggerVisualizationTransform(transform: any) {

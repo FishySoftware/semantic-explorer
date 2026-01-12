@@ -17,6 +17,9 @@ pub struct AppConfig {
     pub server: ServerConfig,
     pub observability: ObservabilityConfig,
     pub tls: TlsConfig,
+    pub redis: RedisConfig,
+    pub rate_limit: RateLimitConfig,
+    pub oidc_session: OidcSessionConfig,
 }
 
 /// Database configuration
@@ -34,6 +37,7 @@ pub struct DatabaseConfig {
 #[derive(Debug, Clone)]
 pub struct NatsConfig {
     pub url: String,
+    pub replicas: u32, // Number of replicas for JetStream streams
 }
 
 /// Qdrant vector database configuration
@@ -43,6 +47,12 @@ pub struct QdrantConfig {
     pub api_key: Option<String>,
     pub timeout: Duration,
     pub connect_timeout: Duration,
+    /// Quantization type: "none", "scalar", or "product"
+    pub quantization_type: String,
+    /// Scalar quantization parameters
+    pub quantization_scalar_enabled: bool,
+    /// Product quantization parameters
+    pub quantization_product_enabled: bool,
 }
 
 /// S3-compatible storage configuration
@@ -52,6 +62,8 @@ pub struct S3Config {
     pub access_key_id: String,
     pub secret_access_key: String,
     pub endpoint_url: String,
+    /// Single S3 bucket for all collections (replaces per-collection buckets)
+    pub bucket_name: String,
 }
 
 /// Server configuration
@@ -98,6 +110,40 @@ pub struct TlsConfig {
     pub ca_cert_path: String,
 }
 
+/// Redis cluster configuration
+#[derive(Debug, Clone)]
+pub struct RedisConfig {
+    pub cluster_nodes: Vec<String>,
+    pub pool_size: u32,
+    pub connect_timeout: Duration,
+}
+
+/// Rate limiting configuration
+#[derive(Debug, Clone)]
+pub struct RateLimitConfig {
+    pub enabled: bool,
+    pub default_requests_per_minute: u64,
+    pub search_requests_per_minute: u64,
+    pub chat_requests_per_minute: u64,
+    pub transform_requests_per_minute: u64,
+    pub test_requests_per_minute: u64,
+}
+
+/// OIDC session management configuration
+#[derive(Debug, Clone)]
+pub struct OidcSessionConfig {
+    /// Enable enhanced session management features
+    pub enabled: bool,
+    /// Session timeout in seconds (default: 3600 = 1 hour)
+    pub session_timeout_secs: u64,
+    /// Enable refresh token rotation for enhanced security
+    pub refresh_token_rotation_enabled: bool,
+    /// Maximum number of concurrent sessions per user
+    pub max_concurrent_sessions: u32,
+    /// Session inactivity timeout in seconds (default: 1800 = 30 minutes)
+    pub inactivity_timeout_secs: u64,
+}
+
 impl AppConfig {
     /// Load configuration from environment variables.
     ///
@@ -112,6 +158,9 @@ impl AppConfig {
             server: ServerConfig::from_env()?,
             observability: ObservabilityConfig::from_env()?,
             tls: TlsConfig::from_env()?,
+            redis: RedisConfig::from_env()?,
+            rate_limit: RateLimitConfig::from_env()?,
+            oidc_session: OidcSessionConfig::from_env()?,
         })
     }
 }
@@ -121,7 +170,7 @@ impl DatabaseConfig {
         Ok(Self {
             url: env::var("DATABASE_URL").context("DATABASE_URL is required")?,
             max_connections: env::var("DB_MAX_CONNECTIONS")
-                .unwrap_or_else(|_| "50".to_string())
+                .unwrap_or_else(|_| "15".to_string())
                 .parse()
                 .context("DB_MAX_CONNECTIONS must be a number")?,
             min_connections: env::var("DB_MIN_CONNECTIONS")
@@ -154,12 +203,28 @@ impl NatsConfig {
     pub fn from_env() -> Result<Self> {
         Ok(Self {
             url: env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string()),
+            replicas: env::var("NATS_REPLICAS")
+                .unwrap_or_else(|_| "3".to_string())
+                .parse()
+                .context("NATS_REPLICAS must be a number")?,
         })
     }
 }
 
 impl QdrantConfig {
     pub fn from_env() -> Result<Self> {
+        let quantization_type = env::var("QDRANT_QUANTIZATION_TYPE")
+            .unwrap_or_else(|_| "none".to_string())
+            .to_lowercase();
+
+        // Validate quantization type
+        if !["none", "scalar", "product"].contains(&quantization_type.as_str()) {
+            anyhow::bail!(
+                "QDRANT_QUANTIZATION_TYPE must be 'none', 'scalar', or 'product', got '{}'",
+                quantization_type
+            );
+        }
+
         Ok(Self {
             url: env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string()),
             api_key: env::var("QDRANT_API_KEY").ok(),
@@ -175,6 +240,17 @@ impl QdrantConfig {
                     .parse()
                     .context("QDRANT_CONNECT_TIMEOUT_SECS must be a number")?,
             ),
+            quantization_type: quantization_type.clone(),
+            quantization_scalar_enabled: quantization_type == "scalar"
+                || env::var("QDRANT_QUANTIZATION_SCALAR_ENABLED")
+                    .unwrap_or_else(|_| "false".to_string())
+                    .parse()
+                    .unwrap_or(false),
+            quantization_product_enabled: quantization_type == "product"
+                || env::var("QDRANT_QUANTIZATION_PRODUCT_ENABLED")
+                    .unwrap_or_else(|_| "false".to_string())
+                    .parse()
+                    .unwrap_or(false),
         })
     }
 }
@@ -188,6 +264,7 @@ impl S3Config {
             secret_access_key: env::var("AWS_SECRET_ACCESS_KEY")
                 .context("AWS_SECRET_ACCESS_KEY is required")?,
             endpoint_url: env::var("AWS_ENDPOINT_URL").context("AWS_ENDPOINT_URL is required")?,
+            bucket_name: env::var("S3_BUCKET_NAME").context("S3_BUCKET_NAME is required")?,
         })
     }
 }
@@ -309,6 +386,92 @@ impl TlsConfig {
             client_cert_path,
             client_key_path,
             ca_cert_path,
+        })
+    }
+}
+
+impl RedisConfig {
+    pub fn from_env() -> Result<Self> {
+        let cluster_nodes_str = env::var("REDIS_CLUSTER_NODES").unwrap_or_else(|_| {
+            "redis://localhost:7000,redis://localhost:7001,redis://localhost:7002".to_string()
+        });
+
+        let cluster_nodes = cluster_nodes_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        Ok(Self {
+            cluster_nodes,
+            pool_size: env::var("REDIS_POOL_SIZE")
+                .unwrap_or_else(|_| "10".to_string())
+                .parse()
+                .context("REDIS_POOL_SIZE must be a number")?,
+            connect_timeout: Duration::from_secs(
+                env::var("REDIS_CONNECT_TIMEOUT_SECS")
+                    .unwrap_or_else(|_| "5".to_string())
+                    .parse()
+                    .context("REDIS_CONNECT_TIMEOUT_SECS must be a number")?,
+            ),
+        })
+    }
+}
+
+impl RateLimitConfig {
+    pub fn from_env() -> Result<Self> {
+        Ok(Self {
+            enabled: env::var("RATE_LIMIT_ENABLED")
+                .unwrap_or_else(|_| "true".to_string())
+                .to_lowercase()
+                == "true",
+            default_requests_per_minute: env::var("RATE_LIMIT_DEFAULT_REQUESTS_PER_MINUTE")
+                .unwrap_or_else(|_| "1000".to_string())
+                .parse()
+                .context("RATE_LIMIT_DEFAULT_REQUESTS_PER_MINUTE must be a number")?,
+            search_requests_per_minute: env::var("RATE_LIMIT_SEARCH_REQUESTS_PER_MINUTE")
+                .unwrap_or_else(|_| "600".to_string())
+                .parse()
+                .context("RATE_LIMIT_SEARCH_REQUESTS_PER_MINUTE must be a number")?,
+            chat_requests_per_minute: env::var("RATE_LIMIT_CHAT_REQUESTS_PER_MINUTE")
+                .unwrap_or_else(|_| "200".to_string())
+                .parse()
+                .context("RATE_LIMIT_CHAT_REQUESTS_PER_MINUTE must be a number")?,
+            transform_requests_per_minute: env::var("RATE_LIMIT_TRANSFORM_REQUESTS_PER_MINUTE")
+                .unwrap_or_else(|_| "100".to_string())
+                .parse()
+                .context("RATE_LIMIT_TRANSFORM_REQUESTS_PER_MINUTE must be a number")?,
+            test_requests_per_minute: env::var("RATE_LIMIT_TEST_REQUESTS_PER_MINUTE")
+                .unwrap_or_else(|_| "100".to_string())
+                .parse()
+                .context("RATE_LIMIT_TEST_REQUESTS_PER_MINUTE must be a number")?,
+        })
+    }
+}
+
+impl OidcSessionConfig {
+    pub fn from_env() -> Result<Self> {
+        Ok(Self {
+            enabled: env::var("OIDC_SESSION_MANAGEMENT_ENABLED")
+                .unwrap_or_else(|_| "true".to_string())
+                .to_lowercase()
+                == "true",
+            session_timeout_secs: env::var("OIDC_SESSION_TIMEOUT_SECS")
+                .unwrap_or_else(|_| "3600".to_string()) // 1 hour default
+                .parse()
+                .context("OIDC_SESSION_TIMEOUT_SECS must be a number")?,
+            refresh_token_rotation_enabled: env::var("OIDC_REFRESH_TOKEN_ROTATION_ENABLED")
+                .unwrap_or_else(|_| "true".to_string())
+                .to_lowercase()
+                == "true",
+            max_concurrent_sessions: env::var("OIDC_MAX_CONCURRENT_SESSIONS")
+                .unwrap_or_else(|_| "5".to_string())
+                .parse()
+                .context("OIDC_MAX_CONCURRENT_SESSIONS must be a number")?,
+            inactivity_timeout_secs: env::var("OIDC_INACTIVITY_TIMEOUT_SECS")
+                .unwrap_or_else(|_| "1800".to_string()) // 30 minutes default
+                .parse()
+                .context("OIDC_INACTIVITY_TIMEOUT_SECS must be a number")?,
         })
     }
 }

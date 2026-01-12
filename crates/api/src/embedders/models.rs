@@ -54,6 +54,7 @@ pub(crate) struct Embedder {
     pub(crate) owner: String,
     pub(crate) provider: String,
     pub(crate) base_url: String,
+    #[sqlx(rename = "api_key_encrypted")]
     pub(crate) api_key: Option<String>,
     #[schema(value_type = Object)]
     pub(crate) config: serde_json::Value,

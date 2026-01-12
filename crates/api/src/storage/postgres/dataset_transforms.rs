@@ -22,14 +22,14 @@ const GET_DATASET_TRANSFORM_QUERY: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner, is_enabled,
            job_config, created_at, updated_at
     FROM dataset_transforms
-    WHERE owner = $1 AND dataset_transform_id = $2
+    WHERE dataset_transform_id = $1
 "#;
 
 const GET_DATASET_TRANSFORMS_FOR_DATASET_QUERY: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner, is_enabled,
            job_config, created_at, updated_at
     FROM dataset_transforms
-    WHERE owner = $1 AND source_dataset_id = $2
+    WHERE source_dataset_id = $1
     ORDER BY created_at DESC
 "#;
 
@@ -55,20 +55,20 @@ const UPDATE_DATASET_TRANSFORM_QUERY: &str = r#"
         embedder_ids = COALESCE($5, embedder_ids),
         job_config = COALESCE($6, job_config),
         updated_at = NOW()
-    WHERE owner = $1 AND dataset_transform_id = $2
+    WHERE dataset_transform_id = $1
     RETURNING dataset_transform_id, title, source_dataset_id, embedder_ids, owner, is_enabled,
               job_config, created_at, updated_at
 "#;
 
 const DELETE_DATASET_TRANSFORM_QUERY: &str = r#"
     DELETE FROM dataset_transforms
-    WHERE owner = $1 AND dataset_transform_id = $2
+    WHERE dataset_transform_id = $1
 "#;
 
 const COUNT_DATASET_TRANSFORMS_QUERY: &str =
     "SELECT COUNT(*) as count FROM dataset_transforms WHERE owner = $1";
 const COUNT_DATASET_TRANSFORMS_WITH_SEARCH_QUERY: &str =
-    "SELECT COUNT(*) as count FROM dataset_transforms WHERE owner = $1 AND title ILIKE $2";
+    "SELECT COUNT(*) as count FROM dataset_transforms WHERE title ILIKE $1 AND owner = $2";
 
 // Note: ORDER BY clause is built dynamically with validated identifiers
 // Column names cannot be parameterized in PostgreSQL, so we validate and use format!
@@ -83,7 +83,8 @@ const GET_DATASET_TRANSFORMS_PAGINATED_WITH_SEARCH_BASE: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner, is_enabled,
            job_config, created_at, updated_at
     FROM dataset_transforms
-    WHERE owner = $1 AND title ILIKE $2
+    WHERE title ILIKE $1
+    AND owner = $2
 "#;
 
 const GET_DATASET_TRANSFORM_STATS_QUERY: &str = r#"
@@ -131,11 +132,15 @@ pub async fn get_dataset_transform(
     owner: &str,
     dataset_transform_id: i32,
 ) -> Result<DatasetTransform> {
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
     let transform = sqlx::query_as::<_, DatasetTransform>(GET_DATASET_TRANSFORM_QUERY)
-        .bind(owner)
         .bind(dataset_transform_id)
-        .fetch_one(pool)
+        .fetch_one(&mut *tx)
         .await?;
+
+    tx.commit().await?;
     Ok(transform)
 }
 
@@ -152,13 +157,16 @@ pub async fn get_dataset_transforms_paginated(
     let sort_field = validate_sort_field(sort_by)?;
     let sort_dir = validate_sort_direction(sort_direction)?;
 
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
     let (total_count, transforms) = if let Some(search_term) = search {
         let search_pattern = format!("%{}%", search_term);
 
         let count_result: (i64,) = sqlx::query_as(COUNT_DATASET_TRANSFORMS_WITH_SEARCH_QUERY)
-            .bind(owner)
             .bind(&search_pattern)
-            .fetch_one(pool)
+            .bind(owner)
+            .fetch_one(&mut *tx)
             .await?;
         let total = count_result.0;
 
@@ -169,18 +177,18 @@ pub async fn get_dataset_transforms_paginated(
         );
 
         let items = sqlx::query_as::<_, DatasetTransform>(&query_str)
-            .bind(owner)
             .bind(&search_pattern)
+            .bind(owner)
             .bind(limit)
             .bind(offset)
-            .fetch_all(pool)
+            .fetch_all(&mut *tx)
             .await?;
 
         (total, items)
     } else {
         let count_result: (i64,) = sqlx::query_as(COUNT_DATASET_TRANSFORMS_QUERY)
             .bind(owner)
-            .fetch_one(pool)
+            .fetch_one(&mut *tx)
             .await?;
         let total = count_result.0;
 
@@ -194,11 +202,13 @@ pub async fn get_dataset_transforms_paginated(
             .bind(owner)
             .bind(limit)
             .bind(offset)
-            .fetch_all(pool)
+            .fetch_all(&mut *tx)
             .await?;
 
         (total, items)
     };
+
+    tx.commit().await?;
 
     Ok(PaginatedResponse {
         items: transforms,
@@ -213,12 +223,16 @@ pub async fn get_dataset_transforms_for_dataset(
     owner: &str,
     dataset_id: i32,
 ) -> Result<Vec<DatasetTransform>> {
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
     let transforms =
         sqlx::query_as::<_, DatasetTransform>(GET_DATASET_TRANSFORMS_FOR_DATASET_QUERY)
-            .bind(owner)
             .bind(dataset_id)
-            .fetch_all(pool)
+            .fetch_all(&mut *tx)
             .await?;
+
+    tx.commit().await?;
     Ok(transforms)
 }
 
@@ -238,6 +252,7 @@ pub async fn create_dataset_transform(
     job_config: &serde_json::Value,
 ) -> Result<(DatasetTransform, Vec<EmbeddedDataset>)> {
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
 
     // Step 1: Create the Dataset Transform
     let transform = sqlx::query_as::<_, DatasetTransform>(CREATE_DATASET_TRANSFORM_QUERY)
@@ -286,10 +301,10 @@ pub async fn update_dataset_transform(
     job_config: Option<&serde_json::Value>,
 ) -> Result<(DatasetTransform, Vec<EmbeddedDataset>)> {
     let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
 
     // Update the Dataset Transform
     let transform = sqlx::query_as::<_, DatasetTransform>(UPDATE_DATASET_TRANSFORM_QUERY)
-        .bind(owner)
         .bind(dataset_transform_id)
         .bind(title)
         .bind(is_enabled)
@@ -316,12 +331,16 @@ pub async fn delete_dataset_transform(
     owner: &str,
     dataset_transform_id: i32,
 ) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
     // Cascading deletes will handle embedded datasets and processed files
     sqlx::query(DELETE_DATASET_TRANSFORM_QUERY)
-        .bind(owner)
         .bind(dataset_transform_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+
+    tx.commit().await?;
     Ok(())
 }
 

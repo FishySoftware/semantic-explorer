@@ -363,15 +363,37 @@ pub(crate) async fn upload_to_collection(
             .as_ref()
             .map(|s| s.to_string())
             .unwrap_or_else(|| format!("file_{}", idx));
-        let mime_type = mime_guess::from_path(&file_name)
+        let claimed_mime = mime_guess::from_path(&file_name)
             .first_or_octet_stream()
             .to_string();
+
+        // Validate file before attempting upload
+        let validation_result =
+            crate::validation::validate_upload_file(&file_bytes.data, &file_name, &claimed_mime);
+
+        if !validation_result.is_valid {
+            tracing::warn!(
+                file_name = %file_name,
+                validation_errors = ?validation_result.validation_errors,
+                "File validation failed, rejecting upload"
+            );
+            failed.push(file_name.clone());
+
+            // Audit log the rejected upload
+            crate::audit::events::file_validation_failed(
+                &user.0,
+                collection_id,
+                &file_name,
+                &validation_result.validation_errors.join("; "),
+            );
+            continue;
+        }
 
         let document = DocumentUpload {
             collection_id: collection.bucket.clone(),
             name: file_name.clone(),
             content: file_bytes.data.to_vec(),
-            mime_type: mime_type.clone(),
+            mime_type: validation_result.detected_mime.clone(),
         };
         if let Err(e) = upload_document(&s3_client, document).await {
             failed.push(file_name.clone());
@@ -383,6 +405,11 @@ pub(crate) async fn upload_to_collection(
             continue;
         }
 
+        tracing::info!(
+            file_name = %file_name,
+            detected_mime = %validation_result.detected_mime,
+            "File uploaded successfully"
+        );
         completed.push(file_name);
     }
 
@@ -462,12 +489,13 @@ pub(crate) async fn list_collection_files(
     tag = "Collections",
 )]
 #[get("/api/collections/{collection_id}/files/{file_key}")]
-#[tracing::instrument(name = "download_collection_file", skip(user, s3_client, postgres_pool, path), fields(collection_id = %path.0, file_key = %path.1))]
+#[tracing::instrument(name = "download_collection_file", skip(user, s3_client, postgres_pool, path, req), fields(collection_id = %path.0, file_key = %path.1))]
 pub(crate) async fn download_collection_file(
     user: AuthenticatedUser,
     s3_client: Data<Client>,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<(i32, String)>,
+    req: actix_web::HttpRequest,
 ) -> impl Responder {
     let (collection_id, file_key) = path.into_inner();
 
@@ -493,6 +521,9 @@ pub(crate) async fn download_collection_file(
     .await
     {
         Ok(file_data) => {
+            // Audit log the file download
+            crate::audit::events::file_downloaded(&req, &user.0, collection_id, &file_key);
+
             let mime_type = mime_guess::from_path(&file_key)
                 .first_or_octet_stream()
                 .to_string();

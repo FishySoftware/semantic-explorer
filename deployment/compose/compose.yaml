@@ -3,12 +3,18 @@ services:
 
   semantic-explorer:
     image: jofish89/semantic-explorer:latest
-    depends_on:      
+    depends_on:
       - rustfs
       - qdrant
       - dex
       - postgres
-      - nats
+      - nats-1
+      - nats-2
+      - nats-3
+      - redis-1
+      - redis-2
+      - redis-3
+      - redis-cluster-init
       - otel-collector
     restart: unless-stopped
     environment:
@@ -20,8 +26,8 @@ services:
       - AWS_SECRET_ACCESS_KEY=test_secret_key
       - AWS_REGION=us-east-1
       - AWS_ENDPOINT_URL=http://127.0.0.1:9000
+      - S3_BUCKET_NAME=semantic-explorer-local
       - QDRANT_URL=http://localhost:6334
-      - QDRANT_TIMEOUT_SECS=30
       - QDRANT_CONNECT_TIMEOUT_SECS=10
       - DATABASE_URL=postgresql://user:password@localhost:5432/explorer
       - DB_MIN_CONNECTIONS=2
@@ -32,10 +38,24 @@ services:
       - OIDC_ISSUER_URL=http://localhost:5556/dex
       - OIDC_CLIENT_ID=semantic-explorer
       - OIDC_CLIENT_SECRET=ZXhhbXBsZS1hcHAtc2VjcmV0
-      - NATS_URL=nats://localhost:4222
+      - NATS_URL=nats://localhost:4222,localhost:4223,localhost:4224
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
       - SERVICE_NAME=semantic-explorer
       - SHUTDOWN_TIMEOUT_SECS=30
+      # API Key Encryption - IMPORTANT: Generate a unique key for production!
+      # Generate with: openssl rand -hex 32
+      - ENCRYPTION_MASTER_KEY=${ENCRYPTION_MASTER_KEY:-e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4}
+      # Redis Cluster Configuration
+      - REDIS_CLUSTER_NODES=redis://localhost:7000,redis://localhost:7001,redis://localhost:7002
+      - REDIS_POOL_SIZE=10
+      - REDIS_CONNECT_TIMEOUT_SECS=5
+      # Rate Limiting Configuration (high initial limits for gradual rollout)
+      - RATE_LIMIT_ENABLED=true
+      - RATE_LIMIT_DEFAULT_REQUESTS_PER_MINUTE=1000
+      - RATE_LIMIT_SEARCH_REQUESTS_PER_MINUTE=600
+      - RATE_LIMIT_CHAT_REQUESTS_PER_MINUTE=200
+      - RATE_LIMIT_TRANSFORM_REQUESTS_PER_MINUTE=100
+      - RATE_LIMIT_TEST_REQUESTS_PER_MINUTE=100
       # CORS_ALLOWED_ORIGINS=https://example.com,https://app.example.com
     ports:
       - "8080:8080"
@@ -50,18 +70,21 @@ services:
   worker-collections:
     image: jofish89/worker-collections:latest
     depends_on:
-      - nats
+      - nats-1
+      - nats-2
+      - nats-3
       - rustfs
       - otel-collector
     restart: unless-stopped
     environment:
       - RUST_LOG=warn,actix_web_prom=error,worker_collections=debug
       - LOG_FORMAT=json
-      - NATS_URL=nats://localhost:4222
+      - NATS_URL=nats://localhost:4222,localhost:4223,localhost:4224
       - AWS_ACCESS_KEY_ID=test_access_key
       - AWS_SECRET_ACCESS_KEY=test_secret_key
       - AWS_REGION=us-east-1
       - AWS_ENDPOINT_URL=http://127.0.0.1:9000
+      - S3_BUCKET_NAME=semantic-explorer-local
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
       - SERVICE_NAME=worker-collections
     network_mode: host
@@ -69,7 +92,9 @@ services:
   worker-datasets:
     image: jofish89/worker-datasets:latest
     depends_on:
-      - nats
+      - nats-1
+      - nats-2
+      - nats-3
       - rustfs
       - qdrant
       - otel-collector
@@ -77,11 +102,12 @@ services:
     environment:
       - RUST_LOG=warn,actix_web_prom=error,worker_datasets=debug
       - LOG_FORMAT=json
-      - NATS_URL=nats://localhost:4222
+      - NATS_URL=nats://localhost:4222,localhost:4223,localhost:4224
       - AWS_ACCESS_KEY_ID=test_access_key
       - AWS_SECRET_ACCESS_KEY=test_secret_key
       - AWS_REGION=us-east-1
       - AWS_ENDPOINT_URL=http://127.0.0.1:9000
+      - S3_BUCKET_NAME=semantic-explorer-local
       - QDRANT_URL=http://localhost:6334
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
       - SERVICE_NAME=worker-datasets
@@ -90,18 +116,21 @@ services:
   worker-visualizations-py:
     image: jofish89/worker-visualizations-py:latest
     depends_on:
-      - nats
+      - nats-1
+      - nats-2
+      - nats-3
       - qdrant
       - rustfs
       - otel-collector
     restart: unless-stopped
     environment:
-      - NATS_URL=nats://localhost:4222
+      - NATS_URL=nats://localhost:4222,localhost:4223,localhost:4224
       - QDRANT_URL=http://localhost:6334
       - S3_ENDPOINT=http://localhost:9000
       - AWS_ACCESS_KEY_ID=test_access_key
       - AWS_SECRET_ACCESS_KEY=test_secret_key
       - AWS_REGION=us-east-1
+      - S3_BUCKET_NAME=semantic-explorer-local
       - LOG_LEVEL=INFO
       - WORKER_ID=py-worker-prod-1
       - PROCESSING_TIMEOUT_SECS=3600
@@ -170,6 +199,114 @@ services:
       - postgres
     network_mode: host
 
+  # Redis Cluster for rate limiting and caching (3 nodes)
+  redis-1:
+    image: redis:7-alpine
+    hostname: redis-1
+    restart: unless-stopped
+    ports:
+      - "7000:7000"
+      - "17000:17000"
+    command: >
+      redis-server
+      --port 7000
+      --cluster-enabled yes
+      --cluster-config-file nodes-7000.conf
+      --cluster-node-timeout 5000
+      --appendonly yes
+      --bind 0.0.0.0
+      --protected-mode no
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data_1:/data:rw
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7000", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    network_mode: host
+
+  redis-2:
+    image: redis:7-alpine
+    hostname: redis-2
+    restart: unless-stopped
+    ports:
+      - "7001:7001"
+      - "17001:17001"
+    command: >
+      redis-server
+      --port 7001
+      --cluster-enabled yes
+      --cluster-config-file nodes-7001.conf
+      --cluster-node-timeout 5000
+      --appendonly yes
+      --bind 0.0.0.0
+      --protected-mode no
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data_2:/data:rw
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7001", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    network_mode: host
+
+  redis-3:
+    image: redis:7-alpine
+    hostname: redis-3
+    restart: unless-stopped
+    ports:
+      - "7002:7002"
+      - "17002:17002"
+    command: >
+      redis-server
+      --port 7002
+      --cluster-enabled yes
+      --cluster-config-file nodes-7002.conf
+      --cluster-node-timeout 5000
+      --appendonly yes
+      --bind 0.0.0.0
+      --protected-mode no
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data_3:/data:rw
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7002", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    network_mode: host
+
+  # Redis cluster initialization (runs once to create cluster)
+  redis-cluster-init:
+    image: redis:7-alpine
+    depends_on:
+      redis-1:
+        condition: service_healthy
+      redis-2:
+        condition: service_healthy
+      redis-3:
+        condition: service_healthy
+    command: >
+      sh -c '
+      echo "Waiting for Redis nodes to be ready...";
+      sleep 5;
+      redis-cli --cluster create
+      127.0.0.1:7000 127.0.0.1:7001 127.0.0.1:7002
+      --cluster-replicas 0
+      --cluster-yes || true;
+      echo "Redis cluster initialized";
+      '
+    network_mode: host
+    restart: "no"
+
   dex:
     image: dexidp/dex:latest
     command: dex serve /etc/dex/config.yaml
@@ -186,23 +323,100 @@ services:
       - "5558:5558"
     network_mode: host
 
-  nats:
+  nats-1:
     image: nats:2.10-alpine
+    hostname: nats-1
     ports:
       - "4222:4222"
       - "8222:8222"
       - "6222:6222"
-    command: 
+    command:
       - "-js"
       - "-sd"
       - "/data"
       - "-m"
       - "8222"
+      - "-cluster"
+      - "nats://0.0.0.0:6222"
+      - "-cluster_name"
+      - "semantic-explorer-nats"
+      - "-routes"
+      - "nats://nats-1:6222,nats://nats-2:6223,nats://nats-3:6224"
+      - "-name"
+      - "nats-1"
     volumes:
-      - nats_data:/data:rw
+      - nats_data_1:/data:rw
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    network_mode: host
+
+  nats-2:
+    image: nats:2.10-alpine
+    hostname: nats-2
+    ports:
+      - "4223:4223"
+      - "8223:8223"
+      - "6223:6223"
+    command:
+      - "-js"
+      - "-sd"
+      - "/data"
+      - "-p"
+      - "4223"
+      - "-m"
+      - "8223"
+      - "-cluster"
+      - "nats://0.0.0.0:6223"
+      - "-cluster_name"
+      - "semantic-explorer-nats"
+      - "-routes"
+      - "nats://nats-1:6222,nats://nats-2:6223,nats://nats-3:6224"
+      - "-name"
+      - "nats-2"
+    volumes:
+      - nats_data_2:/data:rw
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8223/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    network_mode: host
+
+  nats-3:
+    image: nats:2.10-alpine
+    hostname: nats-3
+    ports:
+      - "4224:4224"
+      - "8224:8224"
+      - "6224:6224"
+    command:
+      - "-js"
+      - "-sd"
+      - "/data"
+      - "-p"
+      - "4224"
+      - "-m"
+      - "8224"
+      - "-cluster"
+      - "nats://0.0.0.0:6224"
+      - "-cluster_name"
+      - "semantic-explorer-nats"
+      - "-routes"
+      - "nats://nats-1:6222,nats://nats-2:6223,nats://nats-3:6224"
+      - "-name"
+      - "nats-3"
+    volumes:
+      - nats_data_3:/data:rw
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8224/healthz"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -284,7 +498,12 @@ volumes:
   rustfs_logs:
   postgres_data:
   dex_data:
-  nats_data:
+  redis_data_1:
+  redis_data_2:
+  redis_data_3:
+  nats_data_1:
+  nats_data_2:
+  nats_data_3:
   quickwit_data:
   prometheus_data:
   grafana_data:

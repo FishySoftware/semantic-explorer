@@ -326,7 +326,6 @@
 						currentEventType = '';
 
 						if (eventType === 'connected') {
-							console.log('SSE connected:', data);
 							streamingStatus = 'retrieving';
 						} else if (eventType === 'retrieval_complete') {
 							actualMessageId = data.message_id;

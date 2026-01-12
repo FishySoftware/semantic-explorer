@@ -23,6 +23,7 @@ use crate::{
     errors::ApiError,
     storage::postgres::chat,
 };
+use semantic_explorer_core::encryption::EncryptionService;
 
 #[utoipa::path(
     responses(
@@ -188,55 +189,50 @@ pub(crate) async fn get_chat_messages(
     session_id: Path<String>,
 ) -> impl Responder {
     match chat::get_chat_session(&postgres_pool, &session_id, &user).await {
-        Ok(_) => {
-            // Session exists and user owns it
-            match chat::get_chat_messages(&postgres_pool, &session_id).await {
-                Ok(messages) => {
-                    let mut messages_response: Vec<ChatMessageResponse> = Vec::new();
-
-                    for message in messages {
-                        // Fetch retrieved documents for assistant messages
-                        let retrieved_documents = if message.role == "assistant" {
-                            match chat::get_retrieved_documents(&postgres_pool, message.message_id)
-                                .await
-                            {
-                                Ok(docs) => {
-                                    if docs.is_empty() {
-                                        None
-                                    } else {
-                                        Some(docs)
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::warn!(error = %e, message_id = message.message_id, "failed to fetch retrieved documents");
+        Ok(_) => match chat::get_chat_messages(&postgres_pool, &session_id).await {
+            Ok(messages) => {
+                let mut messages_response: Vec<ChatMessageResponse> = Vec::new();
+                for message in messages {
+                    let retrieved_documents = if message.role == "assistant" {
+                        match chat::get_retrieved_documents(&postgres_pool, message.message_id)
+                            .await
+                        {
+                            Ok(docs) => {
+                                if docs.is_empty() {
                                     None
+                                } else {
+                                    Some(docs)
                                 }
                             }
-                        } else {
-                            None
-                        };
+                            Err(e) => {
+                                tracing::warn!(error = %e, message_id = message.message_id, "failed to fetch retrieved documents");
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    };
 
-                        messages_response.push(ChatMessageResponse {
-                            message_id: message.message_id,
-                            role: message.role,
-                            content: message.content,
-                            documents_retrieved: message.documents_retrieved,
-                            status: message.status,
-                            retrieved_documents,
-                            created_at: message.created_at,
-                        });
-                    }
+                    messages_response.push(ChatMessageResponse {
+                        message_id: message.message_id,
+                        role: message.role,
+                        content: message.content,
+                        documents_retrieved: message.documents_retrieved,
+                        status: message.status,
+                        retrieved_documents,
+                        created_at: message.created_at,
+                    });
+                }
 
-                    HttpResponse::Ok().json(ChatMessagesResponse {
-                        messages: messages_response,
-                    })
-                }
-                Err(e) => {
-                    tracing::error!(error = %e, session_id = %session_id, "failed to fetch messages");
-                    ApiError::Internal(format!("error fetching messages: {:?}", e)).error_response()
-                }
+                HttpResponse::Ok().json(ChatMessagesResponse {
+                    messages: messages_response,
+                })
             }
-        }
+            Err(e) => {
+                tracing::error!(error = %e, session_id = %session_id, "failed to fetch messages");
+                ApiError::Internal(format!("error fetching messages: {:?}", e)).error_response()
+            }
+        },
         Err(e) => {
             tracing::error!(error = %e, session_id = %session_id, "session not found");
             ApiError::NotFound(format!("session not found: {:?}", e)).error_response()
@@ -259,13 +255,14 @@ pub(crate) async fn get_chat_messages(
 #[post("/api/chat/sessions/{session_id}/messages")]
 #[tracing::instrument(
     name = "send_chat_message",
-    skip(user, postgres_pool, request, qdrant_client, req)
+    skip(user, postgres_pool, request, qdrant_client, req, encryption)
 )]
 pub(crate) async fn send_chat_message(
     user: AuthenticatedUser,
     req: HttpRequest,
     postgres_pool: Data<Pool<Postgres>>,
     qdrant_client: Data<Qdrant>,
+    encryption: Data<EncryptionService>,
     session_id: Path<String>,
     request: Json<CreateChatMessageRequest>,
 ) -> impl Responder {
@@ -311,6 +308,7 @@ pub(crate) async fn send_chat_message(
         session.embedded_dataset_id,
         &request.content,
         &rag_config,
+        &encryption,
     )
     .await
     {
@@ -329,6 +327,7 @@ pub(crate) async fn send_chat_message(
     // Generate response using LLM with RAG context
     let response_content = match llm::generate_response(
         &postgres_pool,
+        &encryption,
         session.llm_id,
         &request.content,
         &context,
@@ -408,13 +407,14 @@ pub(crate) async fn send_chat_message(
 #[post("/api/chat/sessions/{session_id}/messages/stream")]
 #[tracing::instrument(
     name = "stream_chat_message",
-    skip(user, postgres_pool, qdrant_client, request, req)
+    skip(user, postgres_pool, qdrant_client, request, req, encryption)
 )]
 pub(crate) async fn stream_chat_message(
     user: AuthenticatedUser,
     req: HttpRequest,
     postgres_pool: Data<Pool<Postgres>>,
     qdrant_client: Data<Qdrant>,
+    encryption: Data<EncryptionService>,
     session_id: Path<String>,
     request: Json<CreateChatMessageRequest>,
 ) -> impl Responder {
@@ -466,6 +466,7 @@ pub(crate) async fn stream_chat_message(
         session.embedded_dataset_id,
         &request.content,
         &rag_config,
+        &encryption,
     )
     .await
     {
@@ -512,6 +513,7 @@ pub(crate) async fn stream_chat_message(
     let message_id = assistant_message.message_id;
     let owner = user.0.clone();
     let postgres_pool_clone = postgres_pool.clone();
+    let encryption_clone = encryption.clone();
 
     // Create SSE stream
     let stream = async_stream::stream! {
@@ -539,6 +541,7 @@ pub(crate) async fn stream_chat_message(
         // Start LLM streaming
         let llm_stream = match llm::generate_response_stream(
             &postgres_pool_clone,
+            &encryption_clone,
             session.llm_id,
             &request.content,
             &context,
@@ -692,11 +695,15 @@ pub(crate) struct RegenerateMessageQuery {
     ),
 )]
 #[post("/api/chat/messages/{message_id}/regenerate")]
-#[tracing::instrument(name = "regenerate_chat_message", skip(user, postgres_pool, req))]
+#[tracing::instrument(
+    name = "regenerate_chat_message",
+    skip(user, postgres_pool, req, encryption)
+)]
 pub(crate) async fn regenerate_chat_message(
     user: AuthenticatedUser,
     req: HttpRequest,
     postgres_pool: Data<Pool<Postgres>>,
+    encryption: Data<EncryptionService>,
     message_id: Path<i32>,
     query: Query<RegenerateMessageQuery>,
 ) -> impl Responder {
@@ -781,6 +788,7 @@ pub(crate) async fn regenerate_chat_message(
     // Generate new response (non-streaming)
     let response_content = match llm::generate_response(
         &postgres_pool,
+        &encryption,
         session.llm_id,
         user_query,
         &context,

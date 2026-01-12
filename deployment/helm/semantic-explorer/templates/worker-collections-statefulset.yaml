@@ -70,6 +70,8 @@ spec:
           value: {{ include "semantic-explorer.storage.s3.region" . }}
         - name: AWS_ENDPOINT_URL
           value: {{ include "semantic-explorer.storage.s3.endpoint" . }}
+        - name: S3_BUCKET_NAME
+          value: {{ .Values.storage.s3.bucketName }}
         {{- if .Values.observability.otelCollector.enabled }}
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: {{ include "semantic-explorer.otel.endpoint" . }}

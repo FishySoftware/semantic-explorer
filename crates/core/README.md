@@ -1,20 +1,24 @@
-# semantic-explorer-core
+# Core Library - Shared Utilities for Semantic Explorer
 
-Core library providing shared utilities, configuration management, and infrastructure abstractions for the Semantic Explorer platform.
+Shared library providing core functionality used across all Semantic Explorer services including configuration, encryption, HTTP client, database access, message queue integration, and worker patterns.
 
-## Overview
+## 📋 Overview
 
-This crate serves as the foundational library for all Semantic Explorer services, providing:
+The `semantic-explorer-core` crate is a library that provides foundational utilities for all other crates:
 
-- Centralized configuration management
-- S3 storage client initialization
-- NATS JetStream setup and consumer patterns
-- OpenTelemetry observability infrastructure
-- HTTP client with TLS/mTLS support
-- Shared domain models and types
-- Input validation utilities
+### Key Modules
+- **`config.rs`** - Configuration management from environment variables
+- **`encryption.rs`** - AES-256 encryption/decryption for sensitive data
+- **`http_client.rs`** - Shared HTTP client with retry logic and timeouts
+- **`models.rs`** - Core domain models and types
+- **`nats.rs`** - NATS JetStream client for pub/sub and streaming
+- **`observability.rs`** - OpenTelemetry setup for tracing
+- **`storage.rs`** - S3-compatible file storage client
+- **`validation.rs`** - Input validation and sanitization
+- **`worker.rs`** - Worker patterns for async job processing
+- **`lib.rs`** - Module exports and public API
 
-## Architecture
+## 🏗️ Architecture
 
 ```mermaid
 graph TB
@@ -61,6 +65,7 @@ graph TB
 | `config` | Environment-based configuration loading with fail-fast validation |
 | `storage` | AWS S3 client initialization and file operations |
 | `nats` | JetStream stream/consumer setup and configuration |
+| `encryption` | AES-256-GCM encryption for API keys and secrets at rest |
 | `worker` | Generic worker framework for background job processing |
 | `observability` | OpenTelemetry metrics definitions and recording functions |
 | `http_client` | Shared HTTP client with TLS certificate support |
@@ -126,6 +131,53 @@ sequenceDiagram
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `NATS_URL` | string | `nats://localhost:4222` | NATS server URL |
+| `NATS_REPLICAS` | integer | `3` | Number of replicas for JetStream streams (production) |
+
+### Encryption Configuration
+
+**IMPORTANT**: API keys and secrets are encrypted at rest using AES-256-GCM encryption. The master encryption key must be securely generated and stored.
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `ENCRYPTION_MASTER_KEY` | string | **required** | 256-bit encryption key as hex string (64 hex characters) |
+
+#### Encryption Setup
+
+1. **Generate a master key** (do this once and store securely):
+   ```bash
+   openssl rand -hex 32
+   # Output: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a
+   ```
+
+2. **Configure in production**:
+   ```bash
+   # Store the key in a secrets management system (Vault, AWS Secrets Manager, etc.)
+   # and inject it as an environment variable
+   export ENCRYPTION_MASTER_KEY="a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a"
+   ```
+
+3. **Encryption Format**: API keys are encrypted using AES-256-GCM with:
+   - **Key**: 256-bit master key from `ENCRYPTION_MASTER_KEY`
+   - **Nonce**: 96-bit random value (12 bytes), generated per encryption
+   - **Format**: base64(`nonce || ciphertext`) where `||` is concatenation
+   - **Storage**: Encrypted value stored in database column `api_key_encrypted`
+
+4. **Decryption Flow**:
+   ```
+   Retrieve encrypted value from database
+   → Base64 decode → Extract 12-byte nonce from beginning
+   → Decrypt remaining bytes using master key and nonce
+   → Result is plaintext API key
+   ```
+
+#### Key Rotation
+
+To rotate the master key:
+1. Generate a new key with `openssl rand -hex 32`
+2. Create a migration that re-encrypts all stored secrets with the new key
+3. Update the environment variable to the new key
+4. Run the migration
+5. Store the old key securely for backup/recovery purposes
 
 ### Qdrant Configuration
 
@@ -144,6 +196,7 @@ sequenceDiagram
 | `AWS_ACCESS_KEY_ID` | string | **required** | AWS access key |
 | `AWS_SECRET_ACCESS_KEY` | string | **required** | AWS secret key |
 | `AWS_ENDPOINT_URL` | string | **required** | S3-compatible endpoint URL |
+| `MAX_FILE_SIZE_MB` | integer | `100` | Maximum file size for in-memory processing (MB) |
 
 ### Server Configuration
 
@@ -284,6 +337,92 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 ```
+
+## Encryption Module
+
+The `encryption` module provides AES-256-GCM authenticated encryption for sensitive data like API keys and credentials.
+
+### Core Features
+
+- **Algorithm**: AES-256-GCM (authenticated encryption with associated data)
+- **Key Derivation**: Master key from `ENCRYPTION_MASTER_KEY` environment variable
+- **Nonce**: 96-bit (12-byte) random value per encryption operation
+- **Authentication**: Built-in GCM authentication tag prevents tampering
+- **Storage**: Encrypted data as base64 string: `base64(nonce || ciphertext)`
+
+### Usage Example
+
+```rust
+use semantic_explorer_core::encryption::EncryptionService;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // Initialize from environment (requires ENCRYPTION_MASTER_KEY)
+    let encryption = EncryptionService::from_env()?;
+
+    // Encrypt a secret
+    let plaintext_key = "sk-1234567890abcdef";
+    let encrypted = encryption.encrypt(plaintext_key)?;
+    println!("Encrypted: {}", encrypted);
+
+    // Decrypt the secret
+    let decrypted = encryption.decrypt(&encrypted)?;
+    assert_eq!(plaintext_key, decrypted);
+
+    // Check if a string looks encrypted
+    if encryption.is_encrypted(&encrypted) {
+        println!("Data appears to be encrypted");
+    }
+
+    Ok(())
+}
+```
+
+### Key Generation
+
+Generate a new 256-bit master key:
+
+```bash
+# Generate hex-encoded 32-byte key
+openssl rand -hex 32
+
+# Example output (use this as ENCRYPTION_MASTER_KEY):
+# a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a
+```
+
+### API Encryption in Practice
+
+When a user provides an API key (e.g., OpenAI key):
+
+```
+User Input: "sk-proj-abc123..."
+           ↓
+    Encryption Service
+           ↓
+    Encrypted (base64): "KRaXxK3l2F8=<ciphertext>..."
+           ↓
+    Store in database column: api_key_encrypted
+```
+
+When the API key is needed:
+
+```
+Load from database: "KRaXxK3l2F8=<ciphertext>..."
+           ↓
+    Decryption Service
+           ↓
+    Plaintext: "sk-proj-abc123..."
+           ↓
+    Use with external API (OpenAI, Cohere, etc.)
+```
+
+### Security Considerations
+
+1. **Master Key Storage**: Store in secure secret management system (Vault, AWS Secrets Manager, HashiCorp Vault)
+2. **Key Rotation**: Implement database migration to re-encrypt with new key
+3. **Nonce Handling**: Each encryption generates a unique random nonce (re-encrypting same secret produces different ciphertext)
+4. **Authentication**: GCM provides authenticated encryption - tampering detected automatically
+5. **No Direct Access**: API keys never sent to client; only server-side operations
 
 ## NATS Streams
 

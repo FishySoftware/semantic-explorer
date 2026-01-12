@@ -35,12 +35,28 @@
 
 	interface Stats {
 		visualization_transform_id: number;
-		latest_visualization: Visualization | null;
+		latest_visualization: DatabaseVisualization | null;
 		total_runs: number;
 		successful_runs: number;
 		failed_runs: number;
 	}
 
+	// Database format from API
+	interface DatabaseVisualization {
+		visualization_id: number;
+		visualization_transform_id: number;
+		status: string;
+		started_at: string | null;
+		completed_at: string | null;
+		html_s3_key: string | null;
+		point_count: number | null;
+		cluster_count: number | null;
+		error_message: string | null;
+		stats_json: Record<string, unknown> | null;
+		created_at: string;
+	}
+
+	// UI format
 	interface Visualization {
 		visualization_id: number;
 		visualization_transform_id: number;
@@ -49,13 +65,6 @@
 		cluster_count: number;
 		created_at: string;
 		updated_at: string;
-	}
-
-	interface PaginatedVisualizationsResponse {
-		items: Visualization[];
-		total_count: number;
-		limit: number;
-		offset: number;
 	}
 
 	let transform = $state<VisualizationTransform | null>(null);
@@ -145,9 +154,21 @@
 				throw new Error(`Failed to fetch visualizations: ${response.statusText}`);
 			}
 
-			const data: PaginatedVisualizationsResponse = await response.json();
-			visualizations = data.items ?? [];
-			totalVisualizationsCount = data.total_count ?? 0;
+			const data = await response.json();
+			const dbVisualizations: DatabaseVisualization[] = Array.isArray(data) ? data : [];
+
+			// Transform from database format to UI format
+			visualizations = dbVisualizations.map((v) => ({
+				visualization_id: v.visualization_id,
+				visualization_transform_id: v.visualization_transform_id,
+				title: `${transform?.title || 'Visualization'} - ${new Date(v.created_at).toISOString().split('T')[0]}`,
+				embedding_count: v.point_count ?? 0,
+				cluster_count: v.cluster_count ?? 0,
+				created_at: v.created_at,
+				updated_at: v.completed_at ?? v.started_at ?? v.created_at,
+			}));
+
+			totalVisualizationsCount = visualizations.length;
 		} catch (e) {
 			console.error('Error fetching visualizations:', e);
 		}
@@ -406,7 +427,7 @@
 					<div class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
 						<p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Latest Visualization</p>
 						<p class="font-medium text-gray-900 dark:text-white">
-							{stats.latest_visualization.title}
+							{`${transform?.title || 'Visualization'} - ${new Date(stats.latest_visualization.created_at).toISOString().split('T')[0]}`}
 						</p>
 						<p class="text-xs text-gray-500 dark:text-gray-400">
 							Created {new Date(stats.latest_visualization.created_at).toLocaleString()}
@@ -443,8 +464,13 @@
 								<tr
 									class="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
 								>
-									<td class="px-4 py-3 font-medium text-gray-900 dark:text-white">
-										{visualization.title}
+									<td class="px-4 py-3 font-medium">
+										<a
+											href={`#/visualizations/${visualization.visualization_id}/details`}
+											class="text-blue-600 dark:text-blue-400 hover:underline"
+										>
+											{visualization.title}
+										</a>
 									</td>
 									<td class="px-4 py-3">{visualization.embedding_count}</td>
 									<td class="px-4 py-3">{visualization.cluster_count}</td>

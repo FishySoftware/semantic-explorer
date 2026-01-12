@@ -619,10 +619,11 @@
 		// Connect to SSE stream for real-time updates
 		connectSSE();
 
-		// Check URL parameters for create action and embedded dataset ID
+		// Check URL parameters for create action, edit action, and embedded dataset ID
 		const urlParams = new SvelteURLSearchParams(window.location.hash.split('?')[1] || '');
 		const shouldCreate = urlParams.get('create') === 'true';
 		const embeddedDatasetId = urlParams.get('embedded_dataset_id');
+		const editTransformId = urlParams.get('edit');
 
 		if (shouldCreate) {
 			showCreateForm = true;
@@ -633,6 +634,35 @@
 
 		if (embeddedDatasetId) {
 			newEmbeddedDatasetId = parseInt(embeddedDatasetId, 10);
+		}
+
+		// Handle edit parameter - open edit form for specified transform
+		if (editTransformId) {
+			const transformId = parseInt(editTransformId, 10);
+			// Wait for transforms to load, then open edit form
+			const checkAndOpenEdit = async () => {
+				// Wait a bit for transforms to load
+				await new Promise((resolve) => setTimeout(resolve, 500));
+				const transform = transforms.find((t) => t.visualization_transform_id === transformId);
+				if (transform) {
+					openEditForm(transform);
+				} else {
+					// If not in current page, fetch the specific transform
+					try {
+						const response = await fetch(`/api/visualization-transforms/${transformId}`);
+						if (response.ok) {
+							const fetchedTransform = await response.json();
+							openEditForm(fetchedTransform);
+						}
+					} catch (e) {
+						console.error('Failed to fetch transform for editing:', e);
+					}
+				}
+			};
+			checkAndOpenEdit();
+			// Remove the URL parameters after processing
+			const cleanHash = window.location.hash.split('?')[0];
+			window.history.replaceState(null, '', cleanHash);
 		}
 	});
 

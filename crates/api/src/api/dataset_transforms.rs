@@ -5,6 +5,7 @@ use crate::storage::postgres::{dataset_transform_batches, dataset_transforms, em
 use crate::transforms::dataset::models::{
     CreateDatasetTransform, DatasetTransform, DatasetTransformStats, UpdateDatasetTransform,
 };
+use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::models::PaginatedResponse;
 use semantic_explorer_core::validation;
 
@@ -360,12 +361,13 @@ pub async fn delete_dataset_transform(
     ),
 )]
 #[post("/api/dataset-transforms/{id}/trigger")]
-#[tracing::instrument(name = "trigger_dataset_transform", skip(user, postgres_pool, nats_client, s3_client), fields(dataset_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "trigger_dataset_transform", skip(user, postgres_pool, nats_client, s3_client, encryption), fields(dataset_transform_id = %path.as_ref()))]
 pub async fn trigger_dataset_transform(
     user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     nats_client: Data<NatsClient>,
     s3_client: Data<aws_sdk_s3::Client>,
+    encryption: Data<EncryptionService>,
     path: Path<i32>,
 ) -> impl Responder {
     let dataset_transform_id = path.into_inner();
@@ -392,6 +394,7 @@ pub async fn trigger_dataset_transform(
         &s3_client,
         dataset_transform_id,
         &user,
+        &encryption,
     )
     .await
     {

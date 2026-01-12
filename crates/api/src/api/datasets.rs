@@ -25,6 +25,7 @@ use crate::{
     errors::ApiError,
     storage::postgres::{datasets, embedded_datasets, embedders},
 };
+use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::validation;
 
 #[utoipa::path(
@@ -734,10 +735,11 @@ pub(crate) struct DatasetEmbedders {
     tag = "Datasets",
 )]
 #[get("/api/datasets/embedders")]
-#[tracing::instrument(name = "get_datasets_embedders", skip(user, postgres_pool))]
+#[tracing::instrument(name = "get_datasets_embedders", skip(user, postgres_pool, encryption))]
 pub(crate) async fn get_datasets_embedders(
     user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
+    encryption: Data<EncryptionService>,
 ) -> impl Responder {
     let pool = postgres_pool.into_inner();
 
@@ -752,7 +754,7 @@ pub(crate) async fn get_datasets_embedders(
     };
 
     // Get all embedders to look up names
-    let all_embedders = match embedders::get_embedders(&pool, &user).await {
+    let all_embedders = match embedders::get_embedders(&pool, &user, &encryption).await {
         Ok(embedders) => embedders,
         Err(e) => {
             error!("error fetching embedders: {e:?}");
