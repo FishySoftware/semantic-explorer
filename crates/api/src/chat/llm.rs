@@ -1,3 +1,4 @@
+use futures_util::Stream;
 use semantic_explorer_core::http_client::HTTP_CLIENT;
 use sqlx::{Pool, Postgres};
 
@@ -12,6 +13,8 @@ pub(crate) async fn generate_response(
     llm_id: i32,
     query: &str,
     context: &str,
+    temperature: Option<f32>,
+    max_tokens: Option<i32>,
 ) -> Result<String, String> {
     // Fetch LLM details from database
     let (name, provider, base_url, model, api_key) =
@@ -25,6 +28,9 @@ pub(crate) async fn generate_response(
         context, query
     );
 
+    let temperature = temperature.unwrap_or(0.7).clamp(0.0, 2.0);
+    let max_tokens = max_tokens.unwrap_or(2000).max(1);
+
     // Call the appropriate LLM API
     let response_text = match provider.to_lowercase().as_str() {
         "openai" => {
@@ -34,6 +40,8 @@ pub(crate) async fn generate_response(
                 &model,
                 SYSTEM_PROMPT,
                 &user_prompt,
+                temperature,
+                max_tokens,
             )
             .await?
         }
@@ -44,10 +52,22 @@ pub(crate) async fn generate_response(
                 &model,
                 SYSTEM_PROMPT,
                 &user_prompt,
+                temperature,
+                max_tokens,
             )
             .await?
         }
-        "cohere" => call_cohere_api(&base_url, api_key.as_deref(), &model, &user_prompt).await?,
+        "cohere" => {
+            call_cohere_api(
+                &base_url,
+                api_key.as_deref(),
+                &model,
+                &user_prompt,
+                temperature,
+                max_tokens,
+            )
+            .await?
+        }
         _ => {
             return Err(format!("unsupported LLM provider: {}", provider));
         }
@@ -64,6 +84,8 @@ async fn call_openai_api(
     model: &str,
     system_prompt: &str,
     user_prompt: &str,
+    temperature: f32,
+    max_tokens: i32,
 ) -> Result<String, String> {
     let api_key = api_key.ok_or_else(|| "API key not configured for OpenAI".to_string())?;
 
@@ -75,8 +97,8 @@ async fn call_openai_api(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ],
-        "temperature": 0.7,
-        "max_tokens": 2000,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
     });
 
     let response = client
@@ -116,6 +138,8 @@ async fn call_anthropic_api(
     model: &str,
     system_prompt: &str,
     user_prompt: &str,
+    temperature: f32,
+    max_tokens: i32,
 ) -> Result<String, String> {
     let api_key = api_key.ok_or_else(|| "API key not configured for Anthropic".to_string())?;
 
@@ -127,7 +151,8 @@ async fn call_anthropic_api(
             {"role": "user", "content": user_prompt}
         ],
         "system": system_prompt,
-        "max_tokens": 2000,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
     });
 
     let response = client
@@ -167,6 +192,8 @@ async fn call_cohere_api(
     api_key: Option<&str>,
     model: &str,
     prompt: &str,
+    temperature: f32,
+    max_tokens: i32,
 ) -> Result<String, String> {
     let api_key = api_key.ok_or_else(|| "API key not configured for Cohere".to_string())?;
 
@@ -177,8 +204,8 @@ async fn call_cohere_api(
         "messages": [
             {"role": "user", "content": prompt}
         ],
-        "max_tokens": 2000,
-        "temperature": 0.7,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
     });
 
     let response = client
@@ -217,4 +244,249 @@ async fn call_cohere_api(
         .to_string();
 
     Ok(response_text)
+}
+
+/// Generate a streaming LLM response with RAG context
+#[tracing::instrument(
+    name = "generate_llm_response_stream",
+    skip(postgres_pool, query, context)
+)]
+pub(crate) async fn generate_response_stream(
+    postgres_pool: &Pool<Postgres>,
+    llm_id: i32,
+    query: &str,
+    context: &str,
+    temperature: Option<f32>,
+    max_tokens: Option<i32>,
+) -> Result<impl Stream<Item = Result<String, String>>, String> {
+    // Fetch LLM details from database
+    let (name, provider, base_url, model, api_key) =
+        chat_storage::get_llm_details(postgres_pool, llm_id)
+            .await
+            .map_err(|e| format!("database error: {e}"))?;
+
+    // Build the prompt with RAG context
+    let user_prompt = format!(
+        "{}\n---\n\nQuestion: {}\n\nPlease provide a helpful answer based on the context above. Remember to cite specific chunk numbers when referencing information.",
+        context, query
+    );
+
+    let temperature = temperature.unwrap_or(0.7).clamp(0.0, 2.0);
+    let max_tokens = max_tokens.unwrap_or(2000).max(1);
+
+    tracing::debug!(llm_name = %name, provider = %provider, "starting streaming LLM response");
+
+    // Create streaming request based on provider
+    let response = match provider.to_lowercase().as_str() {
+        "openai" => {
+            make_streaming_request(
+                &base_url,
+                &model,
+                api_key.as_deref(),
+                SYSTEM_PROMPT,
+                &user_prompt,
+                "openai",
+                temperature,
+                max_tokens,
+            )
+            .await?
+        }
+        "anthropic" => {
+            make_streaming_request(
+                &base_url,
+                &model,
+                api_key.as_deref(),
+                SYSTEM_PROMPT,
+                &user_prompt,
+                "anthropic",
+                temperature,
+                max_tokens,
+            )
+            .await?
+        }
+        "cohere" => {
+            make_streaming_request(
+                &base_url,
+                &model,
+                api_key.as_deref(),
+                SYSTEM_PROMPT,
+                &user_prompt,
+                "cohere",
+                temperature,
+                max_tokens,
+            )
+            .await?
+        }
+        _ => return Err(format!("unsupported LLM provider: {}", provider)),
+    };
+
+    let provider_clone = provider.clone();
+    let stream = async_stream::stream! {
+        let mut response = response;
+        let mut buffer = String::new();
+
+        while let Some(chunk_result) = response.chunk().await.transpose() {
+            let chunk = match chunk_result {
+                Ok(c) => c,
+                Err(e) => {
+                    yield Err(format!("stream error: {}", e));
+                    return;
+                }
+            };
+
+            let text = String::from_utf8_lossy(&chunk);
+            buffer.push_str(&text);
+
+            // Process complete lines
+            while let Some(newline_pos) = buffer.find('\n') {
+                let line = buffer[..newline_pos].trim().to_string();
+                buffer.drain(..=newline_pos);
+                if let Some(data) = line.strip_prefix("data: ") {
+                    if data == "[DONE]" {
+                        return;
+                    }
+
+                    match serde_json::from_str::<serde_json::Value>(data) {
+                        Ok(json) => {
+                            tracing::debug!(json = %json, provider = %provider_clone, "Parsed LLM stream JSON");
+                            if let Some(content) = extract_content_from_provider(&json, &provider_clone) {
+                                tracing::debug!(content = %content, "Extracted content from LLM stream");
+                                yield Ok(content);
+                            } else {
+                                tracing::debug!("No content extracted from LLM stream JSON");
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, data = %data, "Failed to parse LLM stream JSON");
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    Ok(stream)
+}
+
+/// Make a streaming request to an LLM provider
+#[allow(clippy::too_many_arguments)]
+async fn make_streaming_request(
+    api_base: &str,
+    model: &str,
+    api_key: Option<&str>,
+    system_prompt: &str,
+    user_prompt: &str,
+    provider: &str,
+    temperature: f32,
+    max_tokens: i32,
+) -> Result<reqwest::Response, String> {
+    let api_key = api_key.ok_or_else(|| format!("API key not configured for {}", provider))?;
+    let client = &*HTTP_CLIENT;
+
+    let response = match provider {
+        "openai" => {
+            let request_body = serde_json::json!({
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": true,
+            });
+
+            client
+                .post(format!("{}/v1/chat/completions", api_base))
+                .header("Authorization", format!("Bearer {}", api_key))
+                .json(&request_body)
+                .send()
+                .await
+                .map_err(|e| format!("OpenAI API request failed: {e}"))?
+        }
+        "anthropic" => {
+            let request_body = serde_json::json!({
+                "model": model,
+                "messages": [
+                    {"role": "user", "content": user_prompt}
+                ],
+                "system": system_prompt,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": true,
+            });
+
+            client
+                .post(format!("{}/messages", api_base))
+                .header("x-api-key", api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header("Content-Type", "application/json")
+                .json(&request_body)
+                .send()
+                .await
+                .map_err(|e| format!("Anthropic API request failed: {e}"))?
+        }
+        "cohere" => {
+            let request_body = serde_json::json!({
+                "model": model,
+                "messages": [
+                    {"role": "user", "content": user_prompt}
+                ],
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "stream": true,
+            });
+
+            client
+                .post(format!("{}/chat", api_base))
+                .header("Authorization", format!("Bearer {}", api_key))
+                .header("Accept", "text/event-stream")
+                .json(&request_body)
+                .send()
+                .await
+                .map_err(|e| format!("Cohere API request failed: {e}"))?
+        }
+        _ => return Err(format!("unsupported provider: {}", provider)),
+    };
+
+    if !response.status().is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("{} API error: {}", provider, error_text));
+    }
+
+    Ok(response)
+}
+
+/// Extract content from provider-specific JSON response
+fn extract_content_from_provider(json: &serde_json::Value, provider: &str) -> Option<String> {
+    match provider {
+        "openai" => json
+            .get("choices")?
+            .get(0)?
+            .get("delta")?
+            .get("content")?
+            .as_str()
+            .map(String::from),
+        "anthropic" => {
+            if json.get("type")?.as_str()? == "content_block_delta" {
+                json.get("delta")?.get("text")?.as_str().map(String::from)
+            } else {
+                None
+            }
+        }
+        "cohere" => {
+            // Cohere V2 Chat API streaming format
+            if json.get("type")?.as_str()? == "content-delta" {
+                json.get("delta")?
+                    .get("message")?
+                    .get("content")?
+                    .get("text")?
+                    .as_str()
+                    .map(String::from)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }

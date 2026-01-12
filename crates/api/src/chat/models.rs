@@ -21,6 +21,7 @@ pub struct ChatMessageResponse {
     pub role: String,
     pub content: String,
     pub documents_retrieved: Option<i32>,
+    pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retrieved_documents: Option<Vec<RetrievedDocument>>,
     #[schema(value_type = String, format = DateTime)]
@@ -57,6 +58,7 @@ pub(crate) struct ChatMessage {
     pub role: String, // "user" or "assistant"
     pub content: String,
     pub documents_retrieved: Option<i32>,
+    pub status: String, // "complete", "incomplete", "error"
     #[schema(value_type = String, format = DateTime)]
     pub created_at: DateTime<Utc>,
 }
@@ -68,6 +70,10 @@ pub(crate) struct CreateChatMessageRequest {
     pub max_context_documents: Option<i32>,
     #[serde(default)]
     pub min_similarity_score: Option<f32>,
+    #[serde(default)]
+    pub temperature: Option<f32>,
+    #[serde(default)]
+    pub max_tokens: Option<i32>,
 }
 
 #[derive(Serialize, Deserialize, ToSchema, Debug)]

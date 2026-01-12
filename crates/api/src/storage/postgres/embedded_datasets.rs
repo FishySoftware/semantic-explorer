@@ -143,6 +143,12 @@ const GET_EMBEDDED_DATASET_INFO_QUERY: &str = r#"
     SELECT collection_name, embedder_id FROM embedded_datasets WHERE embedded_dataset_id = $1
 "#;
 
+const UPDATE_EMBEDDED_DATASET_LAST_PROCESSED_AT_QUERY: &str = r#"
+    UPDATE embedded_datasets
+    SET last_processed_at = $2
+    WHERE embedded_dataset_id = $1
+"#;
+
 const GET_EMBEDDED_DATASET_WITH_DETAILS_BATCH: &str = r#"
         SELECT
             ed.embedded_dataset_id,
@@ -354,17 +360,11 @@ pub async fn update_embedded_dataset_last_processed_at_to(
     embedded_dataset_id: i32,
     timestamp: DateTime<Utc>,
 ) -> Result<()> {
-    sqlx::query(
-        r#"
-        UPDATE embedded_datasets
-        SET last_processed_at = $2
-        WHERE embedded_dataset_id = $1
-        "#,
-    )
-    .bind(embedded_dataset_id)
-    .bind(timestamp)
-    .execute(pool)
-    .await?;
+    sqlx::query(UPDATE_EMBEDDED_DATASET_LAST_PROCESSED_AT_QUERY)
+        .bind(embedded_dataset_id)
+        .bind(timestamp)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 

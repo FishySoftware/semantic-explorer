@@ -39,7 +39,7 @@ opentelemetry-appender-tracing = { version = "0.31.1" }
 tracing-opentelemetry = { version = "0.32.0" }
 prometheus = { version = "0.14.0" }
 mime_guess = { version = "2.0.5" }
-quick-xml = {version = "0.38.4", features = ["escape-html"]}
+quick-xml = {version = "0.39.0", features = ["escape-html"]}
 mime = { version = "0.3.17" }
 pdf-extract = { version = "0.10.0" }
 unicode-normalization = { version = "0.1.25" }
@@ -54,6 +54,7 @@ rust-stemmers = {version ="1.2.0" }
 stop-words = { version = "0.9.0" }
 async-trait = { version = "0.1.89" }
 once_cell = "1.21.3"
+regex = { version = "1.12.2" }
 
 
 semantic-explorer-core = { path = "crates/core" }

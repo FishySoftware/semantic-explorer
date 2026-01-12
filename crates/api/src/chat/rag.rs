@@ -195,6 +195,40 @@ pub fn build_context(documents: &[RetrievedDocument]) -> String {
     context
 }
 
+/// Replace "Chunk N" references in LLM response with actual document titles
+/// This transforms the response from using generic chunk numbers to user-facing document titles
+pub fn replace_chunk_references(content: &str, documents: &[RetrievedDocument]) -> String {
+    use regex::Regex;
+
+    // Create a mapping from chunk number to item title
+    let chunk_to_title: std::collections::HashMap<usize, String> = documents
+        .iter()
+        .enumerate()
+        .map(|(idx, doc)| {
+            let chunk_num = idx + 1;
+            let title = doc.item_title.as_deref().unwrap_or("Unknown Source");
+            (chunk_num, title.to_string())
+        })
+        .collect();
+
+    // Replace "Chunk N" with actual titles using regex
+    // Matches patterns like "Chunk 1", "Chunk 2", etc.
+    let re = Regex::new(r"Chunk (\d+)").unwrap();
+    let result = re.replace_all(content, |caps: &regex::Captures| {
+        let chunk_num_str = &caps[1];
+        if let Ok(chunk_num) = chunk_num_str.parse::<usize>() {
+            chunk_to_title
+                .get(&chunk_num)
+                .cloned()
+                .unwrap_or_else(|| format!("Chunk {}", chunk_num))
+        } else {
+            caps[0].to_string()
+        }
+    });
+
+    result.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,6 +254,47 @@ mod tests {
         assert!(context.contains("Score: 0.95"));
         assert!(context.contains("test_item"));
         assert!(context.contains("This is a test document"));
+    }
+
+    #[test]
+    fn test_replace_chunk_references() {
+        let docs = vec![
+            RetrievedDocument {
+                document_id: Some("doc1".to_string()),
+                text: "Content 1".to_string(),
+                similarity_score: 0.95,
+                item_title: Some("Document A".to_string()),
+            },
+            RetrievedDocument {
+                document_id: Some("doc2".to_string()),
+                text: "Content 2".to_string(),
+                similarity_score: 0.85,
+                item_title: Some("Document B".to_string()),
+            },
+        ];
+
+        let content = "According to Chunk 1, this is true. Also, Chunk 2 confirms it.";
+        let result = replace_chunk_references(content, &docs);
+
+        assert_eq!(
+            result,
+            "According to Document A, this is true. Also, Document B confirms it."
+        );
+    }
+
+    #[test]
+    fn test_replace_chunk_references_no_title() {
+        let docs = vec![RetrievedDocument {
+            document_id: Some("doc1".to_string()),
+            text: "Content".to_string(),
+            similarity_score: 0.95,
+            item_title: None,
+        }];
+
+        let content = "According to Chunk 1, this is true.";
+        let result = replace_chunk_references(content, &docs);
+
+        assert_eq!(result, "According to Unknown Source, this is true.");
     }
 
     #[test]

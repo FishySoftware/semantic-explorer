@@ -17,6 +17,12 @@ const GET_DATASETS_QUERY: &str = r#"
     SELECT dataset_id, title, details, owner, tags, is_public, created_at, updated_at FROM datasets WHERE owner = $1
 "#;
 
+const GET_DATASETS_WITH_SEARCH_QUERY: &str = r#"
+    SELECT dataset_id, title, details, owner, tags, is_public, created_at, updated_at 
+    FROM datasets 
+    WHERE owner = $1 AND title ILIKE $2
+"#;
+
 const CREATE_DATASET_QUERY: &str = r#"
     INSERT INTO datasets (title, details, owner, tags, is_public)
     VALUES ($1, $2, $3, $4, $5)
@@ -55,6 +61,14 @@ const GET_DATASET_ITEMS_SUMMARY_QUERY: &str = r#"
     LIMIT $2 OFFSET $3
 "#;
 
+const GET_DATASET_ITEMS_SUMMARY_WITH_SEARCH_QUERY: &str = r#"
+    SELECT item_id, dataset_id, title, jsonb_array_length(chunks) as chunk_count, metadata, created_at, COALESCE(updated_at, created_at) as updated_at
+    FROM dataset_items
+    WHERE dataset_id = $1 AND title ILIKE $4
+    ORDER BY item_id DESC
+    LIMIT $2 OFFSET $3
+"#;
+
 const GET_DATASET_ITEM_CHUNKS_QUERY: &str = r#"
     SELECT item_id, dataset_id, title, chunks, metadata
     FROM dataset_items
@@ -63,6 +77,10 @@ const GET_DATASET_ITEM_CHUNKS_QUERY: &str = r#"
 
 const COUNT_DATASET_ITEMS_QUERY: &str = r#"
     SELECT COUNT(*) as count FROM dataset_items WHERE dataset_id = $1
+"#;
+
+const COUNT_DATASET_ITEMS_WITH_SEARCH_QUERY: &str = r#"
+    SELECT COUNT(*) as count FROM dataset_items WHERE dataset_id = $1 AND title ILIKE $2
 "#;
 
 const GET_DATASET_ITEMS_MODIFIED_SINCE_QUERY: &str = r#"
@@ -158,6 +176,27 @@ pub(crate) async fn get_datasets(pool: &Pool<Postgres>, owner: &str) -> Result<V
     let start = Instant::now();
     let result = sqlx::query_as::<_, Dataset>(GET_DATASETS_QUERY)
         .bind(owner)
+        .fetch_all(pool)
+        .await;
+
+    let duration = start.elapsed().as_secs_f64();
+    let success = result.is_ok();
+    record_database_query("SELECT", "datasets", duration, success);
+
+    Ok(result?)
+}
+
+#[tracing::instrument(name = "database.get_datasets_with_search", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner = %owner))]
+pub(crate) async fn get_datasets_with_search(
+    pool: &Pool<Postgres>,
+    owner: &str,
+    search_query: &str,
+) -> Result<Vec<Dataset>> {
+    let start = Instant::now();
+    let search_pattern = format!("%{}%", search_query);
+    let result = sqlx::query_as::<_, Dataset>(GET_DATASETS_WITH_SEARCH_QUERY)
+        .bind(owner)
+        .bind(&search_pattern)
         .fetch_all(pool)
         .await;
 
@@ -355,6 +394,28 @@ pub(crate) async fn get_dataset_items_summary(
     Ok(items)
 }
 
+#[tracing::instrument(name = "database.get_dataset_items_summary_with_search", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", dataset_id = %dataset_id, page = %page, page_size = %page_size))]
+pub(crate) async fn get_dataset_items_summary_with_search(
+    pool: &Pool<Postgres>,
+    dataset_id: i32,
+    page: i64,
+    page_size: i64,
+    search_query: &str,
+) -> Result<Vec<crate::datasets::models::DatasetItemSummary>> {
+    use crate::datasets::models::DatasetItemSummary;
+    let offset = page * page_size;
+    let search_pattern = format!("%{}%", search_query);
+    let items: Vec<DatasetItemSummary> =
+        sqlx::query_as::<_, DatasetItemSummary>(GET_DATASET_ITEMS_SUMMARY_WITH_SEARCH_QUERY)
+            .bind(dataset_id)
+            .bind(page_size as i32)
+            .bind(offset as i32)
+            .bind(&search_pattern)
+            .fetch_all(pool)
+            .await?;
+    Ok(items)
+}
+
 #[tracing::instrument(name = "database.get_dataset_item_chunks", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", dataset_id = %dataset_id, item_id = %item_id))]
 pub(crate) async fn get_dataset_item_chunks(
     pool: &Pool<Postgres>,
@@ -392,6 +453,21 @@ pub(crate) async fn get_dataset_item_chunks(
 pub(crate) async fn count_dataset_items(pool: &Pool<Postgres>, dataset_id: i32) -> Result<i64> {
     let count: (i64,) = sqlx::query_as(COUNT_DATASET_ITEMS_QUERY)
         .bind(dataset_id)
+        .fetch_one(pool)
+        .await?;
+    Ok(count.0)
+}
+
+#[tracing::instrument(name = "database.count_dataset_items_with_search", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", dataset_id = %dataset_id))]
+pub(crate) async fn count_dataset_items_with_search(
+    pool: &Pool<Postgres>,
+    dataset_id: i32,
+    search_query: &str,
+) -> Result<i64> {
+    let search_pattern = format!("%{}%", search_query);
+    let count: (i64,) = sqlx::query_as(COUNT_DATASET_ITEMS_WITH_SEARCH_QUERY)
+        .bind(dataset_id)
+        .bind(&search_pattern)
         .fetch_one(pool)
         .await?;
     Ok(count.0)

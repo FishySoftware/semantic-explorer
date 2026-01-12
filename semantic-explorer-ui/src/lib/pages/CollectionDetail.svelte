@@ -92,7 +92,27 @@
 	let currentPageIndex = $state(0);
 	let totalCount = $state<number | null>(null);
 
-	let searchQuery = $state('');
+	function getInitialSearchQuery(): string {
+		if (typeof window === 'undefined') return '';
+		const hashParts = window.location.hash.split('?');
+		if (hashParts.length > 1) {
+			const params = new SvelteURLSearchParams(hashParts[1]);
+			const searchParam = params.get('search');
+			if (searchParam) {
+				// Remove the search param from the URL
+				params.delete('search');
+				const newQueryString = params.toString();
+				const hashBase = hashParts[0];
+				const newHash = newQueryString ? `${hashBase}?${newQueryString}` : hashBase;
+				window.history.replaceState(null, '', newHash);
+				return decodeURIComponent(searchParam);
+			}
+		}
+		return '';
+	}
+
+	let searchQuery = $state(getInitialSearchQuery());
+	let searchTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	let uploading = $state(false);
 	let uploadProgress = $state<{
@@ -116,6 +136,9 @@
 
 	onDestroy(() => {
 		sseConnection?.disconnect();
+		if (searchTimeout) {
+			clearTimeout(searchTimeout);
+		}
 	});
 
 	function connectSSE() {
@@ -337,6 +360,16 @@
 			);
 		})
 	);
+
+	// When there's a search filter, only show Next button if there are more filtered results than current page can show
+	let canGoToNextPage = $derived.by(() => {
+		if (searchQuery.trim()) {
+			// If filtering, only allow next if we have more filtered items than current page size
+			return filteredFiles.length > (currentPage + 1) * pageSize;
+		}
+		// Otherwise use server-side pagination indicator
+		return paginatedFiles?.has_more ?? false;
+	});
 
 	function changePageSize(newSize: number) {
 		pageSize = newSize;
@@ -895,7 +928,7 @@
 											</span>
 											<button
 												onclick={goToNextPage}
-												disabled={!paginatedFiles.has_more}
+												disabled={!canGoToNextPage}
 												class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm text-gray-700 dark:text-gray-300"
 											>
 												Next

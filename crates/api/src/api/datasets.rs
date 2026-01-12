@@ -1,6 +1,6 @@
 use actix_web::{
     HttpRequest, HttpResponse, Responder, ResponseError, delete, get, patch, post,
-    web::{Data, Json, Path, Query},
+    web::{self, Data, Json, Path, Query},
 };
 
 use qdrant_client::{
@@ -28,6 +28,9 @@ use crate::{
 use semantic_explorer_core::validation;
 
 #[utoipa::path(
+    params(
+        ("search" = Option<String>, Query, description = "Optional search term to filter datasets by title using ILIKE"),
+    ),
     responses(
         (status = 200, description = "OK", body = Vec<DatasetWithStats>),
         (status = 401, description = "Unauthorized"),
@@ -36,20 +39,38 @@ use semantic_explorer_core::validation;
     tag = "Datasets",
 )]
 #[get("/api/datasets")]
-#[tracing::instrument(name = "get_datasets", skip(user, postgres_pool))]
+#[tracing::instrument(name = "get_datasets", skip(user, postgres_pool, query))]
 pub(crate) async fn get_datasets(
     user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
+    query: web::Query<HashMap<String, String>>,
 ) -> impl Responder {
     let pool = postgres_pool.into_inner();
+    let search_query = query.get("search").and_then(|s| {
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
 
     // Get datasets
-    let all_datasets = match datasets::get_datasets(&pool, &user).await {
-        Ok(datasets) => datasets,
-        Err(e) => {
-            return ApiError::Internal(format!("error fetching datasets: {:?}", e))
-                .error_response();
-        }
+    let all_datasets = match search_query {
+        Some(q) => match datasets::get_datasets_with_search(&pool, &user, q).await {
+            Ok(datasets) => datasets,
+            Err(e) => {
+                return ApiError::Internal(format!("error fetching datasets: {:?}", e))
+                    .error_response();
+            }
+        },
+        None => match datasets::get_datasets(&pool, &user).await {
+            Ok(datasets) => datasets,
+            Err(e) => {
+                return ApiError::Internal(format!("error fetching datasets: {:?}", e))
+                    .error_response();
+            }
+        },
     };
 
     // Get stats
@@ -448,6 +469,7 @@ pub(crate) async fn get_dataset_items(
         ("dataset_id" = i32, Path, description = "The dataset ID"),
         ("page" = i64, Query, description = "Page number (0-indexed)"),
         ("page_size" = i64, Query, description = "Number of items per page"),
+        ("search" = Option<String>, Query, description = "Optional search term to filter items by title"),
     ),
     responses(
         (status = 200, description = "OK", body = PaginatedDatasetItemSummaries),
@@ -483,29 +505,63 @@ pub(crate) async fn get_dataset_items_summary(
 
     let page = params.page.max(0);
     let page_size = params.page_size.clamp(1, 100);
+    let search_query = params
+        .search
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
 
-    let items = match datasets::get_dataset_items_summary(
-        &postgres_pool,
-        dataset_id,
-        page,
-        page_size,
-    )
-    .await
-    {
-        Ok(items) => items,
-        Err(e) => {
-            return ApiError::Internal(format!("error fetching dataset items: {:?}", e))
-                .error_response();
+    let items = match search_query {
+        Some(query) => {
+            match datasets::get_dataset_items_summary_with_search(
+                &postgres_pool,
+                dataset_id,
+                page,
+                page_size,
+                query,
+            )
+            .await
+            {
+                Ok(items) => items,
+                Err(e) => {
+                    return ApiError::Internal(format!("error fetching dataset items: {:?}", e))
+                        .error_response();
+                }
+            }
+        }
+        None => {
+            match datasets::get_dataset_items_summary(&postgres_pool, dataset_id, page, page_size)
+                .await
+            {
+                Ok(items) => items,
+                Err(e) => {
+                    return ApiError::Internal(format!("error fetching dataset items: {:?}", e))
+                        .error_response();
+                }
+            }
         }
     };
 
-    let total_count = match datasets::count_dataset_items(&postgres_pool, dataset_id).await {
-        Ok(count) => count,
-        Err(e) => {
-            error!("error counting dataset items: {e:?}");
-            return ApiError::Internal(format!("error counting dataset items: {:?}", e))
-                .error_response();
+    let total_count = match search_query {
+        Some(query) => {
+            match datasets::count_dataset_items_with_search(&postgres_pool, dataset_id, query).await
+            {
+                Ok(count) => count,
+                Err(e) => {
+                    error!("error counting dataset items: {e:?}");
+                    return ApiError::Internal(format!("error counting dataset items: {:?}", e))
+                        .error_response();
+                }
+            }
         }
+        None => match datasets::count_dataset_items(&postgres_pool, dataset_id).await {
+            Ok(count) => count,
+            Err(e) => {
+                error!("error counting dataset items: {e:?}");
+                return ApiError::Internal(format!("error counting dataset items: {:?}", e))
+                    .error_response();
+            }
+        },
     };
 
     let has_more = (page + 1) * page_size < total_count;

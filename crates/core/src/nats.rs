@@ -96,9 +96,9 @@ pub async fn initialize_jetstream(client: &Client) -> Result<()> {
                 "transforms.dataset.status.*.*.*".to_string(),
                 "transforms.visualization.status.*.*.*".to_string(),
             ],
-            retention: RetentionPolicy::Limits, // Keep for subscribers
-            max_age: Duration::from_secs(60 * 60), // 1 hour retention
-            max_messages: 100_000,              // 100k message limit for 15k users
+            retention: RetentionPolicy::Limits,
+            max_age: Duration::from_secs(60 * 60),
+            max_messages: 100_000,
             num_replicas: 1,
             ..Default::default()
         },

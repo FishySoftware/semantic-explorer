@@ -242,7 +242,10 @@ pub(crate) async fn search(
                 };
 
                 let documents = if matches!(search_request.search_mode, SearchMode::Documents) {
-                    Some(aggregate_matches_to_documents(&matches))
+                    let mut docs = aggregate_matches_to_documents(&matches);
+                    // Limit documents to the requested amount
+                    docs.truncate(search_request.limit as usize);
+                    Some(docs)
                 } else {
                     None
                 };

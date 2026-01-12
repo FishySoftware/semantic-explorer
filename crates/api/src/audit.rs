@@ -8,6 +8,24 @@ use sqlx::{Pool, Postgres};
 use std::time::SystemTime;
 use tracing::{info, warn};
 
+// SQL Queries
+const INSERT_AUDIT_EVENT_QUERY: &str = r#"
+    INSERT INTO audit_events (
+        timestamp,
+        event_type,
+        outcome,
+        username,
+        request_id,
+        client_ip,
+        resource_type,
+        resource_id,
+        details
+    )
+    VALUES (
+        $1::timestamp with time zone, $2, $3, $4, $5, $6, $7, $8, $9
+    )
+"#;
+
 /// Audit event types for security-relevant operations
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -173,35 +191,18 @@ impl AuditEvent {
 
     /// Store this audit event in the database for long-term retention and querying
     pub async fn store(&self, pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            r#"
-            INSERT INTO audit_events (
-                timestamp,
-                event_type,
-                outcome,
-                username,
-                request_id,
-                client_ip,
-                resource_type,
-                resource_id,
-                details
-            )
-            VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9
-            )
-            "#,
-        )
-        .bind(&self.timestamp)
-        .bind(format!("{:?}", self.event_type))
-        .bind(format!("{:?}", self.outcome))
-        .bind(&self.user)
-        .bind(&self.request_id)
-        .bind(&self.client_ip)
-        .bind(self.resource_type.as_ref().map(|rt| format!("{:?}", rt)))
-        .bind(&self.resource_id)
-        .bind(&self.details)
-        .execute(pool)
-        .await?;
+        sqlx::query(INSERT_AUDIT_EVENT_QUERY)
+            .bind(&self.timestamp)
+            .bind(format!("{:?}", self.event_type))
+            .bind(format!("{:?}", self.outcome))
+            .bind(&self.user)
+            .bind(&self.request_id)
+            .bind(&self.client_ip)
+            .bind(self.resource_type.as_ref().map(|rt| format!("{:?}", rt)))
+            .bind(&self.resource_id)
+            .bind(&self.details)
+            .execute(pool)
+            .await?;
 
         Ok(())
     }

@@ -9,7 +9,7 @@
 		TableHeadCell,
 	} from 'flowbite-svelte';
 	import { onDestroy, onMount } from 'svelte';
-	import { SvelteMap } from 'svelte/reactivity';
+	import { SvelteMap, SvelteURLSearchParams } from 'svelte/reactivity';
 	import ActionMenu from '../components/ActionMenu.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
@@ -65,7 +65,14 @@
 		error = null;
 
 		try {
-			const response = await fetch('/api/visualization-transforms');
+			const params = new SvelteURLSearchParams();
+			if (searchQuery.trim()) {
+				params.append('search', searchQuery.trim());
+			}
+			const url = params.toString()
+				? `/api/visualization-transforms?${params.toString()}`
+				: '/api/visualization-transforms';
+			const response = await fetch(url);
 			if (!response.ok) {
 				throw new Error(`Failed to fetch visualization transforms: ${response.statusText}`);
 			}
@@ -216,18 +223,17 @@
 		}
 	}
 
+	// Refetch when search query changes
+	$effect(() => {
+		searchQuery;
+		loadTransforms();
+	});
+
 	let filteredTransforms = $derived(
 		transforms.filter((v) => {
 			// Only show transforms that have a completed visualization
 			if (!completedVisualizations.has(v.visualization_transform_id)) return false;
-
-			if (!searchQuery.trim()) return true;
-			const query = searchQuery.toLowerCase();
-			return (
-				v.title.toLowerCase().includes(query) ||
-				v.owner.toLowerCase().includes(query) ||
-				v.embedded_dataset_id.toString().includes(query)
-			);
+			return true;
 		})
 	);
 
@@ -337,7 +343,7 @@
 		</div>
 	{/if}
 
-	{#if !loading && transforms.length > 0}
+	{#if !loading}
 		<div class="mb-4">
 			<div class="relative">
 				<input

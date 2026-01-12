@@ -1,6 +1,8 @@
+use std::collections::HashMap;
+
 use actix_web::{
     HttpRequest, HttpResponse, Responder, ResponseError, delete, get, patch, post,
-    web::{Data, Json, Path},
+    web::{self, Data, Json, Path},
 };
 use semantic_explorer_core::validation;
 use sqlx::{Pool, Postgres};
@@ -14,6 +16,9 @@ use crate::{
 };
 
 #[utoipa::path(
+    params(
+        ("search" = Option<String>, Query, description = "Optional search term to filter LLMs by name using ILIKE"),
+    ),
     responses(
         (status = 200, description = "OK", body = Vec<LargeLanguageModel>),
         (status = 500, description = "Internal Server Error"),
@@ -21,17 +26,36 @@ use crate::{
     tag = "LLMs",
 )]
 #[get("/api/llms")]
-#[tracing::instrument(name = "get_llms", skip(user, postgres_pool))]
+#[tracing::instrument(name = "get_llms", skip(user, postgres_pool, query))]
 pub(crate) async fn get_llms(
     user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
+    query: web::Query<HashMap<String, String>>,
 ) -> impl Responder {
-    match llms::get_llms(&postgres_pool.into_inner(), &user).await {
-        Ok(llms_list) => HttpResponse::Ok().json(llms_list),
-        Err(e) => {
-            tracing::error!(error = %e, "failed to fetch LLMs");
-            ApiError::Internal(format!("error fetching LLMs: {:?}", e)).error_response()
+    let search_query = query.get("search").and_then(|s| {
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
         }
+    });
+
+    match search_query {
+        Some(q) => match llms::get_llms_with_search(&postgres_pool.into_inner(), &user, q).await {
+            Ok(llms_list) => HttpResponse::Ok().json(llms_list),
+            Err(e) => {
+                tracing::error!(error = %e, "failed to fetch LLMs");
+                ApiError::Internal(format!("error fetching LLMs: {:?}", e)).error_response()
+            }
+        },
+        None => match llms::get_llms(&postgres_pool.into_inner(), &user).await {
+            Ok(llms_list) => HttpResponse::Ok().json(llms_list),
+            Err(e) => {
+                tracing::error!(error = %e, "failed to fetch LLMs");
+                ApiError::Internal(format!("error fetching LLMs: {:?}", e)).error_response()
+            }
+        },
     }
 }
 

@@ -7,12 +7,6 @@ use uuid::Uuid;
 use crate::chat::models::{ChatMessage, ChatSession, CreateChatSessionRequest, RetrievedDocument};
 use semantic_explorer_core::observability::record_database_query;
 
-const ENSURE_USER_QUERY: &str = r#"
-    INSERT INTO users (username, created_at)
-    VALUES ($1, NOW())
-    ON CONFLICT (username) DO NOTHING
-"#;
-
 const CREATE_SESSION_QUERY: &str = r#"
     INSERT INTO chat_sessions (session_id, owner, embedded_dataset_id, llm_id, title, created_at, updated_at)
     VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
@@ -37,16 +31,45 @@ const DELETE_SESSION_QUERY: &str = r#"
 "#;
 
 const CREATE_MESSAGE_QUERY: &str = r#"
-    INSERT INTO chat_messages (session_id, role, content, documents_retrieved, created_at)
-    VALUES ($1, $2, $3, $4, NOW())
-    RETURNING message_id, session_id, role, content, documents_retrieved, created_at
+    INSERT INTO chat_messages (session_id, role, content, documents_retrieved, status, created_at)
+    VALUES ($1, $2, $3, $4, COALESCE($5, 'complete'), NOW())
+    RETURNING message_id, session_id, role, content, documents_retrieved, status, created_at
 "#;
 
 const GET_MESSAGES_QUERY: &str = r#"
-    SELECT message_id, session_id, role, content, documents_retrieved, created_at
+    SELECT message_id, session_id, role, content, documents_retrieved, status, created_at
     FROM chat_messages
     WHERE session_id = $1
     ORDER BY created_at ASC
+"#;
+
+const UPDATE_MESSAGE_CONTENT_STATUS_QUERY: &str = r#"
+    UPDATE chat_messages
+    SET content = $2, status = $3
+    WHERE message_id = $1
+    AND session_id IN (
+        SELECT session_id FROM chat_sessions WHERE owner = $4
+    )
+    RETURNING message_id, session_id, role, content, documents_retrieved, status, created_at
+"#;
+
+const UPDATE_MESSAGE_STATUS_QUERY: &str = r#"
+    UPDATE chat_messages
+    SET status = $2
+    WHERE message_id = $1
+    AND session_id IN (
+        SELECT session_id FROM chat_sessions WHERE owner = $3
+    )
+    RETURNING message_id, session_id, role, content, documents_retrieved, status, created_at
+"#;
+
+const GET_MESSAGE_BY_ID_QUERY: &str = r#"
+    SELECT message_id, session_id, role, content, documents_retrieved, status, created_at
+    FROM chat_messages
+    WHERE message_id = $1
+    AND session_id IN (
+        SELECT session_id FROM chat_sessions WHERE owner = $2
+    )
 "#;
 
 const GET_LLM_DETAILS_QUERY: &str = r#"
@@ -81,12 +104,6 @@ pub(crate) async fn create_chat_session(
         let now = Utc::now();
         format!("chat-session-{}", now.format("%Y%m%d-%H%M%S"))
     });
-
-    // Ensure user exists in users table (required by foreign key constraint)
-    sqlx::query(ENSURE_USER_QUERY)
-        .bind(owner)
-        .execute(pool)
-        .await?;
 
     let result = sqlx::query_as::<_, ChatSession>(CREATE_SESSION_QUERY)
         .bind(&session_id)
@@ -170,6 +187,7 @@ pub(crate) async fn add_chat_message(
     role: &str,
     content: &str,
     documents_retrieved: Option<i32>,
+    status: Option<&str>,
 ) -> Result<ChatMessage> {
     let start = Instant::now();
     let result = sqlx::query_as::<_, ChatMessage>(CREATE_MESSAGE_QUERY)
@@ -177,6 +195,7 @@ pub(crate) async fn add_chat_message(
         .bind(role)
         .bind(content)
         .bind(documents_retrieved)
+        .bind(status)
         .fetch_one(pool)
         .await;
 
@@ -302,4 +321,70 @@ pub(crate) async fn get_retrieved_documents(
     record_database_query("SELECT", "chat_message_retrieved_documents", duration, true);
 
     Ok(documents)
+}
+
+#[tracing::instrument(name = "database.update_message_content_and_status", skip(pool), fields(database.system = "postgresql", database.operation = "UPDATE", owner = %owner))]
+pub(crate) async fn update_message_content_and_status(
+    pool: &Pool<Postgres>,
+    message_id: i32,
+    content: &str,
+    status: &str,
+    owner: &str,
+) -> Result<ChatMessage> {
+    let start = Instant::now();
+    let result = sqlx::query_as::<_, ChatMessage>(UPDATE_MESSAGE_CONTENT_STATUS_QUERY)
+        .bind(message_id)
+        .bind(content)
+        .bind(status)
+        .bind(owner)
+        .fetch_one(pool)
+        .await;
+
+    let duration = start.elapsed().as_secs_f64();
+    let success = result.is_ok();
+    record_database_query("UPDATE", "chat_messages", duration, success);
+
+    Ok(result?)
+}
+
+#[tracing::instrument(name = "database.update_message_status", skip(pool), fields(database.system = "postgresql", database.operation = "UPDATE", owner = %owner))]
+pub(crate) async fn update_message_status(
+    pool: &Pool<Postgres>,
+    message_id: i32,
+    status: &str,
+    owner: &str,
+) -> Result<ChatMessage> {
+    let start = Instant::now();
+    let result = sqlx::query_as::<_, ChatMessage>(UPDATE_MESSAGE_STATUS_QUERY)
+        .bind(message_id)
+        .bind(status)
+        .bind(owner)
+        .fetch_one(pool)
+        .await;
+
+    let duration = start.elapsed().as_secs_f64();
+    let success = result.is_ok();
+    record_database_query("UPDATE", "chat_messages", duration, success);
+
+    Ok(result?)
+}
+
+#[tracing::instrument(name = "database.get_message_by_id", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner = %owner))]
+pub(crate) async fn get_message_by_id(
+    pool: &Pool<Postgres>,
+    message_id: i32,
+    owner: &str,
+) -> Result<ChatMessage> {
+    let start = Instant::now();
+    let result = sqlx::query_as::<_, ChatMessage>(GET_MESSAGE_BY_ID_QUERY)
+        .bind(message_id)
+        .bind(owner)
+        .fetch_optional(pool)
+        .await;
+
+    let duration = start.elapsed().as_secs_f64();
+    let success = result.is_ok();
+    record_database_query("SELECT", "chat_messages", duration, success);
+
+    result?.ok_or_else(|| anyhow::anyhow!("Message not found"))
 }

@@ -46,6 +46,7 @@ mime = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 reqwest = { workspace = true }
+regex = { workspace = true }
 rustls = { version = "0.23.36" }
 pem = { version = "3.0.6" }
 

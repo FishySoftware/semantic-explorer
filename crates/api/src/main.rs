@@ -239,6 +239,8 @@ async fn main() -> Result<()> {
             .service(api::chat::delete_chat_session)
             .service(api::chat::get_chat_messages)
             .service(api::chat::send_chat_message)
+            .service(api::chat::stream_chat_message)
+            .service(api::chat::regenerate_chat_message)
             .openapi_service(|api| {
                 SwaggerUi::new("/swagger-ui/{_:.*}").url("/api/openapi.json", api)
             })

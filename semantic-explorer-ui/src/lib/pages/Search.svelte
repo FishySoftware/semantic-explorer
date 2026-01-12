@@ -569,7 +569,7 @@
 															Best matching chunk:
 														</div>
 														<p
-															class="text-sm text-gray-900 dark:text-gray-100 leading-relaxed whitespace-pre-wrap line-clamp-4"
+															class="text-sm text-gray-900 dark:text-gray-100 leading-relaxed whitespace-pre-wrap"
 														>
 															{document.best_chunk.text}
 														</p>

@@ -18,6 +18,13 @@ const GET_LLMS_QUERY: &str = r#"
     ORDER BY created_at DESC
 "#;
 
+const GET_LLMS_WITH_SEARCH_QUERY: &str = r#"
+    SELECT llm_id, name, owner, provider, base_url, api_key, config, is_public, created_at, updated_at
+    FROM llms
+    WHERE owner = $1 AND name ILIKE $2
+    ORDER BY created_at DESC
+"#;
+
 const GET_PUBLIC_LLMS_QUERY: &str = r#"
     SELECT llm_id, name, owner, provider, base_url, api_key, config, is_public, created_at, updated_at
     FROM llms
@@ -91,6 +98,27 @@ pub(crate) async fn get_llms(
     let start = Instant::now();
     let result = sqlx::query_as::<_, LargeLanguageModel>(GET_LLMS_QUERY)
         .bind(owner)
+        .fetch_all(pool)
+        .await;
+
+    let duration = start.elapsed().as_secs_f64();
+    let success = result.is_ok();
+    record_database_query("SELECT", "llms", duration, success);
+
+    Ok(result?)
+}
+
+#[tracing::instrument(name = "database.get_llms_with_search", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner = %owner))]
+pub(crate) async fn get_llms_with_search(
+    pool: &Pool<Postgres>,
+    owner: &str,
+    search_query: &str,
+) -> Result<Vec<LargeLanguageModel>> {
+    let start = Instant::now();
+    let search_pattern = format!("%{}%", search_query);
+    let result = sqlx::query_as::<_, LargeLanguageModel>(GET_LLMS_WITH_SEARCH_QUERY)
+        .bind(owner)
+        .bind(&search_pattern)
         .fetch_all(pool)
         .await;
 

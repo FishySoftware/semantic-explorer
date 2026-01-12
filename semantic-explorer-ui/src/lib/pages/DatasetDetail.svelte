@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
+	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import ApiExamples from '../ApiExamples.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import CreateDatasetTransformModal from '../components/CreateDatasetTransformModal.svelte';
@@ -139,10 +140,16 @@
 		if (typeof window === 'undefined') return '';
 		const hashParts = window.location.hash.split('?');
 		if (hashParts.length > 1) {
-			const params = new URLSearchParams(hashParts[1]);
-			const queryParam = params.get('q');
-			if (queryParam) {
-				return decodeURIComponent(queryParam);
+			const params = new SvelteURLSearchParams(hashParts[1]);
+			const searchParam = params.get('search');
+			if (searchParam) {
+				// Remove the search param from the URL
+				params.delete('search');
+				const newQueryString = params.toString();
+				const hashBase = hashParts[0];
+				const newHash = newQueryString ? `${hashBase}?${newQueryString}` : hashBase;
+				window.history.replaceState(null, '', newHash);
+				return decodeURIComponent(searchParam);
 			}
 		}
 		return '';
@@ -150,6 +157,7 @@
 
 	// Search state
 	let searchQuery = $state(getInitialSearchQuery());
+	let searchFetchTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	// Delete state
 	let deletingItem = $state<number | null>(null);
@@ -436,9 +444,14 @@
 		try {
 			itemsLoading = true;
 			itemsError = null;
-			const response = await fetch(
-				`/api/datasets/${datasetId}/items-summary?page=${currentPage}&page_size=${pageSize}`
-			);
+			const params = new SvelteURLSearchParams({
+				page: currentPage.toString(),
+				page_size: pageSize.toString(),
+			});
+			if (searchQuery.trim()) {
+				params.append('search', searchQuery.trim());
+			}
+			const response = await fetch(`/api/datasets/${datasetId}/items-summary?${params.toString()}`);
 			if (!response.ok) {
 				throw new Error(`Failed to fetch items: ${response.statusText}`);
 			}
@@ -532,38 +545,35 @@
 		};
 	}
 
-	// Filtered items based on search (title only)
-	let filteredItems = $derived(
-		(paginatedItems?.items || []).filter((item) => {
-			if (!searchQuery.trim()) return true;
-			const query = searchQuery.toLowerCase();
-			return item.title.toLowerCase().includes(query);
-		})
-	);
-
 	// Reset to page 0 when search query changes
 	$effect(() => {
-		searchQuery;
-		currentPage = 0;
-	});
-
-	// Refetch items when current page changes
-	$effect(() => {
-		currentPage;
-		fetchItems();
-	});
-
-	// Update URL when search query changes
-	$effect(() => {
-		if (typeof window !== 'undefined') {
-			const hashBase = window.location.hash.split('?')[0];
-			if (searchQuery.trim()) {
-				const newHash = `${hashBase}?q=${encodeURIComponent(searchQuery)}`;
-				window.history.replaceState(null, '', newHash);
-			} else {
-				window.history.replaceState(null, '', hashBase);
-			}
+		// Access searchQuery to create the dependency
+		if (searchQuery !== undefined) {
+			currentPage = 0;
 		}
+	});
+
+	// Refetch items when current page or search query changes (debounced)
+	$effect(() => {
+		// Access both variables to create dependencies
+		if (currentPage !== undefined && searchQuery !== undefined) {
+			// Clear any pending fetch
+			if (searchFetchTimeout) {
+				clearTimeout(searchFetchTimeout);
+			}
+
+			// Debounce the fetch by 500ms to avoid excessive API calls during rapid typing
+			searchFetchTimeout = setTimeout(() => {
+				fetchItems();
+			}, 500);
+		}
+
+		// Cleanup function
+		return () => {
+			if (searchFetchTimeout) {
+				clearTimeout(searchFetchTimeout);
+			}
+		};
 	});
 
 	function requestDeleteItem(item: DatasetItemSummary) {
@@ -621,16 +631,23 @@
 		fetchDataset();
 		fetchDatasetTransforms();
 		connectSSE();
-		// fetchItems will be called by the $effect watching currentPage
+		fetchItems();
 
 		return () => {
 			// Cleanup polling on unmount
 			stopTransformProgressPolling();
+			if (searchFetchTimeout) {
+				clearTimeout(searchFetchTimeout);
+			}
 		};
 	});
 
 	onDestroy(() => {
 		datasetSSE?.disconnect();
+		// Clean up any pending search fetch
+		if (searchFetchTimeout) {
+			clearTimeout(searchFetchTimeout);
+		}
 	});
 </script>
 
@@ -751,7 +768,7 @@
 									</div>
 								</div>
 
-								{#if paginatedItems && paginatedItems.items.length > 0}
+								{#if (paginatedItems && paginatedItems.items.length > 0) || searchQuery.trim()}
 									<div class="px-6 pt-4 pb-4">
 										<div class="relative">
 											<input
@@ -812,20 +829,22 @@
 												d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
 											></path>
 										</svg>
-										<p class="text-gray-500 dark:text-gray-400 mb-2">No items yet</p>
-										<p class="text-sm text-gray-400 dark:text-gray-500">
-											Upload data via the API below to populate this dataset
-										</p>
-									</div>
-								{:else if paginatedItems && filteredItems.length === 0}
-									<div class="p-12 text-center">
-										<p class="text-gray-500 dark:text-gray-400 mb-4">No items match your search</p>
-										<button
-											onclick={() => (searchQuery = '')}
-											class="text-blue-600 dark:text-blue-400 hover:underline"
-										>
-											Clear search
-										</button>
+										{#if searchQuery.trim()}
+											<p class="text-gray-500 dark:text-gray-400 mb-2">
+												No results match the search term
+											</p>
+											<button
+												onclick={() => (searchQuery = '')}
+												class="text-blue-600 dark:text-blue-400 hover:underline"
+											>
+												Clear search
+											</button>
+										{:else}
+											<p class="text-gray-500 dark:text-gray-400 mb-2">No items yet</p>
+											<p class="text-sm text-gray-400 dark:text-gray-500">
+												Upload data via the API below to populate this dataset
+											</p>
+										{/if}
 									</div>
 								{:else if paginatedItems}
 									<div class="overflow-x-auto">
@@ -859,7 +878,7 @@
 											<tbody
 												class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700"
 											>
-												{#each filteredItems as item (item.item_id)}
+												{#each paginatedItems.items as item (item.item_id)}
 													<tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
 														<td
 															class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400"
