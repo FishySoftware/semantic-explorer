@@ -9,7 +9,7 @@ metadata:
     app.kubernetes.io/component: otel-collector
 data:
   otel-collector-config.yaml: |
-    {{- toYaml .Values.observability.otelCollector.config | nindent 4 }}
+    {{- tpl (toYaml .Values.observability.otelCollector.config) . | nindent 4 }}
 ---
 apiVersion: apps/v1
 kind: Deployment

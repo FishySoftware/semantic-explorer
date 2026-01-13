@@ -94,7 +94,14 @@ spec:
         {{- end }}
         resources:
           {{- toYaml .Values.workerDatasets.resources | nindent 10 }}
-        volumeMounts: {}
+        {{- with .Values.workerDatasets.volumeMounts }}
+        volumeMounts:
+          {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.workerDatasets.volumes }}
+      volumes:
+        {{- toYaml . | nindent 6 }}
+      {{- end }}
       {{- with .Values.workerDatasets.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -107,5 +114,5 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      volumes: {}
+      
 {{- end }}

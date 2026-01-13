@@ -60,7 +60,7 @@ api:
   image:
     repository: jofish89/semantic-explorer
     tag: "latest"
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   statefulset:
     podManagementPolicy: Parallel
     updateStrategy:
@@ -187,7 +187,7 @@ workerCollections:
   image:
     repository: jofish89/worker-collections
     tag: "latest"
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   statefulset:
     podManagementPolicy: Parallel
     updateStrategy:
@@ -253,7 +253,7 @@ workerDatasets:
   image:
     repository: jofish89/worker-datasets
     tag: "latest"
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   statefulset:
     podManagementPolicy: Parallel
     updateStrategy:
@@ -319,7 +319,7 @@ workerVisualizationsPy:
   image:
     repository: jofish89/worker-visualizations-py
     tag: "latest"
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   statefulset:
     podManagementPolicy: Parallel
     updateStrategy:
@@ -424,7 +424,7 @@ postgresql:
     password: ""  # Generate random if empty
     existingSecret: ""
     secretKeys:
-      userPasswordKey: "password"
+      userPasswordKey: "database-password"
   primary:
     resources:
       requests:
@@ -560,6 +560,8 @@ nats:
     tag: "2.10-alpine"
     pullPolicy: IfNotPresent
   # Internal NATS configuration
+  natsBox:
+    enabled: false
   config:
     jetstream:
       enabled: true
@@ -619,9 +621,8 @@ qdrant:
     apiKeyKey: "api-key"
   # Internal Qdrant deployment
   image:
-    registry: ""  # Defaults to global.imageRegistry
     repository: qdrant/qdrant
-    tag: "latest"
+    tag: "v1.16.3"
     pullPolicy: IfNotPresent
   replicaCount: 3
   cluster:
@@ -650,11 +651,11 @@ qdrant:
       port: 6333
     grpc:
       port: 6334
+  updateVolumeFsOwnership: false
   podSecurityContext:
-    runAsNonRoot: true
+    runAsNonRoot: false
     runAsUser: 1000
     fsGroup: 1000
-    fsGroupChangePolicy: "OnRootMismatch"
   containerSecurityContext:
     allowPrivilegeEscalation: false
     capabilities:
@@ -852,6 +853,9 @@ observability:
         cpu: 1000m
         memory: 1Gi
     config:
+      extensions:
+        health_check:
+          endpoint: 0.0.0.0:13133
       receivers:
         otlp:
           protocols:
@@ -866,27 +870,28 @@ observability:
       exporters:
         prometheus:
           endpoint: "0.0.0.0:8889"
-        logging:
-          loglevel: info
+        debug:
+          verbosity: detailed
         # Quickwit exporter for traces and logs (when enabled)
         otlp/quickwit:
-          endpoint: "{{ include \"semantic-explorer.quickwit.url\" . }}:7281"
+          endpoint: "{{ include \"semantic-explorer.fullname\" . }}-quickwit:7281"
           tls:
             insecure: true
       service:
+        extensions: [health_check]
         pipelines:
           traces:
             receivers: [otlp]
             processors: [batch]
-            exporters: [logging, otlp/quickwit]
+            exporters: [debug, otlp/quickwit]
           metrics:
             receivers: [otlp]
             processors: [batch]
-            exporters: [prometheus, logging]
+            exporters: [prometheus, debug]
           logs:
             receivers: [otlp]
             processors: [batch]
-            exporters: [logging, otlp/quickwit]
+            exporters: [debug, otlp/quickwit]
     service:
       type: ClusterIP
       ports:
@@ -1001,7 +1006,6 @@ observability:
     replicaCount: 1
     config:
       enableOtlpEndpoint: true
-      enableJaegerEndpoint: true
       logLevel: "info"
     resources:
       requests:

@@ -37,7 +37,7 @@ spec:
         imagePullPolicy: {{ .Values.observability.quickwit.image.pullPolicy }}
         securityContext:
           {{- toYaml .Values.observability.quickwit.containerSecurityContext | nindent 10 }}
-        command: ["run"]
+        command: ["quickwit", "run", "--config", "/quickwit/config/quickwit.yaml"]
         ports:
         - name: rest
           containerPort: {{ .Values.observability.quickwit.service.rest.port }}
@@ -48,8 +48,6 @@ spec:
         env:
         - name: QW_ENABLE_OTLP_ENDPOINT
           value: {{ .Values.observability.quickwit.config.enableOtlpEndpoint | quote }}
-        - name: QW_ENABLE_JAEGER_ENDPOINT
-          value: {{ .Values.observability.quickwit.config.enableJaegerEndpoint | quote }}
         - name: RUST_LOG
           value: {{ .Values.observability.quickwit.config.logLevel }}
         - name: QW_DATA_DIR
@@ -76,7 +74,7 @@ spec:
         - name: data
           mountPath: /quickwit/qwdata
         - name: config
-          mountPath: /quickwit/node.yaml
+          mountPath: /quickwit/config/quickwit.yaml
           subPath: node.yaml
       {{- with .Values.observability.quickwit.nodeSelector }}
       nodeSelector:

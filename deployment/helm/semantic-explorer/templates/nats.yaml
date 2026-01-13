@@ -38,6 +38,8 @@ spec:
         - "/data"
         - "-m"
         - "8222"
+        - "-server_name"
+        - "$(POD_NAME)"
         {{- if .Values.nats.config.cluster.enabled }}
         - "-cluster"
         - "nats://0.0.0.0:6222"
@@ -46,6 +48,11 @@ spec:
         - "-routes"
         - "nats://{{ include "semantic-explorer.fullname" . }}-nats:6222"
         {{- end }}
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
         ports:
         - name: client
           containerPort: 4222
@@ -113,15 +120,15 @@ spec:
   type: {{ .Values.nats.service.type }}
   ports:
   - name: client
-    port: {{ .Values.nats.service.ports.client }}
+    port: {{ .Values.nats.service.client.port }}
     targetPort: client
     protocol: TCP
   - name: monitoring
-    port: {{ .Values.nats.service.ports.monitoring }}
+    port: {{ .Values.nats.service.monitoring.port }}
     targetPort: monitoring
     protocol: TCP
   - name: cluster
-    port: {{ .Values.nats.service.ports.cluster }}
+    port: {{ .Values.nats.service.cluster.port }}
     targetPort: cluster
     protocol: TCP
   selector:

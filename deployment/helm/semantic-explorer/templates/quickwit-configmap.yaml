@@ -15,8 +15,9 @@ data:
     version: 0.8
     node_id: {{ include "semantic-explorer.fullname" . }}
     cluster_id: {{ include "semantic-explorer.fullname" . }}
-    
+
     listen_address: 0.0.0.0
+    advertise_address: {{ include "semantic-explorer.fullname" . }}-quickwit
     rest_listen_port: {{ .Values.observability.quickwit.service.rest.port }}
     grpc_listen_port: {{ .Values.observability.quickwit.service.grpc.port }}
     
@@ -28,7 +29,6 @@ data:
     
     indexer:
       enable_otlp_endpoint: {{ .Values.observability.quickwit.config.enableOtlpEndpoint }}
-      enable_jaeger_endpoint: {{ .Values.observability.quickwit.config.enableJaegerEndpoint }}
     
     searcher:
       fast_field_cache_capacity: 1GB
