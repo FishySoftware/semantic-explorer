@@ -234,8 +234,8 @@ async fn main() -> Result<()> {
             .app_data(web::Data::new(encryption_service.clone()))
             .app_data(
                 MultipartFormConfig::default()
-                    .total_limit(100 * 1024 * 1024) // 100MB max per upload (in memory)
-                    .memory_limit(100 * 1024 * 1024), // 100MB in memory (no temp files)
+                    .total_limit(1024 * 1024 * 1024) // 1GB max per upload (in memory)
+                    .memory_limit(1024 * 1024 * 1024), // 1GB in memory (no temp files)
             )
             .app_data(web::Data::new(static_files_directory.clone()))
             .into_utoipa_app()
