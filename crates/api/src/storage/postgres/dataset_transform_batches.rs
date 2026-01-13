@@ -52,6 +52,7 @@ const UPDATE_BATCH_STATUS_QUERY: &str = r#"
     SET status = $3,
         error_message = $4,
         processing_duration_ms = $5,
+        chunk_count = $6,
         updated_at = CURRENT_TIMESTAMP
     WHERE dataset_transform_id = $1 AND batch_key = $2
     RETURNING *
@@ -187,6 +188,7 @@ pub async fn update_batch_status(
     status: &str,
     error_message: Option<&str>,
     processing_duration_ms: Option<i64>,
+    chunk_count: i32,
 ) -> Result<DatasetTransformBatch, sqlx::Error> {
     let batch = sqlx::query_as::<_, DatasetTransformBatch>(UPDATE_BATCH_STATUS_QUERY)
         .bind(dataset_transform_id)
@@ -194,6 +196,7 @@ pub async fn update_batch_status(
         .bind(status)
         .bind(error_message)
         .bind(processing_duration_ms)
+        .bind(chunk_count)
         .fetch_one(pool)
         .await?;
 

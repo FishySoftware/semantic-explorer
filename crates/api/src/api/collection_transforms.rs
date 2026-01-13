@@ -380,20 +380,23 @@ pub async fn get_collection_transform_stats(
     path = "/api/collection-transforms/{id}/processed-files",
     tag = "Collection Transforms",
     params(
-        ("id" = i32, Path, description = "Collection Transform ID")
+        ("id" = i32, Path, description = "Collection Transform ID"),
+        ("limit" = i64, Query, description = "Number of results per page", example = 10),
+        ("offset" = i64, Query, description = "Number of results to skip", example = 0),
     ),
     responses(
-        (status = 200, description = "Processed files", body = Vec<ProcessedFile>),
+        (status = 200, description = "Processed files", body = PaginatedResponse<ProcessedFile>),
         (status = 404, description = "Collection transform not found"),
         (status = 401, description = "Unauthorized"),
     ),
 )]
 #[get("/api/collection-transforms/{id}/processed-files")]
-#[tracing::instrument(name = "get_processed_files", skip(user, postgres_pool), fields(collection_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "get_processed_files", skip(user, postgres_pool, params), fields(collection_transform_id = %path.as_ref()))]
 pub async fn get_processed_files(
     user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<i32>,
+    params: Query<SortParams>,
 ) -> impl Responder {
     let collection_transform_id = path.into_inner();
 
@@ -411,7 +414,21 @@ pub async fn get_processed_files(
             )
             .await
             {
-                Ok(files) => HttpResponse::Ok().json(files),
+                Ok(files) => {
+                    let total_count = files.len() as i64;
+                    let offset = params.offset as usize;
+                    let limit = params.limit as usize;
+                    let paginated_files: Vec<ProcessedFile> =
+                        files.into_iter().skip(offset).take(limit).collect();
+
+                    let response = PaginatedResponse {
+                        items: paginated_files,
+                        total_count,
+                        limit: params.limit,
+                        offset: params.offset,
+                    };
+                    HttpResponse::Ok().json(response)
+                }
                 Err(e) => {
                     error!("Failed to get processed files: {}", e);
                     HttpResponse::InternalServerError().json(serde_json::json!({

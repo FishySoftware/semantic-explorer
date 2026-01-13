@@ -277,6 +277,13 @@
 						transformProgressStats = stats;
 						startTransformProgressPolling();
 					}
+				} else if (
+					stats.is_processing &&
+					activeTransformProgress &&
+					activeTransformProgress.id === transformId
+				) {
+					// Update stats for the currently tracked transform
+					transformProgressStats = stats;
 				}
 			}
 		} catch (e) {
@@ -368,7 +375,9 @@
 	}
 
 	async function fetchTransformProgressStats() {
-		if (!activeTransformProgress) return;
+		if (!activeTransformProgress) {
+			return;
+		}
 
 		try {
 			const response = await fetch(`/api/dataset-transforms/${activeTransformProgress.id}/stats`);
@@ -382,6 +391,10 @@
 			}
 
 			const stats = await response.json();
+			console.log(
+				`[fetchTransformProgressStats] Got stats for transform ${activeTransformProgress.id}:`,
+				stats
+			);
 			transformProgressStats = stats;
 
 			// Also update the stats map for the transforms list
@@ -389,6 +402,7 @@
 			datasetTransformStatsMap = datasetTransformStatsMap;
 
 			console.debug('Transform stats:', {
+				transformId: activeTransformProgress.id,
 				batches: stats.total_batches_processed,
 				processing_batches: stats.processing_batches,
 				embedded: stats.total_chunks_embedded,
@@ -401,13 +415,14 @@
 			const terminalStatuses = ['completed', 'completed_with_errors', 'failed', 'idle'];
 			if (terminalStatuses.includes(stats.status) || !stats.is_processing) {
 				console.info(
-					`Transform ${stats.status}, is_processing=${stats.is_processing}, stopping polling`
+					`Transform ${activeTransformProgress.id} ${stats.status}, is_processing=${stats.is_processing}, stopping polling`
 				);
 				stopTransformProgressPolling();
 				// Refresh the transforms list to get final state
 				fetchDatasetTransforms();
 				// Keep showing the progress panel for 3 more seconds, then auto-dismiss
 				setTimeout(() => {
+					console.log(`Dismissing progress panel for transform ${activeTransformProgress?.id}`);
 					activeTransformProgress = null;
 					transformProgressStats = null;
 				}, 3000);
@@ -423,12 +438,20 @@
 	}
 
 	function startTransformProgressPolling() {
+		console.log(
+			`[startTransformProgressPolling] Starting for transform ${activeTransformProgress?.id}`
+		);
 		if (transformProgressPollInterval) {
 			clearInterval(transformProgressPollInterval);
 		}
 
+		// Fetch stats immediately before starting interval
+		console.log(`[startTransformProgressPolling] Calling fetchTransformProgressStats immediately`);
+		fetchTransformProgressStats();
+
 		// Poll every 1 second for updates
 		transformProgressPollInterval = setInterval(() => {
+			console.log(`[polling] Polling transform ${activeTransformProgress?.id}`);
 			fetchTransformProgressStats();
 		}, 1000);
 	}
@@ -731,16 +754,16 @@
 				</div>
 			</div>
 
-			{#if activeTransformProgress && transformProgressStats}
+			{#if activeTransformProgress}
 				<DatasetTransformProgressPanel
 					datasetTransformId={activeTransformProgress.id}
 					title={activeTransformProgress.title}
 					sourceDatasetTitle={dataset?.title || 'Unknown Dataset'}
-					overallStatus={transformProgressStats.status || 'processing'}
-					totalItemsProcessed={transformProgressStats.total_chunks_embedded || 0}
-					totalItems={transformProgressStats.total_chunks_to_process || 0}
+					overallStatus={transformProgressStats?.status || 'processing'}
+					totalItemsProcessed={transformProgressStats?.total_chunks_embedded || 0}
+					totalItems={transformProgressStats?.total_chunks_to_process || 0}
 					startedAt={activeTransformProgress.startedAt}
-					embedderProgresses={transformProgressStats.embedders || []}
+					embedderProgresses={transformProgressStats?.embedders || []}
 				/>
 			{/if}
 

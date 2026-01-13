@@ -392,8 +392,6 @@
 												+{collection.tags.length - 2} more
 											</span>
 										{/if}
-									{:else}
-										<span class="text-gray-500 dark:text-gray-400 text-sm">—</span>
 									{/if}
 								</div>
 							</TableBodyCell>

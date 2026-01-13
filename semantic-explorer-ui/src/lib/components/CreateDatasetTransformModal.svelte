@@ -131,7 +131,6 @@
 			const result = await response.json();
 			const newTransformId = result.transform?.dataset_transform_id;
 			const newTransformTitle = transformTitle.trim();
-
 			// Close modal immediately
 			resetForm();
 

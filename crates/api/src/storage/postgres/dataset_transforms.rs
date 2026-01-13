@@ -50,10 +50,10 @@ const CREATE_DATASET_TRANSFORM_QUERY: &str = r#"
 
 const UPDATE_DATASET_TRANSFORM_QUERY: &str = r#"
     UPDATE dataset_transforms
-    SET title = COALESCE($3, title),
-        is_enabled = COALESCE($4, is_enabled),
-        embedder_ids = COALESCE($5, embedder_ids),
-        job_config = COALESCE($6, job_config),
+    SET title = COALESCE($2, title),
+        is_enabled = COALESCE($3, is_enabled),
+        embedder_ids = COALESCE($4, embedder_ids),
+        job_config = COALESCE($5, job_config),
         updated_at = NOW()
     WHERE dataset_transform_id = $1
     RETURNING dataset_transform_id, title, source_dataset_id, embedder_ids, owner, is_enabled,

@@ -108,6 +108,7 @@
 	let selectAll = $state(false);
 
 	function toggleSelectAll() {
+		selectAll = !selectAll;
 		if (selectAll) {
 			selected.clear();
 			for (const t of transforms) {
@@ -131,7 +132,7 @@
 		for (const id of selected) {
 			const transform = transforms.find((t) => t.collection_transform_id === id);
 			if (transform) {
-				await toggleEnabled(transform, false);
+				await toggleEnabled(transform, _enable, false);
 			}
 		}
 		selected.clear();
@@ -265,7 +266,11 @@
 		}
 	}
 
-	async function toggleEnabled(transform: CollectionTransform, refresh = true) {
+	async function toggleEnabled(
+		transform: CollectionTransform,
+		targetState: boolean,
+		refresh = true
+	) {
 		try {
 			const response = await fetch(
 				`/api/collection-transforms/${transform.collection_transform_id}`,
@@ -275,7 +280,7 @@
 						'Content-Type': 'application/json',
 					},
 					body: JSON.stringify({
-						is_enabled: !transform.is_enabled,
+						is_enabled: targetState,
 					}),
 				}
 			);

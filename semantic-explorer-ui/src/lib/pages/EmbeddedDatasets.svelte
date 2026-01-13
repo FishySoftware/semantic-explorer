@@ -45,7 +45,7 @@
 		api_key: string | null;
 		config: Record<string, any>;
 		max_batch_size?: number;
-		dimension?: number;
+		dimensions?: number;
 		collection_name: string;
 		created_at: string;
 		updated_at: string;
@@ -409,11 +409,11 @@
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3 text-center">
 								{@const embedder = embeddersCache.get(dataset.embedder_id)}
-								{#if embedder?.dimension}
+								{#if embedder?.dimensions}
 									<span
 										class="inline-block px-2 py-1 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded text-xs font-medium"
 									>
-										{embedder.dimension}d
+										{embedder.dimensions}
 									</span>
 								{:else}
 									<span class="text-gray-500 dark:text-gray-400 text-xs">—</span>
