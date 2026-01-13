@@ -120,11 +120,15 @@ async fn check_postgres(pool: &Pool<Postgres>) -> ComponentHealth {
             latency_ms: Some(start.elapsed().as_secs_f64() * 1000.0),
             error: None,
         },
-        Err(e) => ComponentHealth {
-            status: HealthStatus::Unhealthy,
-            latency_ms: Some(start.elapsed().as_secs_f64() * 1000.0),
-            error: Some(format!("Database connection failed: {}", e)),
-        },
+        Err(e) => {
+            // Log detailed error for debugging, but don't expose to client
+            tracing::error!(error = %e, "Database health check failed");
+            ComponentHealth {
+                status: HealthStatus::Unhealthy,
+                latency_ms: Some(start.elapsed().as_secs_f64() * 1000.0),
+                error: Some("Database connection failed".to_string()),
+            }
+        }
     }
 }
 
@@ -137,11 +141,14 @@ async fn check_qdrant(client: &Qdrant) -> ComponentHealth {
             latency_ms: Some(start.elapsed().as_secs_f64() * 1000.0),
             error: None,
         },
-        Err(e) => ComponentHealth {
-            status: HealthStatus::Unhealthy,
-            latency_ms: Some(start.elapsed().as_secs_f64() * 1000.0),
-            error: Some(format!("Qdrant connection failed: {}", e)),
-        },
+        Err(e) => {
+            tracing::error!(error = %e, "Qdrant health check failed");
+            ComponentHealth {
+                status: HealthStatus::Unhealthy,
+                latency_ms: Some(start.elapsed().as_secs_f64() * 1000.0),
+                error: Some("Vector database connection failed".to_string()),
+            }
+        }
     }
 }
 
@@ -155,11 +162,14 @@ async fn check_s3(client: &S3Client) -> ComponentHealth {
             latency_ms: Some(start.elapsed().as_secs_f64() * 1000.0),
             error: None,
         },
-        Err(e) => ComponentHealth {
-            status: HealthStatus::Unhealthy,
-            latency_ms: Some(start.elapsed().as_secs_f64() * 1000.0),
-            error: Some(format!("S3 connection failed: {}", e)),
-        },
+        Err(e) => {
+            tracing::error!(error = %e, "S3 health check failed");
+            ComponentHealth {
+                status: HealthStatus::Unhealthy,
+                latency_ms: Some(start.elapsed().as_secs_f64() * 1000.0),
+                error: Some("Object storage connection failed".to_string()),
+            }
+        }
     }
 }
 

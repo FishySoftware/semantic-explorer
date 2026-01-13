@@ -43,7 +43,10 @@ pub(crate) struct FileValidationResult {
     pub(crate) validation_errors: Vec<String>,
 }
 
-/// Validate an uploaded file using multiple criteria
+/// Validate an uploaded file using multiple criteria (async version)
+///
+/// This spawns CPU-intensive operations (ZIP parsing) on the blocking thread pool
+/// to avoid blocking the async runtime.
 ///
 /// # Arguments
 /// * `file_bytes` - The raw file content
@@ -52,7 +55,33 @@ pub(crate) struct FileValidationResult {
 ///
 /// # Returns
 /// A FileValidationResult containing validation status and any errors found
-pub(crate) fn validate_upload_file(
+pub(crate) async fn validate_upload_file(
+    file_bytes: &[u8],
+    filename: &str,
+    mime_type: &str,
+) -> FileValidationResult {
+    // Clone data for blocking task
+    let file_bytes_owned = file_bytes.to_vec();
+    let filename_owned = filename.to_string();
+    let mime_type_owned = mime_type.to_string();
+
+    // Run validation on blocking thread pool to avoid starving async runtime
+    tokio::task::spawn_blocking(move || {
+        validate_upload_file_sync(&file_bytes_owned, &filename_owned, &mime_type_owned)
+    })
+    .await
+    .unwrap_or_else(|e| {
+        tracing::error!(error = %e, "Blocking validation task failed");
+        FileValidationResult {
+            detected_mime: "unknown".to_string(),
+            is_valid: false,
+            validation_errors: vec!["File validation task failed".to_string()],
+        }
+    })
+}
+
+/// Synchronous file validation implementation
+fn validate_upload_file_sync(
     file_bytes: &[u8],
     filename: &str,
     mime_type: &str,
@@ -204,14 +233,14 @@ mod tests {
     #[test]
     fn test_validate_plain_text() {
         let content = b"Hello, world!";
-        let result = validate_upload_file(content, "test.txt", "text/plain");
+        let result = validate_upload_file_sync(content, "test.txt", "text/plain");
         assert!(result.is_valid);
     }
 
     #[test]
     fn test_validate_disallowed_type() {
         let content = b"Not a real executable";
-        let result = validate_upload_file(content, "test.exe", "application/x-msdownload");
+        let result = validate_upload_file_sync(content, "test.exe", "application/x-msdownload");
         assert!(!result.is_valid);
         assert!(!result.validation_errors.is_empty());
     }
@@ -219,7 +248,7 @@ mod tests {
     #[test]
     fn test_validate_file_too_large() {
         let large_content = vec![0u8; MAX_FILE_SIZE_BYTES + 1];
-        let result = validate_upload_file(&large_content, "large.txt", "text/plain");
+        let result = validate_upload_file_sync(&large_content, "large.txt", "text/plain");
         assert!(!result.is_valid);
         assert!(
             result
@@ -233,7 +262,7 @@ mod tests {
     fn test_validate_mime_type_detection() {
         // PDF magic bytes: %PDF
         let pdf_content = b"%PDF-1.4\n%\xE2\xE3\xCF\xD3\n";
-        let result = validate_upload_file(pdf_content, "test.pdf", "application/pdf");
+        let result = validate_upload_file_sync(pdf_content, "test.pdf", "application/pdf");
         assert!(result.is_valid);
         assert_eq!(result.detected_mime, "application/pdf");
     }

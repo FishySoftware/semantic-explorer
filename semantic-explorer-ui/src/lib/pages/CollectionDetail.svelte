@@ -325,7 +325,8 @@
 		try {
 			const date = new Date(dateString);
 			return date.toLocaleString();
-		} catch {
+		} catch (e) {
+			console.error('Failed to parse date:', e);
 			return dateString;
 		}
 	}

@@ -2,6 +2,7 @@ use anyhow::Result;
 use semantic_explorer_core::models::{CollectionTransformJob, CollectionTransformResult};
 use semantic_explorer_core::observability::record_worker_job;
 use semantic_explorer_core::storage::{DocumentUpload, get_file_with_size_check, upload_document};
+use semantic_explorer_core::validation::{validate_bucket_name, validate_s3_key};
 use std::time::Instant;
 use tracing::{error, info, instrument};
 
@@ -21,6 +22,35 @@ pub(crate) async fn process_file_job(
 ) -> Result<()> {
     let start_time = Instant::now();
     info!("Processing file job");
+
+    // Validate S3 inputs to prevent path traversal attacks
+    if let Err(e) = validate_bucket_name(&job.bucket) {
+        let duration = start_time.elapsed().as_secs_f64();
+        record_worker_job("transform-file", duration, "failed_validation");
+        error!(error = %e, bucket = %job.bucket, "Invalid bucket name");
+        send_result(
+            &ctx.nats_client,
+            &job,
+            Err(format!("Invalid bucket name: {}", e)),
+            Some((duration * 1000.0) as i64),
+        )
+        .await?;
+        return Ok(());
+    }
+
+    if let Err(e) = validate_s3_key(&job.source_file_key) {
+        let duration = start_time.elapsed().as_secs_f64();
+        record_worker_job("transform-file", duration, "failed_validation");
+        error!(error = %e, key = %job.source_file_key, "Invalid S3 key");
+        send_result(
+            &ctx.nats_client,
+            &job,
+            Err(format!("Invalid file key: {}", e)),
+            Some((duration * 1000.0) as i64),
+        )
+        .await?;
+        return Ok(());
+    }
 
     info!(bucket = %job.bucket, "Downloading file");
     let file_content =
@@ -260,7 +290,10 @@ async fn send_result(
     };
 
     let payload = serde_json::to_vec(&result_msg)?;
-    nats.publish("worker.result.file".to_string(), payload.into())
-        .await?;
+    nats.publish(
+        semantic_explorer_core::results::COLLECTION_TRANSFORM.to_string(),
+        payload.into(),
+    )
+    .await?;
     Ok(())
 }

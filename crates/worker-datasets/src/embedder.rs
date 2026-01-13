@@ -117,21 +117,58 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
         }
     }
 
-    let resp = match req.send().await {
-        Ok(r) => r,
-        Err(e) => {
-            return Err(anyhow::anyhow!("Failed to send request to {}: {}", url, e));
-        }
-    };
+    // Retry logic with exponential backoff for transient errors
+    let max_retries = 3;
+    let mut last_error = None;
 
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let text = resp.text().await?;
-        return Err(anyhow::anyhow!("Embedder API error {}: {}", status, text));
+    for attempt in 0..=max_retries {
+        if attempt > 0 {
+            // Exponential backoff: 1s, 2s, 4s
+            let delay = Duration::from_secs(1 << (attempt - 1));
+            tracing::warn!(
+                attempt = attempt,
+                delay_secs = delay.as_secs(),
+                "Retrying embedder request after transient error"
+            );
+            tokio::time::sleep(delay).await;
+        }
+
+        let request = req
+            .try_clone()
+            .ok_or_else(|| anyhow::anyhow!("Failed to clone request for retry"))?;
+
+        match request.send().await {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    let response_body: serde_json::Value = resp.json().await?;
+                    return parse_embeddings_response(config, response_body);
+                }
+
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+
+                // Don't retry on 4xx errors (client errors)
+                if status.is_client_error() {
+                    return Err(anyhow::anyhow!("Embedder API error {}: {}", status, text));
+                }
+
+                // Retry on 5xx errors (server errors)
+                last_error = Some(anyhow::anyhow!("Embedder API error {}: {}", status, text));
+            }
+            Err(e) => {
+                // Retry on network errors
+                last_error = Some(anyhow::anyhow!("Failed to send request to {}: {}", url, e));
+            }
+        }
     }
 
-    let response_body: serde_json::Value = resp.json().await?;
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Unknown embedder error")))
+}
 
+fn parse_embeddings_response(
+    config: &EmbedderConfig,
+    response_body: serde_json::Value,
+) -> Result<Vec<Vec<f32>>> {
     match config.provider.as_str() {
         "openai" => {
             let data = response_body

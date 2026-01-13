@@ -15,12 +15,16 @@ const GET_DATASET_QUERY: &str = r#"
 
 const GET_DATASETS_QUERY: &str = r#"
     SELECT dataset_id, title, details, owner, tags, is_public, created_at, updated_at FROM datasets
+    ORDER BY created_at DESC
+    LIMIT 1000
 "#;
 
 const GET_DATASETS_WITH_SEARCH_QUERY: &str = r#"
     SELECT dataset_id, title, details, owner, tags, is_public, created_at, updated_at 
     FROM datasets 
     WHERE title ILIKE $1
+    ORDER BY created_at DESC
+    LIMIT 1000
 "#;
 
 const CREATE_DATASET_QUERY: &str = r#"

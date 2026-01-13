@@ -152,7 +152,8 @@
 			if (diffHours < 24) return `${diffHours} hour${diffHours === 1 ? '' : 's'} ago`;
 			if (diffDays < 7) return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
 			return date.toLocaleDateString();
-		} catch {
+		} catch (e) {
+			console.error('Failed to parse relative time:', e);
 			return 'Invalid date';
 		}
 	}

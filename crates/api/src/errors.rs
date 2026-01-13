@@ -80,7 +80,14 @@ impl ResponseError for ApiError {
             ApiError::BadRequest(msg) => ("BadRequest", msg.clone()),
             ApiError::Unauthorized(msg) => ("Unauthorized", msg.clone()),
             ApiError::Internal(msg) => ("InternalServerError", msg.clone()),
-            ApiError::Database(e) => ("DatabaseError", e.to_string()),
+            ApiError::Database(e) => {
+                // Log the actual error for debugging but don't expose to client
+                tracing::error!(error = %e, "Database error occurred");
+                (
+                    "DatabaseError",
+                    "An internal database error occurred".to_string(),
+                )
+            }
             ApiError::Validation(e) => ("ValidationError", e.to_string()),
         };
 

@@ -367,9 +367,10 @@ pub(crate) async fn upload_to_collection(
             .first_or_octet_stream()
             .to_string();
 
-        // Validate file before attempting upload
+        // Validate file before attempting upload (runs on blocking thread pool)
         let validation_result =
-            crate::validation::validate_upload_file(&file_bytes.data, &file_name, &claimed_mime);
+            crate::validation::validate_upload_file(&file_bytes.data, &file_name, &claimed_mime)
+                .await;
 
         if !validation_result.is_valid {
             tracing::warn!(

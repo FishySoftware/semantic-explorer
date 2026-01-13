@@ -89,9 +89,11 @@
 
 <aside
 	class="shrink-0 w-64 bg-white border-r border-gray-200 dark:bg-gray-800 dark:border-gray-700 overflow-y-auto"
+	role="navigation"
+	aria-label="Main navigation"
 >
 	<div class="h-full px-3 py-4 overflow-y-auto">
-		<ul class="space-y-2 font-medium">
+		<ul class="space-y-2 font-medium" role="menubar" aria-label="Navigation menu">
 			{#each menuItems as item (item.url || item.name)}
 				{@const Icon = item.icon}
 				{#if item.isDivider}
@@ -101,10 +103,12 @@
 					</li>
 				{:else if item.children}
 					<!-- Folder item with children -->
-					<li>
+					<li role="none">
 						<button
 							class="flex items-center w-full p-2 rounded-lg transition-colors duration-200 text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-700"
 							onclick={() => toggleFolder(item.name)}
+							aria-expanded={expandedFolders.includes(item.name)}
+							aria-label={`${item.name} submenu, ${expandedFolders.includes(item.name) ? 'expanded' : 'collapsed'}`}
 						>
 							<Icon class="w-5 h-5" />
 							<span class="ml-3 flex-1 text-left">{item.name}</span>
@@ -116,16 +120,18 @@
 						</button>
 
 						{#if expandedFolders.includes(item.name)}
-							<ul class="ml-6 mt-2 space-y-2">
+							<ul class="ml-6 mt-2 space-y-2" role="menu" aria-label={`${item.name} submenu`}>
 								{#each item.children as child (child.url)}
 									{@const ChildIcon = child.icon}
-									<li>
+									<li role="none">
 										<a
 											href={`#${child.url}`}
+											role="menuitem"
 											class="flex items-center p-2 rounded-lg transition-colors duration-200
 												{activeUrl === child.url
 												? 'bg-gray-100 text-gray-900 dark:bg-gray-700 dark:text-white'
 												: 'text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-700'}"
+											aria-current={activeUrl === child.url ? 'page' : undefined}
 											onclick={(e) => {
 												e.preventDefault();
 												window.location.hash = child.url || '';
@@ -142,13 +148,15 @@
 					</li>
 				{:else}
 					<!-- Regular menu item -->
-					<li>
+					<li role="none">
 						<a
 							href={`#${item.url}`}
+							role="menuitem"
 							class="flex items-center p-2 rounded-lg transition-colors duration-200
 								{activeUrl === item.url
 								? 'bg-gray-100 text-gray-900 dark:bg-gray-700 dark:text-white'
 								: 'text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-700'}"
+							aria-current={activeUrl === item.url ? 'page' : undefined}
 							onclick={(e) => {
 								e.preventDefault();
 								window.location.hash = item.url || '';

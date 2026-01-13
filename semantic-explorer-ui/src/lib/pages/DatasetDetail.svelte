@@ -391,10 +391,6 @@
 			}
 
 			const stats = await response.json();
-			console.log(
-				`[fetchTransformProgressStats] Got stats for transform ${activeTransformProgress.id}:`,
-				stats
-			);
 			transformProgressStats = stats;
 
 			// Also update the stats map for the transforms list
@@ -422,7 +418,6 @@
 				fetchDatasetTransforms();
 				// Keep showing the progress panel for 3 more seconds, then auto-dismiss
 				setTimeout(() => {
-					console.log(`Dismissing progress panel for transform ${activeTransformProgress?.id}`);
 					activeTransformProgress = null;
 					transformProgressStats = null;
 				}, 3000);
@@ -438,20 +433,15 @@
 	}
 
 	function startTransformProgressPolling() {
-		console.log(
-			`[startTransformProgressPolling] Starting for transform ${activeTransformProgress?.id}`
-		);
 		if (transformProgressPollInterval) {
 			clearInterval(transformProgressPollInterval);
 		}
 
 		// Fetch stats immediately before starting interval
-		console.log(`[startTransformProgressPolling] Calling fetchTransformProgressStats immediately`);
 		fetchTransformProgressStats();
 
 		// Poll every 1 second for updates
 		transformProgressPollInterval = setInterval(() => {
-			console.log(`[polling] Polling transform ${activeTransformProgress?.id}`);
 			fetchTransformProgressStats();
 		}, 1000);
 	}

@@ -225,6 +225,112 @@ pub fn validate_search_query(query: &str) -> Result<(), ValidationError> {
     Ok(())
 }
 
+/// Validate an S3 object key to prevent path traversal and injection attacks
+pub fn validate_s3_key(key: &str) -> Result<(), ValidationError> {
+    if key.is_empty() {
+        return Err(ValidationError::Empty { field: "S3 key" });
+    }
+
+    // Check for path traversal
+    if key.contains("..") {
+        return Err(ValidationError::PathTraversal { field: "S3 key" });
+    }
+
+    // Check for null bytes
+    if key.contains('\0') {
+        return Err(ValidationError::InvalidCharacters {
+            field: "S3 key",
+            reason: "contains null bytes",
+        });
+    }
+
+    // S3 keys shouldn't start with /
+    if key.starts_with('/') {
+        return Err(ValidationError::InvalidCharacters {
+            field: "S3 key",
+            reason: "cannot start with /",
+        });
+    }
+
+    // Check for control characters
+    if key.chars().any(|c| c.is_control()) {
+        return Err(ValidationError::InvalidCharacters {
+            field: "S3 key",
+            reason: "contains control characters",
+        });
+    }
+
+    // Max S3 key length is 1024 bytes
+    if key.len() > 1024 {
+        return Err(ValidationError::TooLong {
+            field: "S3 key",
+            max: 1024,
+        });
+    }
+
+    Ok(())
+}
+
+/// Validate an S3 bucket name
+pub fn validate_bucket_name(name: &str) -> Result<(), ValidationError> {
+    if name.is_empty() {
+        return Err(ValidationError::Empty {
+            field: "bucket name",
+        });
+    }
+
+    // Bucket names must be 3-63 characters
+    if name.len() < 3 {
+        return Err(ValidationError::TooShort {
+            field: "bucket name",
+            min: 3,
+        });
+    }
+
+    if name.len() > 63 {
+        return Err(ValidationError::TooLong {
+            field: "bucket name",
+            max: 63,
+        });
+    }
+
+    // Must start and end with alphanumeric
+    if !name
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+    {
+        return Err(ValidationError::InvalidCharacters {
+            field: "bucket name",
+            reason: "must start with lowercase letter or number",
+        });
+    }
+
+    if !name
+        .chars()
+        .last()
+        .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+    {
+        return Err(ValidationError::InvalidCharacters {
+            field: "bucket name",
+            reason: "must end with lowercase letter or number",
+        });
+    }
+
+    // Only lowercase letters, numbers, and hyphens
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Err(ValidationError::InvalidCharacters {
+            field: "bucket name",
+            reason: "can only contain lowercase letters, numbers, and hyphens",
+        });
+    }
+
+    Ok(())
+}
+
 /// Sanitize a string by removing potentially dangerous characters
 /// while preserving readability
 pub fn sanitize_string(input: &str) -> String {

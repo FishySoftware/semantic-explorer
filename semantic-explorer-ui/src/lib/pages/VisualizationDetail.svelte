@@ -348,11 +348,12 @@
 								</div>
 							</div>
 							<div class="w-full" style="height: 800px;">
+								<!-- Security: Only allow-scripts, not allow-same-origin to prevent sandbox escape -->
 								<iframe
 									title="Visualization"
 									srcdoc={htmlContent}
 									class="w-full h-full border-0 rounded-lg"
-									sandbox="allow-scripts allow-same-origin"
+									sandbox="allow-scripts"
 								></iframe>
 							</div>
 						</div>

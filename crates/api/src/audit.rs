@@ -57,6 +57,9 @@ pub enum AuditEventType {
     UnauthorizedAccess,
     ValidationFailed,
     RateLimitExceeded,
+
+    /// System events
+    SystemError,
 }
 
 /// Resource types for audit logging
@@ -79,6 +82,8 @@ pub enum AuditOutcome {
     Success,
     Failure,
     Denied,
+    /// Request was allowed despite degraded conditions
+    Allowed,
 }
 
 /// Audit log entry for security events
@@ -169,11 +174,11 @@ impl AuditEvent {
         // Use tracing to emit the audit event as a structured log
         // The "audit" target allows filtering/routing to separate audit log
         match self.outcome {
-            AuditOutcome::Success => {
+            AuditOutcome::Success | AuditOutcome::Allowed => {
                 info!(
                     target: "audit",
                     event_type = ?self.event_type,
-                    outcome = "success",
+                    outcome = ?self.outcome,
                     user = %self.user,
                     request_id = ?self.request_id,
                     client_ip = ?self.client_ip,
