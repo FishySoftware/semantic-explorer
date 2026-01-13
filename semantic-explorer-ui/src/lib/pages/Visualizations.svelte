@@ -1,4 +1,5 @@
 <script lang="ts">
+	/* eslint-disable svelte/no-at-html-tags */
 	import {
 		Badge,
 		Spinner,
@@ -14,7 +15,9 @@
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
 	import type { Visualization, VisualizationTransform } from '../types/visualizations';
+	import { InfoIcon } from '../utils/icons';
 	import { formatError, toastStore } from '../utils/notifications';
+	import { formatDate } from '../utils/ui-helpers';
 
 	interface Props {
 		onViewVisualization?: (_id: number) => void;
@@ -114,16 +117,6 @@
 		}
 
 		completedVisualizations = newCompletedVisualizations;
-	}
-
-	function formatDate(dateString: string): string {
-		return new Date(dateString).toLocaleDateString('en-US', {
-			year: 'numeric',
-			month: 'short',
-			day: 'numeric',
-			hour: '2-digit',
-			minute: '2-digit',
-		});
 	}
 
 	function handleView(transformId: number) {
@@ -330,13 +323,7 @@
 				class="bg-blue-50 dark:bg-blue-900/10 px-6 py-3 text-sm text-blue-700 dark:text-blue-300"
 			>
 				<span class="inline-flex items-center gap-1">
-					<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-						<path
-							fill-rule="evenodd"
-							d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
-							clip-rule="evenodd"
-						/>
-					</svg>
+					{@html InfoIcon}
 					Visualizations will appear in the list below once generation is complete.
 				</span>
 			</div>

@@ -24,7 +24,7 @@ class S3Storage:
         """Initialize S3 client with configuration from environment."""
         init_start = time.time()
         logger.debug("Initializing S3 storage client")
-        self.endpoint_url = os.getenv("S3_ENDPOINT")
+        self.endpoint_url = os.getenv("AWS_ENDPOINT_URL")
 
         # Configure boto3
         config = Config(

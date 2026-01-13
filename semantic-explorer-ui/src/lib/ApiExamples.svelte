@@ -1,5 +1,8 @@
 <script lang="ts">
+	/* eslint-disable svelte/no-at-html-tags */
 	import { onMount } from 'svelte';
+	import { CodeIcon } from './utils/icons';
+	import { copyToClipboard } from './utils/ui-helpers';
 
 	let {
 		endpoint,
@@ -79,9 +82,9 @@
 		return python;
 	}
 
-	async function copyToClipboard(text: string) {
+	async function copyText(text: string) {
 		try {
-			await navigator.clipboard.writeText(text);
+			await copyToClipboard(text);
 			copied = true;
 			setTimeout(() => (copied = false), 2000);
 		} catch (err) {
@@ -99,14 +102,7 @@
 		onclick={() => (showExamples = !showExamples)}
 		class="inline-flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400 hover:underline"
 	>
-		<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path
-				stroke-linecap="round"
-				stroke-linejoin="round"
-				stroke-width="2"
-				d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
-			></path>
-		</svg>
+		{@html CodeIcon}
 		{showExamples ? 'Hide' : 'Show'} API Examples
 	</button>
 
@@ -124,7 +120,7 @@
 				<div class="flex items-center justify-between mb-2">
 					<h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300">CURL</h4>
 					<button
-						onclick={() => copyToClipboard(getCurlExample())}
+						onclick={() => copyText(getCurlExample())}
 						class="text-xs px-2 py-1 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded transition-colors"
 					>
 						{copied ? '✓ Copied!' : 'Copy'}
@@ -140,7 +136,7 @@
 				<div class="flex items-center justify-between mb-2">
 					<h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300">Python (requests)</h4>
 					<button
-						onclick={() => copyToClipboard(getPythonExample())}
+						onclick={() => copyText(getPythonExample())}
 						class="text-xs px-2 py-1 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded transition-colors"
 					>
 						{copied ? '✓ Copied!' : 'Copy'}

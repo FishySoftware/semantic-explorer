@@ -4,6 +4,7 @@
 	import ActionMenu from '../components/ActionMenu.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
+	import { formatNumber } from '../utils/ui-helpers';
 
 	let { onNavigate, onViewDataset } = $props<{
 		onNavigate: (_path: string) => void;
@@ -436,7 +437,7 @@
 											class="inline-block px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs font-medium"
 											title="Total Chunks Embedded"
 										>
-											{stats.total_chunks_embedded.toLocaleString()}
+											{formatNumber(stats.total_chunks_embedded)}
 										</span>
 										{#if stats.failed_batches > 0}
 											<span

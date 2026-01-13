@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Table, TableBody, TableBodyCell, TableHead, TableHeadCell } from 'flowbite-svelte';
 	import ActionMenu from './ActionMenu.svelte';
+	import { formatDate } from '$lib/utils/ui-helpers';
 
 	interface Props {
 		transforms: any[];
@@ -21,17 +22,6 @@
 		onDelete,
 		onView,
 	}: Props = $props();
-
-	function formatDate(dateString: string): string {
-		const date = new Date(dateString);
-		return date.toLocaleDateString('en-US', {
-			year: 'numeric',
-			month: 'short',
-			day: 'numeric',
-			hour: '2-digit',
-			minute: '2-digit',
-		});
-	}
 
 	function getStatusBadge(transform: any): { label: string; color: string } {
 		// For dataset transforms, derive status from stats

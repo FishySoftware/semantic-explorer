@@ -205,54 +205,51 @@ semantic-explorer/
 
 ### Environment Variables
 
+All services use environment variables for configuration. See `.env.example` files in each component directory for complete configuration options.
+
+**Core Services:**
+- API: [crates/api/.env.example](./crates/api/.env.example)
+- Collections Worker: [crates/worker-collections/.env.example](./crates/worker-collections/.env.example)
+- Datasets Worker: [crates/worker-datasets/.env.example](./crates/worker-datasets/.env.example)
+- Visualizations Worker: [crates/worker-visualizations-py/.env.example](./crates/worker-visualizations-py/.env.example)
+
+**Key Configuration Areas:**
+
 **Database & Storage:**
 ```bash
 DATABASE_URL=postgresql://user:pass@localhost:5432/db
 REDIS_CLUSTER_NODES=redis-1:6379,redis-2:6379,...
 QDRANT_URL=http://localhost:6334
-QDRANT_QUANTIZATION_TYPE=product  # product, scalar, or none
 AWS_REGION=us-east-1
-AWS_ACCESS_KEY_ID=your-key
-AWS_SECRET_ACCESS_KEY=your-secret
 AWS_ENDPOINT_URL=http://minio:9000
 S3_BUCKET_NAME=semantic-explorer-files
 ```
 
-**Security & Auth:**
+**Authentication (OIDC):**
 ```bash
-OIDC_CLIENT_ID=your-client-id
+OIDC_CLIENT_ID=semantic-explorer-client
 OIDC_CLIENT_SECRET=your-secret
-OIDC_ISSUER_URL=https://dex.example.com
-OIDC_USE_PKCE=false
+OIDC_ISSUER_URL=http://localhost:5556
 OIDC_SESSION_MANAGEMENT_ENABLED=true
+OIDC_SESSION_TIMEOUT_SECS=3600
 OIDC_MAX_CONCURRENT_SESSIONS=5
-OIDC_REFRESH_TOKEN_ROTATION_ENABLED=true
-```
-
-**Session Management:**
-```bash
-OIDC_SESSION_MANAGEMENT_ENABLED=true    # Enable session management
-OIDC_SESSION_TIMEOUT_SECS=3600          # Session expiration (1 hour)
-OIDC_INACTIVITY_TIMEOUT_SECS=1800       # Inactivity timeout (30 minutes)
-OIDC_MAX_CONCURRENT_SESSIONS=5          # Max sessions per user
-OIDC_REFRESH_TOKEN_ROTATION_ENABLED=true  # Enable token rotation
 ```
 
 **Security:**
 ```bash
-ENCRYPTION_KEY=your-key                 # AES-256 encryption key
-MAX_FILE_SIZE_MB=100                    # Max file size for processing (default: 100MB)
+# Generate with: openssl rand -hex 32
+ENCRYPTION_MASTER_KEY=your-64-char-hex-key
+RATE_LIMIT_ENABLED=true
+SERVER_SSL_ENABLED=false
+CLIENT_MTLS_ENABLED=false
 ```
 
 **Observability:**
 ```bash
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 LOG_FORMAT=json
-RUST_LOG=semantic_explorer=debug
-SERVICE_NAME=semantic-explorer
+RUST_LOG=semantic_explorer=debug,actix_web=info
 ```
-
-See [.env.example](./crates/api/.env.example) for complete configuration options.
 
 ## 📊 Monitoring & Observability
 

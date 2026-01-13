@@ -1,4 +1,5 @@
 <script lang="ts">
+	/* eslint-disable svelte/no-at-html-tags */
 	import { onDestroy, onMount } from 'svelte';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import ApiExamples from '../ApiExamples.svelte';
@@ -7,8 +8,10 @@
 	import DatasetTransformProgressPanel from '../components/DatasetTransformProgressPanel.svelte';
 	import TabPanel from '../components/TabPanel.svelte';
 	import TransformsList from '../components/TransformsList.svelte';
+	import { ArrowLeftIcon, ArrowsExpandIcon } from '../utils/icons';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { createSSEConnection, type SSEConnection } from '../utils/sse';
+	import { formatDate } from '../utils/ui-helpers';
 
 	interface Dataset {
 		dataset_id: number;
@@ -347,15 +350,6 @@
 		}
 	}
 
-	function formatTimestamp(timestamp: string) {
-		try {
-			return new Date(timestamp).toLocaleString();
-		} catch (e) {
-			console.warn('Failed to format timestamp', e);
-			return timestamp;
-		}
-	}
-
 	async function handleTransformCreated(transformId: number, transformTitle: string) {
 		// Set up progress tracking for the newly created transform
 		activeTransformProgress = {
@@ -667,14 +661,7 @@
 <div class="max-w-7xl mx-auto">
 	<div class="mb-4">
 		<button onclick={onBack} class="mb-4 btn-secondary inline-flex items-center gap-2">
-			<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width="2"
-					d="M10 19l-7-7m0 0l7-7m-7 7h18"
-				></path>
-			</svg>
+			{@html ArrowLeftIcon}
 			Back to Datasets
 		</button>
 
@@ -1117,19 +1104,7 @@
 													class="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
 													title="Create a transform to embed items from this dataset"
 												>
-													<svg
-														class="w-5 h-5"
-														fill="none"
-														stroke="currentColor"
-														viewBox="0 0 24 24"
-													>
-														<path
-															stroke-linecap="round"
-															stroke-linejoin="round"
-															stroke-width="2"
-															d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
-														></path>
-													</svg>
+													{@html ArrowsExpandIcon}
 													Create Dataset Transform
 												</button>
 											</div>
@@ -1142,14 +1117,7 @@
 												class="inline-flex items-center gap-2 px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
 												title="Create a transform to embed items from this dataset"
 											>
-												<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-													<path
-														stroke-linecap="round"
-														stroke-linejoin="round"
-														stroke-width="2"
-														d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
-													></path>
-												</svg>
+												{ArrowsExpandIcon}
 												Create Dataset Transform
 											</button>
 										</div>
@@ -1271,7 +1239,7 @@
 																</p>
 															</div>
 															<div class="text-xs text-gray-500 dark:text-gray-400">
-																Updated {formatTimestamp(embedded.updated_at)}
+																Updated {formatDate(embedded.updated_at)}
 															</div>
 														</div>
 													</div>

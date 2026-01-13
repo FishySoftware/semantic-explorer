@@ -3,6 +3,7 @@
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import TabPanel from '../components/TabPanel.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
+	import { formatDate } from '../utils/ui-helpers';
 
 	interface Embedder {
 		embedder_id: number;
@@ -315,15 +316,6 @@
 		}
 	}
 
-	function formatTimestamp(timestamp: string) {
-		try {
-			return new Date(timestamp).toLocaleString();
-		} catch (e) {
-			console.warn('Failed to format timestamp', e);
-			return timestamp;
-		}
-	}
-
 	onMount(() => {
 		fetchEmbedder();
 		fetchEmbeddedDatasets();
@@ -414,13 +406,13 @@
 								<div>
 									<div class="font-medium text-gray-600 dark:text-gray-400">Created</div>
 									<div class="text-gray-900 dark:text-white mt-1">
-										{formatTimestamp(embedder.created_at)}
+										{formatDate(embedder.created_at)}
 									</div>
 								</div>
 								<div>
 									<div class="font-medium text-gray-600 dark:text-gray-400">Updated</div>
 									<div class="text-gray-900 dark:text-white mt-1">
-										{formatTimestamp(embedder.updated_at)}
+										{formatDate(embedder.updated_at)}
 									</div>
 								</div>
 							</div>
@@ -673,7 +665,7 @@
 												<div class="text-right ml-4 shrink-0">
 													<p class="text-xs text-gray-500 dark:text-gray-400">Created</p>
 													<p class="text-sm text-gray-900 dark:text-white font-medium">
-														{formatTimestamp(ed.created_at)}
+														{formatDate(ed.created_at)}
 													</p>
 												</div>
 											</div>

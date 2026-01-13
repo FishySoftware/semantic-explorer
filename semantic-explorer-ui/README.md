@@ -6,48 +6,53 @@ Modern single-page application (SPA) for the Semantic Explorer platform, providi
 
 The `semantic-explorer-ui` is built with Svelte 5 and provides:
 
-- Document collection management with file uploads
-- Dataset creation and item management
-- Embedder and LLM provider configuration
-- Transform pipeline orchestration with real-time progress
-- Interactive 3D visualizations using Deck.gl
-- Semantic search across embedded datasets
-- Chat with documents using RAG
-- Marketplace for discovering public resources
-- Dark/light theme support
+- **Document Management** - Collection management with file uploads and organization
+- **Dataset Operations** - Dataset creation and item management with chunking
+- **Embedder Configuration** - Manage multiple embedding models and providers
+- **LLM Management** - Configure and test LLM providers (OpenAI, Anthropic, Cohere, etc.)
+- **Transform Pipelines** - Orchestrate document extraction, embedding, and visualization workflows
+- **Real-time Progress** - Live updates via Server-Sent Events (SSE)
+- **Interactive Visualizations** - 3D/2D visualizations using Deck.gl and datamapplot
+- **Semantic Search** - Vector similarity search across embedded datasets
+- **RAG Chat** - Chat with documents using retrieval-augmented generation
+- **Marketplace** - Discover and grab public resources
+- **Theme Support** - Dark/light theme with system preference detection
 
-## Architecture
+## Project Structure
 
-```mermaid
-graph TB
-    subgraph "Browser"
-        subgraph "semantic-explorer-ui"
-            ROUTER[SPA Router]
+```
+semantic-explorer-ui/
+├── src/
+│   ├── main.ts                  # Application entry point
+│   ├── App.svelte               # Root component with routing
+│   ├── app.css                  # Global styles (Tailwind)
+│   └── lib/
+│       ├── pages/               # Page components (23 pages)
+│       │   ├── Collections.svelte
+│       │   ├── Datasets.svelte
+│       │   ├── Embedders.svelte
+│       │   ├── Chat.svelte
+│       │   ├── Search.svelte
+│       │   └── ...
+│       ├── components/          # Reusable UI components
+│       │   ├── FormField.svelte
+│       │   ├── StatusBadge.svelte
+│       │   ├── LoadingState.svelte
+│       │   └── ...
+│       ├── utils/               # Shared utilities
+│       │   ├── api.ts          # API client functions
+│       │   ├── notifications.ts # Toast notification system
+│       │   ├── sse.ts          # Server-Sent Events utilities
+│       │   ├── theme.ts        # Theme management
+│       │   ├── ui-helpers.ts   # Common UI helper functions
+│       │   └── icons.ts        # SVG icon components
+│       └── types/              # TypeScript type definitions
+│           └── visualizations.ts
+├── public/                      # Static assets
+├── dist/                        # Build output
+└── package.json                 # Dependencies and scripts
+```
 
-            subgraph "Pages"
-                COLL[Collections]
-                DS[Datasets]
-                EMB[Embedders]
-                LLM[LLMs]
-                TRANS[Transforms]
-                VIZ[Visualizations]
-                SEARCH[Search]
-                CHAT[Chat]
-                MARKET[Marketplace]
-            end
-
-            subgraph "Components"
-                FORMS[Form Components]
-                MODALS[Modal Dialogs]
-                PROGRESS[Progress Panels]
-                CARDS[Card Components]
-            end
-
-            subgraph "Services"
-                API[API Client]
-                SSE[SSE Handlers]
-                STATE[Svelte Stores]
-            end
         end
     end
 
@@ -60,7 +65,8 @@ graph TB
     COLL & DS & EMB & LLM & TRANS & VIZ & SEARCH & CHAT & MARKET --> API & SSE & STATE
     API --> SERVER
     SSE --> SERVER
-```
+
+````
 
 ## User Flow
 
@@ -88,7 +94,7 @@ flowchart TD
 
     B --> P[Marketplace]
     P --> Q[Grab Public<br/>Resources]
-```
+````
 
 ## Technologies
 

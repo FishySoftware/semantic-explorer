@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { formatError, toastStore } from '../utils/notifications';
+	import { formatRelativeTime } from '../utils/ui-helpers';
 	import type { Visualization } from '../types/visualizations';
 
 	interface Collection {
@@ -132,29 +133,6 @@
 			toastStore.error(message);
 		} finally {
 			loading = false;
-		}
-	}
-
-	function formatDate(dateStr: string): string {
-		try {
-			const date = new Date(dateStr);
-			if (isNaN(date.getTime())) {
-				return 'Invalid date: ' + dateStr;
-			}
-			const now = new Date();
-			const diffMs = now.getTime() - date.getTime();
-			const diffMins = Math.floor(diffMs / 60000);
-			const diffHours = Math.floor(diffMs / 3600000);
-			const diffDays = Math.floor(diffMs / 86400000);
-
-			if (diffMins < 1) return 'Just now';
-			if (diffMins < 60) return `${diffMins} minute${diffMins === 1 ? '' : 's'} ago`;
-			if (diffHours < 24) return `${diffHours} hour${diffHours === 1 ? '' : 's'} ago`;
-			if (diffDays < 7) return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
-			return date.toLocaleDateString();
-		} catch (e) {
-			console.error('Failed to parse relative time:', e);
-			return 'Invalid date';
 		}
 	}
 
@@ -372,7 +350,7 @@
 										</div>
 									</div>
 									<span class="text-xs text-gray-500 dark:text-gray-400 ml-2">
-										{formatDate(collection.updated_at)}
+										{formatRelativeTime(collection.updated_at)}
 									</span>
 								</div>
 							</a>
@@ -418,7 +396,7 @@
 										</div>
 									</div>
 									<span class="text-xs text-gray-500 dark:text-gray-400 ml-2">
-										{formatDate(dataset.updated_at)}
+										{formatRelativeTime(dataset.updated_at)}
 									</span>
 								</div>
 							</a>
@@ -467,7 +445,7 @@
 										{/if}
 									</div>
 									<span class="text-xs text-gray-500 dark:text-gray-400 ml-2">
-										{formatDate(embeddedDataset.updated_at)}
+										{formatRelativeTime(embeddedDataset.updated_at)}
 									</span>
 								</div>
 							</a>
@@ -511,7 +489,7 @@
 										</div>
 									</div>
 									<span class="text-xs text-gray-500 dark:text-gray-400 ml-2">
-										{formatDate(visualization.created_at)}
+										{formatRelativeTime(visualization.created_at)}
 									</span>
 								</div>
 							</a>
@@ -559,7 +537,7 @@
 							<div
 								class="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400"
 							>
-								<span>{formatDate(collection.updated_at)}</span>
+								<span>{formatRelativeTime(collection.updated_at)}</span>
 								<button
 									disabled={grabbingId === collection.collection_id}
 									onclick={() => grabCollection(collection.collection_id)}
@@ -610,7 +588,7 @@
 							<div
 								class="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400"
 							>
-								<span>{formatDate(dataset.updated_at)}</span>
+								<span>{formatRelativeTime(dataset.updated_at)}</span>
 								<button
 									disabled={grabbingId === dataset.dataset_id}
 									onclick={() => grabDataset(dataset.dataset_id)}
@@ -650,7 +628,7 @@
 							<div
 								class="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400"
 							>
-								<span>{formatDate(embedder.updated_at)}</span>
+								<span>{formatRelativeTime(embedder.updated_at)}</span>
 								<button
 									disabled={grabbingId === embedder.embedder_id}
 									onclick={() => grabEmbedder(embedder.embedder_id)}
@@ -690,7 +668,7 @@
 							<div
 								class="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400"
 							>
-								<span>{formatDate(llm.updated_at)}</span>
+								<span>{formatRelativeTime(llm.updated_at)}</span>
 								<button
 									disabled={grabbingId === llm.llm_id}
 									onclick={() => grabLLM(llm.llm_id)}
