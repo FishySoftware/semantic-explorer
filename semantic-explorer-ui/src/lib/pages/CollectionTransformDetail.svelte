@@ -397,9 +397,9 @@
 							class="bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700"
 						>
 							<tr>
-								<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">File</th>
+								<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Item Name</th>
+								<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Total Chunks</th>
 								<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Status</th>
-								<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Items</th>
 								<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Duration</th>
 								<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Processed At</th>
 							</tr>
@@ -414,14 +414,24 @@
 									</td>
 									<td class="px-4 py-3">
 										<span
+											class="inline-flex items-center px-2.5 py-0.5 rounded-full text-sm font-semibold bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
+										>
+											{file.item_count}
+										</span>
+									</td>
+									<td class="px-4 py-3">
+										<span
 											class={file.process_status === 'success'
 												? 'px-2 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400'
-												: 'px-2 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400'}
+												: file.process_status === 'completed'
+													? 'px-2 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400'
+													: file.process_status === 'failed'
+														? 'px-2 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400'
+														: 'px-2 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-400'}
 										>
 											{file.process_status}
 										</span>
 									</td>
-									<td class="px-4 py-3">{file.item_count}</td>
 									<td class="px-4 py-3">
 										{file.processing_duration_ms ? `${file.processing_duration_ms}ms` : '-'}
 									</td>

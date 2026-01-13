@@ -58,7 +58,7 @@ groups:
 
       - alert: DatabaseConnectionPoolExhausted
         expr: |
-          (pg_stat_activity_count / pg_settings_max_connections) > 0.8
+          (database_connection_pool_active / database_connection_pool_size) > 0.8
         for: 5m
         labels:
           severity: warning
@@ -66,151 +66,179 @@ groups:
         annotations:
           summary: "Database connection pool nearly exhausted"
           description: |
-            Currently using {{ $value | humanizePercentage }} of max connections.
+            Currently using {{ $value | humanizePercentage }} of pool size.
             This could indicate a connection leak or high load.
 
-      - alert: DatabaseReplicationLag
-        expr: |
-          pg_xlog_position_bytes_standby{slot="primary"} < 
-          pg_xlog_position_bytes_primary - (10 * 1024 * 1024)  # 10MB lag
-        for: 2m
-        labels:
-          severity: warning
-          service: postgresql
-        annotations:
-          summary: "PostgreSQL replication lag detected"
-          description: |
-            Replica is {{ $value | humanize1024 }}B behind primary.
-            High lag may impact read replica availability for analytics.
+      # NOTE: Replication lag monitoring requires postgres_exporter with replication stats enabled
+      # This alert is a placeholder - enable if using CloudNativePG with monitoring enabled
+      # - alert: DatabaseReplicationLag
+      #   expr: |
+      #     pg_replication_lag_seconds > 10
+      #   for: 2m
+      #   labels:
+      #     severity: warning
+      #     service: postgresql
+      #   annotations:
+      #     summary: "PostgreSQL replication lag detected"
+      #     description: |
+      #       Replica is {{ $value | humanizeDuration }} behind primary.
+      #       High lag may impact read replica availability.
 
-      - alert: DatabaseSlowQueries
+      # NOTE: Slow query monitoring requires log_min_duration_statement configured
+      # This alert monitors high database query duration instead
+      - alert: HighDatabaseQueryDuration
         expr: |
-          pg_slow_queries > 10
+          histogram_quantile(0.95, sum(rate(database_query_duration_seconds_bucket[5m])) by (le)) > 1.0
         for: 5m
         labels:
           severity: warning
           service: postgresql
         annotations:
-          summary: "High number of slow queries detected"
+          summary: "High database query duration detected"
           description: |
-            {{ $value }} slow queries in the last 5 minutes.
-            Check log_min_duration_statement logs for query details.
+            p95 query duration is {{ $value | humanizeDuration }}.
+            Check for slow queries or missing indexes.
 
-      - alert: DatabaseCheckpointDelay
-        expr: |
-          pg_wal_records_count_diff > 1000000
-        for: 10m
-        labels:
-          severity: warning
-          service: postgresql
-        annotations:
-          summary: "Large number of WAL records pending checkpoint"
-          description: |
-            {{ $value }} WAL records pending checkpoint.
-            Consider tuning checkpoint_timeout or checkpoint_completion_target.
+      # NOTE: WAL checkpoint monitoring requires postgres_exporter with wal metrics enabled
+      # This alert is a placeholder - enable if using CloudNativePG with monitoring enabled
+      # - alert: DatabaseCheckpointDelay
+      #   expr: |
+      #     pg_wal_records_pending > 1000000
+      #   for: 10m
+      #   labels:
+      #     severity: warning
+      #     service: postgresql
+      #   annotations:
+      #     summary: "Large number of WAL records pending checkpoint"
+      #     description: |
+      #       {{ $value }} WAL records pending checkpoint.
+      #       Consider tuning checkpoint_timeout or checkpoint_completion_target.
 
       # ============================================================================
       # REDIS ALERTS
       # ============================================================================
 
-      - alert: RedisClusterNodeDown
-        expr: |
-          redis_cluster_info_cluster_state != 1
-        for: 1m
-        labels:
-          severity: critical
-          service: redis
-        annotations:
-          summary: "Redis cluster node down"
-          description: |
-            Redis cluster is in unhealthy state.
-            Cluster state: {{ $value }}
-            Check node status and restart failed nodes.
+      # NOTE: Redis cluster state monitoring requires redis_exporter with cluster info enabled
+      # This alert is a placeholder - enable if using redis-ha cluster with monitoring
+      # - alert: RedisClusterNodeDown
+      #   expr: |
+      #     redis_cluster_info_cluster_state != 1
+      #   for: 1m
+      #   labels:
+      #     severity: critical
+      #     service: redis
+      #   annotations:
+      #     summary: "Redis cluster node down"
+      #     description: |
+      #       Redis cluster is in unhealthy state.
+      #       Check node status and restart failed nodes.
 
-      - alert: RedisMemoryUsageHigh
-        expr: |
-          (redis_memory_used_bytes / redis_memory_max_bytes) > 0.85
-        for: 5m
-        labels:
-          severity: warning
-          service: redis
-        annotations:
-          summary: "Redis memory usage is high"
-          description: |
-            Redis is using {{ $value | humanizePercentage }} of max memory.
-            Cache evictions may occur. Consider increasing max memory or clearing cache.
+      # NOTE: Redis memory monitoring requires redis_exporter with memory metrics enabled
+      # This alert is a placeholder - enable if using redis-ha with monitoring
+      # - alert: RedisMemoryUsageHigh
+      #   expr: |
+      #     (redis_memory_used_bytes / redis_memory_max_bytes) > 0.85
+      #   for: 5m
+      #   labels:
+      #     severity: warning
+      #     service: redis
+      #   annotations:
+      #     summary: "Redis memory usage is high"
+      #     description: |
+      #       Redis is using {{ $value | humanizePercentage }} of max memory.
+      #       Cache evictions may occur.
 
-      - alert: RedisCacheEvictions
-        expr: |
-          rate(redis_evicted_keys_total[5m]) > 100
-        for: 5m
-        labels:
-          severity: warning
-          service: redis
-        annotations:
-          summary: "High Redis cache eviction rate"
-          description: |
-            Redis is evicting {{ $value | humanize }} keys/sec.
-            This reduces cache effectiveness. Increase max memory or optimize key expiry.
+      # NOTE: Redis eviction monitoring requires redis_exporter with stats enabled
+      # This alert is a placeholder - enable if using redis-ha with monitoring
+      # - alert: RedisCacheEvictions
+      #   expr: |
+      #     rate(redis_evicted_keys_total[5m]) > 100
+      #   for: 5m
+      #   labels:
+      #     severity: warning
+      #     service: redis
+      #   annotations:
+      #     summary: "High Redis cache eviction rate"
+      #     description: |
+      #       Redis is evicting {{ $value | humanize }} keys/sec.
+      #       This reduces cache effectiveness.
 
-      - alert: RedisHighCommandLatency
-        expr: |
-          redis_command_duration_seconds_bucket{le="0.1"} / 
-          redis_command_duration_seconds_count < 0.5
-        for: 5m
-        labels:
-          severity: warning
-          service: redis
-        annotations:
-          summary: "Redis commands have high latency"
-          description: |
-            Less than 50% of Redis commands complete within 100ms.
-            Check for network latency, persistence operations, or high load.
+      # NOTE: Redis command latency requires redis_exporter with latency histograms enabled
+      # This alert is a placeholder - enable if using redis-ha with monitoring
+      # - alert: RedisHighCommandLatency
+      #   expr: |
+      #     redis_command_duration_seconds_bucket{le="0.1"} / redis_command_duration_seconds_count < 0.5
+      #   for: 5m
+      #   labels:
+      #     severity: warning
+      #     service: redis
+      #   annotations:
+      #     summary: "Redis commands have high latency"
+      #     description: |
+      #       Less than 50% of Redis commands complete within 100ms.
+      #       Check for network latency or high load.
 
       # ============================================================================
       # VECTOR DATABASE (QDRANT) ALERTS
       # ============================================================================
 
-      - alert: QdrantErrorRate
-        expr: |
-          (sum(rate(qdrant_http_requests_total{status=~"5.."}[5m])) / 
-           sum(rate(qdrant_http_requests_total[5m]))) > 0.01
-        for: 5m
-        labels:
-          severity: critical
-          service: qdrant
-        annotations:
-          summary: "High error rate in Qdrant"
-          description: |
-            Error rate is {{ $value | humanizePercentage }}.
-            Vector search operations may be failing.
+      # NOTE: Qdrant metrics require Qdrant to expose Prometheus metrics
+      # These alerts are placeholders - enable if using Qdrant with metrics enabled
+      # - alert: QdrantErrorRate
+      #   expr: |
+      #     (sum(rate(qdrant_http_requests_total{status=~"5.."}[5m])) /
+      #      sum(rate(qdrant_http_requests_total[5m]))) > 0.01
+      #   for: 5m
+      #   labels:
+      #     severity: critical
+      #     service: qdrant
+      #   annotations:
+      #     summary: "High error rate in Qdrant"
+      #     description: |
+      #       Vector search operations may be failing.
 
-      - alert: QdrantHighLatency
+      # - alert: QdrantHighLatency
+      #   expr: |
+      #     histogram_quantile(0.95,
+      #       sum(rate(qdrant_search_latency_seconds_bucket[5m])) by (le)) > 1.0
+      #   for: 10m
+      #   labels:
+      #     severity: warning
+      #     service: qdrant
+      #   annotations:
+      #     summary: "Slow Qdrant search latency"
+      #     description: |
+      #       p95 search latency is {{ $value | humanizeDuration }}.
+      #       Consider scaling or optimizing indices.
+
+      # Monitor search performance via our custom metrics instead
+      - alert: SearchHighLatency
         expr: |
-          histogram_quantile(0.95, 
-            sum(rate(qdrant_search_latency_seconds_bucket[5m])) by (le)) > 1.0
+          histogram_quantile(0.95, sum(rate(search_qdrant_query_duration_seconds_bucket[5m])) by (le)) > 1.0
         for: 10m
         labels:
           severity: warning
-          service: qdrant
+          service: api
         annotations:
-          summary: "Slow Qdrant search latency"
+          summary: "High Qdrant query latency detected"
           description: |
-            p95 search latency is {{ $value | humanizeDuration }}.
-            Consider adding more Qdrant replicas or optimizing quantization settings.
+            p95 Qdrant query duration is {{ $value | humanizeDuration }}.
+            Consider scaling vector database or optimizing embeddings.
 
-      - alert: QdrantDiskSpaceWarning
-        expr: |
-          (qdrant_disk_used_bytes / qdrant_disk_total_bytes) > 0.85
-        for: 10m
-        labels:
-          severity: warning
-          service: qdrant
-        annotations:
-          summary: "Qdrant disk space usage is high"
-          description: |
-            Disk usage is {{ $value | humanizePercentage }}.
-            Vector index growth may be impacting performance.
+      # NOTE: Qdrant disk monitoring requires Qdrant to expose disk metrics
+      # This alert is a placeholder - enable if using Qdrant with metrics enabled
+      # - alert: QdrantDiskSpaceWarning
+      #   expr: |
+      #     (qdrant_disk_used_bytes / qdrant_disk_total_bytes) > 0.85
+      #   for: 10m
+      #   labels:
+      #     severity: warning
+      #     service: qdrant
+      #   annotations:
+      #     summary: "Qdrant disk space usage is high"
+      #     description: |
+      #       Disk usage is {{ $value | humanizePercentage }}.
+      #       Vector index growth may be impacting performance.
 
       # ============================================================================
       # MESSAGE QUEUE (NATS) ALERTS
@@ -218,7 +246,7 @@ groups:
 
       - alert: NatsQueueBacklog
         expr: |
-          nats_jetstream_queue_messages > 10000
+          nats_consumer_pending > 10000
         for: 5m
         labels:
           severity: warning
@@ -229,31 +257,35 @@ groups:
             Queue has {{ $value }} pending messages.
             Workers may be lagging. Check worker processes.
 
-      - alert: NatsConnectionFailures
-        expr: |
-          increase(nats_connection_errors_total[5m]) > 5
-        for: 2m
-        labels:
-          severity: critical
-          service: nats
-        annotations:
-          summary: "High NATS connection failure rate"
-          description: |
-            {{ $value }} connection failures in the last 5 minutes.
-            Check NATS server availability and network connectivity.
+      # NOTE: NATS connection error metrics require nats_exporter with connection stats enabled
+      # This alert is a placeholder - enable if using NATS with monitoring
+      # - alert: NatsConnectionFailures
+      #   expr: |
+      #     increase(nats_connection_errors_total[5m]) > 5
+      #   for: 2m
+      #   labels:
+      #     severity: critical
+      #     service: nats
+      #   annotations:
+      #     summary: "High NATS connection failure rate"
+      #     description: |
+      #       {{ $value }} connection failures in the last 5 minutes.
+      #       Check NATS server availability and network connectivity.
 
-      - alert: NatsHighMemory
-        expr: |
-          (nats_server_memory_bytes / nats_server_memory_max_bytes) > 0.80
-        for: 10m
-        labels:
-          severity: warning
-          service: nats
-        annotations:
-          summary: "NATS server memory usage is high"
-          description: |
-            Memory usage is {{ $value | humanizePercentage }}.
-            Consider increasing max_memory or pruning old messages.
+      # NOTE: NATS memory monitoring requires nats_exporter with memory metrics enabled
+      # This alert is a placeholder - enable if using NATS with monitoring
+      # - alert: NatsHighMemory
+      #   expr: |
+      #     (nats_server_memory_bytes / nats_server_memory_max_bytes) > 0.80
+      #   for: 10m
+      #   labels:
+      #     severity: warning
+      #     service: nats
+      #   annotations:
+      #     summary: "NATS server memory usage is high"
+      #     description: |
+      #       Memory usage is {{ $value | humanizePercentage }}.
+      #       Consider increasing max_memory or pruning old messages.
 
       # ============================================================================
       # WORKER ALERTS
@@ -274,8 +306,8 @@ groups:
 
       - alert: WorkerHighErrorRate
         expr: |
-          (sum(rate(worker_job_errors_total[5m])) by (service) /
-           sum(rate(worker_job_total[5m])) by (service)) > 0.05
+          (sum(rate(worker_job_failures_total[5m])) by (service) /
+           sum(rate(worker_jobs_total[5m])) by (service)) > 0.05
         for: 10m
         labels:
           severity: warning
@@ -286,49 +318,91 @@ groups:
             Job error rate is {{ $value | humanizePercentage }}.
             Check worker logs for failure reasons.
 
-      - alert: EmbeddingGenerationSlow
+      - alert: DatasetEmbeddingGenerationSlow
         expr: |
           histogram_quantile(0.95,
-            sum(rate(worker_embedding_duration_seconds_bucket[5m])) by (le)) > 30.0
+            sum(rate(dataset_transform_duration_seconds_bucket[5m])) by (le)) > 30.0
         for: 10m
         labels:
           severity: warning
           service: worker-datasets
         annotations:
-          summary: "Embedding generation is slow"
+          summary: "Dataset embedding generation is slow"
           description: |
             p95 generation time is {{ $value | humanizeDuration }}.
             Consider scaling worker instances or optimizing batch size.
+      - alert: CollectionTransformHighFailureRate
+        expr: |
+          (sum(increase(collection_transform_jobs_total{status="failed"}[5m])) /
+           sum(increase(collection_transform_jobs_total[5m]))) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: worker-collections
+        annotations:
+          summary: "High failure rate in collection transform jobs"
+          description: |
+            Failure rate is {{ $value | humanizePercentage }}.
+            Check worker logs for failure details.
 
+      - alert: DatasetTransformHighFailureRate
+        expr: |
+          (sum(increase(dataset_transform_jobs_total{status="failed"}[5m])) /
+           sum(increase(dataset_transform_jobs_total[5m]))) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: worker-datasets
+        annotations:
+          summary: "High failure rate in dataset transform jobs"
+          description: |
+            Failure rate is {{ $value | humanizePercentage }}.
+            Check worker logs for failure details.
+
+      - alert: VisualizationTransformHighFailureRate
+        expr: |
+          (sum(increase(visualization_transform_jobs_total{status="failed"}[5m])) /
+           sum(increase(visualization_transform_jobs_total[5m]))) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: worker-visualizations
+        annotations:
+          summary: "High failure rate in visualization transform jobs"
+          description: |
+            Failure rate is {{ $value | humanizePercentage }}.
+            Check worker logs for failure details.
       # ============================================================================
       # COST TRACKING ALERTS
       # ============================================================================
+      # NOTE: Cost tracking metrics are not currently exposed by the observability module
+      # Enable these alerts if/when cost tracking metrics are added
 
-      - alert: DailyAPICallCostHigh
-        expr: |
-          api_calls_cost_daily_usd > 1000
-        for: 1h
-        labels:
-          severity: warning
-          business: cost-control
-        annotations:
-          summary: "Daily API call costs are exceeding $1000"
-          description: |
-            Current daily cost: ${{ $value | humanize2 }}
-            This may indicate unexpected usage or misconfiguration.
+      # - alert: DailyAPICallCostHigh
+      #   expr: |
+      #     api_calls_cost_daily_usd > 1000
+      #   for: 1h
+      #   labels:
+      #     severity: warning
+      #     business: cost-control
+      #   annotations:
+      #     summary: "Daily API call costs are exceeding $1000"
+      #     description: |
+      #       Current daily cost: ${{ $value | humanize2 }}
+      #       This may indicate unexpected usage or misconfiguration.
 
-      - alert: LLMCostThresholdExceeded
-        expr: |
-          (sum(api_calls_cost_by_model_usd) by (model)) > 500
-        for: 1h
-        labels:
-          severity: warning
-          business: cost-control
-        annotations:
-          summary: "LLM costs for {{ $labels.model }} exceed $500"
-          description: |
-            Current cost: ${{ $value | humanize2 }}
-            Consider using cheaper models or caching results.
+      # - alert: LLMCostThresholdExceeded
+      #   expr: |
+      #     (sum(api_calls_cost_by_model_usd) by (model)) > 500
+      #   for: 1h
+      #   labels:
+      #     severity: warning
+      #     business: cost-control
+      #   annotations:
+      #     summary: "LLM costs for {{ $labels.model }} exceed $500"
+      #     description: |
+      #       Current cost: ${{ $value | humanize2 }}
+      #       Consider using cheaper models or caching results.
 
       # ============================================================================
       # SLO ALERTS

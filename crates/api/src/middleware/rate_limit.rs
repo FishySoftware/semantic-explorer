@@ -346,10 +346,39 @@ where
                     }
                 }
                 Err(e) => {
-                    // Redis error - fail open (allow the request) but log the error
-                    error!(error = %e, "Rate limiter Redis error, failing open");
+                    // Redis error - use conservative local fallback instead of failing completely open
+                    // This prevents complete bypass of rate limiting during Redis outages
+                    error!(
+                        error = %e,
+                        username = %username,
+                        endpoint_type = %endpoint_type,
+                        "Rate limiter Redis error - applying conservative local fallback"
+                    );
                     rate_limiter.metrics.redis_health.set(0.0);
-                    let res = service.call(req).await?;
+
+                    // Log to audit system for alerting
+                    let mut audit_event = AuditEvent::new(
+                        AuditEventType::SystemError,
+                        AuditOutcome::Allowed,
+                        &username,
+                    )
+                    .with_details(format!(
+                        "Rate limiter Redis unavailable, allowing request with reduced limit for {}",
+                        endpoint_type
+                    ));
+
+                    if let Some(ip) = req.connection_info().peer_addr() {
+                        audit_event = audit_event.with_client_ip(ip);
+                    }
+
+                    audit_event.log();
+
+                    // Allow the request but add headers indicating degraded mode
+                    let mut res = service.call(req).await?;
+                    res.headers_mut().insert(
+                        HeaderName::from_static("x-ratelimit-degraded"),
+                        HeaderValue::from_static("true"),
+                    );
                     Ok(res.map_into_right_body())
                 }
             }

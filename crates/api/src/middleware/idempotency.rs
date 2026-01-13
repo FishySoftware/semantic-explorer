@@ -168,7 +168,40 @@ where
         // Extract idempotency key from header
         let idempotency_key = match req.headers().get(IDEMPOTENCY_KEY_HEADER) {
             Some(key) => match key.to_str() {
-                Ok(k) => k.to_string(),
+                Ok(k) => {
+                    // Validate idempotency key format and length
+                    let key_str = k.to_string();
+
+                    // Max length of 256 characters to prevent Redis memory issues
+                    if key_str.len() > 256 {
+                        warn!("Idempotency key exceeds maximum length of 256 characters");
+                        let response = HttpResponse::BadRequest().json(serde_json::json!({
+                            "error": "InvalidIdempotencyKey",
+                            "message": "Idempotency key must not exceed 256 characters"
+                        }));
+                        let (req_head, _) = req.into_parts();
+                        let res = ServiceResponse::new(req_head, response);
+                        return Box::pin(async move { Ok(res.map_into_left_body()) });
+                    }
+
+                    // Only allow alphanumeric, hyphens, underscores, and periods
+                    if !key_str
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
+                    {
+                        warn!("Idempotency key contains invalid characters");
+                        let response = HttpResponse::BadRequest()
+                            .json(serde_json::json!({
+                                "error": "InvalidIdempotencyKey",
+                                "message": "Idempotency key may only contain alphanumeric characters, hyphens, underscores, and periods"
+                            }));
+                        let (req_head, _) = req.into_parts();
+                        let res = ServiceResponse::new(req_head, response);
+                        return Box::pin(async move { Ok(res.map_into_left_body()) });
+                    }
+
+                    key_str
+                }
                 Err(_) => {
                     debug!("Invalid idempotency key header value");
                     let fut = self.service.call(req);

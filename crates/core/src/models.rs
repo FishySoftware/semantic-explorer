@@ -296,13 +296,13 @@ fn default_text_max_pixel_size() -> f32 {
     36.0
 }
 fn default_font_family() -> String {
-    "Roboto".to_string()
+    "Playfair Display SC".to_string()
 }
 fn default_font_weight() -> i32 {
     600
 }
 fn default_tooltip_font_family() -> String {
-    "Roboto".to_string()
+    "Playfair Display SC".to_string()
 }
 fn default_tooltip_font_weight() -> i32 {
     400

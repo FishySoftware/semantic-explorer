@@ -19,7 +19,12 @@ mod validation;
 
 use actix_cors::Cors;
 use actix_multipart::form::MultipartFormConfig;
-use actix_web::{App, HttpServer, http::header, middleware::Compress, web};
+use actix_web::{
+    App, HttpServer,
+    http::header,
+    middleware::{Compress, DefaultHeaders},
+    web,
+};
 use anyhow::Result;
 use dotenvy::dotenv;
 use semantic_explorer_core::config::AppConfig;
@@ -201,11 +206,23 @@ async fn main() -> Result<()> {
         // Create session activity tracking middleware
         let session_activity = middleware::SessionActivityMiddleware::new(postgres_pool.clone());
 
+        // Security headers middleware
+        let security_headers = DefaultHeaders::new()
+            .add(("X-Content-Type-Options", "nosniff"))
+            .add(("X-Frame-Options", "DENY"))
+            .add(("X-XSS-Protection", "1; mode=block"))
+            .add(("Referrer-Policy", "strict-origin-when-cross-origin"))
+            .add((
+                "Permissions-Policy",
+                "geolocation=(), microphone=(), camera=()",
+            ));
+
         App::new()
             .wrap(prometheus.clone())
             .wrap(rate_limiter)
             .wrap(idempotency)
             .wrap(cors)
+            .wrap(security_headers)
             .wrap(Compress::default())
             .wrap(openid_client.get_middleware())
             .wrap(session_activity) // After OIDC to track authenticated sessions

@@ -7,7 +7,7 @@ Handles uploading visualization results to S3 with owner/transform/timestamp tra
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import boto3
@@ -24,7 +24,7 @@ class S3Storage:
         """Initialize S3 client with configuration from environment."""
         init_start = time.time()
         logger.debug("Initializing S3 storage client")
-        self.endpoint_url = os.getenv("S3_ENDPOINT")
+        self.endpoint_url = os.getenv("AWS_ENDPOINT_URL")
 
         # Configure boto3
         config = Config(
@@ -133,7 +133,7 @@ class S3Storage:
             )
 
             # Generate S3 path
-            timestamp_str = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+            timestamp_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             bucket_name = f"visualizations-{transform_id}"
             s3_path = f"visualization-{timestamp_str}.html"
             content_size = len(html_content.encode("utf-8"))

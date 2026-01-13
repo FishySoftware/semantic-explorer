@@ -4,12 +4,9 @@ Data Models for Visualization Worker
 Pydantic models for NATS message deserialization and result publishing.
 """
 
-from datetime import datetime
 from typing import Any, Dict, Optional
 from uuid import UUID
-
 from pydantic import BaseModel, Field
-
 
 class VectorDatabaseConfig(BaseModel):
     """Vector database configuration."""
@@ -109,13 +106,13 @@ class VisualizationConfig(BaseModel):
         default=36.0, description="Maximum pixel size of label text"
     )
     font_family: str = Field(
-        default="Roboto", description="Font family for labels and titles"
+        default="Playfair Display SC", description="Font family for labels and titles"
     )
     font_weight: int = Field(
         default=600, description="Font weight for text labels (0-1000)"
     )
     tooltip_font_family: str = Field(
-        default="Roboto", description="Font family for tooltips"
+        default="Playfair Display SC", description="Font family for tooltips"
     )
     tooltip_font_weight: int = Field(
         default=400, description="Font weight for tooltips (0-1000)"

@@ -1,5 +1,6 @@
 <!-- eslint-disable svelte/no-at-html-tags -->
 <script lang="ts">
+	import DOMPurify from 'dompurify';
 	import { marked } from 'marked';
 	import { onMount } from 'svelte';
 	import PageHeader from '../components/PageHeader.svelte';
@@ -409,7 +410,6 @@
 
 			// Process any remaining data in the buffer after stream ends
 			if (buffer.trim()) {
-				console.log('Processing remaining buffer:', buffer);
 				const remainingLines = buffer.split('\n');
 				for (const line of remainingLines) {
 					if (line.startsWith('event:')) {
@@ -420,8 +420,6 @@
 							try {
 								const data = JSON.parse(data_str);
 								const eventType = currentEventType || data.type;
-								console.log('Remaining SSE event:', eventType, data);
-
 								if (eventType === 'content') {
 									const chunk = data.content || data.text || '';
 									accumulatedContent += chunk;
@@ -442,7 +440,6 @@
 			}
 
 			// Ensure cleanup happens after stream ends
-			console.log('Stream ended. Final accumulated content length:', accumulatedContent.length);
 			if (isGenerating) {
 				// Stream ended without a complete event, update UI anyway
 				if (actualMessageId) {
@@ -614,9 +611,42 @@
 		}
 
 		const html = marked.parse(processedContent) as string;
+		// Sanitize HTML to prevent XSS attacks
+		const sanitizedHtml = DOMPurify.sanitize(html, {
+			ALLOWED_TAGS: [
+				'h1',
+				'h2',
+				'h3',
+				'h4',
+				'h5',
+				'h6',
+				'p',
+				'br',
+				'hr',
+				'ul',
+				'ol',
+				'li',
+				'blockquote',
+				'pre',
+				'code',
+				'span',
+				'strong',
+				'em',
+				'a',
+				'table',
+				'thead',
+				'tbody',
+				'tr',
+				'th',
+				'td',
+				'img',
+			],
+			ALLOWED_ATTR: ['href', 'target', 'rel', 'class', 'style', 'src', 'alt', 'title'],
+			ALLOW_DATA_ATTR: false,
+		});
 		// Apply syntax highlighting to code blocks after rendering
 		const div = document.createElement('div');
-		div.innerHTML = html;
+		div.innerHTML = sanitizedHtml;
 
 		const codeBlocks = div.querySelectorAll('pre code');
 		if (codeBlocks.length > 0) {

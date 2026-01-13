@@ -1,4 +1,5 @@
 <script lang="ts">
+	/* eslint-disable svelte/no-at-html-tags */
 	import {
 		Badge,
 		Button,
@@ -12,8 +13,10 @@
 	import { DownloadOutline, EyeOutline } from 'flowbite-svelte-icons';
 	import { onDestroy, onMount } from 'svelte';
 	import type { Visualization, VisualizationTransform } from '../types/visualizations';
+	import { ArrowLeftIcon } from '../utils/icons';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { createSSEConnection, type SSEConnection } from '../utils/sse';
+	import { formatDate, formatNumber } from '../utils/ui-helpers';
 
 	interface Props {
 		visualizationTransformId: number;
@@ -211,18 +214,6 @@
 		return progressData?.progress_percent || 0;
 	}
 
-	function formatDate(dateString: string | null): string {
-		if (!dateString) return 'N/A';
-		const date = new Date(dateString);
-		return date.toLocaleDateString('en-US', {
-			year: 'numeric',
-			month: 'short',
-			day: 'numeric',
-			hour: '2-digit',
-			minute: '2-digit',
-		});
-	}
-
 	function closeVisualization() {
 		selectedVisualization = null;
 		htmlContent = null;
@@ -243,14 +234,7 @@
 <div class="max-w-7xl mx-auto">
 	<div class="mb-4">
 		<button onclick={onBack} class="mb-4 btn-secondary inline-flex items-center gap-2">
-			<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width="2"
-					d="M10 19l-7-7m0 0l7-7m-7 7h18"
-				></path>
-			</svg>
+			{@html ArrowLeftIcon}
 			Back to Visualizations
 		</button>
 
@@ -337,22 +321,23 @@
 								<div>
 									<span class="text-sm text-gray-600 dark:text-gray-400">Points:</span>
 									<span class="ml-2 text-sm font-medium text-gray-900 dark:text-white">
-										{selectedVisualization.point_count?.toLocaleString() || 'N/A'}
+										{formatNumber(selectedVisualization.point_count) || 'N/A'}
 									</span>
 								</div>
 								<div>
 									<span class="text-sm text-gray-600 dark:text-gray-400">Clusters:</span>
 									<span class="ml-2 text-sm font-medium text-gray-900 dark:text-white">
-										{selectedVisualization.cluster_count?.toLocaleString() || 'N/A'}
+										{formatNumber(selectedVisualization.cluster_count) || 'N/A'}
 									</span>
 								</div>
 							</div>
 							<div class="w-full" style="height: 800px;">
+								<!-- Security: Only allow-scripts, not allow-same-origin to prevent sandbox escape -->
 								<iframe
 									title="Visualization"
 									srcdoc={htmlContent}
 									class="w-full h-full border-0 rounded-lg"
-									sandbox="allow-scripts allow-same-origin"
+									sandbox="allow-scripts"
 								></iframe>
 							</div>
 						</div>
@@ -454,10 +439,10 @@
 											{/if}
 										</TableBodyCell>
 										<TableBodyCell class="px-4 py-2">
-											{visualization.point_count?.toLocaleString() || '—'}
+											{formatNumber(visualization.point_count) || '—'}
 										</TableBodyCell>
 										<TableBodyCell class="px-4 py-2">
-											{visualization.cluster_count?.toLocaleString() || '—'}
+											{formatNumber(visualization.cluster_count) || '—'}
 										</TableBodyCell>
 										<TableBodyCell class="px-4 py-2">
 											<span class="text-sm">{formatDate(visualization.created_at)}</span>

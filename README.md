@@ -26,29 +26,26 @@ Production-grade semantic exploration platform with advanced caching, real-time 
 - 📝 **Comprehensive Audit Logging** - All operations logged to audit trail with immutable records via NATS
 
 ### Database & Storage
-- 🗄️ **PostgreSQL with Replication** - Primary + read replicas for high availability
+- 🗄️ **PostgreSQL Database** - Robust relational database for metadata and state
 - 📦 **S3-compatible Storage** - AWS S3, MinIO, or any S3-compatible provider
-- 🔴 **Redis Cluster** - Caching, rate limiting, session management with automatic failover
+- 🔴 **Redis Cluster** - Rate limiting, session management, and request deduplication
 - 📍 **Qdrant Vector DB** - Production-grade vector search with quantization (product/scalar)
 
 ### Observability & Monitoring
-- 📊 **Prometheus Metrics** - Real-time metrics collection (error rates, latency, throughput, costs)
-- 📈 **Grafana Dashboards** - Business metrics, performance tracking, cost monitoring, SLO dashboards
-- 🔍 **OpenTelemetry Tracing** - Distributed tracing across all services via Quickwit
-- ⚡ **SLO Tracking** - Automated tracking of availability, latency, and error rate SLOs
+- 📊 **Prometheus Metrics** - Real-time metrics collection (error rates, latency, throughput)
+- 📈 **Grafana Dashboards** - Pre-configured dashboards for API, workers, and infrastructure
+- 🔍 **OpenTelemetry Tracing** - Distributed tracing across all services
 
 ### Performance Optimizations
 - ⚙️ **Connection Pooling** - Tuned for high concurrency with prepared statement caching
-- 💾 **Query Result Caching** - Smart caching with TTL-based invalidation
 - 🎯 **Quantized Embeddings** - Product quantization for 10x faster nearest-neighbor search
 - 🔄 **HTTP Caching** - ETag-based cache validation, conditional requests
-- 🎁 **Request Deduplication** - Prevents duplicate processing of identical requests via Redis
+- 🔄 **Request Deduplication** - Prevents duplicate processing of identical requests via Redis
 
 ### Session Management
 - 👤 **Multi-session Support** - Multiple concurrent sessions per user with limits
-- 🔄 **Automatic Token Refresh** - Seamless token rotation without user interaction
-- ⏱️ **Configurable Timeouts** - Session and token refresh thresholds
-- 📊 **Session Analytics** - Track session duration, devices, locations
+- 🔄 **Token Rotation** - Refresh token rotation for enhanced security
+- ⏱️ **Configurable Timeouts** - Session expiration and inactivity timeouts
 
 ## 🚀 Quick Start
 
@@ -75,10 +72,6 @@ cp crates/api/.env.example crates/api/.env
 cd deployment/compose
 docker-compose -f compose.dev.yaml up -d
 
-# Run database migrations
-cd ../../crates/api
-sqlx migrate run --database-url "$DATABASE_URL"
-
 # Start API server (Terminal 1)
 cd ../../crates/api
 cargo run
@@ -100,6 +93,7 @@ cargo run
 # Terminal 5: Visualizations worker
 cd ../../crates/worker-visualizations-py
 source venv/bin/activate
+pip install -r requirements.txt
 python src/main.py
 ```
 
@@ -211,51 +205,51 @@ semantic-explorer/
 
 ### Environment Variables
 
+All services use environment variables for configuration. See `.env.example` files in each component directory for complete configuration options.
+
+**Core Services:**
+- API: [crates/api/.env.example](./crates/api/.env.example)
+- Collections Worker: [crates/worker-collections/.env.example](./crates/worker-collections/.env.example)
+- Datasets Worker: [crates/worker-datasets/.env.example](./crates/worker-datasets/.env.example)
+- Visualizations Worker: [crates/worker-visualizations-py/.env.example](./crates/worker-visualizations-py/.env.example)
+
+**Key Configuration Areas:**
+
 **Database & Storage:**
 ```bash
 DATABASE_URL=postgresql://user:pass@localhost:5432/db
-DATABASE_REPLICA_URLS=postgresql://user:pass@replica:5432/db  # Optional read replicas
 REDIS_CLUSTER_NODES=redis-1:6379,redis-2:6379,...
 QDRANT_URL=http://localhost:6334
-QDRANT_QUANTIZATION_TYPE=product  # product, scalar, or none
+AWS_REGION=us-east-1
+AWS_ENDPOINT_URL=http://minio:9000
+S3_BUCKET_NAME=semantic-explorer-files
 ```
 
-**Security & Auth:**
+**Authentication (OIDC):**
 ```bash
-OIDC_CLIENT_ID=your-client-id
+OIDC_CLIENT_ID=semantic-explorer-client
 OIDC_CLIENT_SECRET=your-secret
-OIDC_ISSUER_URL=https://dex.example.com
-ENCRYPTION_KEY=your-32-char-encryption-key
-ENABLE_RLS=true
+OIDC_ISSUER_URL=http://localhost:5556
+OIDC_SESSION_MANAGEMENT_ENABLED=true
+OIDC_SESSION_TIMEOUT_SECS=3600
+OIDC_MAX_CONCURRENT_SESSIONS=5
 ```
 
-**Features:**
+**Security:**
 ```bash
-SESSION_MAX_CONCURRENT=5           # Max sessions per user
-SESSION_TIMEOUT_MINUTES=30         # Session expiration
-SESSION_REFRESH_THRESHOLD_MINUTES=5  # Refresh before expiry
-ENABLE_SESSION_TRACKING=true       # Track session events
-ENABLE_QUERY_CACHING=true          # Cache semantic search results
-ENABLE_HTTP_CACHING=true           # Cache HTTP responses
-ENABLE_AUDIT_LOGGING=true          # Enable audit trail
-AUDIT_RETENTION_DAYS=90            # How long to keep audit logs
-ENCRYPTION_KEY=your-key            # AES-256 encryption key
-ENABLE_RLS=true                    # Row-level security
-MAX_FILE_SIZE_MB=100               # Max file size for processing (default: 100MB)
+# Generate with: openssl rand -hex 32
+ENCRYPTION_MASTER_KEY=your-64-char-hex-key
+RATE_LIMIT_ENABLED=true
+SERVER_SSL_ENABLED=false
+CLIENT_MTLS_ENABLED=false
 ```
 
 **Observability:**
 ```bash
-PROMETHEUS_SCRAPE_PORT=9090        # Metrics export port
-PROMETHEUS_SCRAPE_INTERVAL=15s     # Scrape interval
-OPENTELEMETRY_ENABLED=true
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
-QUICKWIT_URL=http://localhost:7280
-LOG_LEVEL=info                     # Logging level
-RUST_LOG=semantic_explorer=debug   # Detailed logging
+LOG_FORMAT=json
+RUST_LOG=semantic_explorer=debug,actix_web=info
 ```
-
-See [.env.example](./crates/api/.env.example) for complete configuration options.
 
 ## 📊 Monitoring & Observability
 
@@ -273,12 +267,8 @@ The API exports metrics at the configured PROMETHEUS_SCRAPE_PORT at `/metrics`:
 
 The following dashboards are pre-configured:
 
-1. **Overview** - System health, uptime, error rates
-2. **Business Metrics** - User engagement, data processed, transforms
-3. **Performance** - Latency percentiles, cache hit rates
-4. **Costs** - API costs by model, storage usage
-5. **Database** - Replication lag, query performance, RLS impact
-6. **Transforms** - Queue depth, processing time, success rates
+1. **API & Workers** - Request metrics, error rates, latency, throughput across API and workers
+2. **Infrastructure** - Database, Redis, Qdrant, NATS health and performance
 
 Access Grafana at http://localhost:3000 (default: admin/admin)
 

@@ -1,4 +1,6 @@
 <script lang="ts">
+	/* eslint-disable svelte/no-at-html-tags */
+	import { PlusIcon } from '$lib/utils/icons';
 	import { Button, Spinner } from 'flowbite-svelte';
 	import { onDestroy, onMount } from 'svelte';
 	import TabPanel from '../components/TabPanel.svelte';
@@ -6,6 +8,7 @@
 	import type { VisualizationTransform } from '../types/visualizations';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { createSSEConnection, type SSEConnection } from '../utils/sse';
+	import { formatDate } from '../utils/ui-helpers';
 
 	interface EmbeddedDataset {
 		embedded_dataset_id: number;
@@ -317,17 +320,6 @@
 		}
 	}
 
-	function formatDate(dateString: string): string {
-		const date = new Date(dateString);
-		return date.toLocaleDateString('en-US', {
-			year: 'numeric',
-			month: 'short',
-			day: 'numeric',
-			hour: '2-digit',
-			minute: '2-digit',
-		});
-	}
-
 	function getSuccessRate(): string {
 		if (!stats) return 'N/A';
 		const total = stats.successful_batches + stats.failed_batches;
@@ -553,14 +545,7 @@
 									onclick={handleCreateVisualizationTransform}
 									class="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
 								>
-									<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width="2"
-											d="M12 4v16m8-8H4"
-										></path>
-									</svg>
+									{@html PlusIcon}
 									Create Visualization Transform
 								</button>
 							</div>

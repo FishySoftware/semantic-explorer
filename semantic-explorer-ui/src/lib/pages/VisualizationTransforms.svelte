@@ -6,6 +6,8 @@
 	import PageHeader from '../components/PageHeader.svelte';
 	import type { VisualizationConfig, VisualizationTransform } from '../types/visualizations';
 	import { formatError, toastStore } from '../utils/notifications';
+	import { showTooltip } from '../utils/ui-helpers';
+	import { InfoIcon } from '../utils/icons';
 
 	interface Props {
 		// eslint-disable-next-line no-unused-vars
@@ -13,39 +15,6 @@
 	}
 
 	let { onViewTransform }: Props = $props();
-
-	// Helper function for tooltip display with hover persistence
-	function showTooltip(event: MouseEvent, text: string) {
-		const button = event.target as HTMLElement;
-		const tooltip = document.createElement('div');
-		tooltip.className =
-			'fixed bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 px-3 py-2 rounded text-sm z-50 max-w-md';
-		tooltip.textContent = text;
-		tooltip.style.pointerEvents = 'auto';
-		document.body.appendChild(tooltip);
-
-		const updatePosition = () => {
-			const rect = button.getBoundingClientRect();
-			tooltip.style.left = rect.left + rect.width / 2 - tooltip.offsetWidth / 2 + 'px';
-			tooltip.style.top = rect.top - tooltip.offsetHeight - 5 + 'px';
-		};
-
-		updatePosition();
-
-		const hideTooltip = () => {
-			tooltip.remove();
-			button.removeEventListener('mouseleave', hideTooltip);
-			tooltip.removeEventListener('mouseleave', hideTooltip);
-		};
-
-		button.addEventListener('mouseleave', hideTooltip);
-		tooltip.addEventListener('mouseleave', hideTooltip);
-	}
-
-	// Info icon SVG component
-	function InfoIcon() {
-		return `<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"></path></svg>`;
-	}
 
 	interface EmbeddedDataset {
 		embedded_dataset_id: number;
@@ -115,9 +84,9 @@
 		text_collision_size_scale: 3.0,
 		text_min_pixel_size: 12.0,
 		text_max_pixel_size: 36.0,
-		font_family: 'Roboto',
+		font_family: 'Playfair Display SC',
 		font_weight: 600,
-		tooltip_font_family: 'Roboto',
+		tooltip_font_family: 'Playfair Display SC',
 		tooltip_font_weight: 400,
 		logo: null,
 		logo_width: 256,
@@ -164,6 +133,7 @@
 	let selectAll = $state(false);
 
 	function toggleSelectAll() {
+		selectAll = !selectAll;
 		if (selectAll) {
 			selected.clear();
 			for (const t of transforms) {
@@ -187,8 +157,7 @@
 		for (const id of selected) {
 			const transform = transforms.find((t) => t.visualization_transform_id === id);
 			if (transform) {
-				transform.is_enabled = _enable;
-				await toggleEnabled(transform, false);
+				await toggleEnabled(transform, _enable, false);
 			}
 		}
 		selected.clear();
@@ -427,7 +396,11 @@
 		}
 	}
 
-	async function toggleEnabled(transform: VisualizationTransform, refresh = true) {
+	async function toggleEnabled(
+		transform: VisualizationTransform,
+		targetState: boolean,
+		refresh = true
+	) {
 		try {
 			const response = await fetch(
 				`/api/visualization-transforms/${transform.visualization_transform_id}`,
@@ -437,7 +410,7 @@
 						'Content-Type': 'application/json',
 					},
 					body: JSON.stringify({
-						is_enabled: !transform.is_enabled,
+						is_enabled: targetState,
 					}),
 				}
 			);
@@ -771,7 +744,7 @@
 											'Controls local vs global structure. Low values (2-5) focus on fine detail, high values (50-200) capture broader structure. Default: 15'
 										)}
 								>
-									{@html InfoIcon()}
+									{@html InfoIcon}
 								</button>
 							</label>
 							<input
@@ -801,7 +774,7 @@
 											'Minimum distance between points in the low dimensional space. Low values (0.0-0.1) create clumpier embeddings good for clustering. Higher values (0.5-0.99) spread points out and preserve global structure. Default: 0.1'
 										)}
 								>
-									{@html InfoIcon()}
+									{@html InfoIcon}
 								</button>
 							</label>
 							<input
@@ -831,7 +804,7 @@
 											'Distance metric for measuring similarity. Cosine: best for text/embeddings (angle-based). Euclidean: standard distance. Manhattan: city-block distance. Default: cosine'
 										)}
 								>
-									{@html InfoIcon()}
+									{@html InfoIcon}
 								</button>
 							</label>
 							<select
@@ -873,7 +846,7 @@
 											'Minimum number of points required to form a cluster. Larger values create fewer, more significant clusters. Smaller values find more fine-grained clusters but may include noise. Default: 10'
 										)}
 								>
-									{@html InfoIcon()}
+									{@html InfoIcon}
 								</button>
 							</label>
 							<input
@@ -903,7 +876,7 @@
 											'Controls how conservative the clustering is. Higher values make clusters more conservative (fewer outliers classified as cluster members). Default: 5'
 										)}
 								>
-									{@html InfoIcon()}
+									{@html InfoIcon}
 								</button>
 							</label>
 							<input
@@ -943,7 +916,7 @@
 											'Select which LLM to use for generating topic names. The LLM will receive document samples from each cluster and generate descriptive labels.'
 										)}
 								>
-									{@html InfoIcon()}
+									{@html InfoIcon}
 								</button>
 							</label>
 							<select
@@ -987,7 +960,7 @@
 									onmouseenter={(e) =>
 										showTooltip(e, 'Minimum font size for cluster labels in points. Default: 12')}
 								>
-									{@html InfoIcon()}
+									{@html InfoIcon}
 								</button>
 							</label>
 							<input
@@ -1014,7 +987,7 @@
 									onmouseenter={(e) =>
 										showTooltip(e, 'Maximum font size for cluster labels in points. Default: 24')}
 								>
-									{@html InfoIcon()}
+									{@html InfoIcon}
 								</button>
 							</label>
 							<input
@@ -1046,7 +1019,7 @@
 											'Font family for labels (e.g., Arial, sans-serif). Default: Arial, sans-serif'
 										)}
 								>
-									{@html InfoIcon()}
+									{@html InfoIcon}
 								</button>
 							</label>
 							<input
@@ -1069,7 +1042,7 @@
 									onmouseenter={(e) =>
 										showTooltip(e, 'Hex color for unclustered (noise) points. Default: #999999')}
 								>
-									{@html InfoIcon()}
+									{@html InfoIcon}
 								</button>
 							</label>
 							<input
@@ -1093,7 +1066,7 @@
 									onmouseenter={(e) =>
 										showTooltip(e, 'Character count before wrapping labels. Default: 16')}
 								>
-									{@html InfoIcon()}
+									{@html InfoIcon}
 								</button>
 							</label>
 							<input
@@ -1123,7 +1096,7 @@
 											'Transparency of cluster boundary polygons. 0=invisible, 1=opaque. Default: 0.1'
 										)}
 								>
-									{@html InfoIcon()}
+									{@html InfoIcon}
 								</button>
 							</label>
 							<input
@@ -1155,7 +1128,7 @@
 									onmouseenter={(e) =>
 										showTooltip(e, 'Use dark background theme for the visualization')}
 								>
-									{@html InfoIcon()}
+									{@html InfoIcon}
 								</button>
 							</label>
 						</div>
@@ -1180,7 +1153,7 @@
 											'Use actual data points (medoids) instead of calculated centroids for cluster center positions'
 										)}
 								>
-									{@html InfoIcon()}
+									{@html InfoIcon}
 								</button>
 							</label>
 						</div>
@@ -1205,7 +1178,7 @@
 											'Draw alpha-shape boundary lines around clusters to visually separate them'
 										)}
 								>
-									{@html InfoIcon()}
+									{@html InfoIcon}
 								</button>
 							</label>
 						</div>

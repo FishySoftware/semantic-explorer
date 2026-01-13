@@ -301,8 +301,8 @@ mod tests {
     #[test]
     fn test_rag_config_default() {
         let config = RAGConfig::default();
-        assert_eq!(config.max_context_documents, 5);
-        assert_eq!(config.min_similarity_score, 0.5);
-        assert_eq!(config.max_tokens_context, 3000);
+        assert_eq!(config.max_context_documents, 20);
+        assert_eq!(config.min_similarity_score, 0.2);
+        assert_eq!(config.max_tokens_context, 5000);
     }
 }

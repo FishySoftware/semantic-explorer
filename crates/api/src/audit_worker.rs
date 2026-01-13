@@ -4,30 +4,13 @@
 //! persists them to the database with automatic retry and dead-letter queue handling.
 
 use crate::audit::{AUDIT_EVENTS_STREAM, AuditEvent};
+use crate::storage::postgres::audit;
 use async_nats::Client;
 use async_nats::jetstream::stream::RetentionPolicy;
 use futures_util::StreamExt;
 use sqlx::{Pool, Postgres};
 use std::time::Duration;
 use tracing::{error, info, warn};
-
-const INSERT_AUDIT_EVENT_QUERY: &str = r#"
-    INSERT INTO audit_events (
-        timestamp,
-        event_type,
-        outcome,
-        username,
-        request_id,
-        client_ip,
-        resource_type,
-        resource_id,
-        details
-    )
-    VALUES (
-        $1::timestamp with time zone, $2, $3, $4, $5, $6::inet, $7, $8, $9
-    )
-    ON CONFLICT DO NOTHING
-"#;
 
 /// Start the audit event consumer worker
 /// This function blocks indefinitely and should be spawned in a tokio task
@@ -79,22 +62,25 @@ pub async fn start_audit_consumer(
     Ok(())
 }
 
-/// Store an audit event in the database
+/// Store an audit event in the database using the storage layer
 async fn store_audit_event(pool: &Pool<Postgres>, event: &AuditEvent) -> Result<(), sqlx::Error> {
-    sqlx::query(INSERT_AUDIT_EVENT_QUERY)
-        .bind(&event.timestamp)
-        .bind(format!("{:?}", event.event_type))
-        .bind(format!("{:?}", event.outcome))
-        .bind(&event.user)
-        .bind(&event.request_id)
-        .bind(event.client_ip.as_deref())
-        .bind(event.resource_type.as_ref().map(|rt| format!("{:?}", rt)))
-        .bind(&event.resource_id)
-        .bind(&event.details)
-        .execute(pool)
-        .await?;
-
-    Ok(())
+    audit::store_audit_event(
+        pool,
+        &event.timestamp,
+        &format!("{:?}", event.event_type),
+        &format!("{:?}", event.outcome),
+        &event.user,
+        event.request_id.as_deref(),
+        event.client_ip.as_deref(),
+        event
+            .resource_type
+            .as_ref()
+            .map(|rt| format!("{:?}", rt))
+            .as_deref(),
+        event.resource_id.as_deref(),
+        event.details.as_deref(),
+    )
+    .await
 }
 
 /// Ensure the AUDIT_EVENTS stream exists in NATS JetStream

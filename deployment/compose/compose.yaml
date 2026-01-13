@@ -38,7 +38,7 @@ services:
       - OIDC_ISSUER_URL=http://localhost:5556/dex
       - OIDC_CLIENT_ID=semantic-explorer
       - OIDC_CLIENT_SECRET=ZXhhbXBsZS1hcHAtc2VjcmV0
-      - NATS_URL=nats://localhost:4222,localhost:4223,localhost:4224
+      - NATS_URL=nats://localhost:4222
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
       - SERVICE_NAME=semantic-explorer
       - SHUTDOWN_TIMEOUT_SECS=30
@@ -79,7 +79,7 @@ services:
     environment:
       - RUST_LOG=warn,actix_web_prom=error,worker_collections=debug
       - LOG_FORMAT=json
-      - NATS_URL=nats://localhost:4222,localhost:4223,localhost:4224
+      - NATS_URL=nats://localhost:4222
       - AWS_ACCESS_KEY_ID=test_access_key
       - AWS_SECRET_ACCESS_KEY=test_secret_key
       - AWS_REGION=us-east-1
@@ -102,7 +102,7 @@ services:
     environment:
       - RUST_LOG=warn,actix_web_prom=error,worker_datasets=debug
       - LOG_FORMAT=json
-      - NATS_URL=nats://localhost:4222,localhost:4223,localhost:4224
+      - NATS_URL=nats://localhost:4222
       - AWS_ACCESS_KEY_ID=test_access_key
       - AWS_SECRET_ACCESS_KEY=test_secret_key
       - AWS_REGION=us-east-1
@@ -124,9 +124,9 @@ services:
       - otel-collector
     restart: unless-stopped
     environment:
-      - NATS_URL=nats://localhost:4222,localhost:4223,localhost:4224
+      - NATS_URL=nats://localhost:4222
       - QDRANT_URL=http://localhost:6334
-      - S3_ENDPOINT=http://localhost:9000
+      - AWS_ENDPOINT_URL=http://localhost:9000
       - AWS_ACCESS_KEY_ID=test_access_key
       - AWS_SECRET_ACCESS_KEY=test_secret_key
       - AWS_REGION=us-east-1
@@ -341,7 +341,7 @@ services:
       - "-cluster_name"
       - "semantic-explorer-nats"
       - "-routes"
-      - "nats://nats-1:6222,nats://nats-2:6223,nats://nats-3:6224"
+      - "nats://localhost:6222,nats://localhost:6223,nats://localhost:6224"
       - "-name"
       - "nats-1"
     volumes:
@@ -375,7 +375,7 @@ services:
       - "-cluster_name"
       - "semantic-explorer-nats"
       - "-routes"
-      - "nats://nats-1:6222,nats://nats-2:6223,nats://nats-3:6224"
+      - "nats://localhost:6222,nats://localhost:6223,nats://localhost:6224"
       - "-name"
       - "nats-2"
     volumes:
@@ -409,7 +409,7 @@ services:
       - "-cluster_name"
       - "semantic-explorer-nats"
       - "-routes"
-      - "nats://nats-1:6222,nats://nats-2:6223,nats://nats-3:6224"
+      - "nats://localhost:6222,nats://localhost:6223,nats://localhost:6224"
       - "-name"
       - "nats-3"
     volumes:

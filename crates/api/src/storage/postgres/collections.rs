@@ -17,6 +17,8 @@ const GET_COLLECTION_QUERY: &str = r#"
 const GET_COLLECTIONS_QUERY: &str = r#"
     SELECT collection_id, title, details, owner, bucket, tags, is_public, created_at, updated_at 
     FROM collections
+    ORDER BY created_at DESC
+    LIMIT 1000
 "#;
 
 const GET_COLLECTIONS_PAGINATED_QUERY: &str = r#"
@@ -67,6 +69,7 @@ const GET_PUBLIC_COLLECTIONS_QUERY: &str = r#"
     FROM collections
     WHERE is_public = TRUE
     ORDER BY created_at DESC
+    LIMIT 1000
 "#;
 
 const GET_RECENT_PUBLIC_COLLECTIONS_QUERY: &str = r#"

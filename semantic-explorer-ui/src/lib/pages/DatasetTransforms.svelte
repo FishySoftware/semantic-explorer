@@ -91,6 +91,7 @@
 	let selectAll = $state(false);
 
 	function toggleSelectAll() {
+		selectAll = !selectAll;
 		if (selectAll) {
 			selected.clear();
 			for (const t of transforms) {
@@ -114,8 +115,7 @@
 		for (const id of selected) {
 			const transform = transforms.find((t) => t.dataset_transform_id === id);
 			if (transform) {
-				transform.is_enabled = enable;
-				await toggleEnabled(transform, false);
+				await toggleEnabled(transform, enable, false);
 			}
 		}
 		selected.clear();
@@ -243,12 +243,12 @@
 		}
 	}
 
-	async function toggleEnabled(transform: DatasetTransform, refresh = true) {
+	async function toggleEnabled(transform: DatasetTransform, targetState: boolean, refresh = true) {
 		try {
 			const response = await fetch(`/api/dataset-transforms/${transform.dataset_transform_id}`, {
 				method: 'PATCH',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ is_enabled: !transform.is_enabled }),
+				body: JSON.stringify({ is_enabled: targetState }),
 			});
 
 			if (!response.ok) {

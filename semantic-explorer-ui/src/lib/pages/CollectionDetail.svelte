@@ -1,4 +1,5 @@
 <script lang="ts">
+	/* eslint-disable svelte/no-at-html-tags */
 	import { onDestroy, onMount } from 'svelte';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import ApiExamples from '../ApiExamples.svelte';
@@ -7,8 +8,10 @@
 	import TabPanel from '../components/TabPanel.svelte';
 	import TransformsList from '../components/TransformsList.svelte';
 	import UploadProgressPanel from '../components/UploadProgressPanel.svelte';
+	import { ArrowLeftIcon, ArrowsExpandIcon, UploadIcon } from '../utils/icons';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { createSSEConnection, type SSEConnection } from '../utils/sse';
+	import { formatDate, formatFileSize } from '../utils/ui-helpers';
 
 	interface FileStatus {
 		name: string;
@@ -312,24 +315,6 @@
 		}
 	}
 
-	function formatFileSize(bytes: number): string {
-		if (bytes === 0) return '0 B';
-		const k = 1024;
-		const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-		const i = Math.floor(Math.log(bytes) / Math.log(k));
-		return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-	}
-
-	function formatDate(dateString: string | null): string {
-		if (!dateString) return 'N/A';
-		try {
-			const date = new Date(dateString);
-			return date.toLocaleString();
-		} catch {
-			return dateString;
-		}
-	}
-
 	function goToNextPage() {
 		if (!paginatedFiles?.has_more) return;
 
@@ -575,14 +560,7 @@
 <div class="max-w-7xl mx-auto">
 	<div class="mb-2">
 		<button onclick={onBack} class="mb-2 btn-secondary inline-flex items-center gap-2">
-			<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width="2"
-					d="M10 19l-7-7m0 0l7-7m-7 7h18"
-				></path>
-			</svg>
+			{@html ArrowLeftIcon}
 			Back to Collections
 		</button>
 
@@ -691,14 +669,7 @@
 											<span class="animate-spin">⏳</span>
 											Uploading...
 										{:else}
-											<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													stroke-width="2"
-													d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-												></path>
-											</svg>
+											{@html UploadIcon}
 											Upload Files
 										{/if}
 									</button>
@@ -962,14 +933,7 @@
 											class="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
 											title="Process files from this collection into a dataset"
 										>
-											<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													stroke-width="2"
-													d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
-												></path>
-											</svg>
+											{@html ArrowsExpandIcon}
 											Create Collection Transform
 										</button>
 									</div>
@@ -982,14 +946,7 @@
 										class="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
 										title="Process files from this collection into a dataset"
 									>
-										<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-											<path
-												stroke-linecap="round"
-												stroke-linejoin="round"
-												stroke-width="2"
-												d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
-											></path>
-										</svg>
+										{@html ArrowsExpandIcon}
 										Create Collection Transform
 									</button>
 								</div>

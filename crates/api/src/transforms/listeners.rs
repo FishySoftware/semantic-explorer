@@ -271,38 +271,13 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
         return;
     }
 
-    info!("Downloading chunks for: {}", result.source_file_key);
-    let chunks_content =
-        match get_file_with_size_check(&ctx.s3_client, &result.bucket, &result.chunks_file_key)
-            .await
-        {
-            Ok(c) => c,
-            Err(e) => {
-                error!(
-                    "Failed to download chunks for {}: {}",
-                    result.source_file_key, e
-                );
-                return;
-            }
-        };
+    // Use the chunk count directly from the worker - it already verified the chunks exist
+    let chunk_count = result.chunk_count as i32;
 
-    let chunks: Vec<ChunkWithMetadata> = match serde_json::from_slice(&chunks_content) {
-        Ok(c) => c,
-        Err(e) => {
-            error!(
-                "Failed to parse chunks for {}: {}",
-                result.source_file_key, e
-            );
-            return;
-        }
-    };
-
-    let chunk_count = chunks.len() as i32;
-
-    // Validate that we have at least one chunk
+    // Validate that the worker reported at least one chunk
     if chunk_count == 0 {
         error!(
-            "File extracted to 0 chunks for {}: text extraction likely failed or resulted in empty content",
+            "Worker reported 0 chunks for {}: text extraction likely failed or resulted in empty content",
             result.source_file_key
         );
         if let Err(e) = collection_transforms::record_processed_file(
@@ -333,12 +308,6 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
 
         return;
     }
-
-    let metadata = serde_json::json!({
-        "source_file": result.source_file_key,
-        "collection_transform_id": result.collection_transform_id,
-        "chunk_count": chunk_count,
-    });
 
     // Validate that the file key (title) is not empty or whitespace-only
     let title = result.source_file_key.trim();
@@ -372,6 +341,38 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
 
         return;
     }
+
+    info!("Downloading chunks for: {}", result.source_file_key);
+    let chunks_content =
+        match get_file_with_size_check(&ctx.s3_client, &result.bucket, &result.chunks_file_key)
+            .await
+        {
+            Ok(c) => c,
+            Err(e) => {
+                error!(
+                    "Failed to download chunks for {}: {}",
+                    result.source_file_key, e
+                );
+                return;
+            }
+        };
+
+    let chunks: Vec<ChunkWithMetadata> = match serde_json::from_slice(&chunks_content) {
+        Ok(c) => c,
+        Err(e) => {
+            error!(
+                "Failed to parse chunks for {}: {}",
+                result.source_file_key, e
+            );
+            return;
+        }
+    };
+
+    let metadata = serde_json::json!({
+        "source_file": result.source_file_key,
+        "collection_transform_id": result.collection_transform_id,
+        "chunk_count": chunk_count,
+    });
 
     info!("Creating dataset item for: {}", title);
     if let Err(e) = datasets::create_dataset_item(
@@ -479,14 +480,14 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
         "processing" => {
             // Record that processing has started
             info!(
-                "Marking batch as processing: {} (ed_id={}, chunks=0)",
-                result.batch_file_key, result.embedded_dataset_id
+                "Marking batch as processing: {} (ed_id={}, chunks={})",
+                result.batch_file_key, result.embedded_dataset_id, result.chunk_count
             );
             if let Err(e) = embedded_datasets::record_processed_batch(
                 &ctx.postgres_pool,
                 result.embedded_dataset_id,
                 &result.batch_file_key,
-                0,
+                result.chunk_count as i32,
                 "processing",
                 None,
                 None,
@@ -503,7 +504,7 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
                     dataset_transform_id: embedded_dataset.dataset_transform_id,
                     batch_key: result.batch_file_key.clone(),
                     status: "processing".to_string(),
-                    chunk_count: 0,
+                    chunk_count: result.chunk_count as i32,
                     error_message: None,
                     processing_duration_ms: None,
                 },
@@ -547,6 +548,7 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
                 "failed",
                 Some(&error_msg),
                 result.processing_duration_ms,
+                0,
             )
             .await
             {
@@ -596,6 +598,7 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
                 "success",
                 None,
                 result.processing_duration_ms,
+                result.chunk_count as i32,
             )
             .await
             {

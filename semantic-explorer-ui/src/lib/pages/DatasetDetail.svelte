@@ -1,4 +1,5 @@
 <script lang="ts">
+	/* eslint-disable svelte/no-at-html-tags */
 	import { onDestroy, onMount } from 'svelte';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import ApiExamples from '../ApiExamples.svelte';
@@ -7,8 +8,10 @@
 	import DatasetTransformProgressPanel from '../components/DatasetTransformProgressPanel.svelte';
 	import TabPanel from '../components/TabPanel.svelte';
 	import TransformsList from '../components/TransformsList.svelte';
+	import { ArrowLeftIcon, ArrowsExpandIcon } from '../utils/icons';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { createSSEConnection, type SSEConnection } from '../utils/sse';
+	import { formatDate } from '../utils/ui-helpers';
 
 	interface Dataset {
 		dataset_id: number;
@@ -277,6 +280,13 @@
 						transformProgressStats = stats;
 						startTransformProgressPolling();
 					}
+				} else if (
+					stats.is_processing &&
+					activeTransformProgress &&
+					activeTransformProgress.id === transformId
+				) {
+					// Update stats for the currently tracked transform
+					transformProgressStats = stats;
 				}
 			}
 		} catch (e) {
@@ -340,15 +350,6 @@
 		}
 	}
 
-	function formatTimestamp(timestamp: string) {
-		try {
-			return new Date(timestamp).toLocaleString();
-		} catch (e) {
-			console.warn('Failed to format timestamp', e);
-			return timestamp;
-		}
-	}
-
 	async function handleTransformCreated(transformId: number, transformTitle: string) {
 		// Set up progress tracking for the newly created transform
 		activeTransformProgress = {
@@ -368,7 +369,9 @@
 	}
 
 	async function fetchTransformProgressStats() {
-		if (!activeTransformProgress) return;
+		if (!activeTransformProgress) {
+			return;
+		}
 
 		try {
 			const response = await fetch(`/api/dataset-transforms/${activeTransformProgress.id}/stats`);
@@ -389,6 +392,7 @@
 			datasetTransformStatsMap = datasetTransformStatsMap;
 
 			console.debug('Transform stats:', {
+				transformId: activeTransformProgress.id,
 				batches: stats.total_batches_processed,
 				processing_batches: stats.processing_batches,
 				embedded: stats.total_chunks_embedded,
@@ -401,7 +405,7 @@
 			const terminalStatuses = ['completed', 'completed_with_errors', 'failed', 'idle'];
 			if (terminalStatuses.includes(stats.status) || !stats.is_processing) {
 				console.info(
-					`Transform ${stats.status}, is_processing=${stats.is_processing}, stopping polling`
+					`Transform ${activeTransformProgress.id} ${stats.status}, is_processing=${stats.is_processing}, stopping polling`
 				);
 				stopTransformProgressPolling();
 				// Refresh the transforms list to get final state
@@ -426,6 +430,9 @@
 		if (transformProgressPollInterval) {
 			clearInterval(transformProgressPollInterval);
 		}
+
+		// Fetch stats immediately before starting interval
+		fetchTransformProgressStats();
 
 		// Poll every 1 second for updates
 		transformProgressPollInterval = setInterval(() => {
@@ -654,14 +661,7 @@
 <div class="max-w-7xl mx-auto">
 	<div class="mb-4">
 		<button onclick={onBack} class="mb-4 btn-secondary inline-flex items-center gap-2">
-			<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width="2"
-					d="M10 19l-7-7m0 0l7-7m-7 7h18"
-				></path>
-			</svg>
+			{@html ArrowLeftIcon}
 			Back to Datasets
 		</button>
 
@@ -731,16 +731,16 @@
 				</div>
 			</div>
 
-			{#if activeTransformProgress && transformProgressStats}
+			{#if activeTransformProgress}
 				<DatasetTransformProgressPanel
 					datasetTransformId={activeTransformProgress.id}
 					title={activeTransformProgress.title}
 					sourceDatasetTitle={dataset?.title || 'Unknown Dataset'}
-					overallStatus={transformProgressStats.status || 'processing'}
-					totalItemsProcessed={transformProgressStats.total_chunks_embedded || 0}
-					totalItems={transformProgressStats.total_chunks_to_process || 0}
+					overallStatus={transformProgressStats?.status || 'processing'}
+					totalItemsProcessed={transformProgressStats?.total_chunks_embedded || 0}
+					totalItems={transformProgressStats?.total_chunks_to_process || 0}
 					startedAt={activeTransformProgress.startedAt}
-					embedderProgresses={transformProgressStats.embedders || []}
+					embedderProgresses={transformProgressStats?.embedders || []}
 				/>
 			{/if}
 
@@ -1104,19 +1104,7 @@
 													class="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
 													title="Create a transform to embed items from this dataset"
 												>
-													<svg
-														class="w-5 h-5"
-														fill="none"
-														stroke="currentColor"
-														viewBox="0 0 24 24"
-													>
-														<path
-															stroke-linecap="round"
-															stroke-linejoin="round"
-															stroke-width="2"
-															d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
-														></path>
-													</svg>
+													{@html ArrowsExpandIcon}
 													Create Dataset Transform
 												</button>
 											</div>
@@ -1129,14 +1117,7 @@
 												class="inline-flex items-center gap-2 px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
 												title="Create a transform to embed items from this dataset"
 											>
-												<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-													<path
-														stroke-linecap="round"
-														stroke-linejoin="round"
-														stroke-width="2"
-														d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
-													></path>
-												</svg>
+												{ArrowsExpandIcon}
 												Create Dataset Transform
 											</button>
 										</div>
@@ -1258,7 +1239,7 @@
 																</p>
 															</div>
 															<div class="text-xs text-gray-500 dark:text-gray-400">
-																Updated {formatTimestamp(embedded.updated_at)}
+																Updated {formatDate(embedded.updated_at)}
 															</div>
 														</div>
 													</div>

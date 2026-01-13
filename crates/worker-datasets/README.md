@@ -192,52 +192,46 @@ docker run \
 ### Environment Variables
 
 ```bash
-# Job Processing
-NATS_SERVER_URL=nats://localhost:4222
-NATS_CONSUMER_NAME=worker-datasets
-NATS_BATCH_SIZE=5  # Concurrent jobs
+# NATS JetStream Configuration
+NATS_URL=nats://localhost:4222
 
-# Qdrant
+# Qdrant Vector Database
 QDRANT_URL=http://localhost:6334
-QDRANT_API_KEY=
+QDRANT_API_KEY=              # Optional
 QDRANT_QUANTIZATION_TYPE=product  # product, scalar, none
 QDRANT_TIMEOUT_SECS=30
+QDRANT_CONNECT_TIMEOUT_SECS=10
 
-# Embedder Configuration
-EMBEDDER_PROVIDER=openai  # openai, cohere, local
-EMBEDDER_MODEL=text-embedding-3-small
-EMBEDDER_BATCH_SIZE=100
-EMBEDDER_TIMEOUT_SECS=60
+# AWS S3 Configuration
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=your-key
+AWS_SECRET_ACCESS_KEY=your-secret
+AWS_ENDPOINT_URL=http://localhost:9000
+S3_BUCKET_NAME=semantic-explorer-files
 
-# OpenAI
+# Embedder Provider Configuration
+# Choose one provider and set corresponding API key
+
+# OpenAI Embeddings (recommended)
 OPENAI_API_KEY=sk-...
-OPENAI_ORG_ID=  # Optional
 
-# Cohere
+# Cohere Embeddings
 COHERE_API_KEY=...
 
-# Local Model (ONNX)
-LOCAL_MODEL_PATH=/models/all-MiniLM-L6-v2.onnx
-
-# Deduplication & Caching
+# Redis (for request deduplication)
 REDIS_CLUSTER_NODES=localhost:6379
-REQUEST_DEDUP_TTL_SECS=3600
-ENABLE_EMBEDDING_CACHE=true
 
-# Database
-DATABASE_URL=postgresql://user:pass@localhost:5432/db
-S3_BUCKET=semantic-explorer-files
-S3_ENDPOINT=http://localhost:9000
+# Worker Configuration
+SERVICE_NAME=worker-datasets     # Optional, defaults to worker-datasets
+MAX_CONCURRENT_JOBS=10          # Number of jobs to process concurrently
 
-# Processing
-MAX_BATCH_SIZE=1000
-EMBEDDING_TIMEOUT_SECS=120
-COST_TRACKING_ENABLED=true
+# File Processing
+MAX_FILE_SIZE_MB=100            # Maximum file size to process
 
 # Observability
-LOG_LEVEL=info
-PROMETHEUS_PORT=8002
-OPENTELEMETRY_ENABLED=true
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+LOG_FORMAT=json
+RUST_LOG=worker_datasets=debug
 ```
 
 ## 💰 Cost Tracking

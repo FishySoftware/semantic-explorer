@@ -15,7 +15,7 @@ from typing import Any, Dict, Optional
 import numpy as np
 from qdrant_client import QdrantClient
 from umap import UMAP
-from hdbscan import HDBSCAN
+from fast_hdbscan import HDBSCAN
 import datamapplot
 
 try:

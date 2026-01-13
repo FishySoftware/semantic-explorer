@@ -54,10 +54,10 @@ const CREATE_COLLECTION_TRANSFORM_QUERY: &str = r#"
 
 const UPDATE_COLLECTION_TRANSFORM_QUERY: &str = r#"
     UPDATE collection_transforms
-    SET title = COALESCE($3, title),
-        is_enabled = COALESCE($4, is_enabled),
-        chunk_size = COALESCE($5, chunk_size),
-        job_config = COALESCE($6, job_config),
+    SET title = COALESCE($2, title),
+        is_enabled = COALESCE($3, is_enabled),
+        chunk_size = COALESCE($4, chunk_size),
+        job_config = COALESCE($5, job_config),
         updated_at = NOW()
     WHERE collection_transform_id = $1
     RETURNING collection_transform_id, title, collection_id, dataset_id, owner, is_enabled,

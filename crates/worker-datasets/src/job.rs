@@ -5,6 +5,7 @@ use qdrant_client::qdrant::{PointStruct, UpsertPointsBuilder};
 use semantic_explorer_core::models::{DatasetTransformJob, DatasetTransformResult};
 use semantic_explorer_core::observability::record_worker_job;
 use semantic_explorer_core::storage::get_file;
+use semantic_explorer_core::validation::{validate_bucket_name, validate_s3_key};
 use std::time::Instant;
 use tracing::{error, info, instrument};
 
@@ -27,6 +28,35 @@ pub(crate) struct BatchItem {
 pub(crate) async fn process_vector_job(job: DatasetTransformJob, ctx: WorkerContext) -> Result<()> {
     let start_time = Instant::now();
     info!("Processing vector job");
+
+    // Validate S3 inputs to prevent path traversal attacks
+    if let Err(e) = validate_bucket_name(&job.bucket) {
+        let duration = start_time.elapsed().as_secs_f64();
+        record_worker_job("vector-embed", duration, "failed_validation");
+        error!(error = %e, bucket = %job.bucket, "Invalid bucket name");
+        send_result(
+            &ctx.nats_client,
+            &job,
+            Err((0, format!("Invalid bucket name: {}", e))),
+            Some((duration * 1000.0) as i64),
+        )
+        .await?;
+        return Ok(());
+    }
+
+    if let Err(e) = validate_s3_key(&job.batch_file_key) {
+        let duration = start_time.elapsed().as_secs_f64();
+        record_worker_job("vector-embed", duration, "failed_validation");
+        error!(error = %e, key = %job.batch_file_key, "Invalid S3 key");
+        send_result(
+            &ctx.nats_client,
+            &job,
+            Err((0, format!("Invalid file key: {}", e))),
+            Some((duration * 1000.0) as i64),
+        )
+        .await?;
+        return Ok(());
+    }
 
     // Send immediate acknowledgment that processing has started
     // This allows the frontend to show progress as the job begins
@@ -267,8 +297,11 @@ async fn send_progress_update(
     };
 
     let payload = serde_json::to_vec(&result_msg)?;
-    nats.publish("worker.result.vector".to_string(), payload.into())
-        .await?;
+    nats.publish(
+        semantic_explorer_core::results::DATASET_TRANSFORM.to_string(),
+        payload.into(),
+    )
+    .await?;
     Ok(())
 }
 
