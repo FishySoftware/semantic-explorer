@@ -51,22 +51,21 @@ pub(crate) async fn initialize_client() -> Result<aws_sdk_s3::Client> {
     Ok(client)
 }
 
-/// Convert old per-collection bucket format to new single-bucket prefix format
-/// Old: bucket="{collection_id}", key="{filename}"
-/// New: bucket="{S3_BUCKET_NAME}", key="collections/{collection_id}/{filename}"
-fn normalize_s3_path(bucket: &str, key: &str) -> Result<(String, String)> {
+/// Get S3 bucket and key for collection files
+/// Uses single-bucket architecture: S3_BUCKET_NAME/collections/{collection_id}/{filename}
+fn get_collection_s3_path(collection_id: &str, key: &str) -> Result<(String, String)> {
     let s3_bucket =
         env::var("S3_BUCKET_NAME").context("S3_BUCKET_NAME is required for S3 operations")?;
+    let full_key = format!("collections/{}/{}", collection_id, key);
+    Ok((s3_bucket, full_key))
+}
 
-    // If bucket is numeric (collection_id), it's using old format
-    if bucket.chars().all(|c| c.is_numeric()) {
-        // Convert to new format: collections/{collection_id}/{key}
-        let new_key = format!("collections/{}/{}", bucket, key);
-        Ok((s3_bucket, new_key))
-    } else {
-        // Already in new format or using custom bucket
-        Ok((bucket.to_string(), key.to_string()))
-    }
+/// Get S3 bucket and prefix for listing collection files
+fn get_collection_s3_prefix(collection_id: &str) -> Result<(String, String)> {
+    let s3_bucket =
+        env::var("S3_BUCKET_NAME").context("S3_BUCKET_NAME is required for S3 operations")?;
+    let prefix = format!("collections/{}/", collection_id);
+    Ok((s3_bucket, prefix))
 }
 
 #[tracing::instrument(name = "s3.upload_document", skip(client, document), fields(storage.system = "s3", bucket = %document.collection_id, key = %document.name, size = document.content.len()))]
@@ -82,8 +81,8 @@ pub(crate) async fn upload_document(client: &Client, document: DocumentUpload) -
         "Uploading document to S3"
     );
 
-    // Convert to new single-bucket format
-    let (bucket, key) = normalize_s3_path(&document.collection_id, &document.name)?;
+    // Use single-bucket architecture
+    let (bucket, key) = get_collection_s3_path(&document.collection_id, &document.name)?;
 
     let result = client
         .put_object()
@@ -188,12 +187,8 @@ pub(crate) async fn list_files(
                 continue;
             }
 
-            // Extract display key (without prefix for old format)
-            let display_key = if bucket.chars().all(|c| c.is_numeric()) {
-                key.strip_prefix(&prefix).unwrap_or(key).to_string()
-            } else {
-                key.to_string()
-            };
+            // Extract display key (without prefix)
+            let display_key = key.strip_prefix(&prefix).unwrap_or(key).to_string();
 
             files.push(CollectionFile {
                 key: display_key.clone(),
@@ -222,15 +217,8 @@ pub(crate) async fn list_files(
     // Truncate to page_size and determine next cursor
     let next_cursor = if has_more {
         files.truncate(page_size_usize);
-        // Use the last file's key as the cursor for start_after pagination
-        files.last().map(|f| {
-            // Convert display key back to full S3 key for cursor
-            if bucket.chars().all(|c| c.is_numeric()) {
-                format!("{}{}", prefix, &f.key)
-            } else {
-                f.key.clone()
-            }
-        })
+        // Use the last file's full S3 key as the cursor for start_after pagination
+        files.last().map(|f| format!("{}{}", prefix, &f.key))
     } else {
         None
     };
@@ -266,8 +254,8 @@ pub(crate) async fn get_file(client: &Client, bucket: &str, key: &str) -> Result
         "Retrieving file from S3"
     );
 
-    // Normalize the path for single-bucket format
-    let (actual_bucket, actual_key) = normalize_s3_path(bucket, key)?;
+    // Use single-bucket architecture
+    let (actual_bucket, actual_key) = get_collection_s3_path(bucket, key)?;
 
     let result = client
         .get_object()
@@ -328,8 +316,8 @@ pub(crate) async fn get_file_with_size_check(
         "Checking file size before download"
     );
 
-    // Normalize the path for single-bucket format
-    let (actual_bucket, actual_key) = normalize_s3_path(bucket, key)?;
+    // Use single-bucket architecture
+    let (actual_bucket, actual_key) = get_collection_s3_path(bucket, key)?;
 
     // First, check file size using head_object
     let head_result = client
@@ -373,8 +361,8 @@ pub(crate) async fn delete_file(client: &Client, bucket: &str, key: &str) -> Res
         "Deleting file from S3"
     );
 
-    // Normalize the path for single-bucket format
-    let (actual_bucket, actual_key) = normalize_s3_path(bucket, key)?;
+    // Use single-bucket architecture
+    let (actual_bucket, actual_key) = get_collection_s3_path(bucket, key)?;
 
     let result = client
         .delete_object()
@@ -580,9 +568,13 @@ pub(crate) async fn empty_bucket(client: &Client, bucket: &str) -> Result<()> {
 
     tracing::debug!(bucket = %bucket, "Emptying S3 bucket");
 
+    // Use single-bucket architecture: S3_BUCKET_NAME/collections/{collection_id}/
+    let (actual_bucket, prefix) = get_collection_s3_prefix(bucket)?;
+
     let mut paginator = client
         .list_objects_v2()
-        .bucket(bucket)
+        .bucket(&actual_bucket)
+        .prefix(&prefix)
         .into_paginator()
         .send();
 
@@ -627,7 +619,7 @@ pub(crate) async fn empty_bucket(client: &Client, bucket: &str) -> Result<()> {
 
             match client
                 .delete_objects()
-                .bucket(bucket)
+                .bucket(&actual_bucket)
                 .delete(
                     aws_sdk_s3::types::Delete::builder()
                         .set_objects(Some(delete_objects))

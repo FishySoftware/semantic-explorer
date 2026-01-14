@@ -288,15 +288,9 @@ pub(crate) async fn delete_collections(
             .error_response();
     }
 
-    if let Err(e) = s3_client
-        .into_inner()
-        .delete_bucket()
-        .bucket(&collection.bucket)
-        .send()
-        .await
-    {
-        error!("error deleting collection bucket '{collection_id}' due to: {e:?}");
-    }
+    // Note: We don't delete the S3 bucket itself because collections use a shared bucket
+    // with prefixes (S3_BUCKET_NAME/collections/{collection_id}/). The empty_bucket call
+    // above removes all files under that prefix.
 
     match collections::delete_collection(&postgres_pool, collection_id, &user).await {
         Ok(_) => {
