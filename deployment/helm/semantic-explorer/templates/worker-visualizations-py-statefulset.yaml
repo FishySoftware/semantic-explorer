@@ -104,6 +104,11 @@ spec:
           containerPort: 8081
           protocol: TCP
         env:
+        # Temp directory for read-only root filesystem support
+        - name: TMPDIR
+          value: "/app/tmp"
+        - name: MPLCONFIGDIR
+          value: "/app/tmp/matplotlib"
         {{- range $key, $value := .Values.workerVisualizationsPy.env }}
         - name: {{ $key }}
           value: {{ $value | quote }}
@@ -150,12 +155,19 @@ spec:
         {{- end }}
         resources:
           {{- toYaml .Values.workerVisualizationsPy.resources | nindent 10 }}
-        {{- with .Values.workerVisualizationsPy.volumeMounts }}
         volumeMounts:
+        # Required for read-only root filesystem - temp directory for datamapplot/matplotlib
+        - name: tmp
+          mountPath: /app/tmp
+        {{- with .Values.workerVisualizationsPy.volumeMounts }}
           {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- with .Values.workerVisualizationsPy.volumes }}
       volumes:
+      # emptyDir for temp files - required for read-only root filesystem
+      - name: tmp
+        emptyDir:
+          sizeLimit: 512Mi
+      {{- with .Values.workerVisualizationsPy.volumes }}
         {{- toYaml . | nindent 6 }}
       {{- end }}
       {{- with .Values.workerVisualizationsPy.nodeSelector }}
