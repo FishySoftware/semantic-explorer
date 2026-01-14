@@ -56,7 +56,19 @@ pub async fn initialize_client() -> Result<aws_sdk_s3::Client> {
         .endpoint_url(env::var("AWS_ENDPOINT_URL")?)
         .load()
         .await;
-    Ok(Client::new(&shard_config))
+    
+    // Use path-style addressing for MinIO/S3-compatible storage when enabled
+    // Virtual-host style (default) tries to resolve bucket.endpoint as DNS
+    // Path-style uses endpoint/bucket instead
+    // Enable with S3_FORCE_PATH_STYLE=true for MinIO, disable for AWS S3
+    let force_path_style = env::var("S3_FORCE_PATH_STYLE")
+        .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+        .unwrap_or(false);
+    
+    let s3_config = aws_sdk_s3::config::Builder::from(&shard_config)
+        .force_path_style(force_path_style)
+        .build();
+    Ok(Client::from_conf(s3_config))
 }
 
 #[tracing::instrument(name = "s3.upload_document", skip(client, document), fields(storage.system = "s3", bucket = %document.collection_id, key = %document.name, size = document.content.len()))]

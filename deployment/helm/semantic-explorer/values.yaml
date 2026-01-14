@@ -844,6 +844,10 @@ storage:
     endpoint: ""  # e.g., "http://rustfs:9000", "https://s3.amazonaws.com"
     region: "us-east-1"
     bucketName: "semantic-explorer-files"  # S3 bucket name for all collections and files
+    # Force path-style addressing (bucket in URL path instead of subdomain)
+    # Set to true for MinIO, Ceph, and other S3-compatible storage
+    # Set to false for AWS S3 (uses virtual-host style: bucket.s3.region.amazonaws.com)
+    forcePathStyle: false
     accessKeyId: ""
     secretAccessKey: ""
     existingSecret: ""

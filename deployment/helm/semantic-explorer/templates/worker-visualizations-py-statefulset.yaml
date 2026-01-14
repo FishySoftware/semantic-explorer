@@ -143,6 +143,8 @@ spec:
           value: {{ include "semantic-explorer.storage.s3.region" . }}
         - name: AWS_ENDPOINT_URL
           value: {{ include "semantic-explorer.storage.s3.endpoint" . }}
+        - name: S3_FORCE_PATH_STYLE
+          value: {{ include "semantic-explorer.storage.s3.forcePathStyle" . | quote }}
         - name: S3_BUCKET_NAME
           value: {{ .Values.storage.s3.bucketName }}
         {{- if .Values.observability.otelCollector.enabled }}

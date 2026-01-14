@@ -541,6 +541,18 @@ Storage S3 endpoint
 {{- end }}
 
 {{/*
+Storage S3 force path style
+Returns "true" if forcePathStyle is enabled or if using MinIO (which requires it)
+*/}}
+{{- define "semantic-explorer.storage.s3.forcePathStyle" -}}
+{{- if .Values.minio.enabled }}
+{{- "true" }}
+{{- else }}
+{{- .Values.storage.s3.forcePathStyle | default false | toString }}
+{{- end }}
+{{- end }}
+
+{{/*
 Storage S3 region
 */}}
 {{- define "semantic-explorer.storage.s3.region" -}}
