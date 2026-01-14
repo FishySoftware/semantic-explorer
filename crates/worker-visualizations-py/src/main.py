@@ -168,13 +168,6 @@ async def readiness_check_handler(request):
     if not health_state.is_ready:
         return web.Response(text="Not ready: worker not initialized", status=503)
 
-    # Check if worker has become unresponsive (no jobs processed in 5 minutes)
-    time_since_last_job = time.time() - health_state.last_job_time
-    if time_since_last_job > 300:  # 5 minutes
-        return web.Response(
-            text=f"Not ready: no activity for {time_since_last_job:.0f}s", status=503
-        )
-
     if health_state.error_message:
         return web.Response(text=f"Not ready: {health_state.error_message}", status=503)
 

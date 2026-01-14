@@ -150,8 +150,9 @@ async fn process_dataset_transform_scan(
         // Use the minimum of configured batch size and embedder's max_batch_size
         let embedding_batch_size = configured_batch_size.min(embedder.max_batch_size as usize);
 
-        // The bucket name is derived from the Qdrant collection name (lowercase)
-        let bucket = embedded_dataset.collection_name.to_lowercase();
+        // The bucket name is derived from the embedded dataset ID (S3-safe)
+        // Using just the ID ensures bucket names are valid (no @, dots in wrong places, etc.)
+        let bucket = format!("embedded-dataset-{}", embedded_dataset.embedded_dataset_id);
 
         // Ensure the S3 bucket exists
         if let Err(e) = ensure_bucket_exists(s3, &bucket).await {

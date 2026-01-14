@@ -606,8 +606,8 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
             }
 
             // Clean up the batch file from S3 after successful processing and database recording
-            // The bucket name is derived from the collection name (lowercase)
-            let bucket = embedded_dataset.collection_name.to_lowercase();
+            // The bucket name is derived from the embedded dataset ID (S3-safe)
+            let bucket = format!("embedded-dataset-{}", embedded_dataset.embedded_dataset_id);
             if let Err(e) = delete_file(&ctx.s3_client, &bucket, &result.batch_file_key).await {
                 // Log the error but don't fail the overall operation
                 // The batch was successfully processed and recorded, cleanup failure is non-critical
