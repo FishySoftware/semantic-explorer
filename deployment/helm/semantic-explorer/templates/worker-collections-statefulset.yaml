@@ -43,6 +43,53 @@ spec:
       {{- with .Values.workerCollections.priorityClassName }}
       priorityClassName: {{ . }}
       {{- end }}
+      initContainers:
+      {{- if not .Values.nats.external.enabled }}
+      - name: wait-for-nats
+        image: {{ include "semantic-explorer.initContainer.image" . }}
+        securityContext:
+          {{- include "semantic-explorer.initContainer.securityContext" . | nindent 10 }}
+        command:
+          - sh
+          - -c
+          - |
+            echo "Waiting for NATS at {{ include "semantic-explorer.nats.host" . }}:{{ include "semantic-explorer.nats.port" . }}..."
+            until nc -z {{ include "semantic-explorer.nats.host" . }} {{ include "semantic-explorer.nats.port" . }}; do
+              echo "NATS not ready, waiting..."
+              sleep 2
+            done
+            echo "NATS is ready!"
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+      {{- end }}
+      {{- if .Values.minio.enabled }}
+      - name: wait-for-minio
+        image: {{ include "semantic-explorer.initContainer.image" . }}
+        securityContext:
+          {{- include "semantic-explorer.initContainer.securityContext" . | nindent 10 }}
+        command:
+          - sh
+          - -c
+          - |
+            echo "Waiting for MinIO at {{ include "semantic-explorer.minio.host" . }}:{{ include "semantic-explorer.minio.port" . }}..."
+            until nc -z {{ include "semantic-explorer.minio.host" . }} {{ include "semantic-explorer.minio.port" . }}; do
+              echo "MinIO not ready, waiting..."
+              sleep 2
+            done
+            echo "MinIO is ready!"
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+      {{- end }}
       containers:
       - name: worker-collections
         image: {{ include "semantic-explorer.workerCollections.image" . }}
@@ -92,7 +139,14 @@ spec:
         {{- end }}
         resources:
           {{- toYaml .Values.workerCollections.resources | nindent 10 }}
-        volumeMounts: {}
+        {{- with .Values.workerCollections.volumeMounts }}
+        volumeMounts:
+          {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.workerCollections.volumes }}
+      volumes:
+        {{- toYaml . | nindent 6 }}
+      {{- end }}
       {{- with .Values.workerCollections.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -105,5 +159,5 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      volumes: {}
+      
 {{- end }}

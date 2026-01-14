@@ -7,6 +7,9 @@ global:
   imageRegistry: "docker.io"
   imagePullSecrets: []
   storageClass: ""
+  # Init container image for startup ordering (secure, non-root)
+  initContainer:
+    image: "busybox:1.36"
   securityContext:
     runAsNonRoot: true
     runAsUser: 10001
@@ -60,7 +63,7 @@ api:
   image:
     repository: jofish89/semantic-explorer
     tag: "latest"
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   statefulset:
     podManagementPolicy: Parallel
     updateStrategy:
@@ -187,7 +190,7 @@ workerCollections:
   image:
     repository: jofish89/worker-collections
     tag: "latest"
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   statefulset:
     podManagementPolicy: Parallel
     updateStrategy:
@@ -253,7 +256,7 @@ workerDatasets:
   image:
     repository: jofish89/worker-datasets
     tag: "latest"
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   statefulset:
     podManagementPolicy: Parallel
     updateStrategy:
@@ -319,7 +322,7 @@ workerVisualizationsPy:
   image:
     repository: jofish89/worker-visualizations-py
     tag: "latest"
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   statefulset:
     podManagementPolicy: Parallel
     updateStrategy:
@@ -424,20 +427,20 @@ postgresql:
     password: ""  # Generate random if empty
     existingSecret: ""
     secretKeys:
-      userPasswordKey: "password"
+      userPasswordKey: "database-password"
   primary:
     resources:
       requests:
-        cpu: 500m
-        memory: 512Mi
-      limits:
         cpu: 2000m
-        memory: 2Gi
+        memory: 4Gi
+      limits:
+        cpu: 4000m
+        memory: 8Gi
     persistence:
       enabled: true
       storageClass: ""  # Defaults to global.storageClass
       accessMode: ReadWriteOnce
-      size: 20Gi
+      size: 100Gi
     podSecurityContext:
       runAsNonRoot: true
       runAsUser: 999
@@ -560,6 +563,8 @@ nats:
     tag: "2.10-alpine"
     pullPolicy: IfNotPresent
   # Internal NATS configuration
+  natsBox:
+    enabled: false
   config:
     jetstream:
       enabled: true
@@ -571,34 +576,34 @@ nats:
   resources:
     requests:
       cpu: 1000m
-      memory: 512Mi
+      memory: 1Gi
     limits:
-      cpu: 2000m
-      memory: 2Gi
+      cpu: 4000m
+      memory: 4Gi
   persistence:
     enabled: true
     storageClass: ""  # Defaults to global.storageClass
     accessMode: ReadWriteOnce
     size: 10Gi
-  service:
-    type: ClusterIP
-    client:
-      port: 4222
-    monitoring:
-      port: 8222
-    cluster:
-      port: 6222
-  podSecurityContext:
-    runAsNonRoot: true
-    runAsUser: 1000
-    fsGroup: 1000
-    fsGroupChangePolicy: "OnRootMismatch"
-  containerSecurityContext:
-    allowPrivilegeEscalation: false
-    capabilities:
-      drop:
-        - ALL
-    readOnlyRootFilesystem: false  # NATS needs writable filesystem for JetStream
+  # NATS subchart configuration (official nats chart)
+  # See: https://github.com/nats-io/k8s/tree/main/helm/charts/nats
+  container:
+    merge:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+  podTemplate:
+    merge:
+      spec:
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          fsGroup: 1000
+          fsGroupChangePolicy: "OnRootMismatch"
   metrics:
     enabled: true
     serviceMonitor:
@@ -619,9 +624,8 @@ qdrant:
     apiKeyKey: "api-key"
   # Internal Qdrant deployment
   image:
-    registry: ""  # Defaults to global.imageRegistry
     repository: qdrant/qdrant
-    tag: "latest"
+    tag: "v1.16.3"
     pullPolicy: IfNotPresent
   replicaCount: 3
   cluster:
@@ -650,11 +654,11 @@ qdrant:
       port: 6333
     grpc:
       port: 6334
+  updateVolumeFsOwnership: false
   podSecurityContext:
-    runAsNonRoot: true
+    runAsNonRoot: false
     runAsUser: 1000
     fsGroup: 1000
-    fsGroupChangePolicy: "OnRootMismatch"
   containerSecurityContext:
     allowPrivilegeEscalation: false
     capabilities:
@@ -809,6 +813,14 @@ minio:
       drop:
         - ALL
     readOnlyRootFilesystem: false
+  # Auto-create buckets on startup
+  buckets:
+    - name: semantic-explorer-files
+      policy: none
+      purge: false
+    - name: quickwit
+      policy: none
+      purge: false
 
 # Storage Configuration (S3-compatible)
 # Configure external S3-compatible storage or use MinIO
@@ -852,41 +864,64 @@ observability:
         cpu: 1000m
         memory: 1Gi
     config:
+      extensions:
+        health_check:
+          endpoint: 0.0.0.0:13133
       receivers:
         otlp:
           protocols:
             grpc:
               endpoint: 0.0.0.0:4317
+              max_recv_msg_size_mib: 100
             http:
               endpoint: 0.0.0.0:4318
       processors:
         batch:
           timeout: 10s
           send_batch_size: 1024
+        memory_limiter:
+          check_interval: 1s
+          limit_mib: 512
+          spike_limit_mib: 128
       exporters:
         prometheus:
           endpoint: "0.0.0.0:8889"
+        debug:
+          verbosity: detailed
+        # Logging exporter as fallback when Quickwit is unavailable
         logging:
-          loglevel: info
+          verbosity: normal
+          sampling_initial: 5
+          sampling_thereafter: 200
         # Quickwit exporter for traces and logs (when enabled)
         otlp/quickwit:
-          endpoint: "{{ include \"semantic-explorer.quickwit.url\" . }}:7281"
+          endpoint: "{{ include \"semantic-explorer.fullname\" . }}-quickwit:7281"
           tls:
             insecure: true
+          retry_on_failure:
+            enabled: true
+            initial_interval: 5s
+            max_interval: 30s
+            max_elapsed_time: 300s
+          sending_queue:
+            enabled: true
+            num_consumers: 10
+            queue_size: 5000
       service:
+        extensions: [health_check]
         pipelines:
           traces:
             receivers: [otlp]
-            processors: [batch]
-            exporters: [logging, otlp/quickwit]
+            processors: [memory_limiter, batch]
+            exporters: [otlp/quickwit, logging]
           metrics:
             receivers: [otlp]
-            processors: [batch]
-            exporters: [prometheus, logging]
+            processors: [memory_limiter, batch]
+            exporters: [prometheus, debug]
           logs:
             receivers: [otlp]
-            processors: [batch]
-            exporters: [logging, otlp/quickwit]
+            processors: [memory_limiter, batch]
+            exporters: [otlp/quickwit, logging]
     service:
       type: ClusterIP
       ports:
@@ -905,87 +940,16 @@ observability:
           - ALL
       readOnlyRootFilesystem: true
   
-  # Prometheus
+  # Prometheus configuration
+  # See: https://github.com/prometheus-community/helm-charts/tree/main/charts/prometheus
   prometheus:
-    enabled: false  # Use Prometheus Operator instead
-    # Use existing Prometheus instance
+    enabled: true  # Deploy Prometheus for metrics storage
+    # Use existing Prometheus instance instead
     external:
       enabled: false
       url: ""  # e.g., "http://prometheus.monitoring:9090"
-  
-  # Grafana
-  grafana:
-    enabled: true  # Deploy Grafana for metrics visualization
-    # Use existing Grafana instance
-    external:
-      enabled: false
-      url: ""  # e.g., "http://grafana.monitoring:3000"
-    image:
-      registry: ""  # Defaults to global.imageRegistry
-      repository: grafana/grafana
-      tag: "latest"
-      pullPolicy: IfNotPresent
-    admin:
-      existingSecret: ""
-      userKey: "admin-user"
-      passwordKey: "admin-password"
-      user: "admin"
-      password: ""  # Generate random if empty
-    config:
-      securityAdminUser: "admin"
-      securityAdminPassword: ""  # Use admin.password if empty
-      usersAllowSignUp: false
-      installPlugins: "grafana-clock-panel"
-    datasources:
-      prometheus:
-        enabled: true
-        url: "http://prometheus:9090"
-        isDefault: true
-      quickwitTraces:
-        enabled: true
-      quickwitLogs:
-        enabled: true
-    dashboards:
-      enabled: true
-      # Dashboard files will be mounted from configmaps
-    resources:
-      requests:
-        cpu: 250m
-        memory: 256Mi
-      limits:
-        cpu: 1000m
-        memory: 1Gi
-    persistence:
-      enabled: true
-      storageClass: ""  # Defaults to global.storageClass
-      accessMode: ReadWriteOnce
-      size: 5Gi
-    service:
-      type: ClusterIP
-      port: 3000
-    ingress:
-      enabled: false
-      className: "nginx"
-      annotations: {}
-      hosts:
-        - host: grafana.example.com
-          paths:
-            - path: /
-              pathType: Prefix
-      tls: []
-    podSecurityContext:
-      runAsNonRoot: true
-      runAsUser: 472
-      fsGroup: 472
-      fsGroupChangePolicy: "OnRootMismatch"
-    containerSecurityContext:
-      allowPrivilegeEscalation: false
-      capabilities:
-        drop:
-          - ALL
-      readOnlyRootFilesystem: false
-  
-  # Quickwit (Log aggregation and tracing)
+
+  # Quickwit (Log aggregation and tracing) - our own template, not a subchart
   quickwit:
     enabled: true  # Enable Quickwit for logs and traces
     # Use external Quickwit instance
@@ -998,11 +962,13 @@ observability:
       repository: quickwit/quickwit
       tag: "latest"
       pullPolicy: IfNotPresent
-    replicaCount: 1
+    replicaCount: 2  # 2 replicas for HA with shared S3 storage
     config:
       enableOtlpEndpoint: true
-      enableJaegerEndpoint: true
       logLevel: "info"
+    # S3 storage configuration (used when minio.enabled=true)
+    storage:
+      bucketName: "quickwit"  # Dedicated bucket for Quickwit metastore and indexes
     resources:
       requests:
         cpu: 500m
@@ -1049,3 +1015,160 @@ observability:
         interval: 30s
     nodeSelector: {}
     tolerations: []
+
+# Prometheus subchart configuration (prometheus-community/prometheus)
+prometheus:
+  enabled: true  # Deploy Prometheus for metrics storage
+  # Disable unused components
+  alertmanager:
+    enabled: false
+  prometheus-pushgateway:
+    enabled: false
+  kube-state-metrics:
+    enabled: false
+  prometheus-node-exporter:
+    enabled: false
+  # Server configuration
+  server:
+    retention: "15d"
+    persistentVolume:
+      enabled: true
+      size: 50Gi
+      storageClass: ""
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 65534
+      runAsGroup: 65534
+      fsGroup: 65534
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+  # Scrape configs using Kubernetes service discovery
+  serverFiles:
+    prometheus.yml:
+      scrape_configs:
+        # Prometheus self-scrape
+        - job_name: prometheus
+          static_configs:
+            - targets:
+                - localhost:9090
+        # OTEL Collector metrics (exports app metrics in Prometheus format)
+        - job_name: otel-collector
+          scrape_interval: 15s
+          kubernetes_sd_configs:
+            - role: endpoints
+              namespaces:
+                own_namespace: true
+          relabel_configs:
+            - source_labels: [__meta_kubernetes_service_name]
+              regex: .*-otel-collector
+              action: keep
+            - source_labels: [__meta_kubernetes_endpoint_port_name]
+              regex: metrics
+              action: keep
+        # API service metrics
+        - job_name: api
+          scrape_interval: 15s
+          kubernetes_sd_configs:
+            - role: endpoints
+              namespaces:
+                own_namespace: true
+          relabel_configs:
+            - source_labels: [__meta_kubernetes_service_name]
+              regex: .*-api
+              action: keep
+            - source_labels: [__meta_kubernetes_endpoint_port_name]
+              regex: http
+              action: keep
+          metrics_path: /metrics
+        # Worker services metrics
+        - job_name: workers
+          scrape_interval: 15s
+          kubernetes_sd_configs:
+            - role: endpoints
+              namespaces:
+                own_namespace: true
+          relabel_configs:
+            - source_labels: [__meta_kubernetes_service_name]
+              regex: .*-worker-.*
+              action: keep
+            - source_labels: [__meta_kubernetes_endpoint_port_name]
+              regex: http
+              action: keep
+          metrics_path: /metrics
+  service:
+    type: ClusterIP
+
+# Grafana subchart configuration (grafana/grafana)
+# See: https://github.com/grafana/helm-charts/tree/main/charts/grafana
+grafana:
+  enabled: true  # Deploy Grafana for metrics visualization
+  # Use existing Grafana instance
+  external:
+    enabled: false
+    url: ""  # e.g., "http://grafana.monitoring:3000"
+  # Grafana subchart configuration
+  adminUser: admin
+  adminPassword: ""  # Generate random if empty
+  # Sidecar for auto-discovering dashboards from ConfigMaps
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      folder: /tmp/dashboards
+      searchNamespace: ALL
+    datasources:
+      enabled: true
+      label: grafana_datasource
+      labelValue: "1"
+  # Datasources are provided via ConfigMap with grafana_datasource label
+  # See templates/grafana-datasources-configmap.yaml
+  # Install Quickwit datasource plugin
+  plugins:
+    - quickwit-quickwit-datasource
+  # Dashboards are auto-discovered by the sidecar from ConfigMaps with grafana_dashboard label
+  # No need to configure dashboards here - they're loaded dynamically
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  persistence:
+    enabled: true
+    storageClassName: ""  # Defaults to global.storageClass
+    accessModes:
+      - ReadWriteOnce
+    size: 5Gi
+  service:
+    type: ClusterIP
+    port: 3000
+  ingress:
+    enabled: false
+    ingressClassName: "nginx"
+    annotations: {}
+    hosts:
+      - grafana.example.com
+    tls: []
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 472
+    runAsGroup: 472
+    fsGroup: 472
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: false

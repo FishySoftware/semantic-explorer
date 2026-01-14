@@ -1,6 +1,6 @@
 {{- if .Values.observability.quickwit.enabled }}
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: {{ include "semantic-explorer.fullname" . }}-quickwit
   namespace: {{ .Release.Namespace }}
@@ -11,7 +11,9 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  replicas: {{ .Values.observability.quickwit.replicaCount }}
+  serviceName: {{ include "semantic-explorer.quickwit.headlessService" . }}
+  replicas: {{ .Values.observability.quickwit.replicaCount | default 2 }}
+  podManagementPolicy: Parallel
   selector:
     matchLabels:
       {{- include "semantic-explorer.quickwit.selectorLabels" . | nindent 6 }}
@@ -31,13 +33,37 @@ spec:
       {{- end }}
       securityContext:
         {{- toYaml .Values.observability.quickwit.podSecurityContext | nindent 8 }}
+      initContainers:
+      {{- if .Values.minio.enabled }}
+      - name: wait-for-minio
+        image: {{ include "semantic-explorer.initContainer.image" . }}
+        securityContext:
+          {{- include "semantic-explorer.initContainer.securityContext" . | nindent 10 }}
+        command:
+          - sh
+          - -c
+          - |
+            echo "Waiting for MinIO at {{ include "semantic-explorer.minio.host" . }}:{{ include "semantic-explorer.minio.port" . }}..."
+            until nc -z {{ include "semantic-explorer.minio.host" . }} {{ include "semantic-explorer.minio.port" . }}; do
+              echo "MinIO not ready, waiting..."
+              sleep 2
+            done
+            echo "MinIO is ready!"
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+      {{- end }}
       containers:
       - name: quickwit
         image: {{ include "semantic-explorer.quickwit.image" . }}
         imagePullPolicy: {{ .Values.observability.quickwit.image.pullPolicy }}
         securityContext:
           {{- toYaml .Values.observability.quickwit.containerSecurityContext | nindent 10 }}
-        command: ["run"]
+        command: ["quickwit", "run", "--config", "/quickwit/config/quickwit.yaml"]
         ports:
         - name: rest
           containerPort: {{ .Values.observability.quickwit.service.rest.port }}
@@ -46,14 +72,52 @@ spec:
           containerPort: {{ .Values.observability.quickwit.service.grpc.port }}
           protocol: TCP
         env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: QW_CLUSTER_ID
+          value: {{ include "semantic-explorer.fullname" . }}
+        - name: QW_NODE_ID
+          value: "$(POD_NAME)"
+        - name: QW_PEER_SEEDS
+          value: {{ include "semantic-explorer.quickwit.peerSeeds" . | quote }}
+        - name: QW_ADVERTISE_ADDRESS
+          value: "$(POD_NAME).{{ include "semantic-explorer.quickwit.headlessService" . }}"
         - name: QW_ENABLE_OTLP_ENDPOINT
           value: {{ .Values.observability.quickwit.config.enableOtlpEndpoint | quote }}
-        - name: QW_ENABLE_JAEGER_ENDPOINT
-          value: {{ .Values.observability.quickwit.config.enableJaegerEndpoint | quote }}
         - name: RUST_LOG
           value: {{ .Values.observability.quickwit.config.logLevel }}
         - name: QW_DATA_DIR
           value: /quickwit/qwdata
+        {{- if .Values.minio.enabled }}
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "semantic-explorer.fullname" . }}-secrets
+              key: aws-access-key-id
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "semantic-explorer.fullname" . }}-secrets
+              key: aws-secret-access-key
+        - name: AWS_REGION
+          value: {{ include "semantic-explorer.storage.s3.region" . }}
+        - name: QW_S3_ENDPOINT
+          value: {{ include "semantic-explorer.storage.s3.endpoint" . }}
+        {{- end }}
+        startupProbe:
+          httpGet:
+            path: /health/livez
+            port: rest
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 30
         livenessProbe:
           httpGet:
             path: /health/livez
@@ -76,7 +140,7 @@ spec:
         - name: data
           mountPath: /quickwit/qwdata
         - name: config
-          mountPath: /quickwit/node.yaml
+          mountPath: /quickwit/config/quickwit.yaml
           subPath: node.yaml
       {{- with .Values.observability.quickwit.nodeSelector }}
       nodeSelector:
@@ -87,14 +151,23 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       volumes:
-      - name: data
-        {{- if .Values.observability.quickwit.persistence.enabled }}
-        persistentVolumeClaim:
-          claimName: {{ include "semantic-explorer.fullname" . }}-quickwit
-        {{- else }}
-        emptyDir: {}
-        {{- end }}
       - name: config
         configMap:
           name: {{ include "semantic-explorer.fullname" . }}-quickwit-config
+  {{- if .Values.observability.quickwit.persistence.enabled }}
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "{{ .Values.observability.quickwit.persistence.accessMode }}" ]
+      {{- if .Values.observability.quickwit.persistence.storageClass }}
+      storageClassName: {{ .Values.observability.quickwit.persistence.storageClass }}
+      {{- end }}
+      resources:
+        requests:
+          storage: {{ .Values.observability.quickwit.persistence.size }}
+  {{- else }}
+      - name: data
+        emptyDir: {}
+  {{- end }}
 {{- end }}

@@ -27,7 +27,10 @@ semantic-explorer-ui/
 │   ├── App.svelte               # Root component with routing
 │   ├── app.css                  # Global styles (Tailwind)
 │   └── lib/
-│       ├── pages/               # Page components (23 pages)
+│       ├── ApiExamples.svelte   # API examples component
+│       ├── Sidebar.svelte       # Navigation sidebar
+│       ├── TopBanner.svelte     # Top navigation banner
+│       ├── pages/               # Page components (22 pages)
 │       │   ├── Collections.svelte
 │       │   ├── Datasets.svelte
 │       │   ├── Embedders.svelte
@@ -108,6 +111,7 @@ flowchart TD
 | Deck.gl         | 9.2     | WebGL visualizations     |
 | marked          | 17.0    | Markdown rendering       |
 | highlight.js    | 11.11   | Code syntax highlighting |
+| DOMPurify       | 3.3     | HTML sanitization        |
 
 ## Page Structure
 
@@ -134,7 +138,7 @@ flowchart TD
 | Search                         | `/search`                        | Semantic search interface      |
 | Chat                           | `/chat`                          | Chat with documents            |
 | Marketplace                    | `/marketplace`                   | Public resources               |
-| Sessions                       | `/sessions`                      | Active session management      |
+| Grab Resource                  | `/grab`                          | Clone marketplace resources    |
 | Documentation                  | `/docs`                          | Help documentation             |
 
 ## Component Library
@@ -146,12 +150,14 @@ flowchart TD
 - `SelectField` - Dropdown selection
 - `MultiSelectField` - Multi-select with chips
 - `TabPanel` - Tabbed content panels
+- `SearchInput` - Search input with icon
 
 ### Action Components
 
 - `ActionMenu` - Dropdown action menu
 - `ConfirmDialog` - Confirmation modal
 - `StatusBadge` - Status indicator badge
+- `PageHeader` - Page header with title and actions
 
 ### Progress Components
 
@@ -160,11 +166,16 @@ flowchart TD
 - `TransformCard` - Transform status card
 - `TransformsList` - List of transforms
 
+### State Components
+
+- `LoadingState` - Loading spinner and message
+- `EmptyState` - Empty content placeholder
+- `ErrorState` - Error display with retry
+
 ### Modal Components
 
 - `CreateCollectionTransformModal` - Create extraction pipeline
 - `CreateDatasetTransformModal` - Create embedding pipeline
-- `CreateVisualizationTransformModal` - Create visualization
 
 ### Utility Components
 

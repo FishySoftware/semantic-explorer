@@ -43,6 +43,53 @@ spec:
       {{- with .Values.workerDatasets.priorityClassName }}
       priorityClassName: {{ . }}
       {{- end }}
+      initContainers:
+      {{- if not .Values.nats.external.enabled }}
+      - name: wait-for-nats
+        image: {{ include "semantic-explorer.initContainer.image" . }}
+        securityContext:
+          {{- include "semantic-explorer.initContainer.securityContext" . | nindent 10 }}
+        command:
+          - sh
+          - -c
+          - |
+            echo "Waiting for NATS at {{ include "semantic-explorer.nats.host" . }}:{{ include "semantic-explorer.nats.port" . }}..."
+            until nc -z {{ include "semantic-explorer.nats.host" . }} {{ include "semantic-explorer.nats.port" . }}; do
+              echo "NATS not ready, waiting..."
+              sleep 2
+            done
+            echo "NATS is ready!"
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+      {{- end }}
+      {{- if not .Values.qdrant.external.enabled }}
+      - name: wait-for-qdrant
+        image: {{ include "semantic-explorer.initContainer.image" . }}
+        securityContext:
+          {{- include "semantic-explorer.initContainer.securityContext" . | nindent 10 }}
+        command:
+          - sh
+          - -c
+          - |
+            echo "Waiting for Qdrant at {{ include "semantic-explorer.qdrant.host" . }}:{{ include "semantic-explorer.qdrant.port" . }}..."
+            until nc -z {{ include "semantic-explorer.qdrant.host" . }} {{ include "semantic-explorer.qdrant.port" . }}; do
+              echo "Qdrant not ready, waiting..."
+              sleep 2
+            done
+            echo "Qdrant is ready!"
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+      {{- end }}
       containers:
       - name: worker-datasets
         image: {{ include "semantic-explorer.workerDatasets.image" . }}
@@ -94,7 +141,14 @@ spec:
         {{- end }}
         resources:
           {{- toYaml .Values.workerDatasets.resources | nindent 10 }}
-        volumeMounts: {}
+        {{- with .Values.workerDatasets.volumeMounts }}
+        volumeMounts:
+          {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.workerDatasets.volumes }}
+      volumes:
+        {{- toYaml . | nindent 6 }}
+      {{- end }}
       {{- with .Values.workerDatasets.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -107,5 +161,5 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      volumes: {}
+      
 {{- end }}

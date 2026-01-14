@@ -1,53 +1,49 @@
-{{- if .Values.observability.grafana.enabled }}
+{{- if .Values.grafana.enabled }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ include "semantic-explorer.fullname" . }}-grafana-datasources
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "semantic-explorer.grafana.labels" . | nindent 4 }}
-  {{- with .Values.commonAnnotations }}
-  annotations:
-    {{- toYaml . | nindent 4 }}
-  {{- end }}
+    {{- include "semantic-explorer.labels" . | nindent 4 }}
+    grafana_datasource: "1"
 data:
   datasources.yaml: |
     apiVersion: 1
     datasources:
-      {{- if .Values.observability.grafana.datasources.prometheus.enabled }}
+      {{- if .Values.prometheus.enabled }}
       - name: Prometheus
         type: prometheus
+        # Points to Prometheus server
+        url: http://{{ .Release.Name }}-prometheus-server:80
         access: proxy
-        url: {{ .Values.observability.grafana.datasources.prometheus.url }}
-        isDefault: {{ .Values.observability.grafana.datasources.prometheus.isDefault }}
-        jsonData:
-          timeInterval: 10s
-          httpMethod: POST
-          prometheusType: Prometheus
-          prometheusVersion: 2.45.0
-        editable: true
-        uid: prometheus
+        isDefault: true
+      {{- else if and .Values.observability .Values.observability.prometheus .Values.observability.prometheus.external .Values.observability.prometheus.external.enabled }}
+      - name: Prometheus
+        type: prometheus
+        url: {{ .Values.observability.prometheus.external.url }}
+        access: proxy
+        isDefault: true
+      {{- else }}
+      # Fallback to OTEL collector's Prometheus exporter (no historical data)
+      - name: Prometheus
+        type: prometheus
+        url: http://{{ include "semantic-explorer.fullname" . }}-otel-collector:8889
+        access: proxy
+        isDefault: true
       {{- end }}
-      {{- if .Values.observability.grafana.datasources.quickwitTraces.enabled }}
+      {{- if .Values.observability.quickwit.enabled }}
       - name: Quickwit-Traces
-        type: jaeger
+        type: quickwit-quickwit-datasource
+        url: http://{{ include "semantic-explorer.fullname" . }}-quickwit:7280
         access: proxy
-        url: {{ include "semantic-explorer.quickwit.url" . }}
         jsonData:
-          nodeGraph:
-            enabled: true
-        editable: true
-        uid: quickwit-traces
-      {{- end }}
-      {{- if .Values.observability.grafana.datasources.quickwitLogs.enabled }}
+          index: otel-traces-v0_7
       - name: Quickwit-Logs
-        type: loki
+        type: quickwit-quickwit-datasource
+        url: http://{{ include "semantic-explorer.fullname" . }}-quickwit:7280
         access: proxy
-        url: {{ include "semantic-explorer.quickwit.url" . }}/api/v1/otel-logs-v0_7
         jsonData:
-          maxLines: 5000
-          timeout: 60
-        editable: true
-        uid: quickwit-logs
+          index: otel-logs-v0_7
       {{- end }}
 {{- end }}

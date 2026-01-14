@@ -7,12 +7,17 @@ Comprehensive guide for deploying Semantic Explorer in production using Kubernet
 - [Quick Start](#quick-start)
 - [Security Configuration](#security-configuration)
 - [Helm Chart Configuration](#helm-chart-configuration)
+- [Helm Chart Dependencies](#helm-chart-dependencies)
+- [Example Values Files](#example-values-files)
+- [Air-Gapped Deployments](#air-gapped-deployments)
 - [Environment Variables](#environment-variables)
 - [Health Checks and Monitoring](#health-checks-and-monitoring)
 - [Observability and Metrics](#observability-and-metrics)
 - [NATS Stream Configuration](#nats-stream-configuration)
 - [Worker Concurrency Tuning](#worker-concurrency-tuning)
 - [Production Best Practices](#production-best-practices)
+- [Helm Chart Reference](#helm-chart-reference)
+- [Support and Troubleshooting](#support-and-troubleshooting)
 
 ## Quick Start
 
@@ -263,6 +268,129 @@ observability:
     enabled: true
   quickwit:
     enabled: true
+```
+
+## Helm Chart Dependencies
+
+The Semantic Explorer Helm chart includes optional dependencies for infrastructure components. These can be enabled for self-contained deployments or disabled when using external managed services.
+
+| Dependency | Chart Version | Repository | Condition |
+|------------|---------------|------------|-----------|
+| redis-ha | 4.35.5 | dandydeveloper/charts | `redis.enabled` |
+| nats | 1.2.x | nats-io/k8s/helm/charts | `nats.enabled` |
+| qdrant | 0.8.x | qdrant/qdrant-helm | `qdrant.enabled` |
+| minio | 5.2.x | charts.min.io | `minio.enabled` |
+| grafana | 8.x | grafana/helm-charts | `grafana.enabled` |
+| prometheus | 25.x | prometheus-community/helm-charts | `prometheus.enabled` |
+
+**Additional components (not subcharts, deployed as templates):**
+- PostgreSQL (single-node deployment)
+- OpenTelemetry Collector
+- Quickwit (log/trace aggregation)
+- Dex (OIDC provider)
+
+### Updating Dependencies
+
+```bash
+# Update chart dependencies
+cd deployment/helm/semantic-explorer
+helm dependency update
+```
+
+## Example Values Files
+
+The chart includes pre-configured values files for common deployment scenarios in `deployment/helm/semantic-explorer/examples/`:
+
+| File | Use Case | Description |
+|------|----------|-------------|
+| `values-all-included-dev.yaml` | Local Development | All infrastructure enabled, minimal resources (500m CPU, 512Mi per pod). Suitable for local testing and CI/CD. |
+| `values-all-included-prod.yaml` | Self-Hosted Production | Full HA deployment with all infrastructure. PostgreSQL HA, Redis cluster, NATS JetStream, 3+ replicas per service. |
+| `values-external-infra-dev.yaml` | Cloud Development | Only app services deployed. Connect to cloud-managed PostgreSQL, Redis, S3, etc. |
+| `values-external-infra-prod.yaml` | Cloud Production | HA app services with external managed infrastructure. Extensive docs for AWS/GCP/Azure equivalents. |
+| `values-airgapped.yaml` | Air-Gapped (External Infra) | Air-gapped Kubernetes with external infrastructure. No CRDs, no operators, internal registry support. |
+| `values-airgapped-all-included.yaml` | Air-Gapped (Self-Contained) | Complete air-gapped deployment. All infrastructure included, internal registry, RKE2-compatible. |
+
+### Install with Example Values
+
+```bash
+# Development (all-included)
+helm install semantic-explorer ./deployment/helm/semantic-explorer \
+  -f ./deployment/helm/semantic-explorer/examples/values-all-included-dev.yaml \
+  -n semantic-explorer --create-namespace
+
+# Production with external infrastructure
+helm install semantic-explorer ./deployment/helm/semantic-explorer \
+  -f ./deployment/helm/semantic-explorer/examples/values-external-infra-prod.yaml \
+  --set postgresql.external.host="prod-db.example.com" \
+  --set postgresql.external.password="$DB_PASSWORD" \
+  --set storage.s3.endpoint="https://s3.amazonaws.com" \
+  --set storage.s3.accessKeyId="$AWS_ACCESS_KEY_ID" \
+  --set storage.s3.secretAccessKey="$AWS_SECRET_ACCESS_KEY" \
+  -n semantic-explorer --create-namespace
+
+# Air-gapped production
+helm install semantic-explorer ./deployment/helm/semantic-explorer \
+  -f ./deployment/helm/semantic-explorer/examples/values-airgapped-all-included.yaml \
+  --set global.imageRegistry="registry.internal.example.com" \
+  -n semantic-explorer --create-namespace
+```
+
+## Air-Gapped Deployments
+
+For air-gapped Kubernetes clusters (e.g., RKE2, OpenShift in disconnected environments), use the air-gapped values files which:
+
+- **Disable CRDs**: ServiceMonitors and other CRD-based resources are disabled
+- **Internal Registry**: Configure `global.imageRegistry` to your internal registry
+- **Non-Root Containers**: All containers run as non-root users
+- **No External Dependencies**: No internet access required post-deployment
+
+### Prerequisites for Air-Gapped
+
+1. **Push Required Images** to your internal registry:
+```bash
+# List of required images
+IMAGES=(
+  "jofish89/semantic-explorer:latest"
+  "jofish89/worker-collections:latest"
+  "jofish89/worker-datasets:latest"
+  "jofish89/worker-visualizations-py:latest"
+  "postgres:16.3-alpine"
+  "redis:7-alpine"
+  "nats:2.10-alpine"
+  "qdrant/qdrant:v1.16.3"
+  "minio/minio:latest"
+  "dexidp/dex:latest"
+  "otel/opentelemetry-collector-contrib:latest"
+  "quickwit/quickwit:latest"
+  "grafana/grafana:latest"
+  "prom/prometheus:latest"
+  "busybox:1.36"
+)
+
+# Pull and push to internal registry
+for img in "${IMAGES[@]}"; do
+  docker pull "docker.io/$img"
+  docker tag "docker.io/$img" "registry.internal.example.com/$img"
+  docker push "registry.internal.example.com/$img"
+done
+```
+
+2. **Create Image Pull Secret**:
+```bash
+kubectl create secret docker-registry registry-credentials \
+  --docker-server=registry.internal.example.com \
+  --docker-username=<user> \
+  --docker-password=<password> \
+  -n semantic-explorer
+```
+
+3. **Deploy with Air-Gapped Values**:
+```bash
+helm install semantic-explorer ./deployment/helm/semantic-explorer \
+  -f ./deployment/helm/semantic-explorer/examples/values-airgapped-all-included.yaml \
+  --set global.imageRegistry="registry.internal.example.com" \
+  --set global.storageClass="local-path" \
+  -n semantic-explorer --create-namespace
 ```
 
 ### Network Policies

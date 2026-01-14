@@ -127,16 +127,17 @@ sequenceDiagram
 |------------|---------|---------|
 | Python | 3.12+ | Language |
 | asyncio | stdlib | Async runtime |
-| nats-py | latest | Message queue consumer |
-| qdrant-client | latest | Vector database client |
-| umap-learn | latest | Dimensionality reduction |
-| hdbscan | latest | Density-based clustering |
-| datamapplot | latest | Interactive visualization |
-| numpy | latest | Numerical operations |
-| pydantic | latest | Data validation |
-| boto3 | latest | S3 storage client |
-| openai | latest | OpenAI API client |
-| cohere | latest | Cohere API client |
+| nats-py | 2.12 | Message queue consumer |
+| qdrant-client | 1.16 | Vector database client |
+| umap-learn | 0.5 | Dimensionality reduction |
+| fast-hdbscan | 0.2 | Density-based clustering |
+| datamapplot | 0.6 | Interactive visualization |
+| numpy | 1.26+ | Numerical operations |
+| pydantic | 2.12 | Data validation |
+| boto3 | 1.42 | S3 storage client |
+| openai | 2.15 | OpenAI API client |
+| cohere | 5.20 | Cohere API client |
+| opentelemetry | 1.39 | Distributed tracing |
 
 ## Module Structure
 
@@ -147,6 +148,7 @@ sequenceDiagram
 | `models.py` | Pydantic data models for jobs and results |
 | `storage.py` | S3 storage operations |
 | `llm_namer.py` | LLM-based cluster topic naming |
+| `observability.py` | OpenTelemetry tracing and metrics |
 
 ## Environment Variables
 
