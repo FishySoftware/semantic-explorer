@@ -247,6 +247,7 @@ async fn main() -> Result<()> {
             .into_utoipa_app()
             .openapi(ApiDoc::openapi())
             .service(api::collections::get_collections)
+            .service(api::collections::get_collection)
             .service(api::collections::search_collections)
             .service(api::collections::create_collections)
             .service(api::collections::update_collections)

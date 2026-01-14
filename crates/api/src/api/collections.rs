@@ -7,7 +7,6 @@ use aws_sdk_s3::Client;
 use futures_util::future::join_all;
 use sqlx::{Pool, Postgres};
 use tracing::error;
-use uuid::Uuid;
 
 use crate::{
     audit::{ResourceType, events},
@@ -64,6 +63,49 @@ pub(crate) async fn get_collections(
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch collections");
             ApiError::Internal(format!("Failed to fetch collections: {}", e)).error_response()
+        }
+    }
+}
+
+#[utoipa::path(
+    params(
+        ("collection_id" = i32, Path, description = "Collection ID"),
+    ),
+    responses(
+        (status = 200, description = "OK", body = Collection),
+        (status = 404, description = "Collection not found"),
+        (status = 500, description = "Internal Server Error"),
+    ),
+    tag = "Collections",
+)]
+#[get("/api/collections/{collection_id}")]
+#[tracing::instrument(name = "get_collection", skip(user, s3_client, postgres_pool))]
+pub(crate) async fn get_collection(
+    user: AuthenticatedUser,
+    s3_client: Data<Client>,
+    postgres_pool: Data<Pool<Postgres>>,
+    path: Path<i32>,
+) -> impl Responder {
+    let collection_id = path.into_inner();
+
+    match collections::get_collection(&postgres_pool.into_inner(), &user, collection_id).await {
+        Ok(mut collection) => {
+            // Fetch file count for the collection
+            if let Ok(count) =
+                storage::rustfs::count_files(s3_client.as_ref(), &collection.bucket).await
+            {
+                collection.file_count = Some(count);
+            }
+            HttpResponse::Ok().json(collection)
+        }
+        Err(e) => {
+            if e.to_string().contains("no rows") {
+                ApiError::NotFound(format!("Collection {} not found", collection_id))
+                    .error_response()
+            } else {
+                tracing::error!(error = %e, collection_id = %collection_id, "failed to fetch collection");
+                ApiError::Internal(format!("Failed to fetch collection: {}", e)).error_response()
+            }
         }
     }
 }
@@ -129,11 +171,11 @@ pub(crate) async fn search_collections(
     tag = "Collections",
 )]
 #[post("/api/collections")]
-#[tracing::instrument(name = "create_collection", skip(user, s3_client, postgres_pool, create_collection, req), fields(collection_title = %create_collection.title))]
+#[tracing::instrument(name = "create_collection", skip(user, _s3_client, postgres_pool, create_collection, req), fields(collection_title = %create_collection.title))]
 pub(crate) async fn create_collections(
     user: AuthenticatedUser,
     req: HttpRequest,
-    s3_client: Data<Client>,
+    _s3_client: Data<Client>,
     postgres_pool: Data<Pool<Postgres>>,
     Json(create_collection): Json<CreateCollection>,
 ) -> impl Responder {
@@ -153,23 +195,18 @@ pub(crate) async fn create_collections(
         return ApiError::Validation(e).error_response();
     }
 
-    let s3_client = s3_client.into_inner();
-    let bucket = Uuid::new_v4().to_string();
-
-    if let Err(e) = s3_client.create_bucket().bucket(&bucket).send().await {
-        return ApiError::Internal(format!(
-            "error creating collection bucket '{}' due to: {:?}",
-            bucket, e
-        ))
-        .error_response();
-    }
+    // Use a placeholder bucket value - we'll update it after we get the collection_id
+    // This enables the single-bucket architecture where files are stored under
+    // collections/{collection_id}/ prefix in S3_BUCKET_NAME
+    let placeholder_bucket = "pending";
+    let postgres_pool = postgres_pool.into_inner();
 
     let collection = match collections::create_collection(
-        &postgres_pool.into_inner(),
+        &postgres_pool,
         &create_collection.title,
         create_collection.details.as_deref(),
         &user,
-        &bucket,
+        placeholder_bucket,
         &create_collection.tags,
         create_collection.is_public,
     )
@@ -177,15 +214,33 @@ pub(crate) async fn create_collections(
     {
         Ok(collection) => collection,
         Err(e) => {
-            if let Err(del_err) = s3_client.delete_bucket().bucket(&bucket).send().await {
-                error!(
-                    "error deleting collection bucket '{}' due to: {:?}",
-                    bucket, del_err
-                );
-            }
             return ApiError::Internal(format!("error creating collection due to: {:?}", e))
                 .error_response();
         }
+    };
+
+    // Update the bucket field to use the collection_id for single-bucket architecture
+    // Files will be stored under S3_BUCKET_NAME/collections/{collection_id}/
+    let bucket = collection.collection_id.to_string();
+    if let Err(e) = collections::update_collection_bucket(
+        &postgres_pool,
+        collection.collection_id,
+        &user,
+        &bucket,
+    )
+    .await
+    {
+        error!(
+            "error updating collection bucket for collection '{}' due to: {:?}",
+            collection.collection_id, e
+        );
+        // Don't fail the request - the collection was created, just with placeholder bucket
+    }
+
+    // Return the collection with the correct bucket value
+    let collection = Collection {
+        bucket,
+        ..collection
     };
 
     events::resource_created_with_request(

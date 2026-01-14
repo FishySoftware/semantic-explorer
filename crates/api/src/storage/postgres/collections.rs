@@ -273,6 +273,32 @@ pub(crate) async fn delete_collection(
     Ok(())
 }
 
+#[tracing::instrument(name = "database.update_collection_bucket", skip(pool), fields(database.system = "postgresql", database.operation = "UPDATE", collection_id = %collection_id, username = %username))]
+pub(crate) async fn update_collection_bucket(
+    pool: &Pool<Postgres>,
+    collection_id: i32,
+    username: &str,
+    bucket: &str,
+) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, username).await?;
+
+    let start = Instant::now();
+    let result = sqlx::query("UPDATE collections SET bucket = $1 WHERE collection_id = $2")
+        .bind(bucket)
+        .bind(collection_id)
+        .execute(&mut *tx)
+        .await;
+
+    let duration = start.elapsed().as_secs_f64();
+    let success = result.is_ok();
+    record_database_query("UPDATE", "collections", duration, success);
+
+    result?;
+    tx.commit().await?;
+    Ok(())
+}
+
 #[tracing::instrument(name = "database.get_public_collections", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT"))]
 pub(crate) async fn get_public_collections(pool: &Pool<Postgres>) -> Result<Vec<Collection>> {
     let start = Instant::now();
