@@ -131,7 +131,6 @@ async fn main() -> Result<()> {
     )
     .await?;
 
-    // Clone CORS origins for use in closure
     let cors_origins = config.server.cors_allowed_origins.clone();
 
     // Start scanners for each transform type
@@ -162,7 +161,6 @@ async fn main() -> Result<()> {
     let server = HttpServer::new(move || {
         // Build CORS configuration based on allowed origins
         let cors = if cors_origins.is_empty() {
-            // Development: allow only self
             Cors::default()
                 .allowed_origin(&address)
                 .allowed_methods(vec!["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
@@ -225,7 +223,7 @@ async fn main() -> Result<()> {
             .wrap(security_headers)
             .wrap(Compress::default())
             .wrap(openid_client.get_middleware())
-            .wrap(session_activity) // After OIDC to track authenticated sessions
+            .wrap(session_activity)
             .configure(openid_client.configure_open_id())
             .app_data(web::Data::new(s3_client.clone()))
             .app_data(web::Data::new(qdrant_client.clone()))

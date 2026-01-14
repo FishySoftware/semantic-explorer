@@ -14,6 +14,20 @@ pub fn chunk(text: String, config: &ChunkingConfig) -> Result<Vec<String>> {
     let mut current_chunk = String::new();
 
     for sentence in sentences {
+        // Handle sentences that exceed chunk_size by splitting them
+        if sentence.len() > config.chunk_size {
+            // First, flush current chunk if not empty
+            if !current_chunk.is_empty() {
+                chunks.push(current_chunk.trim().to_string());
+                current_chunk = String::new();
+            }
+
+            // Split the long sentence into smaller pieces
+            let sub_chunks = split_long_sentence(sentence, config.chunk_size);
+            chunks.extend(sub_chunks);
+            continue;
+        }
+
         if current_chunk.len() + sentence.len() + 1 > config.chunk_size && !current_chunk.is_empty()
         {
             chunks.push(current_chunk.trim().to_string());
@@ -31,6 +45,67 @@ pub fn chunk(text: String, config: &ChunkingConfig) -> Result<Vec<String>> {
     }
 
     Ok(chunks)
+}
+
+/// Split a long sentence into smaller chunks, preferring word boundaries
+fn split_long_sentence(sentence: &str, max_size: usize) -> Vec<String> {
+    // Split on whitespace while preserving punctuation attached to words
+    let words: Vec<&str> = sentence.split_whitespace().collect();
+
+    if words.is_empty() {
+        // No words found, split by character
+        return split_by_chars(sentence, max_size);
+    }
+
+    let mut chunks = Vec::new();
+    let mut current_chunk = String::new();
+
+    for word in words {
+        // If a single word exceeds max_size, split it by characters
+        if word.len() > max_size {
+            // First, flush current chunk
+            if !current_chunk.is_empty() {
+                chunks.push(current_chunk.trim().to_string());
+                current_chunk = String::new();
+            }
+            // Split the long word
+            chunks.extend(split_by_chars(word, max_size));
+            continue;
+        }
+
+        // Check if adding this word would exceed the limit
+        let new_len = if current_chunk.is_empty() {
+            word.len()
+        } else {
+            current_chunk.len() + 1 + word.len()
+        };
+
+        if new_len > max_size && !current_chunk.is_empty() {
+            chunks.push(current_chunk.trim().to_string());
+            current_chunk = String::new();
+        }
+
+        if !current_chunk.is_empty() {
+            current_chunk.push(' ');
+        }
+        current_chunk.push_str(word);
+    }
+
+    if !current_chunk.is_empty() {
+        chunks.push(current_chunk.trim().to_string());
+    }
+
+    chunks
+}
+
+/// Split text by character count, respecting Unicode grapheme clusters
+fn split_by_chars(text: &str, max_size: usize) -> Vec<String> {
+    let chars: Vec<char> = text.chars().collect();
+
+    chars
+        .chunks(max_size)
+        .map(|chunk| chunk.iter().collect::<String>())
+        .collect()
 }
 
 #[cfg(test)]
@@ -144,7 +219,53 @@ mod tests {
         assert!(result.is_ok());
 
         let chunks = result.unwrap();
-        // Long sentence should still be in one chunk
+        // Long sentence should now be split into multiple chunks
+        assert!(
+            chunks.len() > 1,
+            "Expected multiple chunks, got {}",
+            chunks.len()
+        );
+
+        // Each chunk should respect the size limit
+        for chunk in &chunks {
+            assert!(
+                chunk.len() <= 50,
+                "Chunk '{}' exceeds max size of 50",
+                chunk
+            );
+        }
+    }
+
+    #[test]
+    fn test_sentence_long_sentence_preserves_all_content() {
+        let text = "This is a very long sentence that exceeds the chunk size limit and should be split properly.".to_string();
+        let config = create_default_config(30);
+
+        let result = chunk(text.clone(), &config);
+        assert!(result.is_ok());
+
+        let chunks = result.unwrap();
+        // Verify all content is preserved by checking the combined length (minus spaces)
+        let original_no_space: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        let rejoined: String = chunks.join("");
+        let rejoined_no_space: String = rejoined.chars().filter(|c| !c.is_whitespace()).collect();
+        assert_eq!(
+            original_no_space, rejoined_no_space,
+            "Content should be preserved after splitting"
+        );
+    }
+
+    #[test]
+    fn test_sentence_very_long_word() {
+        // A single word that exceeds chunk size (like a URL or code)
+        let text = "Visit https://example.com/very/long/path/that/exceeds/the/limit for more info."
+            .to_string();
+        let config = create_default_config(20);
+
+        let result = chunk(text, &config);
+        assert!(result.is_ok());
+
+        let chunks = result.unwrap();
         assert!(!chunks.is_empty());
     }
 

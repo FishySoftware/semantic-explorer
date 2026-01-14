@@ -29,9 +29,13 @@ pub fn apply_overlap(chunks: Vec<String>, overlap_size: usize) -> Result<Vec<Str
 }
 
 fn get_last_chars(text: &str, n: usize) -> String {
-    let chars: Vec<char> = text.chars().collect();
-    let start = if chars.len() > n { chars.len() - n } else { 0 };
-    chars[start..].iter().collect()
+    text.chars()
+        .rev()
+        .take(n)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect()
 }
 
 #[cfg(test)]
@@ -200,5 +204,28 @@ mod tests {
         assert_eq!(overlapped[2], "BC");
         assert_eq!(overlapped[3], "CD");
         assert_eq!(overlapped[4], "DE");
+    }
+
+    #[test]
+    fn test_apply_overlap_unicode_iterator_correctness() {
+        // Test specifically for the iterator implementation of get_last_chars
+        // "😊" is 4 bytes.
+        let text = "Start 😊 End";
+        let n = 5;
+
+        let result = get_last_chars(text, n);
+
+        // n is number of CHARS, not bytes.
+        // "End" is 3 chars. " " is 1. "😊" is 1.
+        // So last 5 chars are: "😊 End"
+
+        assert_eq!(result, "😊 End");
+
+        // Ensure no panic on split surrogates or large request
+        let empty_result = get_last_chars("", 10);
+        assert_eq!(empty_result, "");
+
+        let overflow_result = get_last_chars("abc", 100);
+        assert_eq!(overflow_result, "abc");
     }
 }

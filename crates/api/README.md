@@ -226,6 +226,42 @@ sequenceDiagram
 | GET | `/api/collection-transforms/{id}/files` | List processed files |
 | GET | `/api/collection-transforms/{id}/stream` | SSE status stream |
 
+#### Collection Transform job_config Schema
+
+The `job_config` field contains extraction and chunking configuration:
+
+```json
+{
+  "extraction_config": {
+    "strategy": "plain_text",
+    "options": {
+      "preserve_formatting": false,
+      "extract_tables": true,
+      "table_format": "plain_text",
+      "preserve_headings": true,
+      "heading_format": "plain_text",
+      "preserve_lists": true,
+      "preserve_code_blocks": true,
+      "include_metadata": true,
+      "append_metadata_to_text": true
+    }
+  },
+  "chunking_config": {
+    "strategy": "sentence",
+    "chunk_size": 1000,
+    "chunk_overlap": 100
+  }
+}
+```
+
+**Extraction Strategies**: `plain_text`, `structure_preserving`, `markdown`
+
+**Chunking Strategies**: `fixed`, `sentence`, `recursive`, `markdown`, `table`, `code`, `token`, `semantic`
+
+**Supported Formats**: PDF, DOCX, XLSX, PPTX, DOC (legacy), ODT, ODS, ODP, EPUB, RTF, HTML, XML, JSON, NDJSON, CSV, EML, LOG, MD, ZIP, TAR.GZ
+
+See `worker-collections` README for complete configuration options.
+
 ### Dataset Transforms
 | Method | Endpoint | Description |
 |--------|----------|-------------|

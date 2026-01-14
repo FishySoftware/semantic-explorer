@@ -52,8 +52,14 @@ pub struct ExtractionOptions {
     #[serde(default)]
     pub preserve_code_blocks: bool,
 
+    /// Extract metadata from document (author, title, dates, etc.)
     #[serde(default)]
     pub include_metadata: bool,
+
+    /// Append extracted metadata as formatted text at the end of content
+    /// This enables metadata to be chunked alongside the main content
+    #[serde(default)]
+    pub append_metadata_to_text: bool,
 }
 
 impl Default for ExtractionOptions {
@@ -67,6 +73,7 @@ impl Default for ExtractionOptions {
             preserve_lists: false,
             preserve_code_blocks: false,
             include_metadata: false,
+            append_metadata_to_text: false,
         }
     }
 }
@@ -89,8 +96,66 @@ impl Default for ExtractionConfig {
     }
 }
 
-#[derive(Debug)]
-pub struct ExtractionResult {
+/// Result of text extraction with optional metadata
+#[derive(Debug, Clone)]
+pub struct ExtractionOutput {
     pub text: String,
     pub metadata: Option<serde_json::Value>,
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_extraction_config_defaults() {
+        let config = ExtractionConfig::default();
+        assert!(matches!(config.strategy, ExtractionStrategy::PlainText));
+        assert_eq!(config.options.preserve_formatting, false);
+        assert_eq!(config.options.extract_tables, true);
+        assert_eq!(config.options.include_metadata, false);
+    }
+
+    #[test]
+    fn test_deserialize_extraction_config() {
+        let json = json!({
+            "strategy": "structure_preserving",
+            "options": {
+                "preserve_formatting": true,
+                "extract_tables": false,
+                "heading_format": "markdown",
+                "include_metadata": true
+            }
+        });
+
+        let config: ExtractionConfig = serde_json::from_value(json).unwrap();
+        assert!(matches!(
+            config.strategy,
+            ExtractionStrategy::StructurePreserving
+        ));
+        assert!(config.options.preserve_formatting);
+        assert!(!config.options.extract_tables);
+        assert!(matches!(
+            config.options.heading_format,
+            HeadingFormat::Markdown
+        ));
+        assert!(config.options.include_metadata);
+    }
+
+    #[test]
+    fn test_partial_options_override() {
+        let json = json!({
+            "options": {
+                "preserve_code_blocks": true
+            }
+        });
+
+        let config: ExtractionConfig = serde_json::from_value(json).unwrap();
+        // Strategy should default to PlainText
+        assert!(matches!(config.strategy, ExtractionStrategy::PlainText));
+        // Overridden option
+        assert!(config.options.preserve_code_blocks);
+        // Default options
+        assert_eq!(config.options.preserve_formatting, false);
+    }
 }

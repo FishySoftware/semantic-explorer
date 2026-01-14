@@ -9,15 +9,20 @@
 			<h1 class="text-3xl font-bold text-gray-900 dark:text-white">User Documentation</h1>
 		</div>
 		<p class="text-lg text-gray-600 dark:text-gray-400">
-			Learn how to use Semantic Explorer to build, test, and compare embedding-based search systems, perform RAG-based chat, and visualize embedding spaces.
+			Learn how to use Semantic Explorer to build, test, and compare embedding-based search systems,
+			perform RAG-based chat, and visualize embedding spaces.
 		</p>
 	</div>
 
 	<!-- Quick Start with Marketplace -->
 	<section class="mb-8 rounded-lg border-l-4 border-green-500 bg-green-50 p-6 dark:bg-gray-800">
-		<h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-3">Quick Start: Marketplace</h3>
+		<h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-3">
+			Quick Start: Marketplace
+		</h3>
 		<p class="text-sm text-gray-700 dark:text-gray-300">
-			Want to get started quickly? Visit the <strong>Marketplace</strong> to browse and grab public collections, datasets, embedders, and LLMs shared by other users. This is a great way to explore the platform without setting up everything from scratch.
+			Want to get started quickly? Visit the <strong>Marketplace</strong> to browse and grab public collections,
+			datasets, embedders, and LLMs shared by other users. This is a great way to explore the platform
+			without setting up everything from scratch.
 		</p>
 	</section>
 
@@ -29,13 +34,21 @@
 			You can programmatically push data directly via the REST API, bypassing the UI entirely:
 		</p>
 		<ul class="space-y-2 text-sm text-gray-700 dark:text-gray-300 list-inside list-disc">
-			<li><strong>Collections</strong> - Upload files directly to collections via multipart form-data</li>
-			<li><strong>Datasets</strong> - Push pre-processed chunks as JSON, bringing your own chunking strategy</li>
-			<li><strong>Embedders & LLMs</strong> - Configure providers programmatically for automation</li>
+			<li>
+				<strong>Collections</strong> - Upload files directly to collections via multipart form-data
+			</li>
+			<li>
+				<strong>Datasets</strong> - Push pre-processed chunks as JSON, bringing your own chunking strategy
+			</li>
+			<li>
+				<strong>Embedders & LLMs</strong> - Configure providers programmatically for automation
+			</li>
 		</ul>
 		<p class="text-sm text-gray-700 dark:text-gray-300 mt-3">
-			This flexibility allows you to integrate Semantic Explorer into existing pipelines, use custom preprocessing,
-			or build automated workflows. API documentation is available at <code class="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs">/api/openapi.json</code>
+			This flexibility allows you to integrate Semantic Explorer into existing pipelines, use custom
+			preprocessing, or build automated workflows. API documentation is available at <code
+				class="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs">/api/openapi.json</code
+			>
 		</p>
 	</section>
 
@@ -191,7 +204,8 @@
 					<h3 class="text-lg font-semibold text-gray-900 dark:text-white">LLMs</h3>
 				</div>
 				<p class="text-sm text-gray-600 dark:text-gray-400">
-					Configure your language model providers (OpenAI, Anthropic, Cohere, etc.) for RAG-based chat.
+					Configure your language model providers (OpenAI, Anthropic, Cohere, etc.) for RAG-based
+					chat.
 				</p>
 			</div>
 
@@ -229,9 +243,9 @@
 			</h3>
 			<p class="text-gray-700 dark:text-gray-300 mb-4">
 				Organize collections of documents of interest. You can add as many files as you want, up to
-				100MB per file with a total upload limit of 1GB per request.
-				Most common content types are supported including Office documents (Word, Excel, PowerPoint),
-				HTML, XML, and raw text files.
+				100MB per file with a total upload limit of 1GB per request. Most common content types are
+				supported including Office documents (Word, Excel, PowerPoint), HTML, XML, and raw text
+				files.
 			</p>
 			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900 mb-3">
 				<h4 class="font-semibold text-gray-900 dark:text-white mb-2">Key Features:</h4>
@@ -244,9 +258,14 @@
 					<li>Organize related documents together for processing</li>
 				</ul>
 			</div>
-			<div class="rounded bg-purple-50 dark:bg-purple-900/20 p-3 border border-purple-200 dark:border-purple-800">
+			<div
+				class="rounded bg-purple-50 dark:bg-purple-900/20 p-3 border border-purple-200 dark:border-purple-800"
+			>
 				<p class="text-xs text-gray-700 dark:text-gray-300">
-					<strong>💡 API Usage:</strong> Push files directly to collections via <code class="px-1 py-0.5 bg-white dark:bg-gray-800 rounded text-xs">POST /api/collections/{'{'}id{'}'}/upload</code>
+					<strong>💡 API Usage:</strong> Push files directly to collections via
+					<code class="px-1 py-0.5 bg-white dark:bg-gray-800 rounded text-xs"
+						>POST /api/collections/&#123;id&#125;/upload</code
+					>
 					with multipart form-data. Great for automation and CI/CD pipelines.
 				</p>
 			</div>
@@ -278,11 +297,17 @@
 					<li>Browse and search dataset items</li>
 				</ul>
 			</div>
-			<div class="rounded bg-purple-50 dark:bg-purple-900/20 p-3 border border-purple-200 dark:border-purple-800">
+			<div
+				class="rounded bg-purple-50 dark:bg-purple-900/20 p-3 border border-purple-200 dark:border-purple-800"
+			>
 				<p class="text-xs text-gray-700 dark:text-gray-300">
-					<strong>💡 API Usage:</strong> Skip Collection Transforms entirely! Push pre-processed chunks directly via
-					<code class="px-1 py-0.5 bg-white dark:bg-gray-800 rounded text-xs">POST /api/datasets/{'{'}id{'}'}/items</code>
-					as JSON. Bring your own chunking strategy from external tools like LangChain, LlamaIndex, or custom pipelines.
+					<strong>💡 API Usage:</strong> Skip Collection Transforms entirely! Push pre-processed
+					chunks directly via
+					<code class="px-1 py-0.5 bg-white dark:bg-gray-800 rounded text-xs"
+						>POST /api/datasets/&#123;id&#125;/items</code
+					>
+					as JSON. Bring your own chunking strategy from external tools like LangChain, LlamaIndex, or
+					custom pipelines.
 				</p>
 			</div>
 		</div>
@@ -433,9 +458,10 @@
 				>
 			</h3>
 			<p class="text-gray-700 dark:text-gray-300 mb-4">
-				View and interact with 2D/3D visualizations of your embedding spaces. After running Visualization
-				Transforms, explore how your documents cluster together in visual space. Compare different embedding
-				models side-by-side to understand how each organizes your data and identify distinct topic clusters.
+				View and interact with 2D/3D visualizations of your embedding spaces. After running
+				Visualization Transforms, explore how your documents cluster together in visual space.
+				Compare different embedding models side-by-side to understand how each organizes your data
+				and identify distinct topic clusters.
 			</p>
 			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
 				<h4 class="font-semibold text-gray-900 dark:text-white mb-2">Key Features:</h4>
@@ -462,8 +488,8 @@
 			</h3>
 			<p class="text-gray-700 dark:text-gray-300 mb-4">
 				Configure and manage Large Language Model (LLM) providers for RAG-based chat functionality.
-				Similar to embedders, LLMs are user-managed configurations that connect to chat completion APIs
-				from providers like OpenAI, Anthropic, Cohere, and other OpenAI-compatible services.
+				Similar to embedders, LLMs are user-managed configurations that connect to chat completion
+				APIs from providers like OpenAI, Anthropic, Cohere, and other OpenAI-compatible services.
 			</p>
 			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
 				<h4 class="font-semibold text-gray-900 dark:text-white mb-2">Key Features:</h4>
@@ -519,10 +545,10 @@
 				>
 			</h3>
 			<p class="text-gray-700 dark:text-gray-300 mb-4">
-				Browse and grab public resources shared by other users. The marketplace allows you to discover
-				collections, datasets, embedders, and LLMs that others have made public. This is a great way
-				to get started quickly without setting up everything from scratch, or to explore example
-				configurations and datasets.
+				Browse and grab public resources shared by other users. The marketplace allows you to
+				discover collections, datasets, embedders, and LLMs that others have made public. This is a
+				great way to get started quickly without setting up everything from scratch, or to explore
+				example configurations and datasets.
 			</p>
 			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
 				<h4 class="font-semibold text-gray-900 dark:text-white mb-2">Key Features:</h4>
@@ -574,18 +600,22 @@
 			<li class="flex items-start gap-2">
 				<ArrowRightOutline class="w-4 h-4 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
 				<span
-					>Generate visualizations to visually compare how different embedding models organize your data</span
+					>Generate visualizations to visually compare how different embedding models organize your
+					data</span
 				>
 			</li>
 			<li class="flex items-start gap-2">
 				<ArrowRightOutline class="w-4 h-4 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
 				<span
-					>Use Chat to interact with your embedded datasets - great for exploring and validating search quality</span
+					>Use Chat to interact with your embedded datasets - great for exploring and validating
+					search quality</span
 				>
 			</li>
 			<li class="flex items-start gap-2">
 				<ArrowRightOutline class="w-4 h-4 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
-				<span>Make your best resources public to share them with the community via the Marketplace</span>
+				<span
+					>Make your best resources public to share them with the community via the Marketplace</span
+				>
 			</li>
 		</ul>
 	</section>
