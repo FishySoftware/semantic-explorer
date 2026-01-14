@@ -5,6 +5,9 @@
 
 global:
   environment: production
+  # Init container image for startup ordering
+  initContainer:
+    image: "busybox:1.36"
 
 # API Service - Production
 api:
@@ -28,7 +31,7 @@ api:
   podDisruptionBudget:
     enabled: true
     minAvailable: 2
-  prometheus:
+  metrics:
     enabled: true
     serviceMonitor:
       enabled: true
@@ -43,7 +46,6 @@ api:
                 - key: app.kubernetes.io/name
                   operator: In
                   values:
-                    - semantic-explorer
                     - api
             topologyKey: kubernetes.io/hostname
   # Environment variables for external services
@@ -57,7 +59,7 @@ api:
     OTEL_EXPORTER_OTLP_ENDPOINT: "http://observability.prod.example.com:4317"
 
 # Worker Collections - Production
-worker-collections:
+workerCollections:
   enabled: true
   replicaCount: 4
   resources:
@@ -74,7 +76,7 @@ worker-collections:
   podDisruptionBudget:
     enabled: true
     minAvailable: 2
-  prometheus:
+  metrics:
     enabled: true
     serviceMonitor:
       enabled: true
@@ -85,7 +87,7 @@ worker-collections:
     OTEL_EXPORTER_OTLP_ENDPOINT: "http://observability.prod.example.com:4317"
 
 # Worker Datasets - Production
-worker-datasets:
+workerDatasets:
   enabled: true
   replicaCount: 4
   resources:
@@ -102,7 +104,7 @@ worker-datasets:
   podDisruptionBudget:
     enabled: true
     minAvailable: 2
-  prometheus:
+  metrics:
     enabled: true
     serviceMonitor:
       enabled: true
@@ -114,7 +116,7 @@ worker-datasets:
     OTEL_EXPORTER_OTLP_ENDPOINT: "http://observability.prod.example.com:4317"
 
 # Worker Visualizations - Production
-worker-visualizations:
+workerVisualizationsPy:
   enabled: true
   replicaCount: 4
   resources:
@@ -139,26 +141,65 @@ worker-visualizations:
     S3_ENDPOINT: "https://s3.prod.example.com"
     OTEL_EXPORTER_OTLP_ENDPOINT: "http://observability.prod.example.com:4317"
 
-# All infrastructure services DISABLED
+# All infrastructure services DISABLED - using external managed services
 postgresql:
   enabled: false
+  external:
+    enabled: true
+    host: "postgres.prod.example.com"
+    port: 5432
+    database: semantic_explorer
+    username: user
+    existingSecret: "external-postgresql-secret"
+    passwordKey: "password"
+    sslMode: verify-full
 
 redis:
   enabled: false
+  external:
+    enabled: true
+    clusterNodes: "redis://redis-primary.prod.example.com:6379"
+    existingSecret: "external-redis-secret"
+    passwordKey: "password"
 
 nats:
   enabled: false
+  external:
+    enabled: true
+    url: "nats://nats1.prod.example.com:4222,nats2.prod.example.com:4222,nats3.prod.example.com:4222"
 
 qdrant:
   enabled: false
+  external:
+    enabled: true
+    url: "http://qdrant.prod.example.com:6333"
+    existingSecret: "external-qdrant-secret"
+    apiKeyKey: "api-key"
 
 minio:
   enabled: false
+  external:
+    enabled: true
+    endpoint: "https://s3.prod.example.com"
+    region: "us-east-1"
+    bucket: "semantic-explorer-prod"
+    existingSecret: "external-s3-secret"
+    accessKeyIdKey: "access-key-id"
+    secretAccessKeyKey: "secret-access-key"
+
+# Storage Configuration (S3-compatible)
+storage:
+  s3:
+    endpoint: "https://s3.prod.example.com"
+    region: "us-east-1"
+    bucketName: "semantic-explorer-prod"
+    existingSecret: "external-s3-secret"
+    accessKeyIdKey: "access-key-id"
+    secretAccessKeyKey: "secret-access-key"
 
 # Dex - OIDC Provider
 dex:
   enabled: true
-  replicas: 2
   resources:
     requests:
       cpu: 200m
@@ -170,22 +211,35 @@ dex:
     enabled: true
     minAvailable: 1
 
-# OpenTelemetry Collector - Optional local aggregation
+# Observability - Optional local aggregation
 # If your cloud provider has a managed observability service, disable this
-otel-collector:
-  enabled: false  # Set to true if you want local collection/aggregation
+observability:
+  otelCollector:
+    enabled: false  # Set to true if you want local collection/aggregation
 
-# Grafana - Optional, typically managed externally in production
-grafana:
-  enabled: false
+  # Use external Prometheus instance
+  prometheus:
+    enabled: false
+    external:
+      enabled: true
+      url: "http://prometheus.prod.example.com:9090"
 
-# Quickwit - Optional, typically managed externally in production
-quickwit:
-  enabled: false
+  quickwit:
+    enabled: false  # Typically managed externally in production
+    external:
+      enabled: true
+      url: "http://quickwit.prod.example.com:7280"
 
-# Prometheus - Not needed
+# Prometheus subchart - Disabled when using external
 prometheus:
   enabled: false
+
+# Grafana subchart - Disabled when using external
+grafana:
+  enabled: false
+  external:
+    enabled: true
+    url: "http://grafana.prod.example.com:3000"
 
 # Network Policy
 networkPolicy:
@@ -201,56 +255,34 @@ networkPolicy:
 # ============================================================================
 #
 # Before deploying with this values file, you must provide credentials and
-# connection details for all external services. Create a secret file with:
+# connection details for all external services. Create secrets:
 #
-# kubectl create secret generic external-services \
-#   --from-literal=DATABASE_URL="postgres://..." \
-#   --from-literal=REDIS_URL="redis://..." \
-#   --from-literal=NATS_SERVERS="nats://..." \
-#   --from-literal=QDRANT_API_KEY="..." \
-#   --from-literal=S3_ACCESS_KEY="..." \
-#   --from-literal=S3_SECRET_KEY="..."
+# kubectl create secret generic external-postgresql-secret \
+#   --from-literal=password="your-postgres-password"
 #
-# Then reference this secret in the deployment templates.
+# kubectl create secret generic external-redis-secret \
+#   --from-literal=password="your-redis-password"
+#
+# kubectl create secret generic external-qdrant-secret \
+#   --from-literal=api-key="your-qdrant-api-key"
+#
+# kubectl create secret generic external-s3-secret \
+#   --from-literal=access-key-id="your-access-key" \
+#   --from-literal=secret-access-key="your-secret-key"
 #
 # Required External Services:
-# 1. PostgreSQL 14+
-#    - Connection string with admin privileges
-#    - Minimum 2 connections per API instance (8+ recommended)
-#    - Automatic failover recommended (RDS Multi-AZ, CloudSQL HA, etc.)
-#
-# 2. Redis Cluster (3+ nodes)
-#    - Cluster mode enabled
-#    - Minimum 10GB memory total
-#    - High availability setup recommended
-#
-# 3. NATS JetStream Cluster (3+ nodes)
-#    - JetStream enabled
-#    - Persistent storage (10GB+ recommended)
-#    - TLS support recommended for security
-#
-# 4. Qdrant Vector Database (3+ replicas)
-#    - API endpoint accessible from Kubernetes
-#    - API key for authentication (if enabled)
-#    - 100GB+ storage recommended
-#    - GPU support optional but recommended
-#
-# 5. S3-Compatible Storage
-#    - Bucket created and accessible
-#    - Access and secret keys with GetObject/PutObject permissions
-#    - Lifecycle policies for cost optimization
-#    - Optional: Versioning enabled for data protection
-#
-# 6. Observability (Optional)
-#    - OTEL Collector or managed observability backend
-#    - Prometheus endpoint for metrics scraping
-#    - Log aggregation backend (e.g., Datadog, New Relic, CloudWatch)
+# 1. PostgreSQL 14+ with automatic failover (RDS Multi-AZ, CloudSQL HA, etc.)
+# 2. Redis Cluster (3+ nodes) with high availability
+# 3. NATS JetStream Cluster (3+ nodes) with persistent storage
+# 4. Qdrant Vector Database (3+ replicas) with API authentication
+# 5. S3-Compatible Storage with versioning and lifecycle policies
+# 6. Observability backend (optional - Datadog, New Relic, CloudWatch, etc.)
 #
 # Example AWS Setup:
 #   - RDS PostgreSQL 14 (Multi-AZ)
 #   - ElastiCache Redis Cluster
-#   - Managed Workflows for Apache NATS (if available)
-#   - Managed Qdrant (if available, else EC2 deployment)
+#   - Amazon MQ for NATS (or self-managed EKS cluster)
+#   - Managed Qdrant (or EC2 deployment)
 #   - S3 for object storage
 #   - CloudWatch or DataDog for observability
 #

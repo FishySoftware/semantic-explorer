@@ -30,3 +30,11 @@ dependencies:
     version: "5.2.x"
     repository: https://charts.min.io/
     condition: minio.enabled
+  - name: grafana
+    version: "8.x"
+    repository: https://grafana.github.io/helm-charts
+    condition: grafana.enabled
+  - name: prometheus
+    version: "25.x"
+    repository: https://prometheus-community.github.io/helm-charts
+    condition: prometheus.enabled

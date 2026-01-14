@@ -13,19 +13,29 @@ metadata:
 data:
   node.yaml: |
     version: 0.8
-    node_id: {{ include "semantic-explorer.fullname" . }}
-    cluster_id: {{ include "semantic-explorer.fullname" . }}
+    # Node and cluster IDs are set via environment variables:
+    # QW_NODE_ID, QW_CLUSTER_ID, QW_PEER_SEEDS, QW_ADVERTISE_ADDRESS
 
     listen_address: 0.0.0.0
-    advertise_address: {{ include "semantic-explorer.fullname" . }}-quickwit
     rest_listen_port: {{ .Values.observability.quickwit.service.rest.port }}
     grpc_listen_port: {{ .Values.observability.quickwit.service.grpc.port }}
     
     data_dir: /quickwit/qwdata
     
-    metastore_uri: file:///quickwit/qwdata/metastore
+    {{- if .Values.minio.enabled }}
+    # S3/MinIO storage configuration
+    metastore_uri: s3://{{ .Values.observability.quickwit.storage.bucketName | default "quickwit" }}/metastore
+    default_index_root_uri: s3://{{ .Values.observability.quickwit.storage.bucketName | default "quickwit" }}/indexes
     
+    storage:
+      s3:
+        flavor: minio
+        force_path_style_access: true
+    {{- else }}
+    # Local file storage (development/single-node)
+    metastore_uri: file:///quickwit/qwdata/metastore
     default_index_root_uri: file:///quickwit/qwdata/indexes
+    {{- end }}
     
     indexer:
       enable_otlp_endpoint: {{ .Values.observability.quickwit.config.enableOtlpEndpoint }}

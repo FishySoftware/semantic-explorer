@@ -4,6 +4,9 @@
 
 global:
   environment: production
+  # Init container image for startup ordering
+  initContainer:
+    image: "busybox:1.36"
 
 # API Service - Production
 api:
@@ -27,7 +30,7 @@ api:
   podDisruptionBudget:
     enabled: true
     minAvailable: 2
-  prometheus:
+  metrics:
     enabled: true
     serviceMonitor:
       enabled: true
@@ -42,12 +45,11 @@ api:
                 - key: app.kubernetes.io/name
                   operator: In
                   values:
-                    - semantic-explorer
                     - api
             topologyKey: kubernetes.io/hostname
 
 # Worker Collections - Production
-worker-collections:
+workerCollections:
   enabled: true
   replicaCount: 4
   resources:
@@ -64,14 +66,14 @@ worker-collections:
   podDisruptionBudget:
     enabled: true
     minAvailable: 2
-  prometheus:
+  metrics:
     enabled: true
     serviceMonitor:
       enabled: true
       interval: 15s
 
 # Worker Datasets - Production
-worker-datasets:
+workerDatasets:
   enabled: true
   replicaCount: 4
   resources:
@@ -88,14 +90,14 @@ worker-datasets:
   podDisruptionBudget:
     enabled: true
     minAvailable: 2
-  prometheus:
+  metrics:
     enabled: true
     serviceMonitor:
       enabled: true
       interval: 15s
 
 # Worker Visualizations - Production
-worker-visualizations:
+workerVisualizationsPy:
   enabled: true
   replicaCount: 4
   resources:
@@ -114,29 +116,23 @@ worker-visualizations:
     enabled: true
     minAvailable: 2
 
-# PostgreSQL - Production (CloudNativePG)
+# PostgreSQL - Production
 postgresql:
   enabled: true
-  replicas: 3
   primary:
+    resources:
+      requests:
+        cpu: 2000m
+        memory: 4Gi
+      limits:
+        cpu: 4000m
+        memory: 8Gi
     persistence:
       size: 100Gi
-  resources:
-    requests:
-      cpu: 1000m
-      memory: 2Gi
-    limits:
-      cpu: 2000m
-      memory: 4Gi
   backup:
     enabled: true
-    retentionDays: 30
-    destinationPath: s3://backups/postgresql
-  monitoring:
-    enabled: true
-  postgresql:
-    maxConnections: 100
-  prometheus:
+    retention: 30
+  metrics:
     enabled: true
     serviceMonitor:
       enabled: true
@@ -145,6 +141,8 @@ postgresql:
 # Redis Cluster - Production (redis-ha)
 redis:
   enabled: true
+
+redis-cluster:
   replicas: 3
   redis:
     resources:
@@ -154,8 +152,6 @@ redis:
       limits:
         cpu: 1000m
         memory: 1Gi
-    persistence:
-      size: 10Gi
   sentinel:
     resources:
       requests:
@@ -164,8 +160,10 @@ redis:
       limits:
         cpu: 500m
         memory: 256Mi
+  persistence:
+    size: 10Gi
 
-# NATS - Production
+# NATS - Production (JetStream enabled with clustering)
 nats:
   enabled: true
   config:
@@ -174,8 +172,6 @@ nats:
       replicas: 3
     jetstream:
       enabled: true
-      memoryStore:
-        maxSize: 4Gi
       fileStore:
         maxSize: 100Gi
   resources:
@@ -183,20 +179,22 @@ nats:
       cpu: 1000m
       memory: 1Gi
     limits:
-      cpu: 2000m
-      memory: 2Gi
+      cpu: 4000m
+      memory: 4Gi
   persistence:
     size: 50Gi
-  prometheus:
+  metrics:
     enabled: true
     serviceMonitor:
       enabled: true
       interval: 30s
 
-# Qdrant - Production (Vector Database)
+# Qdrant - Production (Vector Database with clustering)
 qdrant:
   enabled: true
-  replicas: 3
+  replicaCount: 3
+  cluster:
+    enabled: true
   persistence:
     size: 200Gi
   resources:
@@ -206,21 +204,17 @@ qdrant:
     limits:
       cpu: 4000m
       memory: 8Gi
-  cluster:
-    enabled: true
-  prometheus:
+  metrics:
     enabled: true
     serviceMonitor:
       enabled: true
       interval: 30s
 
-# MinIO - Production (S3-compatible)
+# MinIO - Production (S3-compatible, distributed mode)
 minio:
   enabled: true
   mode: distributed
   replicas: 4
-  persistence:
-    size: 100Gi
   resources:
     requests:
       cpu: 2000m
@@ -228,18 +222,20 @@ minio:
     limits:
       cpu: 4000m
       memory: 4Gi
+  persistence:
+    size: 100Gi
+  # Auto-create buckets for application and Quickwit
   buckets:
-    - name: semantic-explorer
-      versioning: true
-      lifecycle:
-        - filter:
-            prefix: uploads/
-          expiration: 30
+    - name: semantic-explorer-files
+      policy: none
+      purge: false
+    - name: quickwit
+      policy: none
+      purge: false
 
 # Dex - OIDC Provider
 dex:
   enabled: true
-  replicas: 2
   resources:
     requests:
       cpu: 200m
@@ -251,40 +247,93 @@ dex:
     enabled: true
     minAvailable: 1
 
-# OpenTelemetry Collector
-otel-collector:
-  enabled: true
-  replicas: 3
-  resources:
-    requests:
-      cpu: 500m
-      memory: 512Mi
-    limits:
-      cpu: 1000m
-      memory: 1Gi
-  autoscaling:
+# Observability Stack - Production
+observability:
+  # OpenTelemetry Collector
+  otelCollector:
     enabled: true
-    minReplicas: 3
-    maxReplicas: 10
+    config:
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:4317
+              max_recv_msg_size_mib: 100
+            http:
+              endpoint: 0.0.0.0:4318
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 1Gi
 
-# Grafana
+  # Prometheus internal config
+  prometheus:
+    enabled: true  # Use Prometheus subchart for metrics storage
+    external:
+      enabled: false
+
+  # Quickwit - Log & Trace Aggregation (S3 backend via MinIO, HA mode)
+  quickwit:
+    enabled: true
+    replicaCount: 2
+    storage:
+      bucketName: "quickwit"
+    config:
+      enableOtlpEndpoint: true
+    resources:
+      requests:
+        cpu: 1000m
+        memory: 2Gi
+      limits:
+        cpu: 2000m
+        memory: 4Gi
+    persistence:
+      size: 50Gi
+    metrics:
+      enabled: true
+      serviceMonitor:
+        enabled: true
+        interval: 30s
+
+# Prometheus subchart configuration - Production
+prometheus:
+  enabled: true
+  alertmanager:
+    enabled: false
+  prometheus-pushgateway:
+    enabled: false
+  prometheus-node-exporter:
+    enabled: false
+  kube-state-metrics:
+    enabled: false
+  server:
+    retention: "30d"
+    persistentVolume:
+      enabled: true
+      size: 100Gi
+    resources:
+      requests:
+        cpu: 1000m
+        memory: 2Gi
+      limits:
+        cpu: 2000m
+        memory: 4Gi
+
+# Grafana subchart configuration - Production
 grafana:
   enabled: true
-  replicas: 2
-  persistence:
-    enabled: true
-    size: 10Gi
-  datasources:
-    prometheus:
+  sidecar:
+    dashboards:
       enabled: true
-      url: http://prometheus:9090
-    quickwit:
-      traces:
-        enabled: true
-        url: http://quickwit:7280
-      logs:
-        enabled: true
-        url: http://quickwit:7280
+      label: grafana_dashboard
+      labelValue: "1"
+    datasources:
+      enabled: true
+      label: grafana_datasource
+      labelValue: "1"
   resources:
     requests:
       cpu: 250m
@@ -292,33 +341,9 @@ grafana:
     limits:
       cpu: 1000m
       memory: 1Gi
-  podDisruptionBudget:
-    enabled: true
-    minAvailable: 1
-
-# Quickwit - Log & Trace Aggregation
-quickwit:
-  enabled: true
-  replicas: 3
   persistence:
-    size: 200Gi
-  config:
-    indexer:
-      splits:
-        max_capacity_gb: 10
-    searcher:
-      warmup_num_splits: 10
-  resources:
-    requests:
-      cpu: 1000m
-      memory: 2Gi
-    limits:
-      cpu: 2000m
-      memory: 4Gi
-
-# Prometheus (if using locally instead of operator)
-prometheus:
-  enabled: false  # Use Prometheus Operator instead for Kubernetes
+    enabled: true
+    size: 10Gi
 
 # Network Policy
 networkPolicy:

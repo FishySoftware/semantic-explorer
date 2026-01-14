@@ -1,4 +1,32 @@
 {{- if .Values.observability.quickwit.enabled }}
+# Headless service for StatefulSet peer discovery
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "semantic-explorer.quickwit.headlessService" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.quickwit.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - port: {{ .Values.observability.quickwit.service.rest.port }}
+      targetPort: rest
+      protocol: TCP
+      name: rest
+    - port: {{ .Values.observability.quickwit.service.grpc.port }}
+      targetPort: grpc
+      protocol: TCP
+      name: grpc
+  selector:
+    {{- include "semantic-explorer.quickwit.selectorLabels" . | nindent 4 }}
+---
+# Regular ClusterIP service for client access
 apiVersion: v1
 kind: Service
 metadata:

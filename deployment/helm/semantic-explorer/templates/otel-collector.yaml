@@ -37,6 +37,30 @@ spec:
       {{- end }}
       securityContext:
         {{- toYaml .Values.observability.otelCollector.podSecurityContext | nindent 8 }}
+      initContainers:
+      {{- if .Values.observability.quickwit.enabled }}
+      - name: wait-for-quickwit
+        image: {{ include "semantic-explorer.initContainer.image" . }}
+        securityContext:
+          {{- include "semantic-explorer.initContainer.securityContext" . | nindent 10 }}
+        command:
+          - sh
+          - -c
+          - |
+            echo "Waiting for Quickwit at {{ include "semantic-explorer.quickwit.host" . }}:{{ include "semantic-explorer.quickwit.grpcPort" . }}..."
+            until nc -z {{ include "semantic-explorer.quickwit.host" . }} {{ include "semantic-explorer.quickwit.grpcPort" . }}; do
+              echo "Quickwit not ready, waiting..."
+              sleep 2
+            done
+            echo "Quickwit is ready!"
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+      {{- end }}
       containers:
       - name: otel-collector
         image: {{ include "semantic-explorer.imageRegistry" (dict "registry" .Values.observability.otelCollector.image.registry "global" .Values.global) }}{{ if include "semantic-explorer.imageRegistry" (dict "registry" .Values.observability.otelCollector.image.registry "global" .Values.global) }}/{{ end }}{{ .Values.observability.otelCollector.image.repository }}:{{ .Values.observability.otelCollector.image.tag }}

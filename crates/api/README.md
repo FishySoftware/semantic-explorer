@@ -125,13 +125,13 @@ sequenceDiagram
 |------------|---------|---------|
 | Rust | 2024 Edition | Language |
 | actix-web | 4.12 | HTTP framework |
-| actix-web-openidconnect | workspace | OIDC authentication |
+| actix-web-openidconnect | 0.3 | OIDC authentication |
 | sqlx | 0.8 | PostgreSQL async client |
 | qdrant-client | 1.16 | Vector database client |
 | aws-sdk-s3 | 1.119 | S3-compatible storage |
 | async-nats | 0.45 | Message queue client |
 | utoipa | 5.4 | OpenAPI documentation |
-| opentelemetry | workspace | Distributed tracing |
+| opentelemetry | 0.31 | Distributed tracing |
 | rustls | 0.23 | TLS support |
 
 ## Module Structure
@@ -141,20 +141,23 @@ sequenceDiagram
 | `api/` | HTTP endpoint handlers |
 | `auth/` | OIDC authentication integration |
 | `audit` | Security event logging |
+| `audit_worker` | Async audit event processing worker |
 | `storage/postgres/` | Database queries and migrations |
 | `storage/rustfs/` | S3 file operations |
 | `storage/qdrant/` | Vector database operations |
 | `transforms/` | Job orchestration and result listeners |
 | `collections/` | Collection domain logic |
 | `datasets/` | Dataset domain logic |
+| `embedded_datasets/` | Embedded dataset domain logic |
 | `embedders/` | Embedder configuration |
 | `llms/` | LLM provider configuration |
 | `search/` | Semantic search implementation |
 | `chat/` | RAG chat implementation |
 | `embedding/` | Embedding generation |
+| `validation/` | Input validation and sanitization |
 | `errors` | Unified error types |
-| `middleware` | Request ID middleware |
-| `observability` | Prometheus metrics endpoint |
+| `middleware/` | Request ID and other middleware |
+| `observability/` | Prometheus metrics endpoint |
 
 ## API Endpoints
 

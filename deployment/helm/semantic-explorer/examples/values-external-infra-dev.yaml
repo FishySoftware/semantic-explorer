@@ -5,6 +5,9 @@
 
 global:
   environment: development
+  # Init container image for startup ordering
+  initContainer:
+    image: "busybox:1.36"
 
 # API Service - Development
 api:
@@ -21,7 +24,7 @@ api:
       memory: 1Gi
   autoscaling:
     enabled: false
-  prometheus:
+  metrics:
     enabled: true
     serviceMonitor:
       enabled: true
@@ -37,7 +40,7 @@ api:
     OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
 
 # Worker Collections - Development
-worker-collections:
+workerCollections:
   enabled: true
   replicaCount: 1
   resources:
@@ -47,7 +50,7 @@ worker-collections:
     limits:
       cpu: 1000m
       memory: 1Gi
-  prometheus:
+  metrics:
     enabled: true
     serviceMonitor:
       enabled: true
@@ -58,7 +61,7 @@ worker-collections:
     OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
 
 # Worker Datasets - Development
-worker-datasets:
+workerDatasets:
   enabled: true
   replicaCount: 1
   resources:
@@ -68,7 +71,7 @@ worker-datasets:
     limits:
       cpu: 2000m
       memory: 2Gi
-  prometheus:
+  metrics:
     enabled: true
     serviceMonitor:
       enabled: true
@@ -80,7 +83,7 @@ worker-datasets:
     OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
 
 # Worker Visualizations - Development
-worker-visualizations:
+workerVisualizationsPy:
   enabled: true
   replicaCount: 1
   resources:
@@ -99,26 +102,60 @@ worker-visualizations:
     S3_ENDPOINT: "https://s3.example.com"
     OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
 
-# All infrastructure services DISABLED
+# All infrastructure services DISABLED - using external
 postgresql:
   enabled: false
+  external:
+    enabled: true
+    host: "postgres.example.com"
+    port: 5432
+    database: semantic_explorer
+    username: user
+    existingSecret: "external-postgresql-secret"
+    passwordKey: "password"
 
 redis:
   enabled: false
+  external:
+    enabled: true
+    clusterNodes: "redis://redis.example.com:6379"
 
 nats:
   enabled: false
+  external:
+    enabled: true
+    url: "nats://nats.example.com:4222"
 
 qdrant:
   enabled: false
+  external:
+    enabled: true
+    url: "http://qdrant.example.com:6333"
 
 minio:
   enabled: false
+  external:
+    enabled: true
+    endpoint: "https://s3.example.com"
+    region: "us-east-1"
+    bucket: "semantic-explorer"
+    existingSecret: "external-s3-secret"
+    accessKeyIdKey: "access-key-id"
+    secretAccessKeyKey: "secret-access-key"
+
+# Storage Configuration (S3-compatible)
+storage:
+  s3:
+    endpoint: "https://s3.example.com"
+    region: "us-east-1"
+    bucketName: "semantic-explorer"
+    existingSecret: "external-s3-secret"
+    accessKeyIdKey: "access-key-id"
+    secretAccessKeyKey: "secret-access-key"
 
 # Dex - OIDC Provider
 dex:
   enabled: true
-  replicas: 1
   resources:
     requests:
       cpu: 100m
@@ -127,44 +164,57 @@ dex:
       cpu: 200m
       memory: 256Mi
 
-# OpenTelemetry Collector - Local for tracing/metrics aggregation
-otel-collector:
-  enabled: true
-  replicas: 1
-  resources:
-    requests:
-      cpu: 100m
-      memory: 256Mi
-    limits:
-      cpu: 500m
-      memory: 512Mi
-  config:
-    receivers:
-      otlp:
-        protocols:
-          grpc:
-            endpoint: 0.0.0.0:4317
-          http:
-            endpoint: 0.0.0.0:4318
-    exporters:
-      # Configure where to send metrics, traces, and logs
-      # Example: export to managed observability service
-      otlp:
-        endpoint: "observability.example.com:4317"
-      prometheus:
-        endpoint: "0.0.0.0:8889"
+# Observability - Local OTEL for tracing/metrics aggregation
+observability:
+  otelCollector:
+    enabled: true
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    config:
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:4317
+              max_recv_msg_size_mib: 100
+            http:
+              endpoint: 0.0.0.0:4318
+      exporters:
+        # Example: export to managed observability service
+        otlp:
+          endpoint: "observability.example.com:4317"
+        prometheus:
+          endpoint: "0.0.0.0:8889"
 
-# Grafana - Optional, can point to external instance
-grafana:
-  enabled: false  # Set to true if you want to run Grafana locally
+  # Use external Prometheus instance
+  prometheus:
+    enabled: false
+    external:
+      enabled: true
+      url: "http://prometheus.example.com:9090"
 
-# Quickwit - Optional, can point to external instance
-quickwit:
-  enabled: false  # Set to true if you want to run Quickwit locally
+  # Quickwit - Optional, can point to external instance
+  quickwit:
+    enabled: false
+    external:
+      enabled: true
+      url: "http://quickwit.example.com:7280"
 
-# Prometheus - Not needed, using external metrics backend
+# Prometheus subchart - Disabled when using external
 prometheus:
   enabled: false
+
+# Grafana subchart - Disabled when using external
+grafana:
+  enabled: false
+  external:
+    enabled: true
+    url: "http://grafana.example.com:3000"
 
 # Network Policy
 networkPolicy:
@@ -175,24 +225,19 @@ networkPolicy:
     toDns: true
     toInternet: true  # Required to reach external services
 
-# IMPORTANT: You must provide the following before deployment:
-# 1. External PostgreSQL database connection details
-# 2. External Redis endpoint(s)
-# 3. External NATS server(s)
-# 4. External Qdrant endpoint
-# 5. External S3-compatible storage endpoint
-# 6. S3 credentials (access key, secret key)
+# ============================================================================
+# REQUIRED EXTERNAL SERVICE CONFIGURATIONS
+# ============================================================================
 #
-# Update the environment variables in the worker/api sections above with your actual values
-# Or provide them via Kubernetes Secrets and reference them in the deployment templates
+# Before deploying with this values file, create secrets for external services:
 #
-# Example:
-#   apiVersion: v1
-#   kind: Secret
-#   metadata:
-#     name: external-services
-#   type: Opaque
-#   stringData:
-#     DATABASE_URL: "postgres://user:pass@db.example.com:5432/db"
-#     S3_ACCESS_KEY: "your-access-key"
-#     S3_SECRET_KEY: "your-secret-key"
+# kubectl create secret generic external-postgresql-secret \
+#   --from-literal=password="your-postgres-password"
+#
+# kubectl create secret generic external-s3-secret \
+#   --from-literal=access-key-id="your-access-key" \
+#   --from-literal=secret-access-key="your-secret-key"
+#
+# Update the environment variables in the worker/api sections above with your
+# actual external service endpoints.
+# ============================================================================

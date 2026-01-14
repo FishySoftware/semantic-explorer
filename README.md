@@ -47,6 +47,170 @@ Production-grade semantic exploration platform with advanced caching, real-time 
 - 🔄 **Token Rotation** - Refresh token rotation for enhanced security
 - ⏱️ **Configurable Timeouts** - Session expiration and inactivity timeouts
 
+## 🏗️ Architecture
+
+### High-Level Overview
+
+```mermaid
+flowchart LR
+    subgraph Clients
+        UI[Web UI]
+        API_Client[API Clients]
+    end
+
+    subgraph Core["Core Services"]
+        API[API Server]
+    end
+
+    subgraph Workers["Background Workers"]
+        W1[Collections]
+        W2[Datasets]
+        W3[Visualizations]
+    end
+
+    subgraph Queue
+        NATS[NATS JetStream]
+    end
+
+    subgraph Data["Data Layer"]
+        PG[(PostgreSQL)]
+        QD[(Qdrant)]
+        S3[(S3/MinIO)]
+        RD[(Redis)]
+    end
+
+    Clients --> API
+    API --> NATS
+    API --> Data
+    NATS --> Workers
+    Workers --> Data
+    Workers --> NATS
+```
+
+### Detailed Architecture
+
+```mermaid
+flowchart TB
+    subgraph clients ["👥 CLIENTS"]
+        direction LR
+        web["🌐 Web UI<br/>Svelte"]
+        ext["🔌 API Clients"]
+    end
+
+    subgraph ingress ["🚪 INGRESS"]
+        ing["Load Balancer / Ingress Controller"]
+    end
+
+    subgraph auth ["🔐 AUTHENTICATION"]
+        direction LR
+        dex["Dex OIDC"]
+        oidc["External IdP<br/>Google · GitHub · LDAP"]
+    end
+
+    subgraph api ["📦 API SERVER"]
+        direction TB
+        server["Actix-web REST API"]
+        mw["Middleware Stack<br/>Auth · RateLimit · Cache · Audit"]
+        server --- mw
+    end
+
+    subgraph workers ["⚙️ WORKERS"]
+        direction LR
+        wc["📄 Collections<br/>Document Extraction<br/><i>Rust</i>"]
+        wd["🧠 Datasets<br/>Embeddings<br/><i>Rust</i>"]
+        wv["📊 Visualizations<br/>UMAP · HDBSCAN<br/><i>Python</i>"]
+    end
+
+    subgraph queue ["📨 MESSAGE QUEUE"]
+        nats["NATS JetStream"]
+        streams["Streams: Collections · Datasets · Visualizations · Status · DLQ"]
+        nats --- streams
+    end
+
+    subgraph storage ["💾 DATA STORAGE"]
+        direction LR
+        pg["🐘 PostgreSQL<br/>Metadata · RLS · Audit"]
+        qd["🔴 Qdrant<br/>Vectors · Search"]
+        s3["📦 S3 / MinIO<br/>Files · Artifacts"]
+        rd["⚡ Redis<br/>Cache · Sessions"]
+    end
+
+    subgraph external ["🌍 EXTERNAL SERVICES"]
+        direction LR
+        emb["Embedding APIs<br/>OpenAI · Cohere"]
+        llm["LLM APIs<br/>GPT-4 · Claude"]
+    end
+
+    subgraph observability ["📊 OBSERVABILITY"]
+        direction LR
+        otel["OTEL Collector"]
+        prom["Prometheus"]
+        qw["Quickwit"]
+        graf["Grafana"]
+    end
+
+    %% Main flows
+    clients --> ingress --> api
+    api <--> auth
+    auth <--> oidc
+    api --> queue
+    queue --> workers
+    workers --> queue
+
+    %% Storage connections
+    api --> storage
+    workers --> storage
+
+    %% External API calls
+    wd --> emb
+    wv --> llm
+
+    %% Observability (dashed)
+    api -.-> otel
+    workers -.-> otel
+    otel --> prom & qw
+    prom & qw --> graf
+```
+
+### Data Flow
+
+```mermaid
+flowchart LR
+    subgraph ingest ["1️⃣ Ingest"]
+        upload["Upload Document"]
+    end
+    
+    subgraph extract ["2️⃣ Extract"]
+        parse["Parse & Chunk"]
+    end
+    
+    subgraph embed ["3️⃣ Embed"]
+        vectors["Generate Vectors"]
+    end
+    
+    subgraph viz ["4️⃣ Visualize"]
+        cluster["UMAP + HDBSCAN"]
+    end
+    
+    subgraph search ["5️⃣ Search"]
+        query["Semantic Query"]
+    end
+
+    upload -->|"S3 + Queue"| extract
+    extract -->|"PostgreSQL"| embed
+    embed -->|"Qdrant"| viz
+    viz -->|"S3"| search
+    search -->|"Qdrant"| results["Results"]
+```
+
+| Step | Component | Input | Output | Storage |
+|------|-----------|-------|--------|---------|
+| 1 | API | Document file | Raw file | S3 |
+| 2 | worker-collections | Raw file | Text chunks | PostgreSQL |
+| 3 | worker-datasets | Text chunks | Vector embeddings | Qdrant |
+| 4 | worker-visualizations-py | Embeddings | 2D layout + clusters | S3 |
+| 5 | API | Query text | Ranked results | - |
+
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -54,8 +218,8 @@ Production-grade semantic exploration platform with advanced caching, real-time 
 - PostgreSQL 14+ (or use Docker)
 - Redis 7+ Cluster mode (or use Docker)
 - Qdrant 1.8+ (or use Docker)
-- Rust 1.75+ (for local development)
-- Node.js 18+ (for UI development)
+- Rust 1.85+ (for local development)
+- Node.js 20+ (for UI development)
 
 ### Development Setup
 
@@ -178,7 +342,7 @@ semantic-explorer/
 ## 📊 Technology Stack
 
 ### Backend
-- **Language**: Rust 1.75+
+- **Language**: Rust 1.85+
 - **Web Framework**: Actix-web (async HTTP)
 - **Database**: PostgreSQL 14+ with RLS & replication
 - **Vector DB**: Qdrant (quantized embeddings)
