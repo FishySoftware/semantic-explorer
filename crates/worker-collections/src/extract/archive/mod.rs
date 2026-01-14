@@ -601,8 +601,10 @@ mod tests {
     fn test_metadata_extraction() {
         let zip_data = create_test_zip(&[("file.txt", b"Content here")]);
 
-        let mut options = ExtractionOptions::default();
-        options.include_metadata = true;
+        let options = ExtractionOptions {
+            include_metadata: true,
+            ..Default::default()
+        };
         let archive_opts = ArchiveOptions::default();
 
         let result = extract_from_zip(&zip_data, &options, &archive_opts);

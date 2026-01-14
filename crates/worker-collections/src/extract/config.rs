@@ -111,9 +111,9 @@ mod tests {
     fn test_extraction_config_defaults() {
         let config = ExtractionConfig::default();
         assert!(matches!(config.strategy, ExtractionStrategy::PlainText));
-        assert_eq!(config.options.preserve_formatting, false);
-        assert_eq!(config.options.extract_tables, true);
-        assert_eq!(config.options.include_metadata, false);
+        assert!(!config.options.preserve_formatting);
+        assert!(config.options.extract_tables);
+        assert!(!config.options.include_metadata);
     }
 
     #[test]
@@ -156,6 +156,6 @@ mod tests {
         // Overridden option
         assert!(config.options.preserve_code_blocks);
         // Default options
-        assert_eq!(config.options.preserve_formatting, false);
+        assert!(!config.options.preserve_formatting);
     }
 }

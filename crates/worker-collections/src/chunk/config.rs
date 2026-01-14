@@ -365,7 +365,7 @@ mod tests {
 
         let opts = config.options.recursive_character.unwrap();
         assert_eq!(opts.separators, vec!["|", ";"]);
-        assert_eq!(opts.keep_separator, false);
+        assert!(!opts.keep_separator);
     }
 
     #[test]
@@ -384,7 +384,7 @@ mod tests {
         let config: ChunkingConfig = serde_json::from_value(json).unwrap();
         let opts = config.options.token_based.unwrap();
         assert_eq!(opts.max_tokens, 1024);
-        assert_eq!(opts.split_on_sentences, false);
+        assert!(!opts.split_on_sentences);
         assert_eq!(opts.model, Some("gpt-4".to_string()));
     }
 }

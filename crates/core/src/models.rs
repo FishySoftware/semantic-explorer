@@ -6,6 +6,7 @@ pub struct CollectionTransformJob {
     pub job_id: Uuid,
     pub source_file_key: String,
     pub bucket: String,
+    pub collection_id: i32,
     pub collection_transform_id: i32,
     pub owner: String,
     pub extraction_config: serde_json::Value,
@@ -34,6 +35,7 @@ pub struct DatasetTransformJob {
     pub job_id: Uuid,
     pub batch_file_key: String,
     pub bucket: String,
+    pub dataset_id: i32,
     pub dataset_transform_id: i32,
     pub embedded_dataset_id: i32, // NEW: Identifies which embedded dataset this job is for
     pub owner: String,

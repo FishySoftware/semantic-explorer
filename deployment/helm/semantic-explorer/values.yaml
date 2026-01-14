@@ -372,6 +372,9 @@ workerVisualizationsPy:
     MAX_ACK_PENDING: "10"
     HEALTH_CHECK_PORT: "8081"
     NATS_REPLICAS: "3"
+    # Retry settings for stream subscription during startup race conditions
+    NATS_STREAM_RETRY_ATTEMPTS: "30"
+    NATS_STREAM_RETRY_DELAY: "2.0"
     # Disable numba caching to avoid file locator issues in containers
     NUMBA_DISABLE_CACHING: "1"
     NUMBA_CACHE_DIR: "/tmp/numba_cache"

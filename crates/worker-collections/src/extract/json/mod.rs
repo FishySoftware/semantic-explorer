@@ -201,8 +201,10 @@ mod tests {
     #[test]
     fn test_extract_json_with_metadata() {
         let json = r#"{"title": "Test", "content": "Hello"}"#;
-        let mut options = ExtractionOptions::default();
-        options.include_metadata = true;
+        let options = ExtractionOptions {
+            include_metadata: true,
+            ..Default::default()
+        };
 
         let result = extract_with_options(json.as_bytes(), &options);
         assert!(result.is_ok());
@@ -243,8 +245,10 @@ mod tests {
         let ndjson = r#"{"id": 1}
 {"id": 2}
 {"id": 3}"#;
-        let mut options = ExtractionOptions::default();
-        options.include_metadata = true;
+        let options = ExtractionOptions {
+            include_metadata: true,
+            ..Default::default()
+        };
 
         let result = extract_ndjson_with_options(ndjson.as_bytes(), &options);
         assert!(result.is_ok());
@@ -257,9 +261,11 @@ mod tests {
     #[test]
     fn test_extract_json_preserving_paths() {
         let json = r#"{"user": {"name": "Test", "email": "test@example.com"}}"#;
-        let mut options = ExtractionOptions::default();
-        options.preserve_formatting = true;
-        options.include_metadata = true;
+        let options = ExtractionOptions {
+            preserve_formatting: true,
+            include_metadata: true,
+            ..Default::default()
+        };
 
         let result = extract_with_options(json.as_bytes(), &options);
         assert!(result.is_ok());
@@ -287,8 +293,10 @@ mod tests {
     #[test]
     fn test_extract_json_with_numbers_and_bools() {
         let json = r#"{"count": 42, "active": true, "label": "test"}"#;
-        let mut options = ExtractionOptions::default();
-        options.preserve_formatting = true;
+        let options = ExtractionOptions {
+            preserve_formatting: true,
+            ..Default::default()
+        };
 
         let result = extract_with_options(json.as_bytes(), &options);
         assert!(result.is_ok());

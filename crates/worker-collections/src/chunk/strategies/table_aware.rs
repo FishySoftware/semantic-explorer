@@ -567,7 +567,7 @@ This is the conclusion.
         let chunks = chunk_with_tables(text, &options).unwrap();
 
         // Should have at least 3 chunks: intro, table, conclusion
-        assert!(chunks.len() >= 1, "Should have chunks");
+        assert!(!chunks.is_empty(), "Should have chunks");
 
         // Check that we have chunks with different content types
         let has_table_content = chunks.iter().any(|c| c.content.contains("Header1"));

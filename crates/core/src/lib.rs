@@ -11,4 +11,4 @@ pub mod validation;
 pub mod worker;
 
 pub use secrets::{OptionalSecret, SecretString};
-pub use subjects::{consumers, dlq, jobs, results};
+pub use subjects::{consumers, dlq, jobs, status};

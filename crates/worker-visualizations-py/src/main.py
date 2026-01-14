@@ -28,6 +28,7 @@ from dotenv import load_dotenv
 # Try to import aiohttp for health check server
 try:
     from aiohttp import web
+
     HAS_AIOHTTP = True
 except ImportError:
     HAS_AIOHTTP = False
@@ -51,7 +52,7 @@ try:
     )
     from .storage import S3Storage
     from .llm_namer import LLMProvider
-    from .observability import init_metrics, get_metrics
+    from .observability import init_metrics
 except ImportError:
     # Fallback to absolute imports (for direct script execution)
     from processor import process_visualization_job
@@ -61,13 +62,14 @@ except ImportError:
     )
     from storage import S3Storage
     from llm_namer import LLMProvider
-    from observability import init_metrics, get_metrics
+    from observability import init_metrics
 
 # Initialize worker configuration first
 WORKER_ID = os.getenv("WORKER_ID", str(uuid.uuid4()))
 
 # Initialize observability first (before logging)
 metrics = init_metrics(WORKER_ID)
+
 
 # Configure structured JSON logging
 def configure_json_logging(worker_id: str):
@@ -90,7 +92,9 @@ def configure_json_logging(worker_id: str):
         class JSONFormatter(logging.Formatter):
             def format(self, record):
                 log_obj = {
-                    "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+                    "timestamp": datetime.fromtimestamp(
+                        record.created, tz=timezone.utc
+                    ).isoformat(),
                     "level": record.levelname,
                     "logger": record.name,
                     "message": record.getMessage(),
@@ -110,15 +114,30 @@ def configure_json_logging(worker_id: str):
     logger_instance.addHandler(handler)
     return logger_instance
 
+
 logger = configure_json_logging(WORKER_ID)
 
 # Configuration
 NATS_URL = os.getenv("NATS_URL", "nats://localhost:4222")
-NATS_SUBJECT = "worker.job.visualization"
-NATS_DURABLE_CONSUMER = "visualization-workers"
-RESULT_SUBJECT = "worker.result.visualization"
+NATS_SUBJECT = "workers.visualization-transform"
+NATS_DURABLE_CONSUMER = "visualization-transform-workers"
+# Status updates use hierarchical subjects: transforms.visualization.status.{owner}.{embedded_dataset_id}.{transform_id}
+RESULT_SUBJECT_PREFIX = "transforms.visualization.status"
+NATS_STREAM_RETRY_ATTEMPTS = int(os.getenv("NATS_STREAM_RETRY_ATTEMPTS", "30"))
+NATS_STREAM_RETRY_DELAY = float(os.getenv("NATS_STREAM_RETRY_DELAY", "2.0"))
 PROCESSING_TIMEOUT_SECS = int(os.getenv("PROCESSING_TIMEOUT_SECS", "3600"))
 HEALTH_CHECK_PORT = int(os.getenv("HEALTH_CHECK_PORT", "8081"))
+
+
+def build_status_subject(
+    owner: str, embedded_dataset_id: int, transform_id: int
+) -> str:
+    """Build hierarchical NATS subject for status updates.
+
+    Format: transforms.visualization.status.{owner}.{embedded_dataset_id}.{transform_id}
+    """
+    return f"{RESULT_SUBJECT_PREFIX}.{owner}.{embedded_dataset_id}.{transform_id}"
+
 
 # Global state
 s3_storage: Optional[S3Storage] = None
@@ -130,6 +149,7 @@ active_jobs = 0
 # Health check state
 class HealthCheckState:
     """Maintains health check state for Kubernetes probes."""
+
     is_ready = False
     last_job_time = time.time()
     error_message: Optional[str] = None
@@ -152,8 +172,7 @@ async def readiness_check_handler(request):
     time_since_last_job = time.time() - health_state.last_job_time
     if time_since_last_job > 300:  # 5 minutes
         return web.Response(
-            text=f"Not ready: no activity for {time_since_last_job:.0f}s",
-            status=503
+            text=f"Not ready: no activity for {time_since_last_job:.0f}s", status=503
         )
 
     if health_state.error_message:
@@ -182,6 +201,7 @@ async def start_health_check_server():
 
 def setup_signal_handlers():
     """Setup signal handlers for graceful shutdown."""
+
     def handle_signal(signum, frame):
         sig_name = signal.Signals(signum).name
         logger.info(f"Received {sig_name} signal, initiating graceful shutdown")
@@ -234,7 +254,6 @@ async def handle_job(
     active_jobs += 1
     metrics.active_jobs_gauge.set(active_jobs)
     job_start_time = time.time()
-    status = "completed"
 
     logger.info(
         f"Processing job {job.job_id} for transform {job.visualization_transform_id} "
@@ -249,6 +268,11 @@ async def handle_job(
         status="processing",
     )
 
+    # Build the status subject once for all updates in this job
+    status_subject = build_status_subject(
+        job.owner, job.embedded_dataset_id, job.visualization_transform_id
+    )
+
     # Send immediate progress update to show job has started
     try:
         progress_result = VisualizationTransformResult(
@@ -260,8 +284,10 @@ async def handle_job(
             statsJson={"stage": "starting", "progress_percent": 0},
         )
         progress_json = json.dumps(progress_result.model_dump_json_safe())
-        await nc.publish(RESULT_SUBJECT, progress_json.encode())
-        logger.debug(f"Sent initial progress update for job {job.job_id}")
+        await nc.publish(status_subject, progress_json.encode())
+        logger.debug(
+            f"Sent initial progress update for job {job.job_id} to {status_subject}"
+        )
     except Exception as e:
         logger.warning(f"Failed to send initial progress update: {e}")
 
@@ -277,7 +303,7 @@ async def handle_job(
                 statsJson={"stage": stage, "progress_percent": progress_percent},
             )
             progress_json = json.dumps(progress_result.model_dump_json_safe())
-            await nc.publish(RESULT_SUBJECT, progress_json.encode())
+            await nc.publish(status_subject, progress_json.encode())
             logger.debug(
                 f"Progress update for job {job.job_id}: {stage} ({progress_percent}%)"
             )
@@ -344,7 +370,6 @@ async def handle_job(
         metrics.visualization_jobs_total.labels("failed").inc()
         metrics.visualization_job_duration.observe(job_elapsed)
         metrics.visualization_job_failures_total.labels("timeout").inc()
-        status = "failed"
         logger.error(
             f"Job {job.job_id} timeout: {result.error_message} (elapsed: {job_elapsed:.3f}s)"
         )
@@ -355,7 +380,6 @@ async def handle_job(
         metrics.visualization_jobs_total.labels("failed").inc()
         metrics.visualization_job_duration.observe(job_elapsed)
         metrics.visualization_job_failures_total.labels(type(e).__name__).inc()
-        status = "failed"
         logger.error(
             f"Job {job.job_id} failed: {result.error_message} (elapsed: {job_elapsed:.3f}s)",
             exc_info=True,
@@ -363,13 +387,13 @@ async def handle_job(
 
     # Publish result back to Rust API
     try:
-        logger.debug(f"Publishing result for job {job.job_id} to {RESULT_SUBJECT}")
+        logger.debug(f"Publishing result for job {job.job_id} to {status_subject}")
         publish_start = time.time()
         result_json = json.dumps(result.model_dump_json_safe())
-        await nc.publish(RESULT_SUBJECT, result_json.encode())
+        await nc.publish(status_subject, result_json.encode())
         publish_elapsed = time.time() - publish_start
         logger.info(
-            f"Published result for job {job.job_id} to {RESULT_SUBJECT} "
+            f"Published result for job {job.job_id} to {status_subject} "
             f"(status: {result.status}, publish time: {publish_elapsed:.3f}s)"
         )
 
@@ -398,7 +422,7 @@ async def message_handler(msg: Msg, nc: NATSConnection) -> None:
     handler_start = time.time()
     metrics.nats_messages_received_total.inc()
     try:
-        logger.debug(f"Received NATS message, parsing payload")
+        logger.debug("Received NATS message, parsing payload")
         # Parse the message payload
         job_data = json.loads(msg.data.decode())
         job = VisualizationTransformJob(**job_data)
@@ -472,51 +496,73 @@ async def main():
 
         # Use pull-based subscription for horizontal scaling
         # Pull subscriptions allow multiple workers to share a durable consumer
-        try:
-            sub_start = time.time()
-            logger.debug(f"Creating pull subscriber for {NATS_SUBJECT}")
-            
-            # Create a pull subscription with the durable consumer name
-            # Multiple workers can pull from the same durable consumer
-            psub = await js.pull_subscribe(
-                subject=NATS_SUBJECT,
-                durable=NATS_DURABLE_CONSUMER,
-                config=ConsumerConfig(
-                    ack_wait=1800,  # 30 minutes
-                    max_deliver=3,
-                    max_ack_pending=10,
-                ),
-            )
-            sub_elapsed = time.time() - sub_start
-            logger.info(
-                f"Pull subscribed to {NATS_SUBJECT} with durable consumer {NATS_DURABLE_CONSUMER} "
-                f"(worker_id: {WORKER_ID}) in {sub_elapsed:.3f}s"
-            )
-        except Exception as e:
-            logger.error(f"Failed to pull subscribe to {NATS_SUBJECT}: {e}", exc_info=True)
-            raise
+        # Retry logic handles race conditions where the stream doesn't exist yet
+        # (API creates streams on startup, but workers may start first)
+        psub = None
+        for attempt in range(1, NATS_STREAM_RETRY_ATTEMPTS + 1):
+            try:
+                sub_start = time.time()
+                logger.debug(
+                    f"Creating pull subscriber for {NATS_SUBJECT} (attempt {attempt}/{NATS_STREAM_RETRY_ATTEMPTS})"
+                )
+
+                # Create a pull subscription with the durable consumer name
+                # Multiple workers can pull from the same durable consumer
+                psub = await js.pull_subscribe(
+                    subject=NATS_SUBJECT,
+                    durable=NATS_DURABLE_CONSUMER,
+                    config=ConsumerConfig(
+                        ack_wait=1800,  # 30 minutes
+                        max_deliver=3,
+                        max_ack_pending=10,
+                    ),
+                )
+                sub_elapsed = time.time() - sub_start
+                logger.info(
+                    f"Pull subscribed to {NATS_SUBJECT} with durable consumer {NATS_DURABLE_CONSUMER} "
+                    f"(worker_id: {WORKER_ID}) in {sub_elapsed:.3f}s"
+                )
+                break  # Success, exit retry loop
+            except Exception as e:
+                if attempt < NATS_STREAM_RETRY_ATTEMPTS:
+                    logger.warning(
+                        f"Failed to subscribe to {NATS_SUBJECT} (attempt {attempt}/{NATS_STREAM_RETRY_ATTEMPTS}): {e}. "
+                        f"Retrying in {NATS_STREAM_RETRY_DELAY}s... (stream may not exist yet)"
+                    )
+                    await asyncio.sleep(NATS_STREAM_RETRY_DELAY)
+                else:
+                    logger.error(
+                        f"Failed to subscribe to {NATS_SUBJECT} after {NATS_STREAM_RETRY_ATTEMPTS} attempts: {e}",
+                        exc_info=True,
+                    )
+                    raise
+
+        if psub is None:
+            raise RuntimeError(f"Failed to create subscription to {NATS_SUBJECT}")
 
         # Message loop with pull-based fetching
         logger.info("Worker started, waiting for jobs...")
         batch_size = int(os.getenv("NATS_BATCH_SIZE", "1"))
         fetch_timeout = float(os.getenv("NATS_FETCH_TIMEOUT", "5.0"))
-        
+
         while not shutdown_event.is_set():
             try:
                 # Fetch messages from the pull subscription
                 # This allows multiple workers to compete for messages
                 messages = await psub.fetch(batch=batch_size, timeout=fetch_timeout)
-                
+
                 for msg in messages:
                     if shutdown_event.is_set():
-                        logger.info(f"Shutdown requested, stopping message processing after {message_count} messages")
+                        logger.info(
+                            f"Shutdown requested, stopping message processing after {message_count} messages"
+                        )
                         break
-                    
+
                     message_count += 1
                     logger.debug(f"Received message #{message_count} from queue")
                     # Create a task for message handling to allow concurrent processing
                     asyncio.create_task(message_handler(msg, nc))
-                    
+
             except asyncio.TimeoutError:
                 # No messages available, continue polling
                 continue
@@ -542,7 +588,9 @@ async def main():
                 await asyncio.sleep(1)
 
             if active_jobs > 0:
-                logger.warning(f"{active_jobs} jobs still active after {max_wait}s timeout")
+                logger.warning(
+                    f"{active_jobs} jobs still active after {max_wait}s timeout"
+                )
             else:
                 logger.info("All active jobs completed")
 

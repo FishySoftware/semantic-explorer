@@ -219,6 +219,7 @@ async fn process_collection_transform_scan(
                     job_id: Uuid::new_v4(),
                     source_file_key: file.key.clone(),
                     bucket: collection.bucket.clone(),
+                    collection_id: transform.collection_id,
                     collection_transform_id: transform.collection_transform_id,
                     owner: transform.owner.clone(),
                     extraction_config: extraction_config.clone(),

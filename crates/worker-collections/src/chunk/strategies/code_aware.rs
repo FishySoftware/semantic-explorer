@@ -754,7 +754,7 @@ fn very_large_function() {{
         let chunks = chunk_code(&large_rust_code, CodeLanguage::Rust, &options).unwrap();
 
         // The large function should be chunked into multiple pieces
-        assert!(chunks.len() >= 1);
+        assert!(!chunks.is_empty());
     }
 
     #[test]

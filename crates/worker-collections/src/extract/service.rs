@@ -290,9 +290,11 @@ mod tests {
 
     #[test]
     fn test_html_table_extraction() {
-        let mut options = ExtractionOptions::default();
-        options.extract_tables = true;
-        options.table_format = super::super::config::TableFormat::Markdown;
+        let options = ExtractionOptions {
+            extract_tables: true,
+            table_format: super::super::config::TableFormat::Markdown,
+            ..Default::default()
+        };
 
         let config = ExtractionConfig {
             strategy: ExtractionStrategy::PlainText,
@@ -312,9 +314,11 @@ mod tests {
 
     #[test]
     fn test_append_metadata_to_text() {
-        let mut options = ExtractionOptions::default();
-        options.include_metadata = true;
-        options.append_metadata_to_text = true;
+        let options = ExtractionOptions {
+            include_metadata: true,
+            append_metadata_to_text: true,
+            ..Default::default()
+        };
 
         let config = ExtractionConfig {
             strategy: ExtractionStrategy::PlainText,

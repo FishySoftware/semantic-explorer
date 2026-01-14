@@ -217,8 +217,10 @@ mod tests {
     #[test]
     fn test_extract_headings() {
         let md = b"# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6";
-        let mut options = ExtractionOptions::default();
-        options.include_metadata = true;
+        let options = ExtractionOptions {
+            include_metadata: true,
+            ..Default::default()
+        };
 
         let result = extract_with_options(md, &options);
         assert!(result.is_ok());
@@ -235,8 +237,10 @@ mod tests {
     fn test_preserve_code_blocks() {
         let md =
             b"Text before\n\n```rust\nfn main() {\n    println!(\"Hello\");\n}\n```\n\nText after";
-        let mut options = ExtractionOptions::default();
-        options.preserve_code_blocks = true;
+        let options = ExtractionOptions {
+            preserve_code_blocks: true,
+            ..Default::default()
+        };
 
         let result = extract_with_options(md, &options);
         assert!(result.is_ok());
@@ -248,8 +252,10 @@ mod tests {
     #[test]
     fn test_strip_code_blocks() {
         let md = b"Text before\n\n```rust\nfn main() {}\n```\n\nText after";
-        let mut options = ExtractionOptions::default();
-        options.preserve_code_blocks = false;
+        let options = ExtractionOptions {
+            preserve_code_blocks: false,
+            ..Default::default()
+        };
 
         let result = extract_with_options(md, &options);
         assert!(result.is_ok());
@@ -263,8 +269,10 @@ mod tests {
     #[test]
     fn test_list_extraction() {
         let md = b"- Item 1\n- Item 2\n- Item 3";
-        let mut options = ExtractionOptions::default();
-        options.preserve_lists = false;
+        let options = ExtractionOptions {
+            preserve_lists: false,
+            ..Default::default()
+        };
 
         let result = extract_with_options(md, &options);
         assert!(result.is_ok());
@@ -305,8 +313,10 @@ mod tests {
     #[test]
     fn test_metadata_extraction() {
         let md = b"# Main\n\n## Sub\n\n```code```\n\n| a | b |\n|---|---|\n| 1 | 2 |";
-        let mut options = ExtractionOptions::default();
-        options.include_metadata = true;
+        let options = ExtractionOptions {
+            include_metadata: true,
+            ..Default::default()
+        };
 
         let result = extract_with_options(md, &options);
         assert!(result.is_ok());

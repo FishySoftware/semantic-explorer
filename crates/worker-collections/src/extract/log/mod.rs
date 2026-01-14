@@ -147,8 +147,10 @@ mod tests {
     #[test]
     fn test_log_entry_count() {
         let log = b"2024-01-15 10:30:45 INFO First\n2024-01-15 10:30:46 INFO Second\n2024-01-15 10:30:47 INFO Third";
-        let mut options = ExtractionOptions::default();
-        options.include_metadata = true;
+        let options = ExtractionOptions {
+            include_metadata: true,
+            ..Default::default()
+        };
 
         let result = extract_with_options(log, &options);
         assert!(result.is_ok());
@@ -161,8 +163,10 @@ mod tests {
     #[test]
     fn test_log_level_counting() {
         let log = b"2024-01-15 10:30:45 INFO First\n2024-01-15 10:30:46 ERROR Problem\n2024-01-15 10:30:47 INFO Second";
-        let mut options = ExtractionOptions::default();
-        options.include_metadata = true;
+        let options = ExtractionOptions {
+            include_metadata: true,
+            ..Default::default()
+        };
 
         let result = extract_with_options(log, &options);
         assert!(result.is_ok());
@@ -175,8 +179,10 @@ mod tests {
     #[test]
     fn test_iso_timestamp_detection() {
         let log = b"2024-01-15T10:30:45.123Z INFO Message";
-        let mut options = ExtractionOptions::default();
-        options.include_metadata = true;
+        let options = ExtractionOptions {
+            include_metadata: true,
+            ..Default::default()
+        };
 
         let result = extract_with_options(log, &options);
         assert!(result.is_ok());
@@ -208,8 +214,10 @@ mod tests {
     #[test]
     fn test_multiline_log_entries() {
         let log = b"2024-01-15 10:30:45 ERROR Exception occurred\n    at Main.run(Main.java:42)\n    at App.main(App.java:10)\n2024-01-15 10:30:46 INFO Continuing";
-        let mut options = ExtractionOptions::default();
-        options.include_metadata = true;
+        let options = ExtractionOptions {
+            include_metadata: true,
+            ..Default::default()
+        };
 
         let result = extract_with_options(log, &options);
         assert!(result.is_ok());
@@ -221,8 +229,10 @@ mod tests {
     #[test]
     fn test_preserve_formatting() {
         let log = b"2024-01-15 10:30:45    INFO    Spaced message";
-        let mut options = ExtractionOptions::default();
-        options.preserve_formatting = true;
+        let options = ExtractionOptions {
+            preserve_formatting: true,
+            ..Default::default()
+        };
 
         let result = extract_with_options(log, &options);
         assert!(result.is_ok());
@@ -234,8 +244,10 @@ mod tests {
     #[test]
     fn test_clean_formatting() {
         let log = b"2024-01-15 10:30:45    INFO    Spaced message";
-        let mut options = ExtractionOptions::default();
-        options.preserve_formatting = false;
+        let options = ExtractionOptions {
+            preserve_formatting: false,
+            ..Default::default()
+        };
 
         let result = extract_with_options(log, &options);
         assert!(result.is_ok());

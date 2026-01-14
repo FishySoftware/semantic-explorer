@@ -12,7 +12,13 @@ import sys
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
-from prometheus_client import Counter, Gauge, Histogram, CollectorRegistry, start_http_server
+from prometheus_client import (
+    Counter,
+    Gauge,
+    Histogram,
+    CollectorRegistry,
+    start_http_server,
+)
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor
@@ -132,7 +138,9 @@ class Metrics:
         )
 
 
-def setup_observability(worker_id: str, service_name: str = "worker-visualizations") -> Metrics:
+def setup_observability(
+    worker_id: str, service_name: str = "worker-visualizations"
+) -> Metrics:
     """
     Initialize OpenTelemetry and Prometheus for the worker.
 
@@ -150,11 +158,13 @@ def setup_observability(worker_id: str, service_name: str = "worker-visualizatio
     log_format = os.getenv("LOG_FORMAT", "json").lower()
 
     # Resource for identifying this worker
-    resource = Resource.create({
-        "service.name": service_name,
-        "service.version": "1.0.0",
-        "service.instance.id": worker_id,
-    })
+    resource = Resource.create(
+        {
+            "service.name": service_name,
+            "service.version": "1.0.0",
+            "service.instance.id": worker_id,
+        }
+    )
 
     # Initialize Prometheus metrics with default registry
     metrics_obj = Metrics()
@@ -164,7 +174,9 @@ def setup_observability(worker_id: str, service_name: str = "worker-visualizatio
         start_http_server(prometheus_port)
         logging.info(f"Prometheus metrics server started on port {prometheus_port}")
     except OSError as e:
-        logging.error(f"Failed to start Prometheus metrics server on port {prometheus_port}: {e}")
+        logging.error(
+            f"Failed to start Prometheus metrics server on port {prometheus_port}: {e}"
+        )
 
     # Setup Tracing
     try:
@@ -192,7 +204,9 @@ def setup_observability(worker_id: str, service_name: str = "worker-visualizatio
     return metrics_obj
 
 
-def configure_structured_logging(worker_id: str, log_format: str = "json", log_level: str = "INFO"):
+def configure_structured_logging(
+    worker_id: str, log_format: str = "json", log_level: str = "INFO"
+):
     """Configure structured logging."""
     root_logger = logging.getLogger()
     root_logger.setLevel(getattr(logging, log_level))
@@ -205,10 +219,13 @@ def configure_structured_logging(worker_id: str, log_format: str = "json", log_l
     handler = logging.StreamHandler(sys.stdout)
 
     if log_format == "json":
+
         class JSONFormatter(logging.Formatter):
             def format(self, record):
                 log_obj: Dict[str, Any] = {
-                    "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+                    "timestamp": datetime.fromtimestamp(
+                        record.created, tz=timezone.utc
+                    ).isoformat(),
                     "level": record.levelname,
                     "logger": record.name,
                     "message": record.getMessage(),

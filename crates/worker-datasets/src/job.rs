@@ -296,12 +296,13 @@ async fn send_progress_update(
         processing_duration_ms: None,
     };
 
+    let subject = semantic_explorer_core::status::dataset_status_subject(
+        &job.owner,
+        job.dataset_id,
+        job.dataset_transform_id,
+    );
     let payload = serde_json::to_vec(&result_msg)?;
-    nats.publish(
-        semantic_explorer_core::results::DATASET_TRANSFORM.to_string(),
-        payload.into(),
-    )
-    .await?;
+    nats.publish(subject, payload.into()).await?;
     Ok(())
 }
 
@@ -328,8 +329,12 @@ async fn send_result(
         processing_duration_ms,
     };
 
+    let subject = semantic_explorer_core::status::dataset_status_subject(
+        &job.owner,
+        job.dataset_id,
+        job.dataset_transform_id,
+    );
     let payload = serde_json::to_vec(&result_msg)?;
-    nats.publish("worker.result.vector".to_string(), payload.into())
-        .await?;
+    nats.publish(subject, payload.into()).await?;
     Ok(())
 }

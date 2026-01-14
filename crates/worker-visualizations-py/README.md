@@ -51,7 +51,7 @@ graph TB
     end
 
     subgraph "Output"
-        RESULT[NATS Result<br/>worker.result.visualization]
+        RESULT[NATS Status<br/>transforms.visualization.status.*]
     end
 
     NATS --> CONSUMER
@@ -165,6 +165,10 @@ sequenceDiagram
 | `LOG_FORMAT` | string | `json` | Log format (json for structured logging) |
 | `MAX_CONCURRENT_JOBS` | integer | `3` | Maximum concurrent jobs |
 | `HEALTH_CHECK_PORT` | integer | `8081` | Port for health check HTTP server |
+| `NATS_STREAM_RETRY_ATTEMPTS` | integer | `30` | Number of attempts to subscribe to stream (handles startup race) |
+| `NATS_STREAM_RETRY_DELAY` | float | `2.0` | Delay between retry attempts in seconds |
+| `NATS_BATCH_SIZE` | integer | `1` | Number of messages to fetch per batch |
+| `NATS_FETCH_TIMEOUT` | float | `5.0` | Timeout for message fetch in seconds |
 
 ## Job Message Format
 

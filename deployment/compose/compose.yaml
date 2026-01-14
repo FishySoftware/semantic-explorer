@@ -125,6 +125,10 @@ services:
     restart: unless-stopped
     environment:
       - NATS_URL=nats://localhost:4222
+      - NATS_STREAM_RETRY_ATTEMPTS=30
+      - NATS_STREAM_RETRY_DELAY=2.0
+      - NATS_BATCH_SIZE=1
+      - NATS_FETCH_TIMEOUT=5.0
       - QDRANT_URL=http://localhost:6334
       - AWS_ENDPOINT_URL=http://localhost:9000
       - AWS_ACCESS_KEY_ID=test_access_key

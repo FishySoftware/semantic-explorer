@@ -324,8 +324,10 @@ mod tests {
     #[test]
     fn test_extract_email_headers() {
         let email = create_simple_email();
-        let mut options = ExtractionOptions::default();
-        options.include_metadata = true;
+        let options = ExtractionOptions {
+            include_metadata: true,
+            ..Default::default()
+        };
         let email_opts = EmailOptions::default();
 
         let result = extract_with_options(&email, &options, &email_opts);

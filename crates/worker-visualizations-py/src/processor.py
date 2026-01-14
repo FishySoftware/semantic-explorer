@@ -214,7 +214,7 @@ class VisualizationProcessor:
 
                 # Check if we've reached the end (no points returned)
                 if not points:
-                    logger.debug(f"Scroll complete: no points returned")
+                    logger.debug("Scroll complete: no points returned")
                     break
 
                 batches += 1
@@ -242,7 +242,7 @@ class VisualizationProcessor:
                 # Check if there are more pages (offset is None means this was the last page)
                 if offset is None:
                     logger.debug(
-                        f"Scroll complete: offset is None (last page processed)"
+                        "Scroll complete: offset is None (last page processed)"
                     )
                     break
 
@@ -392,7 +392,9 @@ class VisualizationProcessor:
         try:
             cluster_labels = {}
             # Filter out cluster -1 (noise points) - they should not have labels
-            unique_clusters = sorted([l for l in set(labels) if l >= 0])
+            unique_clusters = sorted(
+                [cluster_id for cluster_id in set(labels) if cluster_id >= 0]
+            )
             logger.debug(
                 f"Generating labels for {len(unique_clusters)} clusters (excluding noise cluster -1)"
             )
@@ -549,7 +551,11 @@ class VisualizationProcessor:
             # Create data for visualization
             logger.debug(f"Preparing label names for {len(labels)} points")
             label_names = [
-                config.noise_label if int(label) == -1 else cluster_labels.get(int(label), f"Cluster {label}") 
+                (
+                    config.noise_label
+                    if int(label) == -1
+                    else cluster_labels.get(int(label), f"Cluster {label}")
+                )
                 for label in labels
             ]
 

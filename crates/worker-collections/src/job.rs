@@ -289,11 +289,12 @@ async fn send_result(
         processing_duration_ms,
     };
 
+    let subject = semantic_explorer_core::status::collection_status_subject(
+        &job.owner,
+        job.collection_id,
+        job.collection_transform_id,
+    );
     let payload = serde_json::to_vec(&result_msg)?;
-    nats.publish(
-        semantic_explorer_core::results::COLLECTION_TRANSFORM.to_string(),
-        payload.into(),
-    )
-    .await?;
+    nats.publish(subject, payload.into()).await?;
     Ok(())
 }

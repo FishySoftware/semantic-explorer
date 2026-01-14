@@ -5,10 +5,9 @@ Supports multiple LLM providers (Cohere, OpenAI) for topic naming.
 Requires API key to be passed via LLMConfig from the job message.
 """
 
-import json
 import logging
 import time
-from typing import List, Optional, cast
+from typing import List, cast
 
 import cohere
 from cohere.types import UserChatMessageV2, TextAssistantMessageResponseContentItem
@@ -33,9 +32,7 @@ class LLMProvider:
         logger.info("LLM Provider initialized (clients will be created on-demand)")
         logger.debug("LLM Provider ready for topic naming requests")
 
-    async def generate_topic_name(
-        self, texts: List[str], llm_config: LLMConfig
-    ) -> str:
+    async def generate_topic_name(self, texts: List[str], llm_config: LLMConfig) -> str:
         """
         Generate a topic name for cluster texts using the specified LLM.
 

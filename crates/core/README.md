@@ -10,12 +10,12 @@ The `semantic-explorer-core` crate is a library that provides foundational utili
 - **`config.rs`** - Configuration management from environment variables
 - **`encryption.rs`** - AES-256 encryption/decryption for sensitive data
 - **`http_client.rs`** - Shared HTTP client with retry logic and timeouts
-- **`models.rs`** - Core domain models and types
+- **`models.rs`** - Core domain models and types (jobs include parent IDs for hierarchical status)
 - **`nats.rs`** - NATS JetStream client for pub/sub and streaming
 - **`observability.rs`** - OpenTelemetry setup for tracing
 - **`secrets.rs`** - Secure `SecretString` wrapper for sensitive data handling
 - **`storage.rs`** - S3-compatible file storage client
-- **`subjects.rs`** - NATS subject constants for worker communication
+- **`subjects.rs`** - NATS subject constants and status subject builders for worker communication
 - **`validation.rs`** - Input validation and sanitization
 - **`worker.rs`** - Worker patterns for async job processing
 - **`lib.rs`** - Module exports and public API
@@ -69,11 +69,11 @@ graph TB
 | `nats` | JetStream stream/consumer setup and configuration |
 | `encryption` | AES-256-GCM encryption for API keys and secrets at rest |
 | `secrets` | Secure handling of sensitive data with `SecretString` wrapper type |
-| `subjects` | NATS subject constants for worker communication |
+| `subjects` | NATS subject constants and status subject builders for worker communication |
 | `worker` | Generic worker framework for background job processing |
 | `observability` | OpenTelemetry metrics definitions and recording functions |
 | `http_client` | Shared HTTP client with TLS certificate support |
-| `models` | Domain models for jobs, transforms, and embedder configurations |
+| `models` | Domain models for jobs (with parent IDs), transforms, and embedder configurations |
 | `validation` | Input validation utilities and error types |
 
 ## Technologies
