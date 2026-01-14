@@ -133,6 +133,9 @@ api:
     HOSTNAME: "0.0.0.0"
     SHUTDOWN_TIMEOUT_SECS: "30"
     LOG_FORMAT: "json"
+    # PUBLIC_URL is used for external-facing URLs like OIDC callbacks
+    # Set this to your ingress URL (e.g., https://semantic-explorer.example.com)
+    # PUBLIC_URL: ""
     DB_MIN_CONNECTIONS: "2"
     DB_MAX_CONNECTIONS: "20"
     DB_ACQUIRE_TIMEOUT_SECS: "30"
@@ -369,6 +372,14 @@ workerVisualizationsPy:
     MAX_ACK_PENDING: "10"
     HEALTH_CHECK_PORT: "8081"
     NATS_REPLICAS: "3"
+    # Disable numba caching to avoid file locator issues in containers
+    NUMBA_DISABLE_CACHING: "1"
+    NUMBA_CACHE_DIR: "/tmp/numba_cache"
+    # Additional numba settings to prevent caching issues
+    NUMBA_DEBUGINFO: "0"
+    # Pull subscription settings for horizontal scaling
+    NATS_BATCH_SIZE: "1"
+    NATS_FETCH_TIMEOUT: "5.0"
   envFrom: []
   nodeSelector: {}
   tolerations: []
@@ -888,11 +899,6 @@ observability:
           endpoint: "0.0.0.0:8889"
         debug:
           verbosity: detailed
-        # Logging exporter as fallback when Quickwit is unavailable
-        logging:
-          verbosity: normal
-          sampling_initial: 5
-          sampling_thereafter: 200
         # Quickwit exporter for traces and logs (when enabled)
         otlp/quickwit:
           endpoint: "{{ include \"semantic-explorer.fullname\" . }}-quickwit:7281"
@@ -913,7 +919,7 @@ observability:
           traces:
             receivers: [otlp]
             processors: [memory_limiter, batch]
-            exporters: [otlp/quickwit, logging]
+            exporters: [otlp/quickwit, debug]
           metrics:
             receivers: [otlp]
             processors: [memory_limiter, batch]
@@ -921,7 +927,7 @@ observability:
           logs:
             receivers: [otlp]
             processors: [memory_limiter, batch]
-            exporters: [otlp/quickwit, logging]
+            exporters: [otlp/quickwit, debug]
     service:
       type: ClusterIP
       ports:

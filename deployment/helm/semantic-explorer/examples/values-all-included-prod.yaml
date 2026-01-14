@@ -106,7 +106,7 @@ workerVisualizationsPy:
       memory: 2Gi
     limits:
       cpu: 4000m
-      memory: 8Gi
+      memory: 16Gi
   autoscaling:
     enabled: true
     minReplicas: 4

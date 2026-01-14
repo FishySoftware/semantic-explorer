@@ -122,13 +122,23 @@ spec:
         - name: AWS_ACCESS_KEY_ID
           valueFrom:
             secretKeyRef:
+              {{- if .Values.minio.enabled }}
+              name: {{ .Release.Name }}-minio
+              key: rootUser
+              {{- else }}
               name: {{ include "semantic-explorer.fullname" . }}-secrets
               key: aws-access-key-id
+              {{- end }}
         - name: AWS_SECRET_ACCESS_KEY
           valueFrom:
             secretKeyRef:
+              {{- if .Values.minio.enabled }}
+              name: {{ .Release.Name }}-minio
+              key: rootPassword
+              {{- else }}
               name: {{ include "semantic-explorer.fullname" . }}-secrets
               key: aws-secret-access-key
+              {{- end }}
         - name: AWS_REGION
           value: {{ include "semantic-explorer.storage.s3.region" . }}
         - name: AWS_ENDPOINT_URL
@@ -156,9 +166,9 @@ spec:
         resources:
           {{- toYaml .Values.workerVisualizationsPy.resources | nindent 10 }}
         volumeMounts:
-        # Required for read-only root filesystem - temp directory for datamapplot/matplotlib
+        # Required for read-only root filesystem - temp directory for datamapplot/matplotlib/numba
         - name: tmp
-          mountPath: /app/tmp
+          mountPath: /tmp
         {{- with .Values.workerVisualizationsPy.volumeMounts }}
           {{- toYaml . | nindent 8 }}
         {{- end }}

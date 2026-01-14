@@ -74,6 +74,9 @@ pub struct ServerConfig {
     pub static_files_dir: String,
     pub cors_allowed_origins: Vec<String>,
     pub shutdown_timeout_secs: Option<u64>,
+    /// Public URL for external access (used for OIDC callbacks)
+    /// If not set, defaults to http://{hostname}:{port}
+    pub public_url: Option<String>,
 }
 
 /// Observability configuration
@@ -282,6 +285,9 @@ impl ServerConfig {
             .ok()
             .and_then(|s| s.parse().ok());
 
+        // PUBLIC_URL is used for external-facing URLs like OIDC callbacks
+        let public_url = env::var("PUBLIC_URL").ok();
+
         Ok(Self {
             hostname: env::var("HOSTNAME").unwrap_or_else(|_| "localhost".to_string()),
             port: env::var("PORT")
@@ -292,6 +298,7 @@ impl ServerConfig {
                 .unwrap_or_else(|_| "./semantic-explorer-ui/".to_string()),
             cors_allowed_origins: cors_origins,
             shutdown_timeout_secs,
+            public_url,
         })
     }
 }

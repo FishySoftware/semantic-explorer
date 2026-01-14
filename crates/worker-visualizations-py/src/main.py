@@ -456,6 +456,7 @@ async def main():
 
     nc: Optional[NATSConnection] = None
     message_count = 0
+    psub = None
     try:
         # Connect to NATS
         nats_start = time.time()
@@ -464,19 +465,22 @@ async def main():
         nats_elapsed = time.time() - nats_start
         logger.info(f"Connected to NATS at {NATS_URL} in {nats_elapsed:.3f}s")
 
-        # Subscribe with JetStream durable consumer
+        # Create JetStream context
         if nc is None:
             raise RuntimeError("NATS connection not established")
-        jsm = nc.jetstream()
+        js = nc.jetstream()
 
-        # Create or get durable consumer
+        # Use pull-based subscription for horizontal scaling
+        # Pull subscriptions allow multiple workers to share a durable consumer
         try:
             sub_start = time.time()
-            logger.debug(f"Creating durable consumer for {NATS_SUBJECT}")
-            sub = await jsm.subscribe(
+            logger.debug(f"Creating pull subscriber for {NATS_SUBJECT}")
+            
+            # Create a pull subscription with the durable consumer name
+            # Multiple workers can pull from the same durable consumer
+            psub = await js.pull_subscribe(
                 subject=NATS_SUBJECT,
                 durable=NATS_DURABLE_CONSUMER,
-                ordered_consumer=False,
                 config=ConsumerConfig(
                     ack_wait=1800,  # 30 minutes
                     max_deliver=3,
@@ -485,25 +489,43 @@ async def main():
             )
             sub_elapsed = time.time() - sub_start
             logger.info(
-                f"Subscribed to {NATS_SUBJECT} with durable consumer {NATS_DURABLE_CONSUMER} "
-                f"in {sub_elapsed:.3f}s"
+                f"Pull subscribed to {NATS_SUBJECT} with durable consumer {NATS_DURABLE_CONSUMER} "
+                f"(worker_id: {WORKER_ID}) in {sub_elapsed:.3f}s"
             )
         except Exception as e:
-            logger.error(f"Failed to subscribe to {NATS_SUBJECT}: {e}", exc_info=True)
+            logger.error(f"Failed to pull subscribe to {NATS_SUBJECT}: {e}", exc_info=True)
             raise
 
-        # Message loop
+        # Message loop with pull-based fetching
         logger.info("Worker started, waiting for jobs...")
-        async for msg in sub.messages:
-            # Check if shutdown was requested
-            if shutdown_event.is_set():
-                logger.info(f"Shutdown requested, stopping message processing after {message_count} messages")
-                break
-
-            message_count += 1
-            logger.debug(f"Received message #{message_count} from queue")
-            # Create a task for message handling to allow concurrent processing
-            asyncio.create_task(message_handler(msg, nc))
+        batch_size = int(os.getenv("NATS_BATCH_SIZE", "1"))
+        fetch_timeout = float(os.getenv("NATS_FETCH_TIMEOUT", "5.0"))
+        
+        while not shutdown_event.is_set():
+            try:
+                # Fetch messages from the pull subscription
+                # This allows multiple workers to compete for messages
+                messages = await psub.fetch(batch=batch_size, timeout=fetch_timeout)
+                
+                for msg in messages:
+                    if shutdown_event.is_set():
+                        logger.info(f"Shutdown requested, stopping message processing after {message_count} messages")
+                        break
+                    
+                    message_count += 1
+                    logger.debug(f"Received message #{message_count} from queue")
+                    # Create a task for message handling to allow concurrent processing
+                    asyncio.create_task(message_handler(msg, nc))
+                    
+            except asyncio.TimeoutError:
+                # No messages available, continue polling
+                continue
+            except Exception as e:
+                if "timeout" in str(e).lower():
+                    # Fetch timeout is expected when no messages are available
+                    continue
+                logger.warning(f"Error fetching messages: {e}")
+                await asyncio.sleep(1)  # Brief pause before retrying
 
     except KeyboardInterrupt:
         logger.info("Received shutdown signal (SIGINT)")

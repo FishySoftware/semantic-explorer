@@ -68,6 +68,12 @@ async fn main() -> Result<()> {
     let hostname = config.server.hostname.clone();
     let port = config.server.port;
     let address = format!("http://{}:{}", hostname, port);
+    // Use PUBLIC_URL for external-facing URLs (OIDC callbacks), fallback to internal address
+    let public_url = config
+        .server
+        .public_url
+        .clone()
+        .unwrap_or_else(|| address.clone());
     let static_files_directory = PathBuf::from(config.server.static_files_dir.clone());
 
     // Graceful shutdown timeout from config or default 30 seconds
@@ -76,7 +82,8 @@ async fn main() -> Result<()> {
     let s3_client = storage::rustfs::initialize_client().await?;
     let qdrant_client = storage::qdrant::initialize_client(&config.qdrant).await?;
     let postgres_pool = storage::postgres::initialize_pool(&config.database).await?;
-    let openid_client = auth::oidc::initialize_client(format!("{address}/auth_callback")).await?;
+    let openid_client =
+        auth::oidc::initialize_client(format!("{public_url}/auth_callback")).await?;
     let nats_client = async_nats::connect(&config.nats.url).await?;
 
     // Initialize Redis cluster client for rate limiting
@@ -132,6 +139,7 @@ async fn main() -> Result<()> {
     .await?;
 
     let cors_origins = config.server.cors_allowed_origins.clone();
+    let address_for_cors = address.clone();
 
     // Start scanners for each transform type
     let collection_scanner_handle = transforms::collection::scanner::initialize_scanner(
@@ -162,7 +170,7 @@ async fn main() -> Result<()> {
         // Build CORS configuration based on allowed origins
         let cors = if cors_origins.is_empty() {
             Cors::default()
-                .allowed_origin(&address)
+                .allowed_origin(&address_for_cors)
                 .allowed_methods(vec!["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
                 .allowed_headers(vec![
                     header::AUTHORIZATION,
