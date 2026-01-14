@@ -114,8 +114,8 @@ logger = configure_json_logging(WORKER_ID)
 
 # Configuration
 NATS_URL = os.getenv("NATS_URL", "nats://localhost:4222")
-NATS_SUBJECT = "workers.visualization-transform"
-NATS_DURABLE_CONSUMER = "visualization-transform-workers"
+NATS_SUBJECT = "worker.job.visualization"
+NATS_DURABLE_CONSUMER = "visualization-workers"
 RESULT_SUBJECT = "worker.result.visualization"
 PROCESSING_TIMEOUT_SECS = int(os.getenv("PROCESSING_TIMEOUT_SECS", "3600"))
 HEALTH_CHECK_PORT = int(os.getenv("HEALTH_CHECK_PORT", "8081"))
