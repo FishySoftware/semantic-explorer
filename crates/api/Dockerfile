@@ -21,7 +21,7 @@ COPY crates/worker-collections/Cargo.toml ./crates/worker-collections/
 COPY crates/worker-datasets/Cargo.toml ./crates/worker-datasets/
 
 # Create dummy source files to build dependencies
-RUN mkdir -p crates/core/src && echo "fn main() {}" > crates/core/src/lib.rs
+RUN mkdir -p crates/core/src && echo "// placeholder" > crates/core/src/lib.rs
 RUN mkdir -p crates/api/src && echo "fn main() {}" > crates/api/src/main.rs
 RUN mkdir -p crates/worker-collections/src && echo "fn main() {}" > crates/worker-collections/src/main.rs
 RUN mkdir -p crates/worker-datasets/src && echo "fn main() {}" > crates/worker-datasets/src/main.rs
