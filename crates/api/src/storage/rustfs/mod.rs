@@ -35,7 +35,7 @@ pub(crate) async fn initialize_client() -> Result<aws_sdk_s3::Client> {
         .endpoint_url(&aws_endpoint_url)
         .load()
         .await;
-    
+
     // Use path-style addressing for MinIO/S3-compatible storage when enabled
     // Virtual-host style (default) tries to resolve bucket.endpoint as DNS
     // Path-style uses endpoint/bucket instead
@@ -43,7 +43,7 @@ pub(crate) async fn initialize_client() -> Result<aws_sdk_s3::Client> {
     let force_path_style = env::var("S3_FORCE_PATH_STYLE")
         .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
         .unwrap_or(false);
-    
+
     let s3_config = aws_sdk_s3::config::Builder::from(&shard_config)
         .force_path_style(force_path_style)
         .build();
