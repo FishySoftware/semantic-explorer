@@ -15,6 +15,12 @@ RUN pip install --user --no-cache-dir -r requirements.txt
 # Runtime stage
 FROM python:3.12-slim
 
+
+ARG UID=10001
+ARG GID=10001
+RUN groupadd --gid ${GID} appgroup && \
+    useradd --uid ${UID} --gid ${GID} --shell /bin/false --create-home appuser
+
 WORKDIR /app
 
 # Install runtime dependencies only
@@ -26,13 +32,19 @@ RUN apt-get update && apt-get install -y \
 COPY --from=builder /root/.local/lib/python3.12/site-packages/ /usr/local/lib/python3.12/site-packages
 COPY --from=builder /root/.local/bin /usr/local/bin
 
+RUN mkdir -p /app/tmp && chown appuser:appgroup /app/tmp
+
+ENV TMPDIR=/app/tmp
+ENV MPLCONFIGDIR=/app/tmp/matplotlib
 
 # Copy application code
-COPY src/ .
+COPY --chown=appuser:appgroup src/ .
+
+USER appuser
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import socket; socket.create_connection(('localhost', 8000), timeout=5)" || exit 1
+    CMD python -c "import socket; socket.create_connection(('localhost', 8081), timeout=5)" || exit 1
 
 # Run the worker
 CMD ["python", "main.py"]

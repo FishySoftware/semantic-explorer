@@ -46,6 +46,53 @@ spec:
       {{- with .Values.workerVisualizationsPy.terminationGracePeriodSeconds }}
       terminationGracePeriodSeconds: {{ . }}
       {{- end }}
+      initContainers:
+      {{- if not .Values.nats.external.enabled }}
+      - name: wait-for-nats
+        image: {{ include "semantic-explorer.initContainer.image" . }}
+        securityContext:
+          {{- include "semantic-explorer.initContainer.securityContext" . | nindent 10 }}
+        command:
+          - sh
+          - -c
+          - |
+            echo "Waiting for NATS at {{ include "semantic-explorer.nats.host" . }}:{{ include "semantic-explorer.nats.port" . }}..."
+            until nc -z {{ include "semantic-explorer.nats.host" . }} {{ include "semantic-explorer.nats.port" . }}; do
+              echo "NATS not ready, waiting..."
+              sleep 2
+            done
+            echo "NATS is ready!"
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+      {{- end }}
+      {{- if not .Values.qdrant.external.enabled }}
+      - name: wait-for-qdrant
+        image: {{ include "semantic-explorer.initContainer.image" . }}
+        securityContext:
+          {{- include "semantic-explorer.initContainer.securityContext" . | nindent 10 }}
+        command:
+          - sh
+          - -c
+          - |
+            echo "Waiting for Qdrant at {{ include "semantic-explorer.qdrant.host" . }}:{{ include "semantic-explorer.qdrant.port" . }}..."
+            until nc -z {{ include "semantic-explorer.qdrant.host" . }} {{ include "semantic-explorer.qdrant.port" . }}; do
+              echo "Qdrant not ready, waiting..."
+              sleep 2
+            done
+            echo "Qdrant is ready!"
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+      {{- end }}
       containers:
       - name: worker-visualizations-py
         image: {{ include "semantic-explorer.workerVisualizationsPy.image" . }}
@@ -57,6 +104,11 @@ spec:
           containerPort: 8081
           protocol: TCP
         env:
+        # Temp directory for read-only root filesystem support
+        - name: TMPDIR
+          value: "/app/tmp"
+        - name: MPLCONFIGDIR
+          value: "/app/tmp/matplotlib"
         {{- range $key, $value := .Values.workerVisualizationsPy.env }}
         - name: {{ $key }}
           value: {{ $value | quote }}
@@ -103,7 +155,21 @@ spec:
         {{- end }}
         resources:
           {{- toYaml .Values.workerVisualizationsPy.resources | nindent 10 }}
-        volumeMounts: {}
+        volumeMounts:
+        # Required for read-only root filesystem - temp directory for datamapplot/matplotlib
+        - name: tmp
+          mountPath: /app/tmp
+        {{- with .Values.workerVisualizationsPy.volumeMounts }}
+          {{- toYaml . | nindent 8 }}
+        {{- end }}
+      volumes:
+      # emptyDir for temp files - required for read-only root filesystem
+      - name: tmp
+        emptyDir:
+          sizeLimit: 512Mi
+      {{- with .Values.workerVisualizationsPy.volumes }}
+        {{- toYaml . | nindent 6 }}
+      {{- end }}
       {{- with .Values.workerVisualizationsPy.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

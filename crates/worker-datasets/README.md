@@ -93,7 +93,7 @@ impl EmbedderClient {
 ## 🚀 Getting Started
 
 ### Prerequisites
-- Rust 1.75+
+- Rust 1.85+
 - PostgreSQL 14+ (configuration, cost tracking)
 - NATS 2.10+ (job queue)
 - S3-compatible storage
@@ -499,11 +499,11 @@ sequenceDiagram
 | Technology | Version | Purpose |
 |------------|---------|---------|
 | Rust | 2024 Edition | Language |
-| tokio | workspace | Async runtime |
-| async-nats | workspace | Message queue consumer |
-| aws-sdk-s3 | workspace | S3 storage client |
+| tokio | 1.49 | Async runtime |
+| async-nats | 0.45 | Message queue consumer |
+| aws-sdk-s3 | 1.119 | S3 storage client |
 | qdrant-client | 1.16 | Vector database client |
-| reqwest | workspace | HTTP client for embedder APIs |
+| reqwest | 0.13 | HTTP client for embedder APIs |
 | once_cell | 1.21 | Lazy static initialization |
 
 ## Module Structure

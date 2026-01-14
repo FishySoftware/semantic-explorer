@@ -13,7 +13,9 @@ The `semantic-explorer-core` crate is a library that provides foundational utili
 - **`models.rs`** - Core domain models and types
 - **`nats.rs`** - NATS JetStream client for pub/sub and streaming
 - **`observability.rs`** - OpenTelemetry setup for tracing
+- **`secrets.rs`** - Secure `SecretString` wrapper for sensitive data handling
 - **`storage.rs`** - S3-compatible file storage client
+- **`subjects.rs`** - NATS subject constants for worker communication
 - **`validation.rs`** - Input validation and sanitization
 - **`worker.rs`** - Worker patterns for async job processing
 - **`lib.rs`** - Module exports and public API
@@ -66,6 +68,8 @@ graph TB
 | `storage` | AWS S3 client initialization and file operations |
 | `nats` | JetStream stream/consumer setup and configuration |
 | `encryption` | AES-256-GCM encryption for API keys and secrets at rest |
+| `secrets` | Secure handling of sensitive data with `SecretString` wrapper type |
+| `subjects` | NATS subject constants for worker communication |
 | `worker` | Generic worker framework for background job processing |
 | `observability` | OpenTelemetry metrics definitions and recording functions |
 | `http_client` | Shared HTTP client with TLS certificate support |
@@ -77,12 +81,13 @@ graph TB
 | Technology | Version | Purpose |
 |------------|---------|---------|
 | Rust | 2024 Edition | Language |
-| tokio | workspace | Async runtime |
-| aws-sdk-s3 | workspace | S3-compatible storage |
-| async-nats | workspace | NATS messaging |
-| opentelemetry | workspace | Distributed tracing & metrics |
-| reqwest | workspace | HTTP client |
-| serde | workspace | Serialization |
+| tokio | 1.49 | Async runtime |
+| aws-sdk-s3 | 1.119 | S3-compatible storage |
+| async-nats | 0.45 | NATS messaging |
+| opentelemetry | 0.31 | Distributed tracing & metrics |
+| reqwest | 0.13 | HTTP client |
+| serde | 1.0 | Serialization |
+| aes-gcm | 0.10 | Encryption |
 
 ## Data Flow
 

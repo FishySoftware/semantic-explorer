@@ -3,7 +3,7 @@ receivers:
     protocols:
       grpc:
         endpoint: 0.0.0.0:4317
-        max_recv_msg_size_mib: 10  # Increase max message size to 10MB to handle large batches
+        max_recv_msg_size_mib: 100  # Increase max message size to 10MB to handle large batches
       http:
         endpoint: 0.0.0.0:4318
 

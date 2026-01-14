@@ -4,6 +4,9 @@
 
 global:
   environment: development
+  # Init container image for startup ordering
+  initContainer:
+    image: "busybox:1.36"
 
 # API Service - Development
 api:
@@ -20,14 +23,14 @@ api:
       memory: 1Gi
   autoscaling:
     enabled: false
-  prometheus:
+  metrics:
     enabled: true
     serviceMonitor:
       enabled: true
       interval: 15s
 
 # Worker Collections - Development
-worker-collections:
+workerCollections:
   enabled: true
   replicaCount: 1
   resources:
@@ -37,14 +40,14 @@ worker-collections:
     limits:
       cpu: 1000m
       memory: 1Gi
-  prometheus:
+  metrics:
     enabled: true
     serviceMonitor:
       enabled: true
       interval: 15s
 
 # Worker Datasets - Development
-worker-datasets:
+workerDatasets:
   enabled: true
   replicaCount: 1
   resources:
@@ -54,14 +57,14 @@ worker-datasets:
     limits:
       cpu: 2000m
       memory: 2Gi
-  prometheus:
+  metrics:
     enabled: true
     serviceMonitor:
       enabled: true
       interval: 15s
 
 # Worker Visualizations - Development
-worker-visualizations:
+workerVisualizationsPy:
   enabled: true
   replicaCount: 1
   resources:
@@ -74,23 +77,23 @@ worker-visualizations:
   autoscaling:
     enabled: false
 
-# PostgreSQL - Development (CloudNativePG)
+# PostgreSQL - Development
 postgresql:
   enabled: true
   primary:
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
     persistence:
       size: 10Gi
-  resources:
-    requests:
-      cpu: 250m
-      memory: 256Mi
-    limits:
-      cpu: 500m
-      memory: 1Gi
   backup:
     enabled: true
-    retentionDays: 7
-  prometheus:
+    retention: 7
+  metrics:
     enabled: true
     serviceMonitor:
       enabled: true
@@ -99,6 +102,8 @@ postgresql:
 # Redis Cluster - Development (redis-ha)
 redis:
   enabled: true
+
+redis-cluster:
   replicas: 3
   redis:
     resources:
@@ -117,7 +122,7 @@ redis:
         cpu: 100m
         memory: 128Mi
 
-# NATS - Development
+# NATS - Development (JetStream enabled)
 nats:
   enabled: true
   config:
@@ -126,8 +131,6 @@ nats:
       replicas: 3
     jetstream:
       enabled: true
-      memoryStore:
-        maxSize: 1Gi
       fileStore:
         maxSize: 10Gi
   resources:
@@ -137,7 +140,9 @@ nats:
     limits:
       cpu: 500m
       memory: 1Gi
-  prometheus:
+  persistence:
+    size: 10Gi
+  metrics:
     enabled: true
     serviceMonitor:
       enabled: true
@@ -146,7 +151,7 @@ nats:
 # Qdrant - Development (Vector Database)
 qdrant:
   enabled: true
-  replicas: 1
+  replicaCount: 1
   persistence:
     size: 20Gi
   resources:
@@ -156,7 +161,7 @@ qdrant:
     limits:
       cpu: 1000m
       memory: 2Gi
-  prometheus:
+  metrics:
     enabled: true
     serviceMonitor:
       enabled: true
@@ -166,8 +171,7 @@ qdrant:
 minio:
   enabled: true
   mode: standalone
-  persistence:
-    size: 20Gi
+  replicas: 1
   resources:
     requests:
       cpu: 500m
@@ -175,11 +179,20 @@ minio:
     limits:
       cpu: 1000m
       memory: 1Gi
+  persistence:
+    size: 20Gi
+  # Auto-create buckets for application and Quickwit
+  buckets:
+    - name: semantic-explorer-files
+      policy: none
+      purge: false
+    - name: quickwit
+      policy: none
+      purge: false
 
 # Dex - OIDC Provider
 dex:
   enabled: true
-  replicas: 1
   resources:
     requests:
       cpu: 100m
@@ -188,36 +201,93 @@ dex:
       cpu: 200m
       memory: 256Mi
 
-# OpenTelemetry Collector
-otel-collector:
-  enabled: true
-  replicas: 1
-  resources:
-    requests:
-      cpu: 100m
-      memory: 256Mi
-    limits:
-      cpu: 500m
-      memory: 512Mi
+# Observability Stack - Development
+observability:
+  # OpenTelemetry Collector
+  otelCollector:
+    enabled: true
+    config:
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:4317
+              max_recv_msg_size_mib: 100
+            http:
+              endpoint: 0.0.0.0:4318
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
 
-# Grafana
+  # Prometheus internal config
+  prometheus:
+    enabled: true  # Use Prometheus subchart for metrics storage
+    external:
+      enabled: false
+
+  # Quickwit - Log & Trace Aggregation (S3 backend via MinIO)
+  quickwit:
+    enabled: true
+    replicaCount: 1
+    storage:
+      bucketName: "quickwit"
+    config:
+      enableOtlpEndpoint: true
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+    persistence:
+      size: 20Gi
+    metrics:
+      enabled: true
+      serviceMonitor:
+        enabled: true
+        interval: 30s
+
+# Prometheus subchart configuration - Development
+prometheus:
+  enabled: true
+  alertmanager:
+    enabled: false
+  prometheus-pushgateway:
+    enabled: false
+  prometheus-node-exporter:
+    enabled: false
+  kube-state-metrics:
+    enabled: false
+  server:
+    retention: "7d"
+    persistentVolume:
+      enabled: true
+      size: 20Gi
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+
+# Grafana subchart configuration - Development
 grafana:
   enabled: true
-  replicas: 1
-  persistence:
-    enabled: true
-    size: 5Gi
-  datasources:
-    prometheus:
+  sidecar:
+    dashboards:
       enabled: true
-      url: http://prometheus:9090
-    quickwit:
-      traces:
-        enabled: true
-        url: http://quickwit:7280
-      logs:
-        enabled: true
-        url: http://quickwit:7280
+      label: grafana_dashboard
+      labelValue: "1"
+    datasources:
+      enabled: true
+      label: grafana_datasource
+      labelValue: "1"
   resources:
     requests:
       cpu: 100m
@@ -225,30 +295,9 @@ grafana:
     limits:
       cpu: 500m
       memory: 512Mi
-
-# Quickwit - Log & Trace Aggregation
-quickwit:
-  enabled: true
-  replicas: 1
   persistence:
-    size: 20Gi
-  config:
-    indexer:
-      splits:
-        max_capacity_gb: 1
-    searcher:
-      warmup_num_splits: 2
-  resources:
-    requests:
-      cpu: 250m
-      memory: 512Mi
-    limits:
-      cpu: 1000m
-      memory: 2Gi
-
-# Prometheus (if using locally instead of operator)
-prometheus:
-  enabled: false  # Use Prometheus Operator instead for Kubernetes
+    enabled: true
+    size: 5Gi
 
 # Network Policy
 networkPolicy:

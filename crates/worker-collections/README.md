@@ -31,14 +31,15 @@ Handles document format detection and text extraction:
 
 ```
 extract/
-├── handler.rs         # Main extraction orchestration
-├── pdf.rs             # PDF text extraction
-├── office.rs          # DOCX/XLSX/PPTX extraction
-├── html.rs            # HTML web document extraction
-├── xml.rs             # XML structured data extraction
-├── text.rs            # Plain text handling
-├── archive.rs         # ZIP file handling
-└── mod.rs             # Module exports
+├── config.rs          # Extraction configuration types
+├── service.rs         # Extraction orchestration
+├── mod.rs             # Module exports
+├── strategies/        # Format-specific extractors
+├── pdf/               # PDF text extraction
+├── office/            # DOCX/XLSX/PPTX extraction
+├── open_office/       # OpenDocument (ODT/ODS) extraction
+├── html/              # HTML web document extraction
+└── xml/               # XML structured data extraction
 ```
 
 **PDF Extraction:**
@@ -71,10 +72,10 @@ Text chunking strategies for optimal embedding:
 
 ```
 chunk/
-├── handler.rs         # Chunking orchestration
-├── fixed_size.rs      # Fixed-size overlapping chunks
-├── semantic.rs        # Semantic boundary detection
-├── sentence.rs        # Sentence-based chunking
+├── config.rs          # Chunking configuration types
+├── service.rs         # Chunking orchestration
+├── metadata.rs        # Chunk metadata handling
+├── strategies/        # Strategy implementations
 └── mod.rs             # Module exports
 ```
 
@@ -110,7 +111,7 @@ let config = ChunkConfig {
 ## 🚀 Getting Started
 
 ### Prerequisites
-- Rust 1.75+
+- Rust 1.85+
 - PostgreSQL 14+ (configuration storage)
 - NATS 2.10+ (job queue)
 - S3-compatible storage (MinIO, AWS S3, etc.)
@@ -582,15 +583,15 @@ Splits at sentence boundaries while respecting maximum chunk size.
 | Technology | Version | Purpose |
 |------------|---------|---------|
 | Rust | 2024 Edition | Language |
-| tokio | workspace | Async runtime |
-| async-nats | workspace | Message queue consumer |
-| aws-sdk-s3 | workspace | S3 storage client |
-| pdf-extract | workspace | PDF text extraction |
-| quick-xml | workspace | XML parsing |
-| scraper | workspace | HTML parsing |
-| zip | workspace | ZIP archive handling |
-| unicode-segmentation | workspace | Text segmentation |
-| unicode-normalization | workspace | Text normalization |
+| tokio | 1.49 | Async runtime |
+| async-nats | 0.45 | Message queue consumer |
+| aws-sdk-s3 | 1.119 | S3 storage client |
+| pdf-extract | 0.10 | PDF text extraction |
+| quick-xml | 0.39 | XML parsing |
+| scraper | 0.25 | HTML parsing |
+| zip | 7.0 | ZIP archive handling |
+| unicode-segmentation | 1.12 | Text segmentation |
+| unicode-normalization | 0.1 | Text normalization |
 
 ## Module Structure
 

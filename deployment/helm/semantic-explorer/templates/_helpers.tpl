@@ -368,13 +368,13 @@ PostgreSQL username
 {{- end }}
 
 {{/*
-NATS URL
+NATS URL (uses subchart naming convention)
 */}}
 {{- define "semantic-explorer.nats.url" -}}
 {{- if .Values.nats.external.enabled }}
 {{- .Values.nats.external.url }}
 {{- else }}
-{{- printf "nats://%s-nats:%d" (include "semantic-explorer.fullname" .) (int .Values.nats.service.client.port | default 4222) }}
+{{- printf "nats://%s-nats:%d" .Release.Name 4222 }}
 {{- end }}
 {{- end }}
 
@@ -530,20 +530,6 @@ app.kubernetes.io/component: grafana
 {{- end }}
 
 {{/*
-Grafana image
-*/}}
-{{- define "semantic-explorer.grafana.image" -}}
-{{- $registry := .Values.observability.grafana.image.registry | default .Values.global.imageRegistry }}
-{{- $repository := .Values.observability.grafana.image.repository }}
-{{- $tag := .Values.observability.grafana.image.tag }}
-{{- if $registry }}
-{{- printf "%s/%s:%s" $registry $repository $tag }}
-{{- else }}
-{{- printf "%s:%s" $repository $tag }}
-{{- end }}
-{{- end }}
-
-{{/*
 Storage S3 endpoint
 */}}
 {{- define "semantic-explorer.storage.s3.endpoint" -}}
@@ -559,4 +545,147 @@ Storage S3 region
 */}}
 {{- define "semantic-explorer.storage.s3.region" -}}
 {{- .Values.storage.s3.region | default "us-east-1" }}
+{{- end }}
+
+{{/*
+Init container image (secure, non-root busybox)
+*/}}
+{{- define "semantic-explorer.initContainer.image" -}}
+{{- .Values.global.initContainer.image | default "busybox:1.36" }}
+{{- end }}
+
+{{/*
+Init container security context (non-root)
+*/}}
+{{- define "semantic-explorer.initContainer.securityContext" -}}
+runAsNonRoot: true
+runAsUser: 65534
+runAsGroup: 65534
+allowPrivilegeEscalation: false
+readOnlyRootFilesystem: true
+capabilities:
+  drop:
+    - ALL
+seccompProfile:
+  type: RuntimeDefault
+{{- end }}
+
+{{/*
+PostgreSQL host for init container
+*/}}
+{{- define "semantic-explorer.postgresql.hostOnly" -}}
+{{- if .Values.postgresql.external.enabled }}
+{{- .Values.postgresql.external.host }}
+{{- else }}
+{{- printf "%s-postgresql" (include "semantic-explorer.fullname" .) }}
+{{- end }}
+{{- end }}
+
+{{/*
+PostgreSQL port for init container
+*/}}
+{{- define "semantic-explorer.postgresql.portOnly" -}}
+{{- if .Values.postgresql.external.enabled }}
+{{- .Values.postgresql.external.port | default 5432 }}
+{{- else }}
+{{- 5432 }}
+{{- end }}
+{{- end }}
+
+{{/*
+NATS host for init container (subchart naming convention)
+*/}}
+{{- define "semantic-explorer.nats.host" -}}
+{{- if .Values.nats.external.enabled }}
+{{- .Values.nats.external.url | trimPrefix "nats://" | regexFind "^[^:]+" }}
+{{- else }}
+{{- printf "%s-nats" .Release.Name }}
+{{- end }}
+{{- end }}
+
+{{/*
+NATS port for init container
+*/}}
+{{- define "semantic-explorer.nats.port" -}}
+{{- 4222 }}
+{{- end }}
+
+{{/*
+Qdrant host for init container
+*/}}
+{{- define "semantic-explorer.qdrant.host" -}}
+{{- if .Values.qdrant.external.enabled }}
+{{- .Values.qdrant.external.url | trimPrefix "http://" | trimPrefix "https://" | regexFind "^[^:]+" }}
+{{- else }}
+{{- printf "%s-qdrant" .Release.Name }}
+{{- end }}
+{{- end }}
+
+{{/*
+Qdrant port for init container
+*/}}
+{{- define "semantic-explorer.qdrant.port" -}}
+{{- 6334 }}
+{{- end }}
+
+{{/*
+MinIO host for init container
+*/}}
+{{- define "semantic-explorer.minio.host" -}}
+{{- if .Values.minio.enabled }}
+{{- printf "%s-minio" .Release.Name }}
+{{- else }}
+{{- .Values.storage.s3.endpoint | trimPrefix "http://" | trimPrefix "https://" | regexFind "^[^:/]+" }}
+{{- end }}
+{{- end }}
+
+{{/*
+MinIO port for init container
+*/}}
+{{- define "semantic-explorer.minio.port" -}}
+{{- if .Values.minio.enabled }}
+{{- .Values.minio.service.port | default 9000 }}
+{{- else }}
+{{- 9000 }}
+{{- end }}
+{{- end }}
+
+{{/*
+Quickwit headless service name
+*/}}
+{{- define "semantic-explorer.quickwit.headlessService" -}}
+{{- printf "%s-quickwit-headless" (include "semantic-explorer.fullname" .) }}
+{{- end }}
+
+{{/*
+Quickwit peer seeds for clustering (generates comma-separated list of peer addresses)
+*/}}
+{{- define "semantic-explorer.quickwit.peerSeeds" -}}
+{{- $fullname := include "semantic-explorer.fullname" . -}}
+{{- $headless := include "semantic-explorer.quickwit.headlessService" . -}}
+{{- $replicas := int (.Values.observability.quickwit.replicaCount | default 2) -}}
+{{- $port := int (.Values.observability.quickwit.service.rest.port | default 7280) -}}
+{{- $seeds := list -}}
+{{- range $i := until $replicas -}}
+{{- $seeds = append $seeds (printf "%s-quickwit-%d.%s:%d" $fullname $i $headless $port) -}}
+{{- end -}}
+{{- join "," $seeds -}}
+{{- end }}
+
+{{/*
+Quickwit host for init container
+*/}}
+{{- define "semantic-explorer.quickwit.host" -}}
+{{- if .Values.observability.quickwit.external.enabled }}
+{{- .Values.observability.quickwit.external.url | trimPrefix "http://" | trimPrefix "https://" | regexFind "^[^:/]+" }}
+{{- else }}
+{{- printf "%s-quickwit" (include "semantic-explorer.fullname" .) }}
+{{- end }}
+{{- end }}
+
+{{/*
+Quickwit gRPC port for init container
+*/}}
+{{- define "semantic-explorer.quickwit.grpcPort" -}}
+{{- .Values.observability.quickwit.service.grpc.port | default 7281 }}
 {{- end }}
