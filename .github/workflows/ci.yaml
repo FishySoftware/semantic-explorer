@@ -6,12 +6,74 @@ on:
       - 'v*.*.*'
 
 jobs:
-  release-semantic-explorer:
+  # Detect which components have changed
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      api: ${{ steps.filter.outputs.api }}
+      worker-collections: ${{ steps.filter.outputs.worker-collections }}
+      worker-datasets: ${{ steps.filter.outputs.worker-datasets }}
+      worker-visualizations-py: ${{ steps.filter.outputs.worker-visualizations-py }}
+      core: ${{ steps.filter.outputs.core }}
+      ui: ${{ steps.filter.outputs.ui }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changes
+        id: filter
+        run: |
+          # Get the previous tag
+          PREVIOUS_TAG=$(git tag --sort=-v:refname | sed -n '2p')
+          echo "Comparing $PREVIOUS_TAG to current tag"
+          
+          # Check for changes in each component
+          if git diff --name-only $PREVIOUS_TAG HEAD | grep -E '^(crates/api/|semantic-explorer-ui/)'; then
+            echo "api=true" >> $GITHUB_OUTPUT
+          else
+            echo "api=false" >> $GITHUB_OUTPUT
+          fi
+          
+          if git diff --name-only $PREVIOUS_TAG HEAD | grep -E '^crates/(worker-collections|core)/'; then
+            echo "worker-collections=true" >> $GITHUB_OUTPUT
+          else
+            echo "worker-collections=false" >> $GITHUB_OUTPUT
+          fi
+          
+          if git diff --name-only $PREVIOUS_TAG HEAD | grep -E '^crates/(worker-datasets|core)/'; then
+            echo "worker-datasets=true" >> $GITHUB_OUTPUT
+          else
+            echo "worker-datasets=false" >> $GITHUB_OUTPUT
+          fi
+          
+          if git diff --name-only $PREVIOUS_TAG HEAD | grep -E '^crates/worker-visualizations-py/'; then
+            echo "worker-visualizations-py=true" >> $GITHUB_OUTPUT
+          else
+            echo "worker-visualizations-py=false" >> $GITHUB_OUTPUT
+          fi
+          
+          if git diff --name-only $PREVIOUS_TAG HEAD | grep -E '^crates/core/'; then
+            echo "core=true" >> $GITHUB_OUTPUT
+          else
+            echo "core=false" >> $GITHUB_OUTPUT
+          fi
+          
+          if git diff --name-only $PREVIOUS_TAG HEAD | grep -E '^semantic-explorer-ui/'; then
+            echo "ui=true" >> $GITHUB_OUTPUT
+          else
+            echo "ui=false" >> $GITHUB_OUTPUT
+          fi
+
+  # Build API image
+  build-api:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.api == 'true' || needs.detect-changes.outputs.core == 'true' || needs.detect-changes.outputs.ui == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,8 +87,8 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Docker meta - API
-        id: meta_api
+      - name: Docker meta
+        id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/semantic-explorer
@@ -37,21 +99,46 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and push API
-        id: docker_build_api
+      - name: Build and push
+        id: docker_build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./crates/api/Dockerfile
           push: true
-          tags: ${{ steps.meta_api.outputs.tags }}
-          labels: ${{ steps.meta_api.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=max,scope=api
-          outputs: type=image,name=${{ secrets.DOCKERHUB_USERNAME }}/semantic-explorer,push-by-digest=false
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
 
-      - name: Docker meta - Worker Collections
-        id: meta_worker_collections
+      - name: Output digest
+        run: echo "API_DIGEST=${{ steps.docker_build.outputs.digest }}" >> $GITHUB_ENV
+
+  # Build Worker Collections image
+  build-worker-collections:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.worker-collections == 'true' || needs.detect-changes.outputs.core == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/worker-collections
@@ -62,21 +149,43 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and push Worker Collections
-        id: docker_build_worker_collections
+      - name: Build and push
+        id: docker_build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./crates/worker-collections/Dockerfile
           push: true
-          tags: ${{ steps.meta_worker_collections.outputs.tags }}
-          labels: ${{ steps.meta_worker_collections.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=worker-collections
           cache-to: type=gha,mode=max,scope=worker-collections
-          outputs: type=image,name=${{ secrets.DOCKERHUB_USERNAME }}/worker-collections,push-by-digest=false
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
 
-      - name: Docker meta - Worker Datasets
-        id: meta_worker_datasets
+  # Build Worker Datasets image
+  build-worker-datasets:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.worker-datasets == 'true' || needs.detect-changes.outputs.core == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/worker-datasets
@@ -87,21 +196,43 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and push Worker Datasets
-        id: docker_build_worker_datasets
+      - name: Build and push
+        id: docker_build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./crates/worker-datasets/Dockerfile
           push: true
-          tags: ${{ steps.meta_worker_datasets.outputs.tags }}
-          labels: ${{ steps.meta_worker_datasets.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=worker-datasets
           cache-to: type=gha,mode=max,scope=worker-datasets
-          outputs: type=image,name=${{ secrets.DOCKERHUB_USERNAME }}/worker-datasets,push-by-digest=false
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
 
-      - name: Docker meta - Worker Visualizations Python
-        id: meta_worker_visualizations_py
+  # Build Worker Visualizations Python image
+  build-worker-visualizations-py:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.worker-visualizations-py == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/worker-visualizations-py
@@ -112,39 +243,41 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and push Worker Visualizations Python
-        id: docker_build_worker_visualizations_py
+      - name: Build and push
+        id: docker_build
         uses: docker/build-push-action@v6
         with:
           context: ./crates/worker-visualizations-py
           file: ./crates/worker-visualizations-py/Dockerfile
           push: true
-          tags: ${{ steps.meta_worker_visualizations_py.outputs.tags }}
-          labels: ${{ steps.meta_worker_visualizations_py.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=worker-visualizations-py
           cache-to: type=gha,mode=max,scope=worker-visualizations-py
-          outputs: type=image,name=${{ secrets.DOCKERHUB_USERNAME }}/worker-visualizations-py,push-by-digest=false
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
 
+  # Summary job
+  summary:
+    needs: [detect-changes, build-api, build-worker-collections, build-worker-datasets, build-worker-visualizations-py]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
       - name: Generate build summary
         run: |
           echo "# Build Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## Images Built and Pushed" >> $GITHUB_STEP_SUMMARY
+          echo "## Change Detection" >> $GITHUB_STEP_SUMMARY
+          echo "- **API:** ${{ needs.detect-changes.outputs.api }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Worker Collections:** ${{ needs.detect-changes.outputs.worker-collections }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Worker Datasets:** ${{ needs.detect-changes.outputs.worker-datasets }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Worker Visualizations Python:** ${{ needs.detect-changes.outputs.worker-visualizations-py }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Core:** ${{ needs.detect-changes.outputs.core }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **UI:** ${{ needs.detect-changes.outputs.ui }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### API" >> $GITHUB_STEP_SUMMARY
-          echo "- **Digest:** \`${{ steps.docker_build_api.outputs.digest }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Image ID:** \`${{ steps.docker_build_api.outputs.imageid }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Worker Collections" >> $GITHUB_STEP_SUMMARY
-          echo "- **Digest:** \`${{ steps.docker_build_worker_collections.outputs.digest }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Image ID:** \`${{ steps.docker_build_worker_collections.outputs.imageid }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Worker Datasets" >> $GITHUB_STEP_SUMMARY
-          echo "- **Digest:** \`${{ steps.docker_build_worker_datasets.outputs.digest }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Image ID:** \`${{ steps.docker_build_worker_datasets.outputs.imageid }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Worker Visualizations Python" >> $GITHUB_STEP_SUMMARY
-          echo "- **Digest:** \`${{ steps.docker_build_worker_visualizations_py.outputs.digest }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Image ID:** \`${{ steps.docker_build_worker_visualizations_py.outputs.imageid }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Build Results" >> $GITHUB_STEP_SUMMARY
+          echo "- **API:** ${{ needs.build-api.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Worker Collections:** ${{ needs.build-worker-collections.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Worker Datasets:** ${{ needs.build-worker-datasets.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Worker Visualizations Python:** ${{ needs.build-worker-visualizations-py.result }}" >> $GITHUB_STEP_SUMMARY
 
