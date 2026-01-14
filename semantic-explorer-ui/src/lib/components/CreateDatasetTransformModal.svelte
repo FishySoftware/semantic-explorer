@@ -133,10 +133,8 @@
 			const newTransformTitle = transformTitle.trim();
 			// Close modal immediately
 			resetForm();
-
 			// Notify parent with the new transform ID and title
 			onSuccess?.(newTransformId, newTransformTitle);
-
 			toastStore.success('Dataset transform created! Embedding generation started.');
 		} catch (e) {
 			const message = formatError(e, 'Failed to create transform');

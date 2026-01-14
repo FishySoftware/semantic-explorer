@@ -15,7 +15,7 @@ use async_nats::Client as NatsClient;
 use qdrant_client::Qdrant;
 use serde::Deserialize;
 use sqlx::{Pool, Postgres};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use uuid::Uuid;
 
 #[derive(Deserialize, Debug)]
@@ -448,7 +448,7 @@ pub async fn get_dataset_transform_stats(
             .await
             {
                 Ok(stats) => {
-                    info!(
+                    debug!(
                         "Transform stats: batches={}, completed={}, processing={}, chunks_embedded={}, chunks_to_process={}",
                         stats.total_batches_processed,
                         stats.successful_batches,

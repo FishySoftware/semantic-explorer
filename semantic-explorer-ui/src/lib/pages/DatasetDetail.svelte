@@ -137,6 +137,7 @@
 
 	// SSE connection for real-time transform status updates
 	let datasetSSE: SSEConnection | null = null;
+	let sseRefreshTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	// Initialize search query from hash URL parameter early
 	function getInitialSearchQuery(): string {
@@ -359,13 +360,29 @@
 			embedders: [],
 		};
 
-		// Start polling for progress
+		// Start polling for progress immediately
 		startTransformProgressPolling();
 
-		// Refresh transforms list after a short delay to show the new one
-		setTimeout(() => {
-			fetchDatasetTransforms();
-		}, 1000);
+		// Also immediately refresh transforms list (don't wait for delay)
+		fetchDatasetTransforms();
+
+		// Use retry mechanism to ensure the transform appears if initial fetch failed
+		let retryCount = 0;
+		const maxRetries = 3;
+
+		const fetchWithRetry = async () => {
+			const foundTransform = datasetTransforms.find((t) => t.dataset_transform_id === transformId);
+			if (!foundTransform && retryCount < maxRetries) {
+				retryCount++;
+				await fetchDatasetTransforms();
+				if (retryCount < maxRetries) {
+					setTimeout(fetchWithRetry, 2000); // Wait 2 seconds before retrying
+				}
+			}
+		};
+
+		// Start retrying after 1 second if transform not found initially
+		setTimeout(fetchWithRetry, 1000);
 	}
 
 	async function fetchTransformProgressStats() {
@@ -391,21 +408,17 @@
 			datasetTransformStatsMap.set(activeTransformProgress.id, stats);
 			datasetTransformStatsMap = datasetTransformStatsMap;
 
-			console.debug('Transform stats:', {
-				transformId: activeTransformProgress.id,
-				batches: stats.total_batches_processed,
-				processing_batches: stats.processing_batches,
-				embedded: stats.total_chunks_embedded,
-				total: stats.total_chunks_to_process,
-				status: stats.status,
-				is_processing: stats.is_processing,
-			});
+			// Check if the transform is complete (only terminal states, not just !is_processing)
+			const terminalStatuses = ['completed', 'completed_with_errors', 'failed'];
+			const isTerminal = terminalStatuses.includes(stats.status);
+			const isIdleWithWork =
+				stats.status === 'idle' &&
+				!stats.is_processing &&
+				(stats.total_chunks_embedded > 0 || stats.total_batches_processed > 0);
 
-			// Check if the transform is complete (any terminal state)
-			const terminalStatuses = ['completed', 'completed_with_errors', 'failed', 'idle'];
-			if (terminalStatuses.includes(stats.status) || !stats.is_processing) {
+			if (isTerminal || isIdleWithWork) {
 				console.info(
-					`Transform ${activeTransformProgress.id} ${stats.status}, is_processing=${stats.is_processing}, stopping polling`
+					`Transform ${activeTransformProgress.id} ${stats.status}, is_processing=${stats.is_processing}, stopping polling (terminal=${isTerminal}, idleWithWork=${isIdleWithWork})`
 				);
 				stopTransformProgressPolling();
 				// Refresh the transforms list to get final state
@@ -626,6 +639,15 @@
 				const status = data as { dataset_transform_id?: number };
 				if (status.dataset_transform_id) {
 					fetchDatasetTransformStats(status.dataset_transform_id);
+
+					// Debounced refresh of transforms list to ensure new transforms are shown
+					// This helps catch newly created transforms that might not appear immediately
+					if (sseRefreshTimeout) {
+						clearTimeout(sseRefreshTimeout);
+					}
+					sseRefreshTimeout = setTimeout(() => {
+						fetchDatasetTransforms();
+					}, 500); // Debounce for 500ms
 				}
 			},
 			onMaxRetriesReached: () => {
@@ -654,6 +676,10 @@
 		// Clean up any pending search fetch
 		if (searchFetchTimeout) {
 			clearTimeout(searchFetchTimeout);
+		}
+		// Clean up SSE refresh timeout
+		if (sseRefreshTimeout) {
+			clearTimeout(sseRefreshTimeout);
 		}
 	});
 </script>
@@ -732,16 +758,18 @@
 			</div>
 
 			{#if activeTransformProgress}
-				<DatasetTransformProgressPanel
-					datasetTransformId={activeTransformProgress.id}
-					title={activeTransformProgress.title}
-					sourceDatasetTitle={dataset?.title || 'Unknown Dataset'}
-					overallStatus={transformProgressStats?.status || 'processing'}
-					totalItemsProcessed={transformProgressStats?.total_chunks_embedded || 0}
-					totalItems={transformProgressStats?.total_chunks_to_process || 0}
-					startedAt={activeTransformProgress.startedAt}
-					embedderProgresses={transformProgressStats?.embedders || []}
-				/>
+				<div class="mb-6">
+					<DatasetTransformProgressPanel
+						datasetTransformId={activeTransformProgress.id}
+						title={activeTransformProgress.title}
+						sourceDatasetTitle={dataset?.title || 'Unknown Dataset'}
+						overallStatus={transformProgressStats?.status || 'processing'}
+						totalItemsProcessed={transformProgressStats?.total_chunks_embedded || 0}
+						totalItems={transformProgressStats?.total_chunks_to_process || 0}
+						startedAt={activeTransformProgress.startedAt}
+						embedderProgresses={transformProgressStats?.embedders || []}
+					/>
+				</div>
 			{/if}
 
 			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-4">
@@ -1117,7 +1145,7 @@
 												class="inline-flex items-center gap-2 px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
 												title="Create a transform to embed items from this dataset"
 											>
-												{ArrowsExpandIcon}
+												{@html ArrowsExpandIcon}
 												Create Dataset Transform
 											</button>
 										</div>

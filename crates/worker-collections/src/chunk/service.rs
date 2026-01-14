@@ -55,6 +55,13 @@ impl ChunkingService {
                     strategies::semantic::chunk_async(text.clone(), config, embedder_config).await?
                 }
                 ChunkingStrategy::FixedSize => strategies::fixed_size::chunk(text.clone(), config)?,
+                ChunkingStrategy::TokenBased => {
+                    strategies::token_based::chunk(text.clone(), config)?
+                }
+                ChunkingStrategy::CodeAware => strategies::code_aware::chunk(text.clone(), config)?,
+                ChunkingStrategy::TableAware => {
+                    strategies::table_aware::chunk(text.clone(), config)?
+                }
                 ChunkingStrategy::MarkdownAware => {
                     unreachable!("MarkdownAware is handled in the structured_chunks path above")
                 }
@@ -63,7 +70,9 @@ impl ChunkingService {
             (chunks, vec![None; len])
         };
 
-        let chunks_with_overlap = if config.chunk_overlap > 0 {
+        let chunks_with_overlap = if config.chunk_overlap > 0
+            && !matches!(config.strategy, ChunkingStrategy::TokenBased)
+        {
             strategies::overlap::apply_overlap(chunks, config.chunk_overlap)?
         } else {
             chunks
@@ -235,6 +244,47 @@ mod tests {
         assert_eq!(chunks[0].content, "This is one sentence.");
         assert_eq!(chunks[0].metadata.chunk_index, 0);
         assert_eq!(chunks[0].metadata.total_chunks, 1);
+    }
+
+    #[tokio::test]
+    async fn test_token_strategy_skips_generic_overlap() {
+        let mut config = create_basic_config(ChunkingStrategy::TokenBased, 50);
+
+        // HUGE generic overlap, but 0 token overlap
+        config.chunk_overlap = 1000;
+
+        config.options.token_based = Some(crate::chunk::config::TokenBasedOptions {
+            max_tokens: 5,
+            overlap_tokens: 0, // No internal overlap
+            split_on_sentences: false,
+            model: None,
+        });
+
+        let text = "one two three four five six seven eight nine ten".to_string();
+
+        let result = ChunkingService::chunk_text(text, &config, None, None).await;
+        assert!(result.is_ok());
+
+        let chunks = result.unwrap();
+        assert!(chunks.len() >= 2);
+
+        // Chunk 1: "one two three four five"
+        // Chunk 2: "six seven eight nine ten"
+
+        // If generic overlap applied (1000 chars), Chunk 2 would be:
+        // "one two three four fivesix seven eight nine ten" (roughly)
+
+        let chunk1_content = &chunks[0].content;
+        let chunk2_content = &chunks[1].content;
+
+        assert!(
+            !chunk2_content.contains("one"),
+            "Chunk 2 should not contain 'one' from Chunk 1 if generic overlap is skipped"
+        );
+        assert!(
+            !chunk2_content.starts_with(chunk1_content),
+            "Chunk 2 should not start with Chunk 1"
+        );
     }
 
     #[tokio::test]

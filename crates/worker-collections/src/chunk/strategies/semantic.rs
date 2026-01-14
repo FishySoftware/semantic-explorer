@@ -258,3 +258,71 @@ async fn call_embedder_api(config: &EmbedderConfig, texts: &[&str]) -> Result<Ve
 
     Ok(embeddings)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chunk::config::SemanticOptions;
+
+    #[test]
+    fn test_cosine_similarity_identical() {
+        let v1 = vec![1.0, 0.0, 0.0];
+        let v2 = vec![1.0, 0.0, 0.0];
+        assert!((cosine_similarity(&v1, &v2) - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_cosine_similarity_orthogonal() {
+        let v1 = vec![1.0, 0.0, 0.0];
+        let v2 = vec![0.0, 1.0, 0.0];
+        assert!((cosine_similarity(&v1, &v2) - 0.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_cosine_similarity_opposite() {
+        let v1 = vec![1.0, 0.0, 0.0];
+        let v2 = vec![-1.0, 0.0, 0.0];
+        assert!((cosine_similarity(&v1, &v2) + 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_merge_by_similarity() {
+        let sentences = vec!["Sentence 1", "Sentence 2", "Sentence 3"];
+        // Very similar embeddings for 1 and 2, different for 3
+        let embeddings = vec![vec![1.0, 0.0], vec![0.99, 0.01], vec![0.0, 1.0]];
+
+        let opts = SemanticOptions {
+            similarity_threshold: 0.9,
+            max_chunk_size: 100,
+            ..Default::default()
+        };
+
+        let result = merge_by_similarity(sentences, embeddings, &opts, 100);
+        assert!(result.is_ok());
+
+        let chunks = result.unwrap();
+        // 1 and 2 should merge, 3 should be separate
+        assert_eq!(chunks.len(), 2);
+        assert!(chunks[0].contains("Sentence 1") && chunks[0].contains("Sentence 2"));
+        assert_eq!(chunks[1], "Sentence 3");
+    }
+
+    #[test]
+    fn test_merge_by_similarity_respects_max_size() {
+        let sentences = vec!["Short", "A very long sentence that causes split"];
+        let embeddings = vec![vec![1.0, 0.0], vec![0.99, 0.01]];
+
+        let opts = SemanticOptions {
+            similarity_threshold: 0.0, // Force merge by similarity
+            max_chunk_size: 10,        // But limit by size
+            ..Default::default()
+        };
+
+        let result = merge_by_similarity(sentences, embeddings, &opts, 10);
+        assert!(result.is_ok());
+
+        let chunks = result.unwrap();
+        // Should not merge because of size limit
+        assert_eq!(chunks.len(), 2);
+    }
+}

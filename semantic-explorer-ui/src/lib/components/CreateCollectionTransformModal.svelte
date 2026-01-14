@@ -84,6 +84,8 @@
 	let headingFormat = $state('plain_text');
 	let preserveLists = $state(true);
 	let preserveCodeBlocks = $state(true);
+	let includeMetadata = $state(true);
+	let appendMetadataToText = $state(true);
 
 	// Update table and heading format when extraction strategy changes
 	$effect(() => {
@@ -233,6 +235,8 @@
 						heading_format: headingFormat,
 						preserve_lists: preserveLists,
 						preserve_code_blocks: preserveCodeBlocks,
+						include_metadata: includeMetadata,
+						append_metadata_to_text: appendMetadataToText,
 					},
 				},
 				chunking: {
@@ -320,6 +324,8 @@
 		headingFormat = 'plain_text';
 		preserveLists = false;
 		preserveCodeBlocks = false;
+		includeMetadata = true;
+		appendMetadataToText = true;
 		chunkingStrategy = 'sentence';
 		chunkSize = 200;
 		chunkOverlap = 0;
@@ -565,6 +571,54 @@
 					/>
 					<span class="text-sm text-gray-700 dark:text-gray-300">Preserve Code Blocks</span>
 				</label>
+
+				<label class="flex items-center gap-2 cursor-pointer">
+					<input
+						type="checkbox"
+						bind:checked={includeMetadata}
+						class="w-4 h-4 text-blue-600 rounded focus:ring-2"
+					/>
+					<span class="text-sm text-gray-700 dark:text-gray-300">Extract Document Metadata</span>
+					<button
+						type="button"
+						id="metadata-help"
+						class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 focus:outline-none"
+					>
+						<QuestionCircleSolid class="w-4 h-4" />
+					</button>
+					<Tooltip
+						triggeredBy="#metadata-help"
+						placement="right"
+						class="max-w-xs text-center bg-gray-900 dark:bg-white text-white dark:text-gray-900 border-0"
+					>
+						Extract metadata like author, title, dates from documents
+					</Tooltip>
+				</label>
+
+				{#if includeMetadata}
+					<label class="flex items-center gap-2 cursor-pointer ml-6">
+						<input
+							type="checkbox"
+							bind:checked={appendMetadataToText}
+							class="w-4 h-4 text-blue-600 rounded focus:ring-2"
+						/>
+						<span class="text-sm text-gray-700 dark:text-gray-300">Append Metadata to Text</span>
+						<button
+							type="button"
+							id="append-metadata-help"
+							class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 focus:outline-none"
+						>
+							<QuestionCircleSolid class="w-4 h-4" />
+						</button>
+						<Tooltip
+							triggeredBy="#append-metadata-help"
+							placement="right"
+							class="max-w-xs text-center bg-gray-900 dark:bg-white text-white dark:text-gray-900 border-0"
+						>
+							Append metadata as text for better semantic search
+						</Tooltip>
+					</label>
+				{/if}
 			</div>
 
 			<!-- Chunking Strategy -->
@@ -602,6 +656,9 @@
 					<option value="recursive_character">Recursive Character</option>
 					<option value="semantic">Semantic</option>
 					<option value="markdown_aware">Markdown Aware</option>
+					<option value="table_aware">Table Aware</option>
+					<option value="code_aware">Code Aware</option>
+					<option value="token_based">Token Based</option>
 				</select>
 			</div>
 
