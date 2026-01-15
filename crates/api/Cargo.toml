@@ -41,7 +41,6 @@ opentelemetry-otlp = { workspace = true }
 opentelemetry-prometheus = { workspace = true }
 opentelemetry-appender-tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true }
-prometheus = { workspace = true }
 mime_guess = { workspace = true }
 mime = { workspace = true }
 uuid = { workspace = true }

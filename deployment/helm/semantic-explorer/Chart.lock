@@ -1,0 +1,18 @@
+dependencies:
+- name: nats
+  repository: https://nats-io.github.io/k8s/helm/charts/
+  version: 1.2.11
+- name: qdrant
+  repository: https://qdrant.github.io/qdrant-helm
+  version: 0.8.5
+- name: minio
+  repository: https://charts.min.io/
+  version: 5.2.0
+- name: grafana
+  repository: https://grafana.github.io/helm-charts
+  version: 8.15.0
+- name: prometheus
+  repository: https://prometheus-community.github.io/helm-charts
+  version: 25.30.2
+digest: sha256:92f2478c44202c14460d683bd4efa9d69aa7ee72783b939fc6129e628843a69c
+generated: "2026-01-14T21:33:32.178525852-05:00"

@@ -202,6 +202,7 @@ async fn main() -> Result<()> {
             .service(api::collections::list_collection_files)
             .service(api::collections::download_collection_file)
             .service(api::collections::delete_collection_file)
+            .service(api::collections::get_allowed_file_types)
             .service(api::datasets::get_datasets)
             .service(api::datasets::get_datasets_embedders)
             .service(api::datasets::get_dataset)

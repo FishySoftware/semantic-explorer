@@ -159,6 +159,7 @@ sequenceDiagram
 | `AWS_ACCESS_KEY_ID` | string | **required** | S3 access key |
 | `AWS_SECRET_ACCESS_KEY` | string | **required** | S3 secret key |
 | `AWS_ENDPOINT_URL` | string | **required** | S3 endpoint URL |
+| `S3_BUCKET_NAME` | string | **required** | S3 bucket name for storing visualization HTML files |
 | `PROCESSING_TIMEOUT_SECS` | integer | `3600` | Job timeout (1 hour default) |
 | `WORKER_ID` | string | UUID | Unique worker identifier |
 | `LOG_LEVEL` | string | `INFO` | Python logging level (DEBUG, INFO, WARNING, ERROR) |
@@ -220,7 +221,7 @@ sequenceDiagram
   "visualizationId": 456,
   "owner": "user@example.com",
   "status": "completed",
-  "htmlS3Key": "visualizations/user@example.com/123/456.html",
+  "htmlS3Key": "visualization-2024-01-11T12:00:00Z.html",
   "pointCount": 5000,
   "clusterCount": 42,
   "processingDurationMs": 125000,
@@ -233,6 +234,9 @@ sequenceDiagram
   }
 }
 ```
+
+> **Note**: The `htmlS3Key` contains just the filename. The full S3 path is constructed as:
+> `s3://{S3_BUCKET_NAME}/collections/visualizations-{visualizationTransformId}/{htmlS3Key}`
 
 ### Progress Updates
 
@@ -492,6 +496,7 @@ export AWS_REGION="us-east-1"
 export AWS_ACCESS_KEY_ID="minioadmin"
 export AWS_SECRET_ACCESS_KEY="minioadmin"
 export AWS_ENDPOINT_URL="http://localhost:9000"
+export S3_BUCKET_NAME="semantic-explorer-local"
 
 # Run the worker
 python -m src.main
@@ -518,6 +523,7 @@ docker run \
   -e AWS_ACCESS_KEY_ID="..." \
   -e AWS_SECRET_ACCESS_KEY="..." \
   -e AWS_ENDPOINT_URL="http://minio:9000" \
+  -e S3_BUCKET_NAME="semantic-explorer-files" \
   ghcr.io/your-org/worker-visualizations-py:latest
 ```
 

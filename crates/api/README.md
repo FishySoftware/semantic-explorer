@@ -178,6 +178,30 @@ sequenceDiagram
 | GET | `/api/collections/{id}/files/{fileId}` | Download file |
 | DELETE | `/api/collections/{id}/files/{fileId}` | Delete file |
 | GET | `/api/collections/{id}/search` | Search within collection |
+| GET | `/api/collections/allowed-file-types` | Get list of allowed MIME types |
+
+#### Supported File Types
+
+The API supports extensive file type validation for document uploads. Use the `/api/collections/allowed-file-types` endpoint to get the current list programmatically. Supported categories include:
+
+**Text Formats**: Plain text (`.txt`), CSV (`.csv`), Markdown (`.md`), HTML (`.html`), XML (`.xml`), RTF (`.rtf`), log files
+
+**Documents**: 
+- PDF (`.pdf`)
+- Microsoft Word (`.doc`, `.docx`, `.docm`, `.dotx`, `.dotm`)
+- Microsoft Excel (`.xls`, `.xlsx`, `.xlsm`, `.xltx`, `.xltm`, `.xlam`, `.xlsb`)
+- Microsoft PowerPoint (`.ppt`, `.pptx`)
+- OpenDocument (`.odt`, `.ods`, `.odp`)
+
+**Data Formats**: JSON (`.json`), NDJSON (`.ndjson`, `.jsonl`)
+
+**E-books**: EPUB (`.epub`)
+
+**Email**: EML files (`.eml` / `message/rfc822`)
+
+**Archives**: ZIP (`.zip`), GZIP (`.gz`, `.tar.gz`), 7-Zip (`.7z`)
+
+All uploads are validated using magic byte detection to prevent type mismatch attacks. Archives are scanned for ZIP bomb protection.
 
 ### Datasets
 | Method | Endpoint | Description |

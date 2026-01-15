@@ -4818,7 +4818,6 @@ dependencies = [
  "opentelemetry-prometheus",
  "opentelemetry_sdk",
  "pem",
- "prometheus",
  "qdrant-client",
  "regex",
  "reqwest 0.13.1",

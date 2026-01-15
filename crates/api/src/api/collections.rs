@@ -638,3 +638,17 @@ pub(crate) async fn delete_collection_file(
         Err(e) => ApiError::Internal(format!("error deleting file: {:?}", e)).error_response(),
     }
 }
+
+#[utoipa::path(
+    responses(
+        (status = 200, description = "List of allowed MIME types", body = Vec<String>),
+    ),
+    tag = "Collections",
+)]
+#[get("/api/collections/allowed-file-types")]
+#[tracing::instrument(name = "get_allowed_file_types")]
+pub(crate) async fn get_allowed_file_types() -> impl Responder {
+    use crate::validation::get_allowed_mime_types;
+
+    HttpResponse::Ok().json(get_allowed_mime_types())
+}

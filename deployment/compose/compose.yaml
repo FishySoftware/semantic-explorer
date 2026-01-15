@@ -22,16 +22,19 @@ services:
       - otel-collector
     restart: unless-stopped
     environment:
-      - HOSTNAME=localhost
+      - HOSTNAME=0.0.0.0
       - PORT=8080
-      - RUST_LOG=warn,actix_web_prom=error,semantic_explorer=debug
+      - PUBLIC_URL=http://localhost:8080
+      - RUST_LOG=warn,actix_web_prom=error,semantic_explorer=info
       - LOG_FORMAT=json
       - AWS_ACCESS_KEY_ID=test_access_key
       - AWS_SECRET_ACCESS_KEY=test_secret_key
       - AWS_REGION=us-east-1
       - AWS_ENDPOINT_URL=http://minio-1:9000
       - S3_BUCKET_NAME=semantic-explorer-local
+      - S3_FORCE_PATH_STYLE=true
       - QDRANT_URL=http://qdrant:6334
+      - QDRANT_TIMEOUT_SECS=30
       - QDRANT_CONNECT_TIMEOUT_SECS=10
       - DATABASE_URL=postgresql://user:password@postgres:5432/explorer
       - DB_MIN_CONNECTIONS=2
@@ -71,7 +74,7 @@ services:
       - otel-collector
     restart: unless-stopped
     environment:
-      - RUST_LOG=warn,actix_web_prom=error,worker_collections=debug
+      - RUST_LOG=warn,actix_web_prom=error,worker_collections=info
       - LOG_FORMAT=json
       - NATS_URL=nats://nats-1:4222
       - AWS_ACCESS_KEY_ID=test_access_key
@@ -79,8 +82,10 @@ services:
       - AWS_REGION=us-east-1
       - AWS_ENDPOINT_URL=http://minio-1:9000
       - S3_BUCKET_NAME=semantic-explorer-local
+      - S3_FORCE_PATH_STYLE=true
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
       - SERVICE_NAME=worker-collections
+      - ENCRYPTION_MASTER_KEY=${ENCRYPTION_MASTER_KEY:-e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4}
     networks:
       - semantic-explorer-net
 
@@ -96,7 +101,7 @@ services:
       - otel-collector
     restart: unless-stopped
     environment:
-      - RUST_LOG=warn,actix_web_prom=error,worker_datasets=debug
+      - RUST_LOG=warn,actix_web_prom=error,worker_datasets=info
       - LOG_FORMAT=json
       - NATS_URL=nats://nats-1:4222
       - AWS_ACCESS_KEY_ID=test_access_key
@@ -104,9 +109,11 @@ services:
       - AWS_REGION=us-east-1
       - AWS_ENDPOINT_URL=http://minio-1:9000
       - S3_BUCKET_NAME=semantic-explorer-local
+      - S3_FORCE_PATH_STYLE=true
       - QDRANT_URL=http://qdrant:6334
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
       - SERVICE_NAME=worker-datasets
+      - ENCRYPTION_MASTER_KEY=${ENCRYPTION_MASTER_KEY:-e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4}
     networks:
       - semantic-explorer-net
 
@@ -133,12 +140,14 @@ services:
       - AWS_SECRET_ACCESS_KEY=test_secret_key
       - AWS_REGION=us-east-1
       - S3_BUCKET_NAME=semantic-explorer-local
+      - S3_FORCE_PATH_STYLE=true
       - LOG_LEVEL=INFO
       - WORKER_ID=py-worker-prod-1
       - PROCESSING_TIMEOUT_SECS=3600
       - MAX_CONCURRENT_JOBS=3
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
-      - SERVICE_NAME=worker-visualizations
+      - SERVICE_NAME=worker-visualizations-py
+      - ENCRYPTION_MASTER_KEY=${ENCRYPTION_MASTER_KEY:-e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4}
     networks:
       - semantic-explorer-net
 
@@ -247,26 +256,26 @@ services:
       /bin/sh -c '
       echo "Waiting for cluster to stabilize...";
       sleep 5;
-      
+
       echo "Configuring MinIO client...";
       mc alias set myminio http://minio-1:9000 test_access_key test_secret_key;
-      
+
       echo "Creating bucket: semantic-explorer-local";
       mc mb myminio/semantic-explorer-local --ignore-existing;
-      
+
       echo "Setting bucket policy to allow read/write";
       mc anonymous set download myminio/semantic-explorer-local;
-      
+
       echo "MinIO cluster status:";
       mc admin info myminio;
-      
+
       echo "MinIO initialization complete!";
       '
     networks:
       - semantic-explorer-net
     restart: "no"
 
-  qdrant:  
+  qdrant:
     image: qdrant/qdrant:gpu-nvidia-latest
     hostname: qdrant
     restart: unless-stopped
@@ -287,7 +296,7 @@ services:
               capabilities: [gpu]
     networks:
       - semantic-explorer-net
-    
+
   postgres:
     image: postgres:16.3-alpine
     restart: unless-stopped
@@ -313,13 +322,6 @@ services:
       - postgres
     networks:
       - semantic-explorer-net
-
-      --cluster-replicas 0
-      --cluster-yes || true;
-      '
-    networks:
-      - semantic-explorer-net
-    restart: "no"
 
   dex:
     image: dexidp/dex:latest
@@ -441,7 +443,6 @@ services:
     networks:
       - semantic-explorer-net
 
-
   quickwit:
     image: quickwit/quickwit:latest
     ports:
@@ -455,6 +456,23 @@ services:
       - QW_ENABLE_JAEGER_ENDPOINT=true
       - RUST_LOG=info
     command: ["run"]
+    restart: unless-stopped
+    networks:
+      - semantic-explorer-net
+
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus:rw
     restart: unless-stopped
     networks:
       - semantic-explorer-net
@@ -473,23 +491,6 @@ services:
     depends_on:
       - quickwit
       - prometheus
-    restart: unless-stopped
-    networks:
-      - semantic-explorer-net
-
-  prometheus:
-    image: prom/prometheus:latest
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
-      - '--web.console.templates=/usr/share/prometheus/consoles'
-      - '--web.enable-lifecycle'
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus:rw
     restart: unless-stopped
     networks:
       - semantic-explorer-net
@@ -513,7 +514,7 @@ services:
     restart: unless-stopped
     networks:
       - semantic-explorer-net
-      
+
 volumes:
   qdrant_storage:
   minio_data_1:
