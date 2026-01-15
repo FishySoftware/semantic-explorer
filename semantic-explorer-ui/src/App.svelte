@@ -106,13 +106,15 @@
 		activeUrl = path;
 
 		if (path === '/collections/detail' && params.id) {
-			selectedCollectionId = parseInt(params.id, 10);
+			const id = parseInt(params.id, 10);
+			selectedCollectionId = !isNaN(id) ? id : null;
 		} else if (path !== '/collections/detail') {
 			selectedCollectionId = null;
 		}
 
 		if (path === '/datasets/detail' && params.id) {
-			selectedDatasetId = parseInt(params.id, 10);
+			const id = parseInt(params.id, 10);
+			selectedDatasetId = !isNaN(id) ? id : null;
 		} else if (path !== '/datasets/detail') {
 			selectedDatasetId = null;
 		}

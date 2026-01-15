@@ -424,6 +424,11 @@
 			return;
 		}
 
+		if (!collectionId || isNaN(collectionId)) {
+			toastStore.error('Invalid collection ID');
+			return;
+		}
+
 		uploading = true;
 		uploadProgress = {
 			completed: 0,

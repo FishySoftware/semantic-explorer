@@ -151,7 +151,6 @@ services:
     networks:
       - semantic-explorer-net
 
-  # MinIO distributed cluster - 4 nodes for production-like erasure coding
   # Console: http://localhost:9001
   minio-1:
     image: minio/minio:latest
