@@ -131,6 +131,11 @@ spec:
           value: {{ include "semantic-explorer.storage.s3.forcePathStyle" . | quote }}
         - name: S3_BUCKET_NAME
           value: {{ .Values.storage.s3.bucketName }}
+        - name: ENCRYPTION_MASTER_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "semantic-explorer.fullname" . }}-secrets
+              key: encryption-master-key
         {{- if .Values.observability.otelCollector.enabled }}
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: {{ include "semantic-explorer.otel.endpoint" . }}

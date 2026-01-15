@@ -68,7 +68,7 @@ pub async fn get_dataset_transforms(
 ) -> impl Responder {
     match dataset_transforms::get_dataset_transforms_paginated(
         &postgres_pool,
-        &user,
+        &user.as_owner(),
         params.limit,
         params.offset,
         &params.sort_by,
@@ -108,7 +108,7 @@ pub async fn get_dataset_transform(
     path: Path<i32>,
 ) -> impl Responder {
     let id = path.into_inner();
-    match dataset_transforms::get_dataset_transform(&postgres_pool, &user, id).await {
+    match dataset_transforms::get_dataset_transform(&postgres_pool, &user.as_owner(), id).await {
         Ok(transform) => {
             events::resource_read(&user, ResourceType::Transform, &id.to_string());
             HttpResponse::Ok().json(transform)
@@ -158,7 +158,7 @@ pub async fn create_dataset_transform(
         &body.title,
         body.source_dataset_id,
         &body.embedder_ids,
-        &user,
+        &user.as_owner(),
         &job_config,
     )
     .await
@@ -252,7 +252,7 @@ pub async fn update_dataset_transform(
     let id = path.into_inner();
     match dataset_transforms::update_dataset_transform(
         &postgres_pool,
-        &user,
+        &user.as_owner(),
         id,
         body.title.as_deref(),
         body.is_enabled,
@@ -328,8 +328,12 @@ pub async fn delete_dataset_transform(
         }
     }
 
-    match dataset_transforms::delete_dataset_transform(&postgres_pool, &user, dataset_transform_id)
-        .await
+    match dataset_transforms::delete_dataset_transform(
+        &postgres_pool,
+        &user.as_owner(),
+        dataset_transform_id,
+    )
+    .await
     {
         Ok(_) => {
             events::resource_deleted_with_request(
@@ -375,7 +379,7 @@ pub async fn trigger_dataset_transform(
     // Verify the transform exists
     let transform = match dataset_transforms::get_dataset_transform(
         &postgres_pool,
-        &user,
+        &user.as_owner(),
         dataset_transform_id,
     )
     .await
@@ -393,7 +397,7 @@ pub async fn trigger_dataset_transform(
         &nats_client,
         &s3_client,
         dataset_transform_id,
-        &user,
+        &user.as_owner(),
         &encryption,
     )
     .await
@@ -437,8 +441,12 @@ pub async fn get_dataset_transform_stats(
 ) -> impl Responder {
     let dataset_transform_id = path.into_inner();
 
-    match dataset_transforms::get_dataset_transform(&postgres_pool, &user, dataset_transform_id)
-        .await
+    match dataset_transforms::get_dataset_transform(
+        &postgres_pool,
+        &user.as_owner(),
+        dataset_transform_id,
+    )
+    .await
     {
         Ok(_) => {
             match dataset_transforms::get_dataset_transform_stats(

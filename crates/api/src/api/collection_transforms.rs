@@ -69,7 +69,7 @@ pub async fn get_collection_transforms(
 ) -> impl Responder {
     match collection_transforms::get_collection_transforms_paginated(
         &postgres_pool,
-        &user,
+        &user.as_owner(),
         params.limit,
         params.offset,
         &params.sort_by,
@@ -109,7 +109,9 @@ pub async fn get_collection_transform(
     path: Path<i32>,
 ) -> impl Responder {
     let id = path.into_inner();
-    match collection_transforms::get_collection_transform(&postgres_pool, &user, id).await {
+    match collection_transforms::get_collection_transform(&postgres_pool, &user.as_owner(), id)
+        .await
+    {
         Ok(transform) => {
             events::resource_read(&user, ResourceType::Transform, &id.to_string());
             HttpResponse::Ok().json(transform)
@@ -153,7 +155,7 @@ pub async fn create_collection_transform(
         &body.title,
         body.collection_id,
         body.dataset_id,
-        &user,
+        &user.as_owner(),
         body.chunk_size,
         &body.job_config,
     )
@@ -167,7 +169,7 @@ pub async fn create_collection_transform(
                 &nats_client,
                 &s3_client,
                 collection_transform_id,
-                &user,
+                &user.as_owner(),
                 &encryption,
             )
             .await
@@ -224,7 +226,7 @@ pub async fn update_collection_transform(
     let id = path.into_inner();
     match collection_transforms::update_collection_transform(
         &postgres_pool,
-        &user,
+        &user.as_owner(),
         id,
         body.title.as_deref(),
         body.is_enabled,
@@ -266,7 +268,9 @@ pub async fn delete_collection_transform(
     path: Path<i32>,
 ) -> impl Responder {
     let id = path.into_inner();
-    match collection_transforms::delete_collection_transform(&postgres_pool, &user, id).await {
+    match collection_transforms::delete_collection_transform(&postgres_pool, &user.as_owner(), id)
+        .await
+    {
         Ok(_) => {
             events::resource_deleted_with_request(
                 &req,
@@ -307,7 +311,7 @@ pub async fn trigger_collection_transform(
 
     match collection_transforms::get_collection_transform(
         &postgres_pool,
-        &user,
+        &user.as_owner(),
         collection_transform_id,
     )
     .await
@@ -347,7 +351,7 @@ pub async fn get_collection_transform_stats(
 
     match collection_transforms::get_collection_transform(
         &postgres_pool,
-        &user,
+        &user.as_owner(),
         collection_transform_id,
     )
     .await
@@ -402,7 +406,7 @@ pub async fn get_processed_files(
 
     match collection_transforms::get_collection_transform(
         &postgres_pool,
-        &user,
+        &user.as_owner(),
         collection_transform_id,
     )
     .await
@@ -465,7 +469,7 @@ pub async fn get_collection_transforms_for_collection(
 ) -> impl Responder {
     match collection_transforms::get_collection_transforms_for_collection(
         &postgres_pool,
-        &user,
+        &user.as_owner(),
         path.into_inner(),
     )
     .await

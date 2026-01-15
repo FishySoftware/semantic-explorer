@@ -41,7 +41,7 @@ pub(crate) async fn create_chat_session(
     postgres_pool: Data<Pool<Postgres>>,
     request: Json<CreateChatSessionRequest>,
 ) -> impl Responder {
-    match chat::create_chat_session(&postgres_pool.into_inner(), &user, &request).await {
+    match chat::create_chat_session(&postgres_pool.into_inner(), &user.as_owner(), &request).await {
         Ok(session) => {
             events::resource_created_with_request(
                 &req,
@@ -78,7 +78,7 @@ pub(crate) async fn get_chat_sessions(
     user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
 ) -> impl Responder {
-    match chat::get_chat_sessions(&postgres_pool.into_inner(), &user).await {
+    match chat::get_chat_sessions(&postgres_pool.into_inner(), &user.as_owner()).await {
         Ok(sessions) => {
             let sessions_response: Vec<ChatSessionResponse> = sessions
                 .into_iter()
@@ -120,7 +120,7 @@ pub(crate) async fn get_chat_session(
     postgres_pool: Data<Pool<Postgres>>,
     session_id: Path<String>,
 ) -> impl Responder {
-    match chat::get_chat_session(&postgres_pool.into_inner(), &session_id, &user).await {
+    match chat::get_chat_session(&postgres_pool.into_inner(), &session_id, &user.as_owner()).await {
         Ok(session) => {
             events::resource_read(&user, ResourceType::Session, &session_id);
             HttpResponse::Ok().json(ChatSessionResponse {
@@ -158,7 +158,9 @@ pub(crate) async fn delete_chat_session(
     postgres_pool: Data<Pool<Postgres>>,
     session_id: Path<String>,
 ) -> impl Responder {
-    match chat::delete_chat_session(&postgres_pool.into_inner(), &session_id, &user).await {
+    match chat::delete_chat_session(&postgres_pool.into_inner(), &session_id, &user.as_owner())
+        .await
+    {
         Ok(()) => {
             events::resource_deleted_with_request(&req, &user, ResourceType::Session, &session_id);
             HttpResponse::NoContent().finish()
@@ -188,7 +190,7 @@ pub(crate) async fn get_chat_messages(
     postgres_pool: Data<Pool<Postgres>>,
     session_id: Path<String>,
 ) -> impl Responder {
-    match chat::get_chat_session(&postgres_pool, &session_id, &user).await {
+    match chat::get_chat_session(&postgres_pool, &session_id, &user.as_owner()).await {
         Ok(_) => match chat::get_chat_messages(&postgres_pool, &session_id).await {
             Ok(messages) => {
                 let mut messages_response: Vec<ChatMessageResponse> = Vec::new();
@@ -267,7 +269,8 @@ pub(crate) async fn send_chat_message(
     request: Json<CreateChatMessageRequest>,
 ) -> impl Responder {
     // Verify session ownership and get session details
-    let session = match chat::get_chat_session(&postgres_pool, &session_id, &user).await {
+    let session = match chat::get_chat_session(&postgres_pool, &session_id, &user.as_owner()).await
+    {
         Ok(s) => s,
         Err(e) => {
             tracing::error!(error = %e, session_id = %session_id, "session not found");
@@ -421,7 +424,8 @@ pub(crate) async fn stream_chat_message(
     use actix_web::http::header;
 
     // Verify session ownership
-    let session = match chat::get_chat_session(&postgres_pool, &session_id, &user).await {
+    let session = match chat::get_chat_session(&postgres_pool, &session_id, &user.as_owner()).await
+    {
         Ok(s) => s,
         Err(e) => {
             tracing::error!(error = %e, session_id = %session_id, "session not found");
@@ -728,15 +732,16 @@ pub(crate) async fn regenerate_chat_message(
     }
 
     // Get session info
-    let session = match chat::get_chat_session(&postgres_pool, &message.session_id, &user).await {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::error!(error = %e, session_id = %message.session_id, "session not found");
-            return HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("session not found: {:?}", e)
-            }));
-        }
-    };
+    let session =
+        match chat::get_chat_session(&postgres_pool, &message.session_id, &user.as_owner()).await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!(error = %e, session_id = %message.session_id, "session not found");
+                return HttpResponse::NotFound().json(serde_json::json!({
+                    "error": format!("session not found: {:?}", e)
+                }));
+            }
+        };
 
     // Get existing retrieved documents (reuse them)
     let retrieved_documents = match chat::get_retrieved_documents(&postgres_pool, message_id).await

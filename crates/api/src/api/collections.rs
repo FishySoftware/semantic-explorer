@@ -42,7 +42,7 @@ pub(crate) async fn get_collections(
     s3_client: Data<Client>,
     postgres_pool: Data<Pool<Postgres>>,
 ) -> impl Responder {
-    match collections::get_collections(&postgres_pool.into_inner(), &user).await {
+    match collections::get_collections(&postgres_pool.into_inner(), &user.as_owner()).await {
         Ok(mut collection_list) => {
             let s3_client = s3_client.as_ref();
 
@@ -88,7 +88,9 @@ pub(crate) async fn get_collection(
 ) -> impl Responder {
     let collection_id = path.into_inner();
 
-    match collections::get_collection(&postgres_pool.into_inner(), &user, collection_id).await {
+    match collections::get_collection(&postgres_pool.into_inner(), &user.as_owner(), collection_id)
+        .await
+    {
         Ok(mut collection) => {
             // Fetch file count for the collection
             if let Ok(count) =
@@ -134,15 +136,20 @@ pub(crate) async fn search_collections(
     let result = if let Some(search_query) = &query.q {
         collections::search_collections(
             &postgres_pool,
-            &user,
+            &user.as_owner(),
             search_query,
             query.limit,
             query.offset,
         )
         .await
     } else {
-        collections::get_collections_paginated(&postgres_pool, &user, query.limit, query.offset)
-            .await
+        collections::get_collections_paginated(
+            &postgres_pool,
+            &user.as_owner(),
+            query.limit,
+            query.offset,
+        )
+        .await
     };
 
     match result {
@@ -205,7 +212,7 @@ pub(crate) async fn create_collections(
         &postgres_pool,
         &create_collection.title,
         create_collection.details.as_deref(),
-        &user,
+        &user.as_owner(),
         placeholder_bucket,
         &create_collection.tags,
         create_collection.is_public,
@@ -225,7 +232,7 @@ pub(crate) async fn create_collections(
     if let Err(e) = collections::update_collection_bucket(
         &postgres_pool,
         collection.collection_id,
-        &user,
+        &user.as_owner(),
         &bucket,
     )
     .await
@@ -272,12 +279,13 @@ pub(crate) async fn delete_collections(
     let postgres_pool = postgres_pool.into_inner();
     let collection_id = collection_id.into_inner();
 
-    let collection = match collections::get_collection(&postgres_pool, &user, collection_id).await {
-        Ok(collection) => collection,
-        Err(_) => {
-            return ApiError::NotFound("Collection not found".to_string()).error_response();
-        }
-    };
+    let collection =
+        match collections::get_collection(&postgres_pool, &user.as_owner(), collection_id).await {
+            Ok(collection) => collection,
+            Err(_) => {
+                return ApiError::NotFound("Collection not found".to_string()).error_response();
+            }
+        };
 
     if let Err(e) = empty_bucket(s3_client.as_ref(), &collection.bucket).await {
         error!(
@@ -292,7 +300,7 @@ pub(crate) async fn delete_collections(
     // with prefixes (S3_BUCKET_NAME/collections/{collection_id}/). The empty_bucket call
     // above removes all files under that prefix.
 
-    match collections::delete_collection(&postgres_pool, collection_id, &user).await {
+    match collections::delete_collection(&postgres_pool, collection_id, &user.as_owner()).await {
         Ok(_) => {
             events::resource_deleted_with_request(
                 &req,
@@ -346,7 +354,7 @@ pub(crate) async fn update_collections(
     match collections::update_collection(
         &postgres_pool,
         collection_id,
-        &user,
+        &user.as_owner(),
         &update_collection.title,
         update_collection.details.as_deref(),
         &update_collection.tags,
@@ -389,19 +397,23 @@ pub(crate) async fn upload_to_collection(
     let postgres_pool = postgres_pool.into_inner();
     let collection_id = collection_id.into_inner();
 
-    let collection = match collections::get_collection(&postgres_pool, &user, collection_id).await {
-        Ok(collection) => collection,
-        Err(e) => {
-            tracing::error!(
-                collection_id = collection_id,
-                username = %*user,
-                error = %e,
-                "Collection not found or access denied"
-            );
-            return ApiError::BadRequest(format!("collection '{}' does not exist", collection_id))
+    let collection =
+        match collections::get_collection(&postgres_pool, &user.as_owner(), collection_id).await {
+            Ok(collection) => collection,
+            Err(e) => {
+                tracing::error!(
+                    collection_id = collection_id,
+                    username = %*user,
+                    error = %e,
+                    "Collection not found or access denied"
+                );
+                return ApiError::BadRequest(format!(
+                    "collection '{}' does not exist",
+                    collection_id
+                ))
                 .error_response();
-        }
-    };
+            }
+        };
 
     let mut completed = Vec::with_capacity(payload.files.len());
     let mut failed = Vec::new();
@@ -491,7 +503,7 @@ pub(crate) async fn list_collection_files(
     let collection_id = collection_id.into_inner();
     let collection = match collections::get_collection(
         &postgres_pool.into_inner(),
-        &user,
+        &user.as_owner(),
         collection_id,
     )
     .await
@@ -551,7 +563,7 @@ pub(crate) async fn download_collection_file(
 
     let collection = match collections::get_collection(
         &postgres_pool.into_inner(),
-        &user,
+        &user.as_owner(),
         collection_id,
     )
     .await
@@ -621,7 +633,7 @@ pub(crate) async fn delete_collection_file(
 
     let collection = match collections::get_collection(
         &postgres_pool.into_inner(),
-        &user,
+        &user.as_owner(),
         collection_id,
     )
     .await

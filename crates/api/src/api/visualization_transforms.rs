@@ -83,7 +83,7 @@ pub async fn get_visualization_transforms(
 ) -> impl Responder {
     match visualization_transforms::get_visualization_transforms_paginated(
         &postgres_pool,
-        &user,
+        &user.as_owner(),
         params.limit,
         params.offset,
         &params.sort_by,
@@ -174,8 +174,12 @@ pub async fn create_visualization_transform(
     }
 
     // Verify embedded dataset exists and belongs to user
-    match embedded_datasets::get_embedded_dataset(&postgres_pool, &user, body.embedded_dataset_id)
-        .await
+    match embedded_datasets::get_embedded_dataset(
+        &postgres_pool,
+        &user.as_owner(),
+        body.embedded_dataset_id,
+    )
+    .await
     {
         Ok(dataset) => {
             if dataset.owner != *user {
@@ -233,7 +237,7 @@ pub async fn create_visualization_transform(
         &postgres_pool,
         &body.title,
         body.embedded_dataset_id,
-        &user,
+        &user.as_owner(),
         &visualization_config,
     )
     .await
@@ -327,7 +331,7 @@ pub async fn update_visualization_transform(
     match visualization_transforms::update_visualization_transform(
         &postgres_pool,
         id,
-        &user,
+        &user.as_owner(),
         body.title.as_deref(),
         body.is_enabled,
         body.visualization_config.as_ref(),
@@ -386,7 +390,12 @@ pub async fn delete_visualization_transform(
         }
     }
 
-    match visualization_transforms::delete_visualization_transform(&postgres_pool, id, &user).await
+    match visualization_transforms::delete_visualization_transform(
+        &postgres_pool,
+        id,
+        &user.as_owner(),
+    )
+    .await
     {
         Ok(()) => {
             events::resource_deleted_with_request(
@@ -676,7 +685,12 @@ pub async fn get_visualizations_by_dataset(
     let embedded_dataset_id = path.into_inner();
 
     // Verify embedded dataset exists and belongs to user
-    match embedded_datasets::get_embedded_dataset(&postgres_pool, &user, embedded_dataset_id).await
+    match embedded_datasets::get_embedded_dataset(
+        &postgres_pool,
+        &user.as_owner(),
+        embedded_dataset_id,
+    )
+    .await
     {
         Ok(dataset) => {
             if dataset.owner != *user {
@@ -694,7 +708,7 @@ pub async fn get_visualizations_by_dataset(
     match visualization_transforms::get_visualization_transforms_by_embedded_dataset(
         &postgres_pool,
         embedded_dataset_id,
-        &user,
+        &user.as_owner(),
     )
     .await
     {
@@ -810,7 +824,13 @@ pub async fn get_recent_visualizations(
 ) -> impl Responder {
     let limit = query.limit.clamp(1, 100);
 
-    match visualization_transforms::get_recent_visualizations(&postgres_pool, &user, limit).await {
+    match visualization_transforms::get_recent_visualizations(
+        &postgres_pool,
+        &user.as_owner(),
+        limit,
+    )
+    .await
+    {
         Ok(visualizations) => HttpResponse::Ok().json(visualizations),
         Err(e) => {
             error!("Failed to fetch recent visualizations: {}", e);

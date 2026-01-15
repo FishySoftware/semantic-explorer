@@ -82,21 +82,21 @@ pub async fn initialize_jetstream(client: &Client, nats_config: &NatsConfig) -> 
     // Transform status stream for SSE real-time updates
     // Uses hierarchical subjects: transforms.{type}.status.{owner}.{resource_id}.{transform_id}
     // Examples:
-    //   transforms.collection.status.user@example.com.123.456
-    //   transforms.dataset.status.user@example.com.789.101
-    //   transforms.visualization.status.user@example.com.111.222
+    //   transforms.collection.status.a1b2c3d4e5f6g7h8.123.456
+    //   transforms.dataset.status.a1b2c3d4e5f6g7h8.789.101
+    //   transforms.visualization.status.a1b2c3d4e5f6g7h8.111.222
+    // Note: owner is now a hashed username for safety with special characters
     // Wildcards allow flexible subscriptions:
-    //   transforms.collection.status.user@example.com.* - all collection transforms for user
-    //   transforms.collection.status.user@example.com.123.* - transforms for specific collection
+    //   transforms.collection.status.> - all collection transforms
     ensure_stream(
         &jetstream,
         "TRANSFORM_STATUS",
         StreamConfig {
             name: "TRANSFORM_STATUS".to_string(),
             subjects: vec![
-                "transforms.collection.status.*.*.*".to_string(),
-                "transforms.dataset.status.*.*.*".to_string(),
-                "transforms.visualization.status.*.*.*".to_string(),
+                "transforms.collection.status.>".to_string(),
+                "transforms.dataset.status.>".to_string(),
+                "transforms.visualization.status.>".to_string(),
             ],
             retention: RetentionPolicy::Limits,
             max_age: Duration::from_secs(60 * 60),
