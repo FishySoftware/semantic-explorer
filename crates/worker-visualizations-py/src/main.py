@@ -250,7 +250,7 @@ async def handle_job(
 
     logger.info(
         f"Processing job {job.job_id} for transform {job.visualization_transform_id} "
-        f"(visualization {job.visualization_id}, owner: {job.owner}, embedded_dataset: {job.embedded_dataset_id})"
+        f"(visualization {job.visualization_id}, owner: {job.owner_id}, embedded_dataset: {job.embedded_dataset_id})"
     )
 
     result = VisualizationTransformResult(
@@ -263,7 +263,7 @@ async def handle_job(
 
     # Build the status subject once for all updates in this job
     status_subject = build_status_subject(
-        job.owner, job.embedded_dataset_id, job.visualization_transform_id
+        job.owner_id, job.embedded_dataset_id, job.visualization_transform_id
     )
 
     # Send immediate progress update to show job has started
@@ -291,7 +291,7 @@ async def handle_job(
                 jobId=job.job_id,
                 visualizationTransformId=job.visualization_transform_id,
                 visualizationId=job.visualization_id,
-                owner=job.owner,
+                owner_id=job.owner_id,
                 status="processing",
                 statsJson={"stage": stage, "progress_percent": progress_percent},
             )

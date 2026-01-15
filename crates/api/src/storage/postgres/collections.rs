@@ -9,20 +9,20 @@ use semantic_explorer_core::observability::record_database_query;
 
 // SQL queries - RLS policies handle owner filtering automatically
 const GET_COLLECTION_QUERY: &str = r#"
-    SELECT collection_id, title, details, owner, bucket, tags, is_public, created_at, updated_at 
+    SELECT collection_id, title, details, owner_id, owner_display_name, bucket, tags, is_public, created_at, updated_at 
     FROM collections
     WHERE collection_id = $1
 "#;
 
 const GET_COLLECTIONS_QUERY: &str = r#"
-    SELECT collection_id, title, details, owner, bucket, tags, is_public, created_at, updated_at 
+    SELECT collection_id, title, details, owner_id, owner_display_name, bucket, tags, is_public, created_at, updated_at 
     FROM collections
     ORDER BY created_at DESC
     LIMIT 1000
 "#;
 
 const GET_COLLECTIONS_PAGINATED_QUERY: &str = r#"
-    SELECT collection_id, title, details, owner, bucket, tags, is_public, created_at, updated_at
+    SELECT collection_id, title, details, owner_id, owner_display_name, bucket, tags, is_public, created_at, updated_at
     FROM collections
     ORDER BY created_at DESC
     LIMIT $1 OFFSET $2
@@ -33,7 +33,7 @@ const COUNT_COLLECTIONS_QUERY: &str = r#"
 "#;
 
 const SEARCH_COLLECTIONS_QUERY: &str = r#"
-    SELECT collection_id, title, details, owner, bucket, tags, is_public, created_at, updated_at
+    SELECT collection_id, title, details, owner_id, owner_display_name, bucket, tags, is_public, created_at, updated_at
     FROM collections
     WHERE (title ILIKE $1 OR details ILIKE $1 OR $2 = ANY(tags))
     ORDER BY created_at DESC
@@ -47,9 +47,9 @@ const COUNT_SEARCH_COLLECTIONS_QUERY: &str = r#"
 "#;
 
 const CREATE_COLLECTION_QUERY: &str = r#"
-    INSERT INTO collections (title, details, owner, bucket, tags, is_public)
-    VALUES ($1, $2, $3, $4, $5, $6)
-    RETURNING collection_id, title, details, owner, bucket, tags, is_public, created_at, updated_at
+    INSERT INTO collections (title, details, owner_id, owner_display_name, bucket, tags, is_public)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    RETURNING collection_id, title, details, owner_id, owner_display_name, bucket, tags, is_public, created_at, updated_at
 "#;
 
 const DELETE_COLLECTION_QUERY: &str = r#"
@@ -60,12 +60,12 @@ const UPDATE_COLLECTION_QUERY: &str = r#"
     UPDATE collections
     SET title = $1, details = $2, tags = $3, is_public = $4, updated_at = NOW()
     WHERE collection_id = $5
-    RETURNING collection_id, title, details, owner, bucket, tags, is_public, created_at, updated_at
+    RETURNING collection_id, title, details, owner_id, owner_display_name, bucket, tags, is_public, created_at, updated_at
 "#;
 
 // Public collections don't require RLS context
 const GET_PUBLIC_COLLECTIONS_QUERY: &str = r#"
-    SELECT collection_id, title, details, owner, bucket, tags, is_public, created_at, updated_at
+    SELECT collection_id, title, details, owner_id, owner_display_name, bucket, tags, is_public, created_at, updated_at
     FROM collections
     WHERE is_public = TRUE
     ORDER BY created_at DESC
@@ -73,7 +73,7 @@ const GET_PUBLIC_COLLECTIONS_QUERY: &str = r#"
 "#;
 
 const GET_RECENT_PUBLIC_COLLECTIONS_QUERY: &str = r#"
-    SELECT collection_id, title, details, owner, bucket, tags, is_public, created_at, updated_at
+    SELECT collection_id, title, details, owner_id, owner_display_name, bucket, tags, is_public, created_at, updated_at
     FROM collections
     WHERE is_public = TRUE
     ORDER BY updated_at DESC
@@ -81,27 +81,27 @@ const GET_RECENT_PUBLIC_COLLECTIONS_QUERY: &str = r#"
 "#;
 
 const GRAB_PUBLIC_COLLECTION_QUERY: &str = r#"
-    INSERT INTO collections (title, details, owner, bucket, tags, is_public)
-    SELECT title || ' - grabbed', details, $1, $2, tags, FALSE
+    INSERT INTO collections (title, details, owner_id, owner_display_name, bucket, tags, is_public)
+    SELECT title || ' - grabbed', details, $1, $2, $3, tags, FALSE
     FROM collections
-    WHERE collection_id = $3 AND is_public = TRUE
-    RETURNING collection_id, title, details, owner, bucket, tags, is_public, created_at, updated_at
+    WHERE collection_id = $4 AND is_public = TRUE
+    RETURNING collection_id, title, details, owner_id, owner_display_name, bucket, tags, is_public, created_at, updated_at
 "#;
 
 const GET_PUBLIC_COLLECTION_QUERY: &str = r#"
-    SELECT collection_id, title, details, owner, bucket, tags, is_public, created_at, updated_at
+    SELECT collection_id, title, details, owner_id, owner_display_name, bucket, tags, is_public, created_at, updated_at
     FROM collections
     WHERE collection_id = $1 AND is_public = TRUE
 "#;
 
-#[tracing::instrument(name = "database.get_collection", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", username = %username, collection_id = %collection_id))]
+#[tracing::instrument(name = "database.get_collection", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner_id = %owner_id, collection_id = %collection_id))]
 pub(crate) async fn get_collection(
     pool: &Pool<Postgres>,
-    username: &str,
+    owner_id: &str,
     collection_id: i32,
 ) -> Result<Collection> {
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, username).await?;
+    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
     let start = Instant::now();
     let result = sqlx::query_as::<_, Collection>(GET_COLLECTION_QUERY)
@@ -118,13 +118,13 @@ pub(crate) async fn get_collection(
     Ok(collection)
 }
 
-#[tracing::instrument(name = "database.get_collections", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", username = %username))]
+#[tracing::instrument(name = "database.get_collections", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner_id = %owner_id))]
 pub(crate) async fn get_collections(
     pool: &Pool<Postgres>,
-    username: &str,
+    owner_id: &str,
 ) -> Result<Vec<Collection>> {
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, username).await?;
+    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
     let start = Instant::now();
     let result = sqlx::query_as::<_, Collection>(GET_COLLECTIONS_QUERY)
@@ -140,15 +140,15 @@ pub(crate) async fn get_collections(
     Ok(collections)
 }
 
-#[tracing::instrument(name = "database.get_collections_paginated", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", username = %username, limit = %limit, offset = %offset))]
+#[tracing::instrument(name = "database.get_collections_paginated", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner_id = %owner_id, limit = %limit, offset = %offset))]
 pub(crate) async fn get_collections_paginated(
     pool: &Pool<Postgres>,
-    username: &str,
+    owner_id: &str,
     limit: i64,
     offset: i64,
 ) -> Result<(Vec<Collection>, i64)> {
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, username).await?;
+    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
     let start = Instant::now();
 
@@ -175,16 +175,16 @@ pub(crate) async fn get_collections_paginated(
     Ok((collections, total_count))
 }
 
-#[tracing::instrument(name = "database.search_collections", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", username = %username, query = %search_query, limit = %limit, offset = %offset))]
+#[tracing::instrument(name = "database.search_collections", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner_id = %owner_id, query = %search_query, limit = %limit, offset = %offset))]
 pub(crate) async fn search_collections(
     pool: &Pool<Postgres>,
-    username: &str,
+    owner_id: &str,
     search_query: &str,
     limit: i64,
     offset: i64,
 ) -> Result<(Vec<Collection>, i64)> {
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, username).await?;
+    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
     let start = Instant::now();
     let search_pattern = format!("%{}%", search_query);
@@ -216,24 +216,26 @@ pub(crate) async fn search_collections(
     Ok((collections, total_count))
 }
 
-#[tracing::instrument(name = "database.create_collection", skip(pool), fields(database.system = "postgresql", database.operation = "INSERT", title = %title, username = %username))]
+#[tracing::instrument(name = "database.create_collection", skip(pool), fields(database.system = "postgresql", database.operation = "INSERT", title = %title, owner_id = %owner_id))]
 pub(crate) async fn create_collection(
     pool: &Pool<Postgres>,
     title: &str,
     details: Option<&str>,
-    username: &str,
+    owner_id: &str,
+    owner_display_name: &str,
     bucket: &str,
     tags: &[String],
     is_public: bool,
 ) -> Result<Collection> {
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, username).await?;
+    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
     let start = Instant::now();
     let result = sqlx::query_as::<_, Collection>(CREATE_COLLECTION_QUERY)
         .bind(title)
         .bind(details)
-        .bind(username)
+        .bind(owner_id)
+        .bind(owner_display_name)
         .bind(bucket)
         .bind(tags)
         .bind(is_public)
@@ -249,14 +251,14 @@ pub(crate) async fn create_collection(
     Ok(collection)
 }
 
-#[tracing::instrument(name = "database.delete_collection", skip(pool), fields(database.system = "postgresql", database.operation = "DELETE", collection_id = %collection_id, username = %username))]
+#[tracing::instrument(name = "database.delete_collection", skip(pool), fields(database.system = "postgresql", database.operation = "DELETE", collection_id = %collection_id, owner_id = %owner_id))]
 pub(crate) async fn delete_collection(
     pool: &Pool<Postgres>,
     collection_id: i32,
-    username: &str,
+    owner_id: &str,
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, username).await?;
+    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
     let start = Instant::now();
     let result = sqlx::query(DELETE_COLLECTION_QUERY)
@@ -273,15 +275,15 @@ pub(crate) async fn delete_collection(
     Ok(())
 }
 
-#[tracing::instrument(name = "database.update_collection_bucket", skip(pool), fields(database.system = "postgresql", database.operation = "UPDATE", collection_id = %collection_id, username = %username))]
+#[tracing::instrument(name = "database.update_collection_bucket", skip(pool), fields(database.system = "postgresql", database.operation = "UPDATE", collection_id = %collection_id, owner_id = %owner_id))]
 pub(crate) async fn update_collection_bucket(
     pool: &Pool<Postgres>,
     collection_id: i32,
-    username: &str,
+    owner_id: &str,
     bucket: &str,
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, username).await?;
+    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
     let start = Instant::now();
     let result = sqlx::query("UPDATE collections SET bucket = $1 WHERE collection_id = $2")
@@ -331,11 +333,12 @@ pub(crate) async fn get_recent_public_collections(
     Ok(result?)
 }
 
-#[tracing::instrument(name = "database.grab_public_collection", skip(pool, s3_client), fields(database.system = "postgresql", database.operation = "INSERT", username = %username, collection_id = %collection_id))]
+#[tracing::instrument(name = "database.grab_public_collection", skip(pool, s3_client), fields(database.system = "postgresql", database.operation = "INSERT", owner_id = %owner_id, collection_id = %collection_id))]
 pub(crate) async fn grab_public_collection(
     pool: &Pool<Postgres>,
     s3_client: &Client,
-    username: &str,
+    owner_id: &str,
+    owner_display_name: &str,
     collection_id: i32,
 ) -> Result<Collection> {
     let start = Instant::now();
@@ -351,10 +354,11 @@ pub(crate) async fn grab_public_collection(
 
     // Insert the new collection with RLS context
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, username).await?;
+    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
     let result = sqlx::query_as::<_, Collection>(GRAB_PUBLIC_COLLECTION_QUERY)
-        .bind(username)
+        .bind(owner_id)
+        .bind(owner_display_name)
         .bind(&new_bucket)
         .bind(collection_id)
         .fetch_one(&mut *tx)
@@ -393,18 +397,18 @@ pub(crate) async fn grab_public_collection(
     Ok(new_collection)
 }
 
-#[tracing::instrument(name = "database.update_collection", skip(pool), fields(database.system = "postgresql", database.operation = "UPDATE", collection_id = %collection_id, username = %username))]
+#[tracing::instrument(name = "database.update_collection", skip(pool), fields(database.system = "postgresql", database.operation = "UPDATE", collection_id = %collection_id, owner_id = %owner_id))]
 pub(crate) async fn update_collection(
     pool: &Pool<Postgres>,
     collection_id: i32,
-    username: &str,
+    owner_id: &str,
     title: &str,
     details: Option<&str>,
     tags: &[String],
     is_public: bool,
 ) -> Result<Collection> {
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, username).await?;
+    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
     let start = Instant::now();
     let result = sqlx::query_as::<_, Collection>(UPDATE_COLLECTION_QUERY)

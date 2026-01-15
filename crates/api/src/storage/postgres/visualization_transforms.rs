@@ -83,7 +83,7 @@ const GET_RECENT_VISUALIZATIONS_QUERY: &str = r#"
            v.html_s3_key, v.point_count, v.cluster_count, v.error_message, v.stats_json, v.created_at
     FROM visualizations v
     INNER JOIN visualization_transforms vt ON v.visualization_transform_id = vt.visualization_transform_id
-    WHERE vt.owner = $1
+    WHERE vt.owner_id = $1
     ORDER BY v.created_at DESC
     LIMIT $2
 "#;
@@ -202,7 +202,7 @@ pub async fn update_visualization(
 }
 
 const GET_VISUALIZATION_TRANSFORM_BY_ID_QUERY: &str = r#"
-    SELECT visualization_transform_id, title, embedded_dataset_id, owner, is_enabled,
+    SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,
            last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
     FROM visualization_transforms
@@ -211,10 +211,10 @@ const GET_VISUALIZATION_TRANSFORM_BY_ID_QUERY: &str = r#"
 
 const CREATE_VISUALIZATION_TRANSFORM_QUERY: &str = r#"
     INSERT INTO visualization_transforms (
-        title, embedded_dataset_id, owner, is_enabled, visualization_config, created_at, updated_at
+        title, embedded_dataset_id, owner_id, owner_display_name, is_enabled, visualization_config, created_at, updated_at
     )
-    VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-    RETURNING visualization_transform_id, title, embedded_dataset_id, owner, is_enabled,
+    VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+    RETURNING visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
               reduced_collection_name, topics_collection_name, visualization_config,
               last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
 "#;
@@ -226,7 +226,7 @@ const UPDATE_VISUALIZATION_TRANSFORM_QUERY: &str = r#"
         visualization_config = COALESCE($4, visualization_config),
         updated_at = NOW()
     WHERE visualization_transform_id = $1
-    RETURNING visualization_transform_id, title, embedded_dataset_id, owner, is_enabled,
+    RETURNING visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
               reduced_collection_name, topics_collection_name, visualization_config,
               last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
 "#;
@@ -247,36 +247,36 @@ const UPDATE_VISUALIZATION_TRANSFORM_STATUS_QUERY: &str = r#"
 "#;
 
 const GET_VISUALIZATION_TRANSFORMS_BY_EMBEDDED_DATASET_QUERY: &str = r#"
-    SELECT visualization_transform_id, title, embedded_dataset_id, owner, is_enabled,
+    SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,
            last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
     FROM visualization_transforms
-    WHERE embedded_dataset_id = $1 AND owner = $2
+    WHERE embedded_dataset_id = $1 AND owner_id = $2
     ORDER BY created_at DESC
 "#;
 
 const COUNT_VISUALIZATION_TRANSFORMS_QUERY: &str =
-    "SELECT COUNT(*) as count FROM visualization_transforms WHERE owner = $1";
+    "SELECT COUNT(*) as count FROM visualization_transforms WHERE owner_id = $1";
 const COUNT_VISUALIZATION_TRANSFORMS_WITH_SEARCH_QUERY: &str =
-    "SELECT COUNT(*) as count FROM visualization_transforms WHERE title ILIKE $1 AND owner = $2";
+    "SELECT COUNT(*) as count FROM visualization_transforms WHERE title ILIKE $1 AND owner_id = $2";
 
 // Note: ORDER BY clause is built dynamically with validated identifiers
 // Column names cannot be parameterized in PostgreSQL, so we validate and use format!
 const GET_VISUALIZATION_TRANSFORMS_PAGINATED_BASE: &str = r#"
-    SELECT visualization_transform_id, title, embedded_dataset_id, owner, is_enabled,
+    SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,
            last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
     FROM visualization_transforms
-    WHERE owner = $1
+    WHERE owner_id = $1
 "#;
 
 const GET_VISUALIZATION_TRANSFORMS_PAGINATED_WITH_SEARCH_BASE: &str = r#"
-    SELECT visualization_transform_id, title, embedded_dataset_id, owner, is_enabled,
+    SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,
            last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
     FROM visualization_transforms
     WHERE title ILIKE $1
-    AND owner = $2
+    AND owner_id = $2
 "#;
 
 pub async fn get_visualization_transforms_paginated(
@@ -369,17 +369,19 @@ pub async fn create_visualization_transform(
     pool: &Pool<Postgres>,
     title: &str,
     embedded_dataset_id: i32,
-    owner: &str,
+    owner_id: &str,
+    owner_display_name: &str,
     visualization_config: &serde_json::Value,
 ) -> Result<VisualizationTransform> {
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
     let transform =
         sqlx::query_as::<_, VisualizationTransform>(CREATE_VISUALIZATION_TRANSFORM_QUERY)
             .bind(title)
             .bind(embedded_dataset_id)
-            .bind(owner)
+            .bind(owner_id)
+            .bind(owner_display_name)
             .bind(true) // is_enabled
             .bind(visualization_config)
             .fetch_one(&mut *tx)

@@ -301,7 +301,7 @@ async fn send_result(
     let result_msg = CollectionTransformResult {
         job_id: job.job_id,
         collection_transform_id: job.collection_transform_id,
-        owner: job.owner.clone(),
+        owner_id: job.owner_id.clone(),
         source_file_key: job.source_file_key.clone(),
         bucket: job.bucket.clone(),
         chunks_file_key: chunks_key,
@@ -312,7 +312,7 @@ async fn send_result(
     };
 
     let subject = semantic_explorer_core::status::collection_status_subject(
-        &job.owner,
+        &job.owner_id,
         job.collection_id,
         job.collection_transform_id,
     );

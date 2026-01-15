@@ -42,7 +42,8 @@ pub(crate) async fn get_collections(
     s3_client: Data<Client>,
     postgres_pool: Data<Pool<Postgres>>,
 ) -> impl Responder {
-    match collections::get_collections(&postgres_pool.into_inner(), &user.as_owner()).await {
+    match collections::get_collections(&postgres_pool.into_inner(), &user.as_owner(), &*user).await
+    {
         Ok(mut collection_list) => {
             let s3_client = s3_client.as_ref();
 
@@ -88,8 +89,13 @@ pub(crate) async fn get_collection(
 ) -> impl Responder {
     let collection_id = path.into_inner();
 
-    match collections::get_collection(&postgres_pool.into_inner(), &user.as_owner(), collection_id)
-        .await
+    match collections::get_collection(
+        &postgres_pool.into_inner(),
+        &user.as_owner(),
+        &*user,
+        collection_id,
+    )
+    .await
     {
         Ok(mut collection) => {
             // Fetch file count for the collection
@@ -137,6 +143,7 @@ pub(crate) async fn search_collections(
         collections::search_collections(
             &postgres_pool,
             &user.as_owner(),
+            &*user,
             search_query,
             query.limit,
             query.offset,
@@ -146,6 +153,7 @@ pub(crate) async fn search_collections(
         collections::get_collections_paginated(
             &postgres_pool,
             &user.as_owner(),
+            &*user,
             query.limit,
             query.offset,
         )
@@ -213,6 +221,7 @@ pub(crate) async fn create_collections(
         &create_collection.title,
         create_collection.details.as_deref(),
         &user.as_owner(),
+        &*user,
         placeholder_bucket,
         &create_collection.tags,
         create_collection.is_public,
@@ -233,6 +242,7 @@ pub(crate) async fn create_collections(
         &postgres_pool,
         collection.collection_id,
         &user.as_owner(),
+        &*user,
         &bucket,
     )
     .await
@@ -280,7 +290,9 @@ pub(crate) async fn delete_collections(
     let collection_id = collection_id.into_inner();
 
     let collection =
-        match collections::get_collection(&postgres_pool, &user.as_owner(), collection_id).await {
+        match collections::get_collection(&postgres_pool, &user.as_owner(), &*user, collection_id)
+            .await
+        {
             Ok(collection) => collection,
             Err(_) => {
                 return ApiError::NotFound("Collection not found".to_string()).error_response();
@@ -300,7 +312,9 @@ pub(crate) async fn delete_collections(
     // with prefixes (S3_BUCKET_NAME/collections/{collection_id}/). The empty_bucket call
     // above removes all files under that prefix.
 
-    match collections::delete_collection(&postgres_pool, collection_id, &user.as_owner()).await {
+    match collections::delete_collection(&postgres_pool, collection_id, &user.as_owner(), &*user)
+        .await
+    {
         Ok(_) => {
             events::resource_deleted_with_request(
                 &req,
@@ -355,6 +369,7 @@ pub(crate) async fn update_collections(
         &postgres_pool,
         collection_id,
         &user.as_owner(),
+        &*user,
         &update_collection.title,
         update_collection.details.as_deref(),
         &update_collection.tags,
@@ -398,7 +413,9 @@ pub(crate) async fn upload_to_collection(
     let collection_id = collection_id.into_inner();
 
     let collection =
-        match collections::get_collection(&postgres_pool, &user.as_owner(), collection_id).await {
+        match collections::get_collection(&postgres_pool, &user.as_owner(), &*user, collection_id)
+            .await
+        {
             Ok(collection) => collection,
             Err(e) => {
                 tracing::error!(
@@ -504,6 +521,7 @@ pub(crate) async fn list_collection_files(
     let collection = match collections::get_collection(
         &postgres_pool.into_inner(),
         &user.as_owner(),
+        &*user,
         collection_id,
     )
     .await
@@ -564,6 +582,7 @@ pub(crate) async fn download_collection_file(
     let collection = match collections::get_collection(
         &postgres_pool.into_inner(),
         &user.as_owner(),
+        &*user,
         collection_id,
     )
     .await
@@ -634,6 +653,7 @@ pub(crate) async fn delete_collection_file(
     let collection = match collections::get_collection(
         &postgres_pool.into_inner(),
         &user.as_owner(),
+        &*user,
         collection_id,
     )
     .await

@@ -58,14 +58,16 @@ pub(crate) async fn get_datasets(
 
     // Get datasets
     let all_datasets = match search_query {
-        Some(q) => match datasets::get_datasets_with_search(&pool, &user.as_owner(), q).await {
-            Ok(datasets) => datasets,
-            Err(e) => {
-                return ApiError::Internal(format!("error fetching datasets: {:?}", e))
-                    .error_response();
+        Some(q) => {
+            match datasets::get_datasets_with_search(&pool, &user.as_owner(), &*user, q).await {
+                Ok(datasets) => datasets,
+                Err(e) => {
+                    return ApiError::Internal(format!("error fetching datasets: {:?}", e))
+                        .error_response();
+                }
             }
-        },
-        None => match datasets::get_datasets(&pool, &user.as_owner()).await {
+        }
+        None => match datasets::get_datasets(&pool, &user.as_owner(), &*user).await {
             Ok(datasets) => datasets,
             Err(e) => {
                 return ApiError::Internal(format!("error fetching datasets: {:?}", e))
@@ -75,7 +77,7 @@ pub(crate) async fn get_datasets(
     };
 
     // Get stats
-    let stats = match datasets::get_dataset_stats(&pool, &user.as_owner()).await {
+    let stats = match datasets::get_dataset_stats(&pool, &user.as_owner(), &*user).await {
         Ok(stats) => stats,
         Err(e) => {
             error!("error fetching dataset stats: {e:?}");
@@ -135,7 +137,7 @@ pub(crate) async fn get_dataset(
     let dataset_id = path.into_inner();
     let pool = postgres_pool.into_inner();
 
-    match datasets::get_dataset(&pool, &user.as_owner(), dataset_id).await {
+    match datasets::get_dataset(&pool, &user.as_owner(), &*user, dataset_id).await {
         Ok(dataset) => {
             events::resource_read(&user, ResourceType::Dataset, &dataset_id.to_string());
             HttpResponse::Ok().json(dataset)
@@ -182,6 +184,7 @@ pub(crate) async fn create_dataset(
         &create_dataset.title,
         create_dataset.details.as_deref(),
         &user.as_owner(),
+        &*user,
         &create_dataset.tags,
         create_dataset.is_public,
     )
@@ -237,7 +240,7 @@ pub(crate) async fn update_dataset(
     let postgres_pool = postgres_pool.into_inner();
     let dataset_id = dataset_id.into_inner();
 
-    if datasets::get_dataset(&postgres_pool, &user.as_owner(), dataset_id)
+    if datasets::get_dataset(&postgres_pool, &user.as_owner(), &*user, dataset_id)
         .await
         .is_err()
     {
@@ -250,6 +253,7 @@ pub(crate) async fn update_dataset(
         &update_dataset.title,
         update_dataset.details.as_deref(),
         &user.as_owner(),
+        &*user,
         &update_dataset.tags,
         update_dataset.is_public,
     )
@@ -287,7 +291,7 @@ pub(crate) async fn delete_dataset(
     let postgres_pool = postgres_pool.into_inner();
     let dataset_id = dataset_id.into_inner();
 
-    if datasets::get_dataset(&postgres_pool, &user.as_owner(), dataset_id)
+    if datasets::get_dataset(&postgres_pool, &user.as_owner(), &*user, dataset_id)
         .await
         .is_err()
     {
@@ -298,6 +302,7 @@ pub(crate) async fn delete_dataset(
     let embedded_datasets = match embedded_datasets::get_embedded_datasets_for_dataset(
         &postgres_pool,
         &user.as_owner(),
+        &*user,
         dataset_id,
     )
     .await
@@ -324,7 +329,7 @@ pub(crate) async fn delete_dataset(
         }
     }
 
-    match datasets::delete_dataset(&postgres_pool, dataset_id, &user.as_owner()).await {
+    match datasets::delete_dataset(&postgres_pool, dataset_id, &user.as_owner(), &*user).await {
         Ok(_) => {
             events::resource_deleted_with_request(
                 &req,
@@ -364,13 +369,14 @@ pub(crate) async fn upload_to_dataset(
     let postgres_pool = postgres_pool.into_inner();
     let dataset_id = dataset_id.into_inner();
 
-    let dataset = match datasets::get_dataset(&postgres_pool, &user.as_owner(), dataset_id).await {
-        Ok(dataset) => dataset,
-        Err(_) => {
-            return ApiError::BadRequest(format!("dataset '{}' does not exist", dataset_id))
-                .error_response();
-        }
-    };
+    let dataset =
+        match datasets::get_dataset(&postgres_pool, &user.as_owner(), &*user, dataset_id).await {
+            Ok(dataset) => dataset,
+            Err(_) => {
+                return ApiError::BadRequest(format!("dataset '{}' does not exist", dataset_id))
+                    .error_response();
+            }
+        };
 
     // Prepare items for batch insert
     let batch_items: Vec<(String, Vec<_>, serde_json::Value)> = payload
@@ -422,7 +428,7 @@ pub(crate) async fn get_dataset_items(
     let postgres_pool = postgres_pool.into_inner();
     let dataset_id = dataset_id.into_inner();
 
-    if datasets::get_dataset(&postgres_pool, &user.as_owner(), dataset_id)
+    if datasets::get_dataset(&postgres_pool, &user.as_owner(), &*user, dataset_id)
         .await
         .is_err()
     {
@@ -493,7 +499,7 @@ pub(crate) async fn get_dataset_items_summary(
     let postgres_pool = postgres_pool.into_inner();
     let dataset_id = dataset_id.into_inner();
 
-    if datasets::get_dataset(&postgres_pool, &user.as_owner(), dataset_id)
+    if datasets::get_dataset(&postgres_pool, &user.as_owner(), &*user, dataset_id)
         .await
         .is_err()
     {
@@ -599,7 +605,7 @@ pub(crate) async fn get_dataset_item_chunks(
     let postgres_pool = postgres_pool.into_inner();
     let (dataset_id, item_id) = path.into_inner();
 
-    if datasets::get_dataset(&postgres_pool, &user.as_owner(), dataset_id)
+    if datasets::get_dataset(&postgres_pool, &user.as_owner(), &*user, dataset_id)
         .await
         .is_err()
     {
@@ -641,7 +647,7 @@ pub(crate) async fn delete_dataset_item(
     let postgres_pool = postgres_pool.into_inner();
     let (dataset_id, item_id) = path.into_inner();
 
-    if datasets::get_dataset(&postgres_pool, &user.as_owner(), dataset_id)
+    if datasets::get_dataset(&postgres_pool, &user.as_owner(), &*user, dataset_id)
         .await
         .is_err()
     {
@@ -663,6 +669,7 @@ pub(crate) async fn delete_dataset_item(
     let embedded_datasets_list = match embedded_datasets::get_embedded_datasets_for_dataset(
         &postgres_pool,
         &user.as_owner(),
+        &*user,
         dataset_id,
     )
     .await
@@ -744,7 +751,7 @@ pub(crate) async fn get_datasets_embedders(
     let pool = postgres_pool.into_inner();
 
     // Get all datasets for the user
-    let all_datasets = match datasets::get_datasets(&pool, &user.as_owner()).await {
+    let all_datasets = match datasets::get_datasets(&pool, &user.as_owner(), &*user).await {
         Ok(datasets) => datasets,
         Err(e) => {
             error!("error fetching datasets: {e:?}");
@@ -775,6 +782,7 @@ pub(crate) async fn get_datasets_embedders(
         let embedded_datasets_list = match embedded_datasets::get_embedded_datasets_for_dataset(
             &pool,
             &user.as_owner(),
+            &*user,
             dataset.dataset_id,
         )
         .await

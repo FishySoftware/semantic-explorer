@@ -288,7 +288,7 @@ async fn send_progress_update(
         job_id: job.job_id,
         dataset_transform_id: job.dataset_transform_id,
         embedded_dataset_id: job.embedded_dataset_id,
-        owner: job.owner.clone(),
+        owner_id: job.owner_id.clone(),
         batch_file_key: job.batch_file_key.clone(),
         chunk_count,
         status: status.to_string(),
@@ -297,7 +297,7 @@ async fn send_progress_update(
     };
 
     let subject = semantic_explorer_core::status::dataset_status_subject(
-        &job.owner,
+        &job.owner_id,
         job.dataset_id,
         job.dataset_transform_id,
     );
@@ -321,7 +321,7 @@ async fn send_result(
         job_id: job.job_id,
         dataset_transform_id: job.dataset_transform_id,
         embedded_dataset_id: job.embedded_dataset_id,
-        owner: job.owner.clone(),
+        owner_id: job.owner_id.clone(),
         batch_file_key: job.batch_file_key.clone(),
         chunk_count,
         status,
@@ -330,7 +330,7 @@ async fn send_result(
     };
 
     let subject = semantic_explorer_core::status::dataset_status_subject(
-        &job.owner,
+        &job.owner_id,
         job.dataset_id,
         job.dataset_transform_id,
     );

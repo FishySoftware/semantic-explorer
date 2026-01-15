@@ -20,7 +20,8 @@ pub(crate) struct CreateLLM {
 pub(crate) struct LargeLanguageModel {
     pub(crate) llm_id: i32,
     pub(crate) name: String,
-    pub(crate) owner: String,
+    pub(crate) owner_id: String,
+    pub(crate) owner_display_name: String,
     pub(crate) provider: String,
     pub(crate) base_url: String,
     #[sqlx(rename = "api_key_encrypted")]

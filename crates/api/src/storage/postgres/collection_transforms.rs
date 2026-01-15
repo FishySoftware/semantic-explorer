@@ -23,14 +23,14 @@ fn validate_sort_direction(direction: &str) -> Result<String> {
 }
 
 const GET_COLLECTION_TRANSFORM_QUERY: &str = r#"
-    SELECT collection_transform_id, title, collection_id, dataset_id, owner, is_enabled,
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
            chunk_size, job_config, created_at, updated_at
     FROM collection_transforms
     WHERE collection_transform_id = $1
 "#;
 
 const GET_COLLECTION_TRANSFORMS_FOR_COLLECTION_QUERY: &str = r#"
-    SELECT collection_transform_id, title, collection_id, dataset_id, owner, is_enabled,
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
            chunk_size, job_config, created_at, updated_at
     FROM collection_transforms
     WHERE collection_id = $1
@@ -38,7 +38,7 @@ const GET_COLLECTION_TRANSFORMS_FOR_COLLECTION_QUERY: &str = r#"
 "#;
 
 const GET_ACTIVE_COLLECTION_TRANSFORMS_QUERY: &str = r#"
-    SELECT collection_transform_id, title, collection_id, dataset_id, owner, is_enabled,
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
            chunk_size, job_config, created_at, updated_at
     FROM collection_transforms
     WHERE is_enabled = TRUE
@@ -46,9 +46,9 @@ const GET_ACTIVE_COLLECTION_TRANSFORMS_QUERY: &str = r#"
 "#;
 
 const CREATE_COLLECTION_TRANSFORM_QUERY: &str = r#"
-    INSERT INTO collection_transforms (title, collection_id, dataset_id, owner, chunk_size, job_config)
-    VALUES ($1, $2, $3, $4, $5, $6)
-    RETURNING collection_transform_id, title, collection_id, dataset_id, owner, is_enabled,
+    INSERT INTO collection_transforms (title, collection_id, dataset_id, owner_id, owner_display_name, chunk_size, job_config)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    RETURNING collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
               chunk_size, job_config, created_at, updated_at
 "#;
 
@@ -60,7 +60,7 @@ const UPDATE_COLLECTION_TRANSFORM_QUERY: &str = r#"
         job_config = COALESCE($5, job_config),
         updated_at = NOW()
     WHERE collection_transform_id = $1
-    RETURNING collection_transform_id, title, collection_id, dataset_id, owner, is_enabled,
+    RETURNING collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
               chunk_size, job_config, created_at, updated_at
 "#;
 
@@ -110,25 +110,25 @@ const CHECK_FILE_PROCESSED_QUERY: &str = r#"
 "#;
 
 const COUNT_COLLECTION_TRANSFORMS_QUERY: &str =
-    "SELECT COUNT(*) as count FROM collection_transforms WHERE owner = $1";
+    "SELECT COUNT(*) as count FROM collection_transforms WHERE owner_id = $1";
 const COUNT_COLLECTION_TRANSFORMS_WITH_SEARCH_QUERY: &str =
-    "SELECT COUNT(*) as count FROM collection_transforms WHERE title ILIKE $1 AND owner = $2";
+    "SELECT COUNT(*) as count FROM collection_transforms WHERE title ILIKE $1 AND owner_id = $2";
 
 // Note: ORDER BY clause is built dynamically with validated identifiers
 // Column names cannot be parameterized in PostgreSQL, so we validate and use format!
 const GET_COLLECTION_TRANSFORMS_PAGINATED_BASE: &str = r#"
-    SELECT collection_transform_id, title, collection_id, dataset_id, owner, is_enabled,
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
            chunk_size, job_config, created_at, updated_at
     FROM collection_transforms
-    WHERE owner = $1
+    WHERE owner_id = $1
 "#;
 
 const GET_COLLECTION_TRANSFORMS_PAGINATED_WITH_SEARCH_BASE: &str = r#"
-    SELECT collection_transform_id, title, collection_id, dataset_id, owner, is_enabled,
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
            chunk_size, job_config, created_at, updated_at
     FROM collection_transforms
     WHERE title ILIKE $1
-    AND owner = $2
+    AND owner_id = $2
 "#;
 
 // CRUD operations
@@ -256,18 +256,20 @@ pub async fn create_collection_transform(
     title: &str,
     collection_id: i32,
     dataset_id: i32,
-    owner: &str,
+    owner_id: &str,
+    owner_display_name: &str,
     chunk_size: i32,
     job_config: &serde_json::Value,
 ) -> Result<CollectionTransform> {
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
     let transform = sqlx::query_as::<_, CollectionTransform>(CREATE_COLLECTION_TRANSFORM_QUERY)
         .bind(title)
         .bind(collection_id)
         .bind(dataset_id)
-        .bind(owner)
+        .bind(owner_id)
+        .bind(owner_display_name)
         .bind(chunk_size)
         .bind(job_config)
         .fetch_one(&mut *tx)

@@ -56,7 +56,8 @@ pub(crate) struct Dataset {
     pub(crate) dataset_id: i32,
     pub(crate) title: String,
     pub(crate) details: Option<String>,
-    pub(crate) owner: String,
+    pub(crate) owner_id: String,
+    pub(crate) owner_display_name: String,
     pub(crate) tags: Vec<String>,
     pub(crate) is_public: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -72,7 +73,8 @@ pub(crate) struct DatasetWithStats {
     pub(crate) dataset_id: i32,
     pub(crate) title: String,
     pub(crate) details: Option<String>,
-    pub(crate) owner: String,
+    pub(crate) owner_id: String,
+    pub(crate) owner_display_name: String,
     pub(crate) tags: Vec<String>,
     pub(crate) is_public: bool,
     #[serde(skip_serializing_if = "Option::is_none")]

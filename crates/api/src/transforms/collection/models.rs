@@ -11,7 +11,8 @@ pub struct CollectionTransform {
     pub title: String,
     pub collection_id: i32,
     pub dataset_id: i32,
-    pub owner: String,
+    pub owner_id: String,
+    pub owner_display_name: String,
     pub is_enabled: bool,
     pub chunk_size: i32,
     #[schema(value_type = Object)]

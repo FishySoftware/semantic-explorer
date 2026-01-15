@@ -8,7 +8,7 @@ pub struct CollectionTransformJob {
     pub bucket: String,
     pub collection_id: i32,
     pub collection_transform_id: i32,
-    pub owner: String,
+    pub owner_id: String,
     pub extraction_config: serde_json::Value,
     pub chunking_config: serde_json::Value,
     /// Optional embedder config for semantic chunking
@@ -20,7 +20,7 @@ pub struct CollectionTransformJob {
 pub struct CollectionTransformResult {
     pub job_id: Uuid,
     pub collection_transform_id: i32,
-    pub owner: String,
+    pub owner_id: String,
     pub source_file_key: String,
     pub bucket: String,
     pub chunks_file_key: String,
@@ -38,7 +38,7 @@ pub struct DatasetTransformJob {
     pub dataset_id: i32,
     pub dataset_transform_id: i32,
     pub embedded_dataset_id: i32, // NEW: Identifies which embedded dataset this job is for
-    pub owner: String,
+    pub owner_id: String,
     pub embedder_config: EmbedderConfig,
     pub vector_database_config: VectorDatabaseConfig,
     pub collection_name: String,
@@ -52,7 +52,7 @@ pub struct DatasetTransformJob {
 pub struct DatasetTransformScanJob {
     pub job_id: Uuid,
     pub dataset_transform_id: i32,
-    pub owner: String,
+    pub owner_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,7 +60,7 @@ pub struct DatasetTransformResult {
     pub job_id: Uuid,
     pub dataset_transform_id: i32,
     pub embedded_dataset_id: i32, // NEW: Identifies which embedded dataset this result is for
-    pub owner: String,
+    pub owner_id: String,
     pub batch_file_key: String,
     pub chunk_count: usize,
     pub status: String,
@@ -106,7 +106,7 @@ pub struct VisualizationTransformJob {
     pub job_id: Uuid,
     pub visualization_transform_id: i32,
     pub visualization_id: i32,
-    pub owner: String,
+    pub owner_id: String,
     pub embedded_dataset_id: i32,
     pub qdrant_collection_name: String,
     pub visualization_config: VisualizationConfig,
@@ -358,7 +358,7 @@ pub struct VisualizationTransformResult {
     pub job_id: Uuid,
     pub visualization_transform_id: i32,
     pub visualization_id: i32,
-    pub owner: String,
+    pub owner_id: String,
     pub status: String,
     pub error_message: Option<String>,
     #[serde(rename = "htmlS3Key")]

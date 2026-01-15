@@ -5,7 +5,8 @@ const INSERT_AUDIT_EVENT_QUERY: &str = r#"
         timestamp,
         event_type,
         outcome,
-        username,
+        user_id,
+        username_display,
         request_id,
         client_ip,
         resource_type,
@@ -13,7 +14,7 @@ const INSERT_AUDIT_EVENT_QUERY: &str = r#"
         details
     )
     VALUES (
-        $1::timestamp with time zone, $2, $3, $4, $5, $6::inet, $7, $8, $9
+        $1::timestamp with time zone, $2, $3, $4, $5, $6, $7::inet, $8, $9, $10
     )
     ON CONFLICT DO NOTHING
 "#;
@@ -25,7 +26,8 @@ pub async fn store_audit_event(
     timestamp: &str,
     event_type: &str,
     outcome: &str,
-    username: &str,
+    user_id: &str,
+    username_display: &str,
     request_id: Option<&str>,
     client_ip: Option<&str>,
     resource_type: Option<&str>,
@@ -36,7 +38,8 @@ pub async fn store_audit_event(
         .bind(timestamp)
         .bind(event_type)
         .bind(outcome)
-        .bind(username)
+        .bind(user_id)
+        .bind(username_display)
         .bind(request_id)
         .bind(client_ip)
         .bind(resource_type)

@@ -9,18 +9,18 @@ use crate::datasets::models::{ChunkWithMetadata, Dataset, DatasetItem};
 use semantic_explorer_core::observability::record_database_query;
 
 const GET_DATASET_QUERY: &str = r#"
-    SELECT dataset_id, title, details, owner, tags, is_public, created_at, updated_at FROM datasets
+    SELECT dataset_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at FROM datasets
     WHERE dataset_id = $1
 "#;
 
 const GET_DATASETS_QUERY: &str = r#"
-    SELECT dataset_id, title, details, owner, tags, is_public, created_at, updated_at FROM datasets
+    SELECT dataset_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at FROM datasets
     ORDER BY created_at DESC
     LIMIT 1000
 "#;
 
 const GET_DATASETS_WITH_SEARCH_QUERY: &str = r#"
-    SELECT dataset_id, title, details, owner, tags, is_public, created_at, updated_at 
+    SELECT dataset_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at 
     FROM datasets 
     WHERE title ILIKE $1
     ORDER BY created_at DESC
@@ -28,14 +28,14 @@ const GET_DATASETS_WITH_SEARCH_QUERY: &str = r#"
 "#;
 
 const CREATE_DATASET_QUERY: &str = r#"
-    INSERT INTO datasets (title, details, owner, tags, is_public)
-    VALUES ($1, $2, $3, $4, $5)
-    RETURNING dataset_id, title, details, owner, tags, is_public, created_at, updated_at
+    INSERT INTO datasets (title, details, owner_id, owner_display_name, tags, is_public)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    RETURNING dataset_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at
 "#;
 
 const DELETE_DATASET_QUERY: &str = r#"
     DELETE FROM datasets WHERE dataset_id = $1
-    RETURNING dataset_id, title, details, owner, tags, is_public, created_at, updated_at
+    RETURNING dataset_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at
 "#;
 
 const INSERT_DATASET_ITEM_QUERY: &str = r#"
@@ -98,7 +98,7 @@ const UPDATE_DATASET_QUERY: &str = r#"
     UPDATE datasets
     SET title = $1, details = $2, tags = $3, is_public = $4, updated_at = NOW()
     WHERE dataset_id = $5
-    RETURNING dataset_id, title, details, owner, tags, is_public, created_at, updated_at
+    RETURNING dataset_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at
 "#;
 
 const DELETE_DATASET_ITEM_QUERY: &str = r#"
@@ -118,14 +118,14 @@ const GET_DATASET_STATS_QUERY: &str = r#"
 "#;
 
 const GET_PUBLIC_DATASETS_QUERY: &str = r#"
-    SELECT dataset_id, title, details, owner, tags, is_public, created_at, updated_at
+    SELECT dataset_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at
     FROM datasets
     WHERE is_public = TRUE
     ORDER BY created_at DESC
 "#;
 
 const GET_RECENT_PUBLIC_DATASETS_QUERY: &str = r#"
-    SELECT dataset_id, title, details, owner, tags, is_public, created_at, updated_at
+    SELECT dataset_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at
     FROM datasets
     WHERE is_public = TRUE
     ORDER BY updated_at DESC
@@ -136,9 +136,9 @@ const GRAB_PUBLIC_DATASET_QUERY: &str = r#"
     WITH source AS (
         SELECT dataset_id, title, details, tags FROM datasets WHERE dataset_id = $1 AND is_public = TRUE
     ), new_dataset AS (
-        INSERT INTO datasets (title, details, owner, tags, is_public)
-        SELECT title || ' - grabbed', details, $2, tags, FALSE FROM source
-        RETURNING dataset_id, title, details, owner, tags, is_public, created_at, updated_at
+        INSERT INTO datasets (title, details, owner_id, owner_display_name, tags, is_public)
+        SELECT title || ' - grabbed', details, $2, $3, tags, FALSE FROM source
+        RETURNING dataset_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at
     )
     SELECT * FROM new_dataset
 "#;
@@ -154,14 +154,14 @@ const CREATE_DATASET_ITEMS_BATCH: &str = r#"
     RETURNING item_id, dataset_id, title, chunks, metadata, created_at, updated_at
 "#;
 
-#[tracing::instrument(name = "database.get_dataset", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", username = %username, dataset_id = %dataset_id))]
+#[tracing::instrument(name = "database.get_dataset", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner_id = %owner_id, dataset_id = %dataset_id))]
 pub(crate) async fn get_dataset(
     pool: &Pool<Postgres>,
-    username: &str,
+    owner_id: &str,
     dataset_id: i32,
 ) -> Result<Dataset> {
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, username).await?;
+    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
     let start = Instant::now();
     let result = sqlx::query_as::<_, Dataset>(GET_DATASET_QUERY)
@@ -178,10 +178,10 @@ pub(crate) async fn get_dataset(
     Ok(dataset)
 }
 
-#[tracing::instrument(name = "database.get_datasets", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", username = %username))]
-pub(crate) async fn get_datasets(pool: &Pool<Postgres>, username: &str) -> Result<Vec<Dataset>> {
+#[tracing::instrument(name = "database.get_datasets", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner_id = %owner_id))]
+pub(crate) async fn get_datasets(pool: &Pool<Postgres>, owner_id: &str) -> Result<Vec<Dataset>> {
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, username).await?;
+    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
     let start = Instant::now();
     let result = sqlx::query_as::<_, Dataset>(GET_DATASETS_QUERY)
@@ -197,14 +197,14 @@ pub(crate) async fn get_datasets(pool: &Pool<Postgres>, username: &str) -> Resul
     Ok(datasets)
 }
 
-#[tracing::instrument(name = "database.get_datasets_with_search", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", username = %username))]
+#[tracing::instrument(name = "database.get_datasets_with_search", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner_id = %owner_id))]
 pub(crate) async fn get_datasets_with_search(
     pool: &Pool<Postgres>,
-    username: &str,
+    owner_id: &str,
     search_query: &str,
 ) -> Result<Vec<Dataset>> {
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, username).await?;
+    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
     let start = Instant::now();
     let search_pattern = format!("%{}%", search_query);
@@ -222,23 +222,25 @@ pub(crate) async fn get_datasets_with_search(
     Ok(datasets)
 }
 
-#[tracing::instrument(name = "database.create_dataset", skip(pool), fields(database.system = "postgresql", database.operation = "INSERT", title = %title, username = %username))]
+#[tracing::instrument(name = "database.create_dataset", skip(pool), fields(database.system = "postgresql", database.operation = "INSERT", title = %title, owner_id = %owner_id))]
 pub(crate) async fn create_dataset(
     pool: &Pool<Postgres>,
     title: &str,
     details: Option<&str>,
-    username: &str,
+    owner_id: &str,
+    owner_display_name: &str,
     tags: &[String],
     is_public: bool,
 ) -> Result<Dataset> {
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, username).await?;
+    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
     let start = Instant::now();
     let result = sqlx::query_as::<_, Dataset>(CREATE_DATASET_QUERY)
         .bind(title)
         .bind(details)
-        .bind(username)
+        .bind(owner_id)
+        .bind(owner_display_name)
         .bind(tags)
         .bind(is_public)
         .fetch_one(&mut *tx)
@@ -253,14 +255,14 @@ pub(crate) async fn create_dataset(
     Ok(dataset)
 }
 
-#[tracing::instrument(name = "database.delete_dataset", skip(pool), fields(database.system = "postgresql", database.operation = "DELETE", dataset_id = %dataset_id, username = %username))]
+#[tracing::instrument(name = "database.delete_dataset", skip(pool), fields(database.system = "postgresql", database.operation = "DELETE", dataset_id = %dataset_id, owner_id = %owner_id))]
 pub(crate) async fn delete_dataset(
     pool: &Pool<Postgres>,
     dataset_id: i32,
-    username: &str,
+    owner_id: &str,
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, username).await?;
+    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
     let start = Instant::now();
     let result = sqlx::query(DELETE_DATASET_QUERY)
@@ -520,18 +522,18 @@ pub(crate) async fn get_dataset_items_modified_since(
     Ok(query)
 }
 
-#[tracing::instrument(name = "database.update_dataset", skip(pool), fields(database.system = "postgresql", database.operation = "UPDATE", dataset_id = %dataset_id, username = %username))]
+#[tracing::instrument(name = "database.update_dataset", skip(pool), fields(database.system = "postgresql", database.operation = "UPDATE", dataset_id = %dataset_id, owner_id = %owner_id))]
 pub(crate) async fn update_dataset(
     pool: &Pool<Postgres>,
     dataset_id: i32,
     title: &str,
     details: Option<&str>,
-    username: &str,
+    owner_id: &str,
     tags: &[String],
     is_public: bool,
 ) -> Result<Dataset> {
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, username).await?;
+    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
     let start = Instant::now();
     let result = sqlx::query_as::<_, Dataset>(UPDATE_DATASET_QUERY)
@@ -590,13 +592,13 @@ impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for DatasetStats {
     }
 }
 
-#[tracing::instrument(name = "database.get_dataset_stats", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", username = %username))]
+#[tracing::instrument(name = "database.get_dataset_stats", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner_id = %owner_id))]
 pub(crate) async fn get_dataset_stats(
     pool: &Pool<Postgres>,
-    username: &str,
+    owner_id: &str,
 ) -> Result<Vec<DatasetStats>> {
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, username).await?;
+    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
     let start = Instant::now();
     let result = sqlx::query_as::<_, DatasetStats>(GET_DATASET_STATS_QUERY)
@@ -644,19 +646,21 @@ pub(crate) async fn get_recent_public_datasets(
     Ok(result?)
 }
 
-#[tracing::instrument(name = "database.grab_public_dataset", skip(pool), fields(database.system = "postgresql", database.operation = "INSERT", username = %username, dataset_id = %dataset_id))]
+#[tracing::instrument(name = "database.grab_public_dataset", skip(pool), fields(database.system = "postgresql", database.operation = "INSERT", owner_id = %owner_id, dataset_id = %dataset_id))]
 pub(crate) async fn grab_public_dataset(
     pool: &Pool<Postgres>,
-    username: &str,
+    owner_id: &str,
+    owner_display_name: &str,
     dataset_id: i32,
 ) -> Result<Dataset> {
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, username).await?;
+    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
     let start = Instant::now();
     let result = sqlx::query_as::<_, Dataset>(GRAB_PUBLIC_DATASET_QUERY)
         .bind(dataset_id)
-        .bind(username)
+        .bind(owner_id)
+        .bind(owner_display_name)
         .fetch_one(&mut *tx)
         .await;
 
