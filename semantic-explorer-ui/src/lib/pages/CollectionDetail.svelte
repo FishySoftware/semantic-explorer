@@ -128,12 +128,18 @@
 	let fileInputRef = $state<HTMLInputElement | undefined>();
 	let updatingPublic = $state(false);
 	let uploadPollInterval: ReturnType<typeof setInterval> | null = null;
+	let allowedFileTypes = $state<string>(''); // MIME types for file input accept attribute
 
 	// SSE connection for real-time transform status updates
 	let sseConnection: SSEConnection | null = null;
 
 	onMount(async () => {
-		await Promise.all([fetchCollection(), fetchFiles(), fetchCollectionTransforms()]);
+		await Promise.all([
+			fetchCollection(),
+			fetchFiles(),
+			fetchCollectionTransforms(),
+			fetchAllowedFileTypes(),
+		]);
 		connectSSE();
 	});
 
@@ -201,6 +207,22 @@
 			}
 		} catch (e) {
 			console.error(e);
+		}
+	}
+
+	async function fetchAllowedFileTypes() {
+		try {
+			const response = await fetch('/api/collections/allowed-file-types');
+			if (response.ok) {
+				const mimeTypes: string[] = await response.json();
+				// Convert MIME types to file input accept format
+				// Use MIME types directly as they're more reliable than extensions
+				allowedFileTypes = mimeTypes.join(',');
+			}
+		} catch (e) {
+			console.error('Failed to fetch allowed file types:', e);
+			// Don't block upload if this fails, just skip the restriction
+			allowedFileTypes = '';
 		}
 	}
 
@@ -399,6 +421,11 @@
 
 	async function uploadFiles(files: FileList | null) {
 		if (!files || files.length === 0) {
+			return;
+		}
+
+		if (!collectionId || isNaN(collectionId)) {
+			toastStore.error('Invalid collection ID');
 			return;
 		}
 
@@ -656,6 +683,7 @@
 									<input
 										type="file"
 										multiple
+										accept={allowedFileTypes}
 										bind:this={fileInputRef}
 										onchange={handleFileSelect}
 										class="hidden"
@@ -673,6 +701,27 @@
 											Upload Files
 										{/if}
 									</button>
+									{#if allowedFileTypes}
+										<span
+											class="text-xs text-gray-500 dark:text-gray-400"
+											title="Supported: PDF, Word, Excel, PowerPoint, HTML, XML, RTF, Markdown, CSV, JSON, EPUB, Email, Archives, and more"
+										>
+											<svg
+												class="w-4 h-4 inline-block mr-1"
+												fill="none"
+												stroke="currentColor"
+												viewBox="0 0 24 24"
+											>
+												<path
+													stroke-linecap="round"
+													stroke-linejoin="round"
+													stroke-width="2"
+													d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+												></path>
+											</svg>
+											File types filtered
+										</span>
+									{/if}
 									<label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
 										<span>Per page:</span>
 										<select

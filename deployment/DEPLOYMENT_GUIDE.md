@@ -276,7 +276,7 @@ The Semantic Explorer Helm chart includes optional dependencies for infrastructu
 
 | Dependency | Chart Version | Repository | Condition |
 |------------|---------------|------------|-----------|
-| redis-ha | 4.35.5 | dandydeveloper/charts | `redis.enabled` |
+| 
 | nats | 1.2.x | nats-io/k8s/helm/charts | `nats.enabled` |
 | qdrant | 0.8.x | qdrant/qdrant-helm | `qdrant.enabled` |
 | minio | 5.2.x | charts.min.io | `minio.enabled` |
@@ -304,8 +304,8 @@ The chart includes pre-configured values files for common deployment scenarios i
 | File | Use Case | Description |
 |------|----------|-------------|
 | `values-all-included-dev.yaml` | Local Development | All infrastructure enabled, minimal resources (500m CPU, 512Mi per pod). Suitable for local testing and CI/CD. |
-| `values-all-included-prod.yaml` | Self-Hosted Production | Full HA deployment with all infrastructure. PostgreSQL HA, Redis cluster, NATS JetStream, 3+ replicas per service. |
-| `values-external-infra-dev.yaml` | Cloud Development | Only app services deployed. Connect to cloud-managed PostgreSQL, Redis, S3, etc. |
+| `values-all-included-prod.yaml` | Self-Hosted Production | Full HA deployment with all infrastructure. PostgreSQL HA, NATS JetStream, NATS JetStream, 3+ replicas per service. |
+| `values-external-infra-dev.yaml` | Cloud Development | Only app services deployed. Connect to cloud-managed PostgreSQL, NATS, S3, etc. |
 | `values-external-infra-prod.yaml` | Cloud Production | HA app services with external managed infrastructure. Extensive docs for AWS/GCP/Azure equivalents. |
 | `values-airgapped.yaml` | Air-Gapped (External Infra) | Air-gapped Kubernetes with external infrastructure. No CRDs, no operators, internal registry support. |
 | `values-airgapped-all-included.yaml` | Air-Gapped (Self-Contained) | Complete air-gapped deployment. All infrastructure included, internal registry, RKE2-compatible. |
@@ -355,7 +355,6 @@ IMAGES=(
   "jofish89/worker-datasets:latest"
   "jofish89/worker-visualizations-py:latest"
   "postgres:16.3-alpine"
-  "redis:7-alpine"
   "nats:2.10-alpine"
   "qdrant/qdrant:v1.16.3"
   "minio/minio:latest"
@@ -570,7 +569,7 @@ All components are pre-configured and automatically scraped. **Deploy with `valu
 - worker-collections: 15s interval, `/metrics` endpoint on port 8080
 - worker-datasets: 15s interval, `/metrics` endpoint on port 8080
 - worker-visualizations-py: 15s interval, `/metrics` endpoint on port 9090
-- Infrastructure (PostgreSQL, Redis, NATS, Qdrant): 30s interval via exporters
+- Infrastructure (PostgreSQL, NATS, NATS, Qdrant): 30s interval via exporters
 
 ### Metrics by Service
 
@@ -877,12 +876,12 @@ Choose the appropriate values file for your deployment:
 
 **All-Included (Complete observability stack):**
 - `values-all-included-dev.yaml`: Local development (minimal resources)
-  - PostgreSQL 10Gi, Redis 3 nodes, NATS, Qdrant, MinIO, OTEL, Grafana, Quickwit
+  - PostgreSQL 10Gi, NATS 3 nodes, NATS, Qdrant, MinIO, OTEL, Grafana, Quickwit
   - 1 replica per service, 500m CPU, 512Mi memory per pod
   - Use for: Local dev, testing, CI/CD pipelines
 
 - `values-all-included-prod.yaml`: Production with all services
-  - PostgreSQL 100Gi HA (3 replicas), Redis cluster, NATS with JetStream
+  - PostgreSQL 100Gi HA (3 replicas), NATS JetStream, NATS with JetStream
   - 4 replicas per service, generous resources (2-4 CPU, 2-8Gi memory)
   - Pod Disruption Budgets, anti-affinity, autoscaling enabled
   - Use for: Self-hosted production deployments
@@ -890,13 +889,13 @@ Choose the appropriate values file for your deployment:
 **External Infrastructure (Managed services):**
 - `values-external-infra-dev.yaml`: Development with external services
   - Only API + workers + Dex deployed
-  - Environment variables for: PostgreSQL, Redis, NATS, Qdrant, S3, OTEL endpoint
+  - Environment variables for: PostgreSQL, NATS, NATS, Qdrant, S3, OTEL endpoint
   - Use for: Cloud dev environments (GCP CloudSQL, AWS RDS, etc.)
 
 - `values-external-infra-prod.yaml`: Production with external services
   - 4 replicas, HA configurations, PDBs
   - Extensive documentation for AWS/GCP/Azure equivalents
-  - Use for: Cloud production (managed PostgreSQL, Redis, S3, etc.)
+  - Use for: Cloud production (managed PostgreSQL, NATS, S3, etc.)
 
 **Install with specific values:**
 

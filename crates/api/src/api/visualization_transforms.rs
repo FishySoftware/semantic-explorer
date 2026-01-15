@@ -765,8 +765,7 @@ pub async fn download_visualization_html(
     let bucket = format!("visualizations-{}", transform_id);
 
     // Download the file from S3
-    match crate::storage::rustfs::get_file_with_size_check(&s3_client, &bucket, &html_s3_key).await
-    {
+    match crate::storage::s3::get_file_with_size_check(&s3_client, &bucket, &html_s3_key).await {
         Ok(file_data) => {
             let filename = format!("visualization-{}-{}.html", transform_id, visualization_id);
             HttpResponse::Ok()

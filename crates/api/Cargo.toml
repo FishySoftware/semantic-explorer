@@ -17,7 +17,6 @@ actix-multipart = { workspace = true }
 actix-files = { workspace = true }
 actix_web_openidconnect = { workspace = true }
 actix-web-prom = { workspace = true }
-redis = { workspace = true }
 thiserror = { workspace = true }
 async-nats = { workspace = true }
 async-stream = { workspace = true }
@@ -42,7 +41,6 @@ opentelemetry-otlp = { workspace = true }
 opentelemetry-prometheus = { workspace = true }
 opentelemetry-appender-tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true }
-prometheus = { workspace = true }
 mime_guess = { workspace = true }
 mime = { workspace = true }
 uuid = { workspace = true }

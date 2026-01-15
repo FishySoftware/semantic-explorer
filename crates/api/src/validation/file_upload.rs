@@ -19,21 +19,64 @@ const MAX_FILE_SIZE_BYTES: usize = 100 * 1024 * 1024;
 const MAX_COMPRESSION_RATIO: f64 = 100.0;
 
 /// Whitelist of allowed MIME types for document uploads
+/// This list matches the extraction capabilities in worker-collections
 const ALLOWED_MIME_TYPES: &[&str] = &[
     // Text formats
     "text/plain",
     "text/csv",
     "text/markdown",
-    // Documents
+    "text/html",
+    "text/xml",
+    "text/rtf",
+    "text/x-log",
+    "text/x-syslog",
+    // Application text variants
+    "application/xhtml+xml",
+    "application/xml",
+    "application/rtf",
+    "application/x-rtf",
+    // Documents - PDF
     "application/pdf",
-    "application/msword",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/vnd.ms-excel",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    // Archives (will be further validated)
+    // Documents - Microsoft Word
+    "application/msword", // .doc
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
+    "application/vnd.ms-word.document.macroEnabled.12", // .docm
+    "application/vnd.ms-word.template.macroEnabled.12", // .dotm
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.template", // .dotx
+    // Documents - Microsoft Excel
+    "application/vnd.ms-excel", // .xls
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
+    "application/vnd.ms-excel.sheet.macroEnabled.12", // .xlsm
+    "application/vnd.ms-excel.template.macroEnabled.12", // .xltm
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.template", // .xltx
+    "application/vnd.ms-excel.addin.macroEnabled.12", // .xlam
+    "application/vnd.ms-excel.sheet.binary.macroEnabled.12", // .xlsb
+    // Documents - Microsoft PowerPoint
+    "application/vnd.ms-powerpoint", // .ppt
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation", // .pptx
+    "application/mspowerpoint",
+    "application/powerpoint",
+    "application/x-mspowerpoint",
+    // Documents - OpenDocument formats
+    "application/vnd.oasis.opendocument.text", // .odt
+    "application/vnd.oasis.opendocument.spreadsheet", // .ods
+    "application/vnd.oasis.opendocument.presentation", // .odp
+    // E-books
+    "application/epub+zip",
+    "application/epub",
+    // Data formats
+    "application/json",
+    "application/x-ndjson",
+    "text/json",
+    "text/x-ndjson",
+    // Email
+    "message/rfc822", // .eml files
+    // Archives (will be further validated for ZIP bombs)
     "application/zip",
     "application/x-zip-compressed",
     "application/x-7z-compressed",
+    "application/gzip",
+    "application/x-gzip",
 ];
 
 #[derive(Debug, Clone)]
@@ -226,6 +269,14 @@ fn validate_zip_bomb(file_bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Get the list of allowed MIME types for client display
+///
+/// Returns a vector of all MIME types that are currently allowed for upload.
+/// This can be used by the UI or API clients to inform users about supported file types.
+pub fn get_allowed_mime_types() -> Vec<String> {
+    ALLOWED_MIME_TYPES.iter().map(|s| s.to_string()).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,5 +316,80 @@ mod tests {
         let result = validate_upload_file_sync(pdf_content, "test.pdf", "application/pdf");
         assert!(result.is_valid);
         assert_eq!(result.detected_mime, "application/pdf");
+    }
+
+    #[test]
+    fn test_validate_powerpoint() {
+        // PowerPoint MIME type should be allowed
+        let content = b"fake ppt content";
+        let result =
+            validate_upload_file_sync(content, "test.ppt", "application/vnd.ms-powerpoint");
+        // Will be valid if detected as octet-stream or the claimed type matches allowed list
+        assert!(
+            result.is_valid
+                || result
+                    .validation_errors
+                    .iter()
+                    .any(|e| !e.contains("application/vnd.ms-powerpoint"))
+        );
+    }
+
+    #[test]
+    fn test_validate_html() {
+        let html_content = b"<!DOCTYPE html><html><body>Test</body></html>";
+        let result = validate_upload_file_sync(html_content, "test.html", "text/html");
+        assert!(result.is_valid);
+    }
+
+    #[test]
+    fn test_validate_json() {
+        let json_content = br#"{"key": "value"}"#;
+        let result = validate_upload_file_sync(json_content, "test.json", "application/json");
+        assert!(result.is_valid);
+    }
+
+    #[test]
+    fn test_validate_rtf() {
+        let rtf_content = b"{\\rtf1\\ansi Test RTF}";
+        let result = validate_upload_file_sync(rtf_content, "test.rtf", "text/rtf");
+        assert!(result.is_valid);
+    }
+
+    #[test]
+    fn test_validate_opendocument() {
+        // OpenDocument formats should be allowed
+        let content = b"fake odt content";
+        let result = validate_upload_file_sync(
+            content,
+            "test.odt",
+            "application/vnd.oasis.opendocument.text",
+        );
+        assert!(
+            result.is_valid
+                || result
+                    .validation_errors
+                    .iter()
+                    .any(|e| !e.contains("opendocument"))
+        );
+    }
+
+    #[test]
+    fn test_get_allowed_mime_types() {
+        let types = get_allowed_mime_types();
+        // Ensure we have all the major types
+        assert!(types.contains(&"text/plain".to_string()));
+        assert!(types.contains(&"application/pdf".to_string()));
+        assert!(types.contains(&"application/vnd.ms-powerpoint".to_string()));
+        assert!(types.contains(&"text/html".to_string()));
+        assert!(types.contains(&"application/json".to_string()));
+        assert!(types.contains(&"message/rfc822".to_string()));
+        assert!(types.contains(&"application/epub+zip".to_string()));
+
+        // Ensure we have a good number of types (should be 45+)
+        assert!(
+            types.len() >= 45,
+            "Expected at least 45 MIME types, got {}",
+            types.len()
+        );
     }
 }

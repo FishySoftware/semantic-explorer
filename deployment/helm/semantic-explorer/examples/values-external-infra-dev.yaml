@@ -32,7 +32,6 @@ api:
   # Environment variables for external services
   env:
     DATABASE_URL: "postgres://user:password@postgres.example.com:5432/semantic_explorer"
-    REDIS_URL: "redis://redis.example.com:6379"
     NATS_URL: "nats://nats.example.com:4222"
     QDRANT_URL: "http://qdrant.example.com:6333"
     S3_BUCKET: "semantic-explorer"
@@ -114,11 +113,9 @@ postgresql:
     existingSecret: "external-postgresql-secret"
     passwordKey: "password"
 
-redis:
   enabled: false
   external:
     enabled: true
-    clusterNodes: "redis://redis.example.com:6379"
 
 nats:
   enabled: false

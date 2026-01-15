@@ -1,5 +1,4 @@
 pub(crate) mod audit;
-pub(crate) mod auth;
 pub(crate) mod chat;
 pub(crate) mod collection_transforms;
 pub(crate) mod collections;
@@ -10,7 +9,6 @@ pub(crate) mod embedded_datasets;
 pub(crate) mod embedders;
 pub(crate) mod llms;
 pub(crate) mod rls;
-pub(crate) mod sessions;
 pub(crate) mod visualization_transforms;
 
 use actix_web::rt::{spawn, time::interval};

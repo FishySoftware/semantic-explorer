@@ -1,8 +1,9 @@
 use anyhow::Result;
-use async_nats::Client as NatsClient;
+use async_nats::{Client as NatsClient, jetstream};
 use aws_sdk_s3::Client as S3Client;
 use futures_util::StreamExt;
 use sqlx::{Pool, Postgres};
+use std::time::Duration;
 use tracing::{error, info, warn};
 
 use semantic_explorer_core::models::{
@@ -21,7 +22,7 @@ use crate::storage::postgres::visualization_transforms::{
     get_visualization, get_visualization_transform_by_id, update_visualization,
     update_visualization_transform_status,
 };
-use crate::storage::rustfs::delete_file;
+use crate::storage::s3::delete_file;
 use crate::transforms::dataset::scanner::trigger_dataset_transform_scan;
 
 #[derive(Clone)]
@@ -112,23 +113,82 @@ pub(crate) async fn start_result_listeners(
 
 fn start_file_result_listener(context: TransformContext, nats_client: NatsClient) {
     actix_web::rt::spawn(async move {
-        let mut subscriber = match nats_client
-            .subscribe("worker.result.file".to_string())
-            .await
-        {
-            Ok(sub) => sub,
+        // Use JetStream durable consumer for reliable message delivery
+        // Subject format: transforms.collection.status.{owner}.{collection_id}.{transform_id}
+        let subject = "transforms.collection.status.>";
+        let stream_name = "TRANSFORM_STATUS";
+        let consumer_name = "collection-status-listener";
+
+        let jetstream = jetstream::new(nats_client.clone());
+
+        let stream = match jetstream.get_stream(stream_name).await {
+            Ok(s) => s,
             Err(e) => {
-                error!("failed to subscribe to file results: {}", e);
+                error!("Failed to get stream {}: {}", stream_name, e);
                 return;
             }
         };
 
-        while let Some(msg) = subscriber.next().await {
-            info!("Received file result message");
-            if let Ok(result) = serde_json::from_slice::<CollectionTransformResult>(&msg.payload) {
-                handle_file_result(result, &context).await;
-            } else {
-                error!("Failed to deserialize file result");
+        // Create or get durable consumer
+        let consumer = match stream.get_consumer(consumer_name).await {
+            Ok(c) => c,
+            Err(_) => {
+                let config = jetstream::consumer::pull::Config {
+                    durable_name: Some(consumer_name.to_string()),
+                    description: Some("Collection transform status listener".to_string()),
+                    filter_subject: subject.to_string(),
+                    ack_policy: jetstream::consumer::AckPolicy::Explicit,
+                    ack_wait: Duration::from_secs(60),
+                    max_deliver: 5,
+                    ..Default::default()
+                };
+                match stream.create_consumer(config).await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        error!("Failed to create consumer {}: {}", consumer_name, e);
+                        return;
+                    }
+                }
+            }
+        };
+
+        info!(
+            "File result listener started with durable consumer: {}",
+            consumer_name
+        );
+
+        let mut messages = match consumer.messages().await {
+            Ok(m) => m,
+            Err(e) => {
+                error!("Failed to get message stream: {}", e);
+                return;
+            }
+        };
+
+        while let Some(msg) = messages.next().await {
+            let msg = match msg {
+                Ok(m) => m,
+                Err(e) => {
+                    error!("Failed to receive message: {}", e);
+                    continue;
+                }
+            };
+
+            info!("Received file result message on subject: {}", msg.subject);
+            match serde_json::from_slice::<CollectionTransformResult>(&msg.payload) {
+                Ok(result) => {
+                    handle_file_result(result, &context).await;
+                    if let Err(e) = msg.ack().await {
+                        error!("Failed to acknowledge message: {}", e);
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to deserialize file result: {}", e);
+                    // Acknowledge bad messages to prevent reprocessing
+                    if let Err(ack_err) = msg.ack().await {
+                        error!("Failed to acknowledge bad message: {}", ack_err);
+                    }
+                }
             }
         }
     });
@@ -136,20 +196,85 @@ fn start_file_result_listener(context: TransformContext, nats_client: NatsClient
 
 fn start_vector_result_listener(context: TransformContext, nats_client: NatsClient) {
     actix_web::rt::spawn(async move {
-        let mut subscriber = match nats_client
-            .subscribe("worker.result.vector".to_string())
-            .await
-        {
-            Ok(sub) => sub,
+        // Use JetStream durable consumer for reliable message delivery
+        // Subject format: transforms.dataset.status.{owner}.{dataset_id}.{transform_id}
+        let subject = "transforms.dataset.status.>";
+        let stream_name = "TRANSFORM_STATUS";
+        let consumer_name = "dataset-status-listener";
+
+        let jetstream = jetstream::new(nats_client.clone());
+
+        let stream = match jetstream.get_stream(stream_name).await {
+            Ok(s) => s,
             Err(e) => {
-                error!("failed to subscribe to vector results: {}", e);
+                error!("Failed to get stream {}: {}", stream_name, e);
                 return;
             }
         };
 
-        while let Some(msg) = subscriber.next().await {
-            if let Ok(result) = serde_json::from_slice::<DatasetTransformResult>(&msg.payload) {
-                handle_vector_result(result, &context).await;
+        // Create or get durable consumer
+        let consumer = match stream.get_consumer(consumer_name).await {
+            Ok(c) => c,
+            Err(_) => {
+                let config = jetstream::consumer::pull::Config {
+                    durable_name: Some(consumer_name.to_string()),
+                    description: Some("Dataset transform status listener".to_string()),
+                    filter_subject: subject.to_string(),
+                    ack_policy: jetstream::consumer::AckPolicy::Explicit,
+                    ack_wait: Duration::from_secs(60),
+                    max_deliver: 5,
+                    ..Default::default()
+                };
+                match stream.create_consumer(config).await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        error!("Failed to create consumer {}: {}", consumer_name, e);
+                        return;
+                    }
+                }
+            }
+        };
+
+        info!(
+            "Vector result listener started with durable consumer: {}",
+            consumer_name
+        );
+
+        let mut messages = match consumer.messages().await {
+            Ok(m) => m,
+            Err(e) => {
+                error!("Failed to get message stream: {}", e);
+                return;
+            }
+        };
+
+        while let Some(msg) = messages.next().await {
+            let msg = match msg {
+                Ok(m) => m,
+                Err(e) => {
+                    error!("Failed to receive message: {}", e);
+                    continue;
+                }
+            };
+
+            info!(
+                "Received dataset result message on subject: {}",
+                msg.subject
+            );
+            match serde_json::from_slice::<DatasetTransformResult>(&msg.payload) {
+                Ok(result) => {
+                    handle_vector_result(result, &context).await;
+                    if let Err(e) = msg.ack().await {
+                        error!("Failed to acknowledge message: {}", e);
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to deserialize dataset result: {}", e);
+                    // Acknowledge bad messages to prevent reprocessing
+                    if let Err(ack_err) = msg.ack().await {
+                        error!("Failed to acknowledge bad message: {}", ack_err);
+                    }
+                }
             }
         }
     });
@@ -157,22 +282,77 @@ fn start_vector_result_listener(context: TransformContext, nats_client: NatsClie
 
 fn start_visualization_result_listener(context: TransformContext, nats_client: NatsClient) {
     actix_web::rt::spawn(async move {
-        let mut subscriber = match nats_client
-            .subscribe("worker.result.visualization".to_string())
-            .await
-        {
-            Ok(sub) => sub,
+        // Use JetStream durable consumer for reliable message delivery
+        // Subject format: transforms.visualization.status.{owner}.{embedded_dataset_id}.{transform_id}
+        let subject = "transforms.visualization.status.>";
+        let stream_name = "TRANSFORM_STATUS";
+        let consumer_name = "visualization-status-listener";
+
+        let jetstream = jetstream::new(nats_client.clone());
+
+        let stream = match jetstream.get_stream(stream_name).await {
+            Ok(s) => s,
             Err(e) => {
-                error!("failed to subscribe to visualization results: {}", e);
+                error!("Failed to get stream {}: {}", stream_name, e);
                 return;
             }
         };
 
-        info!("Visualization result listener started");
-        while let Some(msg) = subscriber.next().await {
+        // Create or get durable consumer
+        let consumer = match stream.get_consumer(consumer_name).await {
+            Ok(c) => c,
+            Err(_) => {
+                let config = jetstream::consumer::pull::Config {
+                    durable_name: Some(consumer_name.to_string()),
+                    description: Some("Visualization transform status listener".to_string()),
+                    filter_subject: subject.to_string(),
+                    ack_policy: jetstream::consumer::AckPolicy::Explicit,
+                    ack_wait: Duration::from_secs(60),
+                    max_deliver: 5,
+                    ..Default::default()
+                };
+                match stream.create_consumer(config).await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        error!("Failed to create consumer {}: {}", consumer_name, e);
+                        return;
+                    }
+                }
+            }
+        };
+
+        info!(
+            "Visualization result listener started with durable consumer: {}",
+            consumer_name
+        );
+
+        let mut messages = match consumer.messages().await {
+            Ok(m) => m,
+            Err(e) => {
+                error!("Failed to get message stream: {}", e);
+                return;
+            }
+        };
+
+        while let Some(msg) = messages.next().await {
+            let msg = match msg {
+                Ok(m) => m,
+                Err(e) => {
+                    error!("Failed to receive message: {}", e);
+                    continue;
+                }
+            };
+
+            info!(
+                "Received visualization result message on subject: {}",
+                msg.subject
+            );
             match serde_json::from_slice::<VisualizationTransformResult>(&msg.payload) {
                 Ok(result) => {
                     handle_visualization_result(result, &context).await;
+                    if let Err(e) = msg.ack().await {
+                        error!("Failed to acknowledge message: {}", e);
+                    }
                 }
                 Err(e) => {
                     let payload_str = String::from_utf8_lossy(&msg.payload);
@@ -181,6 +361,10 @@ fn start_visualization_result_listener(context: TransformContext, nats_client: N
                         e,
                         payload_str.chars().take(500).collect::<String>()
                     );
+                    // Acknowledge bad messages to prevent reprocessing
+                    if let Err(ack_err) = msg.ack().await {
+                        error!("Failed to acknowledge bad message: {}", ack_err);
+                    }
                 }
             }
         }
@@ -343,15 +527,30 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
     }
 
     info!("Downloading chunks for: {}", result.source_file_key);
+
+    let s3_bucket_name = match std::env::var("S3_BUCKET_NAME") {
+        Ok(bucket) => bucket,
+        Err(_) => {
+            error!("S3_BUCKET_NAME environment variable not set");
+            return;
+        }
+    };
+
+    let full_chunks_key = format!("collections/{}/{}", result.bucket, result.chunks_file_key);
+
+    info!(
+        bucket = %s3_bucket_name,
+        key = %full_chunks_key,
+        "Attempting to download chunks"
+    );
+
     let chunks_content =
-        match get_file_with_size_check(&ctx.s3_client, &result.bucket, &result.chunks_file_key)
-            .await
-        {
+        match get_file_with_size_check(&ctx.s3_client, &s3_bucket_name, &full_chunks_key).await {
             Ok(c) => c,
             Err(e) => {
                 error!(
-                    "Failed to download chunks for {}: {}",
-                    result.source_file_key, e
+                    "Failed to download chunks for {} from {}: {}",
+                    result.source_file_key, full_chunks_key, e
                 );
                 return;
             }

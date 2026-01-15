@@ -28,7 +28,6 @@ Production-grade semantic exploration platform with advanced caching, real-time 
 ### Database & Storage
 - 🗄️ **PostgreSQL Database** - Robust relational database for metadata and state
 - 📦 **S3-compatible Storage** - AWS S3, MinIO, or any S3-compatible provider
-- 🔴 **Redis Cluster** - Rate limiting, session management, and request deduplication
 - 📍 **Qdrant Vector DB** - Production-grade vector search with quantization (product/scalar)
 
 ### Observability & Monitoring
@@ -40,7 +39,6 @@ Production-grade semantic exploration platform with advanced caching, real-time 
 - ⚙️ **Connection Pooling** - Tuned for high concurrency with prepared statement caching
 - 🎯 **Quantized Embeddings** - Product quantization for 10x faster nearest-neighbor search
 - 🔄 **HTTP Caching** - ETag-based cache validation, conditional requests
-- 🔄 **Request Deduplication** - Prevents duplicate processing of identical requests via Redis
 
 ### Session Management
 - 👤 **Multi-session Support** - Multiple concurrent sessions per user with limits
@@ -76,7 +74,7 @@ flowchart LR
         PG[(PostgreSQL)]
         QD[(Qdrant)]
         S3[(S3/MinIO)]
-        RD[(Redis)]
+        RD[(NATS)]
     end
 
     Clients --> API
@@ -132,7 +130,7 @@ flowchart TB
         pg["🐘 PostgreSQL<br/>Metadata · RLS · Audit"]
         qd["🔴 Qdrant<br/>Vectors · Search"]
         s3["📦 S3 / MinIO<br/>Files · Artifacts"]
-        rd["⚡ Redis<br/>Cache · Sessions"]
+        rd["⚡ NATS<br/>Cache · Sessions"]
     end
 
     subgraph external ["🌍 EXTERNAL SERVICES"]
@@ -216,7 +214,7 @@ flowchart LR
 ### Prerequisites
 - Docker & Docker Compose
 - PostgreSQL 14+ (or use Docker)
-- Redis 7+ Cluster mode (or use Docker)
+- NATS 7+ Cluster mode (or use Docker)
 - Qdrant 1.8+ (or use Docker)
 - Rust 1.85+ (for local development)
 - Node.js 20+ (for UI development)
@@ -232,7 +230,7 @@ cd semantic-explorer
 cp crates/api/.env.example crates/api/.env
 # Edit crates/api/.env with your configuration
 
-# Start infrastructure (PostgreSQL, Redis, Qdrant, NATS, etc.)
+# Start infrastructure (PostgreSQL, NATS, Qdrant, NATS, etc.)
 cd deployment/compose
 docker-compose -f compose.dev.yaml up -d
 
@@ -346,7 +344,7 @@ semantic-explorer/
 - **Web Framework**: Actix-web (async HTTP)
 - **Database**: PostgreSQL 14+ with RLS & replication
 - **Vector DB**: Qdrant (quantized embeddings)
-- **Cache**: Redis Cluster
+- **Cache**: NATS JetStream
 - **Message Queue**: NATS JetStream
 - **Authentication**: OIDC (Dex)
 - **Storage**: S3-compatible (AWS S3, MinIO)
@@ -382,7 +380,6 @@ All services use environment variables for configuration. See `.env.example` fil
 **Database & Storage:**
 ```bash
 DATABASE_URL=postgresql://user:pass@localhost:5432/db
-REDIS_CLUSTER_NODES=redis-1:6379,redis-2:6379,...
 QDRANT_URL=http://localhost:6334
 AWS_REGION=us-east-1
 AWS_ENDPOINT_URL=http://minio:9000
@@ -432,7 +429,7 @@ The API exports metrics at the configured PROMETHEUS_SCRAPE_PORT at `/metrics`:
 The following dashboards are pre-configured:
 
 1. **API & Workers** - Request metrics, error rates, latency, throughput across API and workers
-2. **Infrastructure** - Database, Redis, Qdrant, NATS health and performance
+2. **Infrastructure** - Database, NATS, Qdrant, NATS health and performance
 
 Access Grafana at http://localhost:3000 (default: admin/admin)
 
@@ -462,8 +459,7 @@ Query trace data using Quickwit's query language for performance analysis.
 - **Audit Logging** - Immutable audit trail of all operations
 
 ### Infrastructure Security
-- **Rate Limiting** - Token-bucket algorithm via Redis
-- **CORS Configuration** - Configurable cross-origin policies
+- **Rate Limiting** - Token-bucket algorithm via NATS
 - **HTTPS/TLS** - Full TLS support in production
 - **Secrets Management** - Environment-based secret injection
 
@@ -476,7 +472,7 @@ cd deployment/compose
 docker-compose -f compose.dev.yaml up
 ```
 
-Includes: PostgreSQL, Redis, Qdrant, NATS, Prometheus, Grafana, Quickwit, Dex
+Includes: PostgreSQL, NATS, Qdrant, NATS, Prometheus, Grafana, Quickwit, Dex
 
 ### Kubernetes (Production)
 

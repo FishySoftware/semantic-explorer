@@ -271,6 +271,114 @@
 			</div>
 		</div>
 
+		<!-- Supported File Types -->
+		<div
+			class="rounded-lg border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-800"
+		>
+			<h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
+				<span
+					class="rounded bg-indigo-100 px-2 py-1 text-sm font-medium text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300"
+					>Supported File Types</span
+				>
+			</h3>
+			<p class="text-gray-700 dark:text-gray-300 mb-4">
+				Semantic Explorer supports a comprehensive range of document formats for upload to
+				collections. All files are validated using magic byte detection to ensure security and
+				proper type identification.
+			</p>
+
+			<div class="space-y-4">
+				<!-- Text Formats -->
+				<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
+					<h4 class="font-semibold text-gray-900 dark:text-white mb-2">📝 Text Formats</h4>
+					<div
+						class="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-gray-600 dark:text-gray-400"
+					>
+						<div><strong>Plain Text:</strong> .txt</div>
+						<div><strong>CSV:</strong> .csv</div>
+						<div><strong>Markdown:</strong> .md</div>
+						<div><strong>HTML:</strong> .html, .htm</div>
+						<div><strong>XML:</strong> .xml</div>
+						<div><strong>RTF:</strong> .rtf (Rich Text Format)</div>
+						<div><strong>Log Files:</strong> .log</div>
+					</div>
+				</div>
+
+				<!-- Documents -->
+				<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
+					<h4 class="font-semibold text-gray-900 dark:text-white mb-2">📄 Documents</h4>
+					<div class="space-y-2 text-sm text-gray-600 dark:text-gray-400">
+						<div><strong>PDF:</strong> .pdf (Portable Document Format)</div>
+						<div>
+							<strong>Microsoft Word:</strong> .doc, .docx, .docm (macro-enabled), .dotx (template), .dotm
+							(macro template)
+						</div>
+						<div>
+							<strong>Microsoft Excel:</strong> .xls, .xlsx, .xlsm (macro-enabled), .xltx (template),
+							.xltm (macro template), .xlam (add-in), .xlsb (binary)
+						</div>
+						<div><strong>Microsoft PowerPoint:</strong> .ppt, .pptx</div>
+						<div>
+							<strong>OpenDocument:</strong> .odt (text), .ods (spreadsheet), .odp (presentation)
+						</div>
+					</div>
+				</div>
+
+				<!-- Data Formats -->
+				<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
+					<h4 class="font-semibold text-gray-900 dark:text-white mb-2">📊 Data Formats</h4>
+					<div class="text-sm text-gray-600 dark:text-gray-400">
+						<div><strong>JSON:</strong> .json (JavaScript Object Notation)</div>
+						<div><strong>NDJSON:</strong> .ndjson, .jsonl (Newline Delimited JSON)</div>
+					</div>
+				</div>
+
+				<!-- E-books & Email -->
+				<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
+					<h4 class="font-semibold text-gray-900 dark:text-white mb-2">📚 E-books & Email</h4>
+					<div class="text-sm text-gray-600 dark:text-gray-400">
+						<div><strong>E-books:</strong> .epub</div>
+						<div><strong>Email:</strong> .eml (RFC 822 email messages)</div>
+					</div>
+				</div>
+
+				<!-- Archives -->
+				<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
+					<h4 class="font-semibold text-gray-900 dark:text-white mb-2">🗜️ Archives</h4>
+					<div class="text-sm text-gray-600 dark:text-gray-400">
+						<div><strong>ZIP:</strong> .zip</div>
+						<div><strong>GZIP:</strong> .gz, .tar.gz</div>
+						<div><strong>7-Zip:</strong> .7z</div>
+						<p class="mt-2 text-xs italic">
+							Archives are scanned for ZIP bomb protection and nested content is extracted.
+						</p>
+					</div>
+				</div>
+			</div>
+
+			<div
+				class="rounded bg-blue-50 dark:bg-blue-900/20 p-3 border border-blue-200 dark:border-blue-800 mt-4"
+			>
+				<p class="text-xs text-gray-700 dark:text-gray-300">
+					<strong>🔒 Security:</strong> All uploads are validated using magic byte detection (not just
+					file extensions) to prevent type mismatch attacks. Archives are scanned for compression ratio
+					to detect ZIP bombs. Maximum file size: 100MB per file, 1GB per upload request.
+				</p>
+			</div>
+
+			<div
+				class="rounded bg-purple-50 dark:bg-purple-900/20 p-3 border border-purple-200 dark:border-purple-800 mt-2"
+			>
+				<p class="text-xs text-gray-700 dark:text-gray-300">
+					<strong>💡 API Usage:</strong> Programmatically query supported types via
+					<code class="px-1 py-0.5 bg-white dark:bg-gray-800 rounded text-xs"
+						>GET /api/collections/allowed-file-types</code
+					>
+					to get the current list of allowed MIME types in JSON format.
+				</p>
+			</div>
+		</div>
+
 		<!-- Datasets -->
 		<div
 			class="rounded-lg border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-800"

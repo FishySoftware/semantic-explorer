@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 
 import boto3
 from botocore.config import Config
-from botocore.exceptions import ClientError
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +23,9 @@ class S3Storage:
         init_start = time.time()
         logger.debug("Initializing S3 storage client")
         self.endpoint_url = os.getenv("AWS_ENDPOINT_URL")
+        self.bucket_name = os.getenv("S3_BUCKET_NAME")
+        if not self.bucket_name:
+            raise ValueError("S3_BUCKET_NAME environment variable is required")
 
         # Configure boto3
         config = Config(
@@ -44,62 +46,13 @@ class S3Storage:
             init_elapsed = time.time() - init_start
             logger.info(
                 f"Initialized S3 client in {init_elapsed:.3f}s "
-                f"(endpoint: {self.endpoint_url or 'default AWS'})"
+                f"(endpoint: {self.endpoint_url or 'default AWS'}, bucket: {self.bucket_name})"
             )
         except Exception as e:
             init_elapsed = time.time() - init_start
             logger.error(
                 f"Failed to initialize S3 client in {init_elapsed:.3f}s: {type(e).__name__}: {e}",
                 exc_info=True,
-            )
-            raise
-
-    def _ensure_bucket_exists(self, bucket_name: str) -> None:
-        """
-        Ensure the S3 bucket exists, creating it if necessary.
-
-        Args:
-            bucket_name: Name of the bucket to check/create
-
-        Raises:
-            Exception: If bucket check or creation fails
-        """
-        try:
-            # Try to head the bucket to see if it exists
-            self.s3_client.head_bucket(Bucket=bucket_name)
-            logger.debug(f"Bucket {bucket_name} already exists")
-        except ClientError as e:
-            # Check if it's a 404 (bucket doesn't exist) or 403 (no permission)
-            error_code = e.response.get("Error", {}).get("Code", "")
-            status_code = e.response.get("ResponseMetadata", {}).get(
-                "HTTPStatusCode", 0
-            )
-
-            if status_code == 404 or error_code == "NoSuchBucket":
-                # Bucket doesn't exist, create it
-                logger.info(f"Bucket {bucket_name} does not exist, creating it")
-                try:
-                    create_start = time.time()
-                    self.s3_client.create_bucket(Bucket=bucket_name)
-                    create_elapsed = time.time() - create_start
-                    logger.info(
-                        f"Successfully created bucket {bucket_name} in {create_elapsed:.3f}s"
-                    )
-                except Exception as create_error:
-                    logger.error(
-                        f"Failed to create bucket {bucket_name}: {type(create_error).__name__}: {create_error}"
-                    )
-                    raise
-            else:
-                # Some other error (like 403 Forbidden)
-                logger.error(
-                    f"Error checking bucket {bucket_name}: {type(e).__name__}: {e}"
-                )
-                raise
-        except Exception as e:
-            # Catch any non-ClientError exceptions
-            logger.error(
-                f"Unexpected error checking bucket {bucket_name}: {type(e).__name__}: {e}"
             )
             raise
 
@@ -111,7 +64,7 @@ class S3Storage:
         html_content: str,
     ) -> str:
         """
-        Upload visualization HTML to S3.
+        Upload visualization HTML to S3 using single-bucket architecture.
 
         Args:
             owner: Owner/username
@@ -120,7 +73,7 @@ class S3Storage:
             html_content: HTML content to upload
 
         Returns:
-            S3 key where content was stored
+            S3 key where content was stored (relative to the collection prefix)
 
         Raises:
             Exception: If upload fails
@@ -131,24 +84,21 @@ class S3Storage:
                 f"Starting S3 upload for transform {transform_id}, visualization {visualization_id}"
             )
 
-            # Generate S3 path
+            # Generate S3 path using single-bucket architecture
+            # Pattern: collections/visualizations-{transform_id}/{filename}
             timestamp_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            bucket_name = f"visualizations-{transform_id}"
-            s3_path = f"visualization-{timestamp_str}.html"
+            filename = f"visualization-{timestamp_str}.html"
+            s3_key = f"collections/visualizations-{transform_id}/{filename}"
             content_size = len(html_content.encode("utf-8"))
-
-            # Ensure bucket exists before uploading
-            logger.debug(f"Ensuring bucket {bucket_name} exists")
-            self._ensure_bucket_exists(bucket_name)
 
             # Upload to S3
             logger.debug(
-                f"Uploading to s3://{bucket_name}/{s3_path} ({content_size} bytes)"
+                f"Uploading to s3://{self.bucket_name}/{s3_key} ({content_size} bytes)"
             )
             put_start = time.time()
             self.s3_client.put_object(
-                Bucket=bucket_name,
-                Key=s3_path,
+                Bucket=self.bucket_name,
+                Key=s3_key,
                 Body=html_content.encode("utf-8"),
                 ContentType="text/html; charset=utf-8",
                 Metadata={
@@ -162,10 +112,11 @@ class S3Storage:
             upload_elapsed = time.time() - upload_start
 
             logger.info(
-                f"Successfully uploaded to s3://{bucket_name}/{s3_path} in {upload_elapsed:.3f}s "
+                f"Successfully uploaded to s3://{self.bucket_name}/{s3_key} in {upload_elapsed:.3f}s "
                 f"(size: {content_size} bytes, put: {put_elapsed:.3f}s)"
             )
-            return s3_path
+            # Return only the filename - the Rust API will reconstruct the full path
+            return filename
 
         except Exception as e:
             upload_elapsed = time.time() - upload_start
@@ -180,12 +131,12 @@ class S3Storage:
         self, owner: str, transform_id: int, s3_key: str, expires_in: int = 3600
     ) -> str:
         """
-        Generate a presigned URL for accessing a visualization.
+        Generate a presigned URL for accessing a visualization using single-bucket architecture.
 
         Args:
             owner: Owner/username (for validation)
             transform_id: Visualization transform ID (for validation)
-            s3_key: S3 key from database
+            s3_key: S3 key from database (just the filename)
             expires_in: URL expiration time in seconds (default: 1 hour)
 
         Returns:
@@ -196,23 +147,17 @@ class S3Storage:
         """
         url_start = time.time()
         try:
-            logger.debug(f"Generating presigned URL for {transform_id}/{s3_key}")
-            bucket_name = f"visualizations-{transform_id}"
-
-            # Validate the s3_key contains the owner/transform
-            if not s3_key.startswith(f"{owner}-{transform_id}-visualizations"):
-                logger.error(
-                    f"S3 key mismatch: key {s3_key} doesn't match owner {owner} / transform {transform_id}"
-                )
-                raise ValueError("Invalid S3 key for this owner/transform")
+            # Construct full S3 key using single-bucket architecture
+            full_s3_key = f"collections/visualizations-{transform_id}/{s3_key}"
+            logger.debug(f"Generating presigned URL for {self.bucket_name}/{full_s3_key}")
 
             # Generate presigned URL
             url_gen_start = time.time()
             url = self.s3_client.generate_presigned_url(
                 "get_object",
                 Params={
-                    "Bucket": bucket_name,
-                    "Key": s3_key,
+                    "Bucket": self.bucket_name,
+                    "Key": full_s3_key,
                 },
                 ExpiresIn=expires_in,
             )
@@ -220,7 +165,7 @@ class S3Storage:
             url_elapsed = time.time() - url_start
 
             logger.info(
-                f"Generated presigned URL for s3://{bucket_name}/{s3_key} in {url_elapsed:.3f}s "
+                f"Generated presigned URL for s3://{self.bucket_name}/{full_s3_key} in {url_elapsed:.3f}s "
                 f"(expires in {expires_in}s, generation: {url_gen_elapsed:.3f}s)"
             )
             return url
@@ -237,42 +182,36 @@ class S3Storage:
         self, owner: str, transform_id: int, s3_key: str
     ) -> None:
         """
-        Delete a visualization from S3.
+        Delete a visualization from S3 using single-bucket architecture.
 
         Args:
             owner: Owner/username (for validation)
             transform_id: Visualization transform ID (for validation)
-            s3_key: S3 key to delete
+            s3_key: S3 key to delete (just the filename)
 
         Raises:
-            Exception: If deletion fails or key doesn't match owner/transform
+            Exception: If deletion fails
         """
         delete_start = time.time()
         try:
-            logger.debug(f"Starting deletion of s3://{transform_id}/{s3_key}")
-            bucket_name = f"visualizations-{transform_id}"
-
-            # Validate the s3_key contains the owner/transform
-            if not s3_key.startswith(f"{owner}-{transform_id}-visualizations"):
-                logger.error(
-                    f"S3 key mismatch: key {s3_key} doesn't match owner {owner} / transform {transform_id}"
-                )
-                raise ValueError("Invalid S3 key for this owner/transform")
+            # Construct full S3 key using single-bucket architecture
+            full_s3_key = f"collections/visualizations-{transform_id}/{s3_key}"
+            logger.debug(f"Starting deletion of s3://{self.bucket_name}/{full_s3_key}")
 
             logger.debug(
-                f"Deleting s3://{bucket_name}/{s3_key} (owner: {owner}, transform: {transform_id})"
+                f"Deleting s3://{self.bucket_name}/{full_s3_key} (owner: {owner}, transform: {transform_id})"
             )
 
             del_start = time.time()
             self.s3_client.delete_object(
-                Bucket=bucket_name,
-                Key=s3_key,
+                Bucket=self.bucket_name,
+                Key=full_s3_key,
             )
             del_elapsed = time.time() - del_start
             delete_elapsed = time.time() - delete_start
 
             logger.info(
-                f"Successfully deleted s3://{bucket_name}/{s3_key} in {delete_elapsed:.3f}s "
+                f"Successfully deleted s3://{self.bucket_name}/{full_s3_key} in {delete_elapsed:.3f}s "
                 f"(delete op: {del_elapsed:.3f}s)"
             )
 

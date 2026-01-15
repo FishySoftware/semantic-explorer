@@ -138,13 +138,9 @@ postgresql:
       enabled: true
       interval: 30s
 
-# Redis Cluster - Production (redis-ha)
-redis:
   enabled: true
 
-redis-cluster:
   replicas: 3
-  redis:
     resources:
       requests:
         cpu: 500m

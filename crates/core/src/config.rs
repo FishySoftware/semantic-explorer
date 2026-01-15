@@ -17,8 +17,6 @@ pub struct AppConfig {
     pub server: ServerConfig,
     pub observability: ObservabilityConfig,
     pub tls: TlsConfig,
-    pub redis: RedisConfig,
-    pub rate_limit: RateLimitConfig,
     pub oidc_session: OidcSessionConfig,
 }
 
@@ -113,25 +111,6 @@ pub struct TlsConfig {
     pub ca_cert_path: String,
 }
 
-/// Redis cluster configuration
-#[derive(Debug, Clone)]
-pub struct RedisConfig {
-    pub cluster_nodes: Vec<String>,
-    pub pool_size: u32,
-    pub connect_timeout: Duration,
-}
-
-/// Rate limiting configuration
-#[derive(Debug, Clone)]
-pub struct RateLimitConfig {
-    pub enabled: bool,
-    pub default_requests_per_minute: u64,
-    pub search_requests_per_minute: u64,
-    pub chat_requests_per_minute: u64,
-    pub transform_requests_per_minute: u64,
-    pub test_requests_per_minute: u64,
-}
-
 /// OIDC session management configuration
 #[derive(Debug, Clone)]
 pub struct OidcSessionConfig {
@@ -161,8 +140,6 @@ impl AppConfig {
             server: ServerConfig::from_env()?,
             observability: ObservabilityConfig::from_env()?,
             tls: TlsConfig::from_env()?,
-            redis: RedisConfig::from_env()?,
-            rate_limit: RateLimitConfig::from_env()?,
             oidc_session: OidcSessionConfig::from_env()?,
         })
     }
@@ -393,65 +370,6 @@ impl TlsConfig {
             client_cert_path,
             client_key_path,
             ca_cert_path,
-        })
-    }
-}
-
-impl RedisConfig {
-    pub fn from_env() -> Result<Self> {
-        let cluster_nodes_str = env::var("REDIS_CLUSTER_NODES").unwrap_or_else(|_| {
-            "redis://localhost:7000,redis://localhost:7001,redis://localhost:7002".to_string()
-        });
-
-        let cluster_nodes = cluster_nodes_str
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-
-        Ok(Self {
-            cluster_nodes,
-            pool_size: env::var("REDIS_POOL_SIZE")
-                .unwrap_or_else(|_| "10".to_string())
-                .parse()
-                .context("REDIS_POOL_SIZE must be a number")?,
-            connect_timeout: Duration::from_secs(
-                env::var("REDIS_CONNECT_TIMEOUT_SECS")
-                    .unwrap_or_else(|_| "5".to_string())
-                    .parse()
-                    .context("REDIS_CONNECT_TIMEOUT_SECS must be a number")?,
-            ),
-        })
-    }
-}
-
-impl RateLimitConfig {
-    pub fn from_env() -> Result<Self> {
-        Ok(Self {
-            enabled: env::var("RATE_LIMIT_ENABLED")
-                .unwrap_or_else(|_| "true".to_string())
-                .to_lowercase()
-                == "true",
-            default_requests_per_minute: env::var("RATE_LIMIT_DEFAULT_REQUESTS_PER_MINUTE")
-                .unwrap_or_else(|_| "1000".to_string())
-                .parse()
-                .context("RATE_LIMIT_DEFAULT_REQUESTS_PER_MINUTE must be a number")?,
-            search_requests_per_minute: env::var("RATE_LIMIT_SEARCH_REQUESTS_PER_MINUTE")
-                .unwrap_or_else(|_| "600".to_string())
-                .parse()
-                .context("RATE_LIMIT_SEARCH_REQUESTS_PER_MINUTE must be a number")?,
-            chat_requests_per_minute: env::var("RATE_LIMIT_CHAT_REQUESTS_PER_MINUTE")
-                .unwrap_or_else(|_| "200".to_string())
-                .parse()
-                .context("RATE_LIMIT_CHAT_REQUESTS_PER_MINUTE must be a number")?,
-            transform_requests_per_minute: env::var("RATE_LIMIT_TRANSFORM_REQUESTS_PER_MINUTE")
-                .unwrap_or_else(|_| "100".to_string())
-                .parse()
-                .context("RATE_LIMIT_TRANSFORM_REQUESTS_PER_MINUTE must be a number")?,
-            test_requests_per_minute: env::var("RATE_LIMIT_TEST_REQUESTS_PER_MINUTE")
-                .unwrap_or_else(|_| "100".to_string())
-                .parse()
-                .context("RATE_LIMIT_TEST_REQUESTS_PER_MINUTE must be a number")?,
         })
     }
 }

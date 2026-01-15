@@ -1,7 +1,4 @@
 dependencies:
-- name: redis-ha
-  repository: https://dandydeveloper.github.io/charts
-  version: 4.35.5
 - name: nats
   repository: https://nats-io.github.io/k8s/helm/charts/
   version: 1.2.11
@@ -17,5 +14,5 @@ dependencies:
 - name: prometheus
   repository: https://prometheus-community.github.io/helm-charts
   version: 25.30.2
-digest: sha256:e8fb6672107842162a6f6dc885c6c6248a5caba6a4941e9838323166abed3cd6
-generated: "2026-01-13T18:52:27.087195575-05:00"
+digest: sha256:92f2478c44202c14460d683bd4efa9d69aa7ee72783b939fc6129e628843a69c
+generated: "2026-01-14T21:33:32.178525852-05:00"

@@ -13,7 +13,7 @@ The `worker-datasets` service processes document chunks via NATS JetStream, gene
 - 🎯 Create and manage Qdrant vector collections
 - 💾 Store embeddings with metadata in Qdrant
 - 📊 Apply quantization for 10x faster search
-- 🔄 Handle request deduplication via Redis
+- 🔄 Handle request deduplication via NATS JetStream
 - 💰 Track API costs and usage metrics
 - 📝 Publish embedding results to API and downstream workers
 
@@ -39,7 +39,7 @@ pub enum EmbedderProvider {
 pub struct EmbedderClient {
     provider: EmbedderProvider,
     batch_size: usize,
-    cache: Redis,
+    deduplication: NATS JetStream,
 }
 
 impl EmbedderClient {
@@ -98,7 +98,7 @@ impl EmbedderClient {
 - NATS 2.10+ (job queue)
 - S3-compatible storage
 - Qdrant 1.8+ (vector storage)
-- Redis 7+ (deduplication cache, optional)
+- NATS JetStream with duplicate_window)
 - API keys (OpenAI, Cohere, or local model)
 
 ### Local Development
@@ -113,7 +113,7 @@ cp .env.example .env
 # QDRANT_URL=http://localhost:6334
 # EMBEDDER_PROVIDER=openai  # or cohere, local
 # OPENAI_API_KEY=sk-...
-# REDIS_CLUSTER_NODES=localhost:6379
+# # Deduplication handled by NATS JetStream duplicate_window
 
 # Run migrations
 cd ../api
@@ -154,7 +154,7 @@ docker run \
      "quantization": "product"
    }
 
-3. Check Redis for duplicate requests (idempotency)
+3. Message deduplication via NATS Msg-Id (idempotency)
    GET request-dedup:{hash}  → Cache hit = skip
 
 4. Extract texts and create batches
@@ -218,8 +218,8 @@ OPENAI_API_KEY=sk-...
 # Cohere Embeddings
 COHERE_API_KEY=...
 
-# Redis (for request deduplication)
-REDIS_CLUSTER_NODES=localhost:6379
+# NATS provides message deduplication
+# Deduplication handled by NATS JetStream duplicate_window
 
 # Worker Configuration
 SERVICE_NAME=worker-datasets     # Optional, defaults to worker-datasets
@@ -343,7 +343,7 @@ Product Quantization:
 
 ### Caching
 ```bash
-# Request deduplication via Redis
+# Request deduplication via NATS JetStream
 # Reduces duplicate API calls
 REQUEST_DEDUP_TTL_SECS=3600  # Cache for 1 hour
 ENABLE_EMBEDDING_CACHE=true
