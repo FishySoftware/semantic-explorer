@@ -189,13 +189,9 @@ postgresql:
     passwordKey: "password"
     sslMode: require
 
-# Redis - DISABLED (use external)
-redis:
   enabled: false
   external:
     enabled: true
-    clusterNodes: "redis://redis.internal.example.com:6379"
-    existingSecret: "redis-secret"
     passwordKey: "password"
 
 # NATS - DISABLED (use external)
@@ -377,8 +373,6 @@ commonAnnotations: {}
 # kubectl create secret generic postgresql-secret \
 #   --from-literal=password="your-postgres-password"
 #
-# kubectl create secret generic redis-secret \
-#   --from-literal=password="your-redis-password"
 #
 # kubectl create secret generic qdrant-secret \
 #   --from-literal=api-key="your-qdrant-api-key"

@@ -368,12 +368,8 @@ pub(crate) async fn grab_public_collection(
     tx.commit().await?;
 
     // Copy S3 files from source bucket to new bucket
-    match crate::storage::rustfs::copy_bucket_files(
-        s3_client,
-        &source_collection.bucket,
-        &new_bucket,
-    )
-    .await
+    match crate::storage::s3::copy_bucket_files(s3_client, &source_collection.bucket, &new_bucket)
+        .await
     {
         Ok(copied_count) => {
             tracing::info!(

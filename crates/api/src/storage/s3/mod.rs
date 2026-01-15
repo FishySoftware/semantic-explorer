@@ -8,7 +8,7 @@ use semantic_explorer_core::observability::record_storage_operation;
 use std::{env, time::Instant};
 use tracing::warn;
 
-use crate::storage::rustfs::models::{CollectionFile, DocumentUpload, PaginatedFiles};
+use crate::storage::s3::models::{CollectionFile, DocumentUpload, PaginatedFiles};
 
 // Maximum file size for API downloads: 100MB
 // NOTE: Limit prevents:
@@ -30,7 +30,7 @@ pub(crate) async fn initialize_client() -> Result<aws_sdk_s3::Client> {
             env::var("AWS_SECRET_ACCESS_KEY")?,
             None,
             None,
-            "rustfs",
+            "s3",
         ))
         .endpoint_url(&aws_endpoint_url)
         .load()
@@ -318,6 +318,14 @@ pub(crate) async fn get_file_with_size_check(
 
     // Use single-bucket architecture
     let (actual_bucket, actual_key) = get_collection_s3_path(bucket, key)?;
+
+    tracing::info!(
+        bucket = %bucket,
+        key = %key,
+        actual_bucket = %actual_bucket,
+        actual_key = %actual_key,
+        "Resolved S3 path for download"
+    );
 
     // First, check file size using head_object
     let head_result = client

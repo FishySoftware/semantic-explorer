@@ -51,7 +51,7 @@ pub async fn initialize_client() -> Result<aws_sdk_s3::Client> {
             env::var("AWS_SECRET_ACCESS_KEY")?,
             None,
             None,
-            "rustfs",
+            "s3",
         ))
         .endpoint_url(env::var("AWS_ENDPOINT_URL")?)
         .load()

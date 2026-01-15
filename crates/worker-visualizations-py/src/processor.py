@@ -37,31 +37,12 @@ class VisualizationProcessor:
         """Initialize processor with Qdrant connection using gRPC."""
         init_start = time.time()
         # Convert HTTP URL to gRPC URL
-        grpc_url = self._convert_to_grpc_url(qdrant_url)
+        grpc_url = qdrant_url
         logger.debug(f"Converting Qdrant URL: {qdrant_url} -> {grpc_url}")
         self.qdrant = QdrantClient(url=grpc_url, prefer_grpc=True)
         init_elapsed = time.time() - init_start
         logger.info(f"Initialized Qdrant client in {init_elapsed:.3f}s: {grpc_url}")
 
-    @staticmethod
-    def _convert_to_grpc_url(url: str) -> str:
-        """Convert HTTP Qdrant URL to gRPC URL."""
-        if url.startswith("http://"):
-            host_port = url.replace("http://", "")
-            # Default gRPC port is 6334
-            if ":" in host_port:
-                host = host_port.split(":")[0]
-                return f"{host}:6334"
-            else:
-                return f"{host_port}:6334"
-        elif url.startswith("https://"):
-            host_port = url.replace("https://", "")
-            if ":" in host_port:
-                host = host_port.split(":")[0]
-                return f"{host}:6334"
-            else:
-                return f"{host_port}:6334"
-        return url
 
     async def process_job(
         self,

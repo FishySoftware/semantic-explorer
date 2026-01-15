@@ -10,7 +10,6 @@ mod embedders;
 mod embedding;
 mod errors;
 mod llms;
-mod middleware;
 mod observability;
 mod search;
 mod storage;
@@ -79,45 +78,18 @@ async fn main() -> Result<()> {
     // Graceful shutdown timeout from config or default 30 seconds
     let shutdown_timeout = config.server.shutdown_timeout_secs.unwrap_or(30);
 
-    let s3_client = storage::rustfs::initialize_client().await?;
+    let s3_client = storage::s3::initialize_client().await?;
     let qdrant_client = storage::qdrant::initialize_client(&config.qdrant).await?;
     let postgres_pool = storage::postgres::initialize_pool(&config.database).await?;
     let openid_client =
         auth::oidc::initialize_client(format!("{public_url}/auth_callback")).await?;
     let nats_client = async_nats::connect(&config.nats.url).await?;
 
-    // Initialize Redis cluster client for rate limiting
-    let redis_client = redis::cluster::ClusterClient::new(config.redis.cluster_nodes.clone())?;
-
-    // Test Redis connection
-    match redis_client.get_async_connection().await {
-        Ok(_) => {
-            info!("Redis cluster connection established");
-        }
-        Err(e) => {
-            if config.rate_limit.enabled {
-                return Err(anyhow::anyhow!(
-                    "Failed to connect to Redis cluster (required for rate limiting): {}",
-                    e
-                ));
-            } else {
-                tracing::warn!(
-                    "Redis cluster unavailable but rate limiting is disabled: {}",
-                    e
-                );
-            }
-        }
-    }
-
     // Keep references for graceful shutdown
     let nats_shutdown = nats_client.clone();
     let postgres_shutdown = postgres_pool.clone();
-    let redis_shutdown = redis_client.clone();
 
     semantic_explorer_core::nats::initialize_jetstream(&nats_client, &config.nats).await?;
-
-    // Start session cleanup background job (runs every hour)
-    let session_cleanup_handle = start_session_cleanup_job(postgres_pool.clone());
 
     // Start audit event consumer worker
     let audit_consumer_handle = {
@@ -159,13 +131,6 @@ async fn main() -> Result<()> {
     // Initialize audit event infrastructure (database and NATS)
     audit::events::init(postgres_pool.clone(), nats_client.clone());
 
-    // Initialize rate limiting metrics
-    let rate_limit_metrics = middleware::RateLimitMetrics::new(&prometheus.registry)
-        .map_err(|e| anyhow::anyhow!("Failed to initialize rate limit metrics: {}", e))?;
-
-    // Clone config and clients for use in server closure
-    let rate_limit_config = config.rate_limit.clone();
-
     let server = HttpServer::new(move || {
         // Build CORS configuration based on allowed origins
         let cors = if cors_origins.is_empty() {
@@ -196,22 +161,6 @@ async fn main() -> Result<()> {
             cors
         };
 
-        // Create rate limiter (always wrap, but it can be disabled via config)
-        let rate_limiter = middleware::RateLimitMiddleware::new(
-            redis_client.clone(),
-            rate_limit_config.clone(),
-            rate_limit_metrics.clone(),
-        );
-
-        // Create idempotency middleware for transform endpoints
-        let idempotency_config = middleware::IdempotencyConfig::new(redis_client.clone())
-            .with_prefix("idempotency:transforms".to_string())
-            .with_ttl(86400); // 24 hours
-        let idempotency = middleware::IdempotencyMiddleware::new(idempotency_config);
-
-        // Create session activity tracking middleware
-        let session_activity = middleware::SessionActivityMiddleware::new(postgres_pool.clone());
-
         // Security headers middleware
         let security_headers = DefaultHeaders::new()
             .add(("X-Content-Type-Options", "nosniff"))
@@ -225,13 +174,10 @@ async fn main() -> Result<()> {
 
         App::new()
             .wrap(prometheus.clone())
-            .wrap(rate_limiter)
-            .wrap(idempotency)
             .wrap(cors)
             .wrap(security_headers)
             .wrap(Compress::default())
             .wrap(openid_client.get_middleware())
-            .wrap(session_activity)
             .configure(openid_client.configure_open_id())
             .app_data(web::Data::new(s3_client.clone()))
             .app_data(web::Data::new(qdrant_client.clone()))
@@ -345,9 +291,6 @@ async fn main() -> Result<()> {
             .service(api::chat::send_chat_message)
             .service(api::chat::stream_chat_message)
             .service(api::chat::regenerate_chat_message)
-            .service(api::sessions::list_sessions)
-            .service(api::sessions::revoke_session)
-            .service(api::sessions::revoke_all_sessions)
             .openapi_service(|api| {
                 SwaggerUi::new("/swagger-ui/{_:.*}").url("/api/openapi.json", api)
             })
@@ -395,7 +338,6 @@ async fn main() -> Result<()> {
     // Stop background scanners
     collection_scanner_handle.abort();
     dataset_scanner_handle.abort();
-    session_cleanup_handle.abort();
     audit_consumer_handle.abort();
 
     // Drain NATS client - flush pending messages
@@ -406,37 +348,9 @@ async fn main() -> Result<()> {
     // Close database pool
     postgres_shutdown.close().await;
 
-    // Close Redis cluster connections (drop handles cleanup automatically)
-    drop(redis_shutdown);
-
     info!("Server shutdown complete");
 
     Ok(())
-}
-
-/// Start a background job that periodically cleans up expired sessions
-/// Runs every hour and revokes sessions that have passed their expiration time
-fn start_session_cleanup_job(pool: sqlx::Pool<sqlx::Postgres>) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600)); // Run every hour
-        loop {
-            interval.tick().await;
-
-            match storage::postgres::auth::cleanup_expired_sessions(&pool).await {
-                Ok(count) => {
-                    if count > 0 {
-                        info!(
-                            "Session cleanup job completed: revoked {} expired sessions",
-                            count
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Session cleanup job failed: {}", e);
-                }
-            }
-        }
-    })
 }
 
 /// Load rustls configuration from certificate and key files

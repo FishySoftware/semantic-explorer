@@ -51,7 +51,6 @@ api:
   # Environment variables for external services
   env:
     DATABASE_URL: "postgres://user:password@postgres.prod.example.com:5432/semantic_explorer"
-    REDIS_URL: "redis://redis-primary.prod.example.com:6379"
     NATS_URL: "nats://nats1.prod.example.com:4222,nats2.prod.example.com:4222,nats3.prod.example.com:4222"
     QDRANT_URL: "http://qdrant.prod.example.com:6333"
     S3_BUCKET: "semantic-explorer-prod"
@@ -154,12 +153,9 @@ postgresql:
     passwordKey: "password"
     sslMode: verify-full
 
-redis:
   enabled: false
   external:
     enabled: true
-    clusterNodes: "redis://redis-primary.prod.example.com:6379"
-    existingSecret: "external-redis-secret"
     passwordKey: "password"
 
 nats:
@@ -260,8 +256,6 @@ networkPolicy:
 # kubectl create secret generic external-postgresql-secret \
 #   --from-literal=password="your-postgres-password"
 #
-# kubectl create secret generic external-redis-secret \
-#   --from-literal=password="your-redis-password"
 #
 # kubectl create secret generic external-qdrant-secret \
 #   --from-literal=api-key="your-qdrant-api-key"
@@ -272,7 +266,6 @@ networkPolicy:
 #
 # Required External Services:
 # 1. PostgreSQL 14+ with automatic failover (RDS Multi-AZ, CloudSQL HA, etc.)
-# 2. Redis Cluster (3+ nodes) with high availability
 # 3. NATS JetStream Cluster (3+ nodes) with persistent storage
 # 4. Qdrant Vector Database (3+ replicas) with API authentication
 # 5. S3-Compatible Storage with versioning and lifecycle policies
@@ -280,7 +273,6 @@ networkPolicy:
 #
 # Example AWS Setup:
 #   - RDS PostgreSQL 14 (Multi-AZ)
-#   - ElastiCache Redis Cluster
 #   - Amazon MQ for NATS (or self-managed EKS cluster)
 #   - Managed Qdrant (or EC2 deployment)
 #   - S3 for object storage
@@ -288,7 +280,6 @@ networkPolicy:
 #
 # Example GCP Setup:
 #   - Cloud SQL PostgreSQL
-#   - Memorystore Redis Cluster
 #   - Cloud Tasks (alternative to NATS)
 #   - Vertex AI Vector Search (alternative to Qdrant)
 #   - Cloud Storage for object storage
@@ -296,7 +287,6 @@ networkPolicy:
 #
 # Example Azure Setup:
 #   - Azure Database for PostgreSQL
-#   - Azure Cache for Redis Enterprise Cluster
 #   - Service Bus (alternative to NATS)
 #   - Azure Cognitive Search (alternative to Qdrant)
 #   - Azure Blob Storage

@@ -17,7 +17,6 @@ actix-multipart = { workspace = true }
 actix-files = { workspace = true }
 actix_web_openidconnect = { workspace = true }
 actix-web-prom = { workspace = true }
-redis = { workspace = true }
 thiserror = { workspace = true }
 async-nats = { workspace = true }
 async-stream = { workspace = true }

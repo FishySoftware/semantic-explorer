@@ -9,7 +9,6 @@ use crate::audit::events;
 use crate::errors::{ApiError, unauthorized};
 
 pub(crate) mod oidc;
-pub(crate) mod session_manager;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub(crate) struct User {

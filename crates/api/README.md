@@ -22,9 +22,7 @@ The `semantic-explorer` API crate is the core HTTP server that orchestrates the 
 ### Enterprise Features  
 - 🛡️ **Row-Level Security** - Database-enforced access control via PostgreSQL RLS
 - 🌐 **HTTP Caching** - ETag and conditional request support (If-None-Match, If-Modified-Since)
-- ⚡ **Rate Limiting** - Token-bucket algorithm per user via Redis
 - 🔐 **Encryption** - AES-256 encryption for API keys at rest (optional)
-- 🔄 **Idempotency** - Idempotent request handling via Redis deduplication
 - 📊 **Prometheus Metrics** - Real-time metrics export for monitoring (error rates, latency, costs)
 - 🔍 **Distributed Tracing** - OpenTelemetry integration for end-to-end tracing
 - 🏗️ **High Availability** - Connection pooling, async workers, horizontal scaling
@@ -143,7 +141,7 @@ sequenceDiagram
 | `audit` | Security event logging |
 | `audit_worker` | Async audit event processing worker |
 | `storage/postgres/` | Database queries and migrations |
-| `storage/rustfs/` | S3 file operations |
+| `storage/s3/` | S3 file operations |
 | `storage/qdrant/` | Vector database operations |
 | `transforms/` | Job orchestration and result listeners |
 | `collections/` | Collection domain logic |
@@ -413,24 +411,11 @@ See `worker-collections` README for complete configuration options.
 | `NATS_URL` | string | `nats://localhost:4222` | NATS server URL |
 | `NATS_REPLICAS` | integer | `3` | JetStream replication factor |
 
-### Redis Cluster
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `REDIS_CLUSTER_NODES` | string | *required if rate limiting enabled* | Comma-separated Redis nodes |
-| `REDIS_POOL_SIZE` | integer | `10` | Connection pool size |
-| `REDIS_CONNECT_TIMEOUT_SECS` | integer | `5` | Connection timeout |
-
-### Rate Limiting
-
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `RATE_LIMIT_ENABLED` | boolean | `true` | Enable rate limiting |
-| `RATE_LIMIT_DEFAULT_REQUESTS_PER_MINUTE` | integer | `1000` | Default rate limit |
-| `RATE_LIMIT_SEARCH_REQUESTS_PER_MINUTE` | integer | `600` | Search rate limit |
-| `RATE_LIMIT_CHAT_REQUESTS_PER_MINUTE` | integer | `200` | Chat rate limit |
-| `RATE_LIMIT_TRANSFORM_REQUESTS_PER_MINUTE` | integer | `100` | Transform rate limit |
-| `RATE_LIMIT_TEST_REQUESTS_PER_MINUTE` | integer | `100` | Test endpoint rate limit |
 
 ### Encryption (Optional)
 

@@ -3,7 +3,7 @@ use semantic_explorer_core::models::{CollectionTransformJob, CollectionTransform
 use semantic_explorer_core::observability::record_worker_job;
 use semantic_explorer_core::storage::{DocumentUpload, get_file_with_size_check, upload_document};
 use semantic_explorer_core::validation::{validate_bucket_name, validate_s3_key};
-use std::time::Instant;
+use std::{env, time::Instant};
 use tracing::{error, info, instrument};
 
 use crate::chunk::{ChunkingService, config::ChunkingConfig};
@@ -23,11 +23,29 @@ pub(crate) async fn process_file_job(
     let start_time = Instant::now();
     info!("Processing file job");
 
+    // Get the actual S3 bucket name from environment
+    let s3_bucket_name = match env::var("S3_BUCKET_NAME") {
+        Ok(bucket) => bucket,
+        Err(_) => {
+            let duration = start_time.elapsed().as_secs_f64();
+            record_worker_job("transform-file", duration, "failed_config");
+            error!("S3_BUCKET_NAME environment variable not set");
+            send_result(
+                &ctx.nats_client,
+                &job,
+                Err("S3_BUCKET_NAME environment variable not set".to_string()),
+                Some((duration * 1000.0) as i64),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
     // Validate S3 inputs to prevent path traversal attacks
-    if let Err(e) = validate_bucket_name(&job.bucket) {
+    if let Err(e) = validate_bucket_name(&s3_bucket_name) {
         let duration = start_time.elapsed().as_secs_f64();
         record_worker_job("transform-file", duration, "failed_validation");
-        error!(error = %e, bucket = %job.bucket, "Invalid bucket name");
+        error!(error = %e, bucket = %s3_bucket_name, "Invalid bucket name");
         send_result(
             &ctx.nats_client,
             &job,
@@ -38,10 +56,13 @@ pub(crate) async fn process_file_job(
         return Ok(());
     }
 
-    if let Err(e) = validate_s3_key(&job.source_file_key) {
+    // Construct the full S3 key: collections/{collection_id}/{filename}
+    let full_source_key = format!("collections/{}/{}", job.collection_id, job.source_file_key);
+
+    if let Err(e) = validate_s3_key(&full_source_key) {
         let duration = start_time.elapsed().as_secs_f64();
         record_worker_job("transform-file", duration, "failed_validation");
-        error!(error = %e, key = %job.source_file_key, "Invalid S3 key");
+        error!(error = %e, key = %full_source_key, "Invalid S3 key");
         send_result(
             &ctx.nats_client,
             &job,
@@ -52,9 +73,9 @@ pub(crate) async fn process_file_job(
         return Ok(());
     }
 
-    info!(bucket = %job.bucket, "Downloading file");
+    info!(bucket = %s3_bucket_name, key = %full_source_key, "Downloading file");
     let file_content =
-        match get_file_with_size_check(&ctx.s3_client, &job.bucket, &job.source_file_key).await {
+        match get_file_with_size_check(&ctx.s3_client, &s3_bucket_name, &full_source_key).await {
             Ok(content) => content,
             Err(e) => {
                 let duration = start_time.elapsed().as_secs_f64();
@@ -228,15 +249,16 @@ pub(crate) async fn process_file_job(
     }
 
     let chunks_key = format!("chunks/{}.json", job.job_id);
+    let full_chunks_key = format!("collections/{}/{}", job.collection_id, chunks_key);
     let chunks_json = serde_json::to_vec(&chunks_with_metadata)?;
     let chunks_size = chunks_json.len();
 
-    info!(chunks_size_bytes = chunks_size, "Uploading chunks");
+    info!(chunks_size_bytes = chunks_size, key = %full_chunks_key, "Uploading chunks");
     if let Err(e) = upload_document(
         &ctx.s3_client,
         DocumentUpload {
-            collection_id: job.bucket.clone(),
-            name: chunks_key.clone(),
+            collection_id: s3_bucket_name.clone(),
+            name: full_chunks_key.clone(),
             content: chunks_json,
             mime_type: "application/json".to_string(),
         },

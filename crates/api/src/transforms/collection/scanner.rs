@@ -16,7 +16,7 @@ use crate::storage::postgres::collection_transforms::{
     get_active_collection_transforms, get_collection_transform, get_processed_files,
 };
 use crate::storage::postgres::{collections, embedders};
-use crate::storage::rustfs;
+use crate::storage::s3;
 use crate::transforms::collection::models::CollectionTransform;
 
 /// Initialize the background scanner for collection transforms
@@ -199,7 +199,7 @@ async fn process_collection_transform_scan(
     // Iterate through all files in the collection bucket
     loop {
         let files =
-            rustfs::list_files(s3, &collection.bucket, 100, continuation_token.as_deref()).await?;
+            s3::list_files(s3, &collection.bucket, 100, continuation_token.as_deref()).await?;
         if files.files.is_empty() {
             break;
         }

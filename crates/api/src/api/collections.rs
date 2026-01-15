@@ -19,7 +19,7 @@ use crate::{
     storage::{
         self,
         postgres::collections,
-        rustfs::{
+        s3::{
             delete_file, empty_bucket,
             models::{DocumentUpload, PaginatedFiles},
             upload_document,
@@ -49,7 +49,7 @@ pub(crate) async fn get_collections(
             // Fetch file counts in parallel for all collections
             let count_futures: Vec<_> = collection_list
                 .iter()
-                .map(|c| storage::rustfs::count_files(s3_client, &c.bucket))
+                .map(|c| storage::s3::count_files(s3_client, &c.bucket))
                 .collect();
 
             let counts = join_all(count_futures).await;
@@ -92,7 +92,7 @@ pub(crate) async fn get_collection(
         Ok(mut collection) => {
             // Fetch file count for the collection
             if let Ok(count) =
-                storage::rustfs::count_files(s3_client.as_ref(), &collection.bucket).await
+                storage::s3::count_files(s3_client.as_ref(), &collection.bucket).await
             {
                 collection.file_count = Some(count);
             }
@@ -505,7 +505,7 @@ pub(crate) async fn list_collection_files(
 
     let s3_client = s3_client.into_inner();
 
-    match storage::rustfs::list_files(
+    match storage::s3::list_files(
         &s3_client,
         &collection.bucket,
         query.page_size,
@@ -516,7 +516,7 @@ pub(crate) async fn list_collection_files(
         Ok(mut paginated_files) => {
             if query.continuation_token.is_none() {
                 paginated_files.total_count =
-                    storage::rustfs::count_files(&s3_client, &collection.bucket)
+                    storage::s3::count_files(&s3_client, &collection.bucket)
                         .await
                         .ok();
             }
@@ -563,7 +563,7 @@ pub(crate) async fn download_collection_file(
         }
     };
 
-    match storage::rustfs::get_file_with_size_check(
+    match storage::s3::get_file_with_size_check(
         &s3_client.into_inner(),
         &collection.bucket,
         &file_key,

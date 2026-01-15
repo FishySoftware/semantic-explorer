@@ -144,16 +144,6 @@ api:
     QDRANT_TIMEOUT_SECS: "30"
     QDRANT_CONNECT_TIMEOUT_SECS: "10"
     NATS_REPLICAS: "3"
-    # Redis Configuration
-    REDIS_POOL_SIZE: "10"
-    REDIS_CONNECT_TIMEOUT_SECS: "5"
-    # Rate Limiting Configuration (high initial limits for gradual rollout)
-    RATE_LIMIT_ENABLED: "true"
-    RATE_LIMIT_DEFAULT_REQUESTS_PER_MINUTE: "1000"
-    RATE_LIMIT_SEARCH_REQUESTS_PER_MINUTE: "600"
-    RATE_LIMIT_CHAT_REQUESTS_PER_MINUTE: "200"
-    RATE_LIMIT_TRANSFORM_REQUESTS_PER_MINUTE: "100"
-    RATE_LIMIT_TEST_REQUESTS_PER_MINUTE: "100"
   envFrom: []
   nodeSelector: {}
   tolerations: []
@@ -487,75 +477,14 @@ postgresql:
     serviceMonitor:
       enabled: true
       interval: 30s
-
-# Redis HA Cluster Configuration (For rate limiting and caching)
-# Disabled by default - configure external.* for production use
-# When enabled: true, deploys Redis HA cluster using redis-ha chart
-redis:
-  enabled: false
-  # Use external Redis instance/cluster
-  external:
-    enabled: false
-    # Comma-separated list of cluster nodes (e.g., "redis://node1:7000,redis://node2:7001,redis://node3:7002")
-    clusterNodes: ""
-    password: ""
-    existingSecret: ""
-    passwordKey: "password"
-
-# Redis cluster subchart configuration (redis-ha chart with alias 'redis-cluster')
-# This section configures the dandydeveloper/redis-ha chart
-redis-cluster:
-  enabled: false  # Controlled by redis.enabled condition
-  # Redis HA configuration
-  replicas: 3
-  redis:
-    port: 6379
-    masterGroupName: "mymaster"
-    config:
-      maxmemory: "256mb"
-      maxmemory-policy: "allkeys-lru"
-      save: "900 1 300 10"
-  sentinel:
-    port: 26379
-    quorum: 2
-  auth:
-    enabled: false
-  haproxy:
-    enabled: true
-    replicas: 3
-    servicePort: 6379
-  image:
-    repository: redis
-    tag: "7-alpine"
-    pullPolicy: IfNotPresent
-  persistence:
-    enabled: true
-    storageClass: ""
-    accessMode: ReadWriteOnce
-    size: 5Gi
-  resources:
-    requests:
-      cpu: 100m
-      memory: 128Mi
-    limits:
-      cpu: 500m
-      memory: 512Mi
-  securityContext:
-    runAsUser: 999
-    fsGroup: 999
-    runAsNonRoot: true
-  containerSecurityContext:
-    allowPrivilegeEscalation: false
-    capabilities:
-      drop:
-        - ALL
-  exporter:
-    enabled: false
-    image: oliver006/redis_exporter
-    tag: latest
-    serviceMonitor:
-      enabled: true
-      interval: 30s
+  podTemplate:
+    merge:
+      spec:
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          fsGroup: 1000
+          fsGroupChangePolicy: "OnRootMismatch"
 
 # NATS Configuration (Optional Infrastructure)
 # Disabled by default - configure external.* for production use
@@ -566,63 +495,30 @@ nats:
   external:
     enabled: false
     url: ""  # e.g., "nats://nats.example.com:4222"
-    credentials:
-      existingSecret: ""
-      userKey: "username"
-      passwordKey: "password"
+    existingSecret: ""
+    credentialsKey: "credentials"
   # Internal NATS deployment
-  image:
-    registry: ""  # Defaults to global.imageRegistry
-    repository: nats
-    tag: "2.10-alpine"
-    pullPolicy: IfNotPresent
-  # Internal NATS configuration
-  natsBox:
-    enabled: false
-  config:
+  nats:
+    image: nats:2.10-alpine
     jetstream:
       enabled: true
-      fileStore:
-        maxSize: 10Gi
-    cluster:
-      enabled: true
-      replicas: 3
+      memStorage:
+        enabled: true
+        size: 2Gi
+      fileStorage:
+        enabled: true
+        size: 10Gi
+        storageClass: ""  # Defaults to global.storageClass
+  cluster:
+    enabled: true
+    replicas: 3
   resources:
     requests:
-      cpu: 1000m
-      memory: 1Gi
+      cpu: 100m
+      memory: 256Mi
     limits:
-      cpu: 4000m
-      memory: 4Gi
-  persistence:
-    enabled: true
-    storageClass: ""  # Defaults to global.storageClass
-    accessMode: ReadWriteOnce
-    size: 10Gi
-  # NATS subchart configuration (official nats chart)
-  # See: https://github.com/nats-io/k8s/tree/main/helm/charts/nats
-  container:
-    merge:
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-        allowPrivilegeEscalation: false
-        capabilities:
-          drop:
-            - ALL
-  podTemplate:
-    merge:
-      spec:
-        securityContext:
-          runAsNonRoot: true
-          runAsUser: 1000
-          fsGroup: 1000
-          fsGroupChangePolicy: "OnRootMismatch"
-  metrics:
-    enabled: true
-    serviceMonitor:
-      enabled: true
-      interval: 30s
+      cpu: 2000m
+      memory: 2Gi
 
 # Qdrant Configuration (Optional Infrastructure)
 # Disabled by default - configure external.* for production use
@@ -840,8 +736,8 @@ minio:
 # Configure external S3-compatible storage or use MinIO
 storage:
   s3:
-    # Use external S3 or S3-compatible storage (RustFS, MinIO, AWS S3, etc.)
-    endpoint: ""  # e.g., "http://rustfs:9000", "https://s3.amazonaws.com"
+    # Use external S3 or S3-compatible storage (MinIO, AWS S3, etc.)
+    endpoint: ""  # e.g., "http://minio:9000", "https://s3.amazonaws.com"
     region: "us-east-1"
     bucketName: "semantic-explorer-files"  # S3 bucket name for all collections and files
     # Force path-style addressing (bucket in URL path instead of subdomain)

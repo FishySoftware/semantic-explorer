@@ -115,67 +115,8 @@ groups:
       #       Consider tuning checkpoint_timeout or checkpoint_completion_target.
 
       # ============================================================================
-      # REDIS ALERTS
-      # ============================================================================
-
-      # NOTE: Redis cluster state monitoring requires redis_exporter with cluster info enabled
-      # This alert is a placeholder - enable if using redis-ha cluster with monitoring
-      # - alert: RedisClusterNodeDown
-      #   expr: |
-      #     redis_cluster_info_cluster_state != 1
-      #   for: 1m
-      #   labels:
-      #     severity: critical
-      #     service: redis
-      #   annotations:
-      #     summary: "Redis cluster node down"
-      #     description: |
-      #       Redis cluster is in unhealthy state.
-      #       Check node status and restart failed nodes.
-
-      # NOTE: Redis memory monitoring requires redis_exporter with memory metrics enabled
-      # This alert is a placeholder - enable if using redis-ha with monitoring
-      # - alert: RedisMemoryUsageHigh
-      #   expr: |
-      #     (redis_memory_used_bytes / redis_memory_max_bytes) > 0.85
-      #   for: 5m
-      #   labels:
-      #     severity: warning
-      #     service: redis
-      #   annotations:
-      #     summary: "Redis memory usage is high"
-      #     description: |
-      #       Redis is using {{ $value | humanizePercentage }} of max memory.
-      #       Cache evictions may occur.
-
-      # NOTE: Redis eviction monitoring requires redis_exporter with stats enabled
-      # This alert is a placeholder - enable if using redis-ha with monitoring
-      # - alert: RedisCacheEvictions
-      #   expr: |
-      #     rate(redis_evicted_keys_total[5m]) > 100
-      #   for: 5m
-      #   labels:
-      #     severity: warning
-      #     service: redis
-      #   annotations:
-      #     summary: "High Redis cache eviction rate"
-      #     description: |
-      #       Redis is evicting {{ $value | humanize }} keys/sec.
       #       This reduces cache effectiveness.
 
-      # NOTE: Redis command latency requires redis_exporter with latency histograms enabled
-      # This alert is a placeholder - enable if using redis-ha with monitoring
-      # - alert: RedisHighCommandLatency
-      #   expr: |
-      #     redis_command_duration_seconds_bucket{le="0.1"} / redis_command_duration_seconds_count < 0.5
-      #   for: 5m
-      #   labels:
-      #     severity: warning
-      #     service: redis
-      #   annotations:
-      #     summary: "Redis commands have high latency"
-      #     description: |
-      #       Less than 50% of Redis commands complete within 100ms.
       #       Check for network latency or high load.
 
       # ============================================================================

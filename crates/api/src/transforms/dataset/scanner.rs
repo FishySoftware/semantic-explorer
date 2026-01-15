@@ -20,7 +20,7 @@ use crate::storage::postgres::dataset_transforms::{
 use crate::storage::postgres::datasets;
 use crate::storage::postgres::embedded_datasets;
 use crate::storage::postgres::embedders;
-use crate::storage::rustfs;
+use crate::storage::s3;
 use crate::transforms::dataset::models::DatasetTransform;
 
 /// Initialize the background scanner for dataset transforms
@@ -177,17 +177,17 @@ async fn process_dataset_transform_scan(
         let mut continuation_token: Option<String> = None;
 
         loop {
-            let files =
-                match rustfs::list_files(s3, &bucket, 100, continuation_token.as_deref()).await {
-                    Ok(files) => files,
-                    Err(e) => {
-                        error!(
-                            "Failed to list files in bucket '{}': {}. Will create new batches.",
-                            bucket, e
-                        );
-                        break;
-                    }
-                };
+            let files = match s3::list_files(s3, &bucket, 100, continuation_token.as_deref()).await
+            {
+                Ok(files) => files,
+                Err(e) => {
+                    error!(
+                        "Failed to list files in bucket '{}': {}. Will create new batches.",
+                        bucket, e
+                    );
+                    break;
+                }
+            };
             if files.files.is_empty() {
                 break;
             }
