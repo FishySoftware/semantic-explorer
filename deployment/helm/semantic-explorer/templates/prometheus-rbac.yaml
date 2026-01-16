@@ -1,0 +1,37 @@
+{{- if and .Values.observability.prometheus.enabled (not .Values.observability.prometheus.external.enabled) }}
+---
+# Role for Prometheus to discover services in the namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-prometheus-server
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+rules:
+  - apiGroups: [""]
+    resources:
+      - services
+      - endpoints
+      - pods
+    verbs: ["get", "list", "watch"]
+---
+# RoleBinding for Prometheus service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-prometheus-server
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "semantic-explorer.fullname" . }}-prometheus-server
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "semantic-explorer.fullname" . }}-prometheus-server
+    namespace: {{ .Release.Namespace }}
+{{- end }}

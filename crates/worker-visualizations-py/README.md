@@ -16,6 +16,41 @@ Key responsibilities:
 - Upload results to S3 storage
 - Publish processing results for API consumption
 
+## Offline Mode & Font Handling
+
+The worker is designed to run in **offline/air-gapped environments** without internet access. To support this:
+
+### Font Embedding
+The datamapplot library uses Google Fonts by default. Since these cannot be fetched at runtime in offline environments, we:
+
+1. **Pre-download fonts** during Docker build using `download_fonts.sh`
+   - Downloads 15+ popular font families suitable for data visualization
+   - Includes serif, sans-serif, monospace, and display fonts
+   - Multiple weights for design flexibility
+2. **Embed fonts as base64** data URLs in the generated HTML
+3. **Patch HTML output** to remove Google Fonts references using `font_patcher.py`
+
+This ensures visualizations render correctly without requiring network access.
+
+### Supported Font Families
+The following fonts are bundled for offline use:
+- **Serif**: Playfair Display SC, Playfair Display, Merriweather, Lora, Crimson Text
+- **Sans-Serif**: Roboto, Open Sans, Lato, Montserrat, Source Sans Pro, Inter
+- **Monospace**: Roboto Mono, Source Code Pro
+- **Display**: Oswald, Raleway
+
+Users can configure any of these fonts via the `font_family` and `tooltip_font_family` settings in visualization configs.
+
+### Build Process
+```bash
+# The Dockerfile automatically:
+# 1. Downloads font CSS and .woff2 files from Google Fonts
+# 2. Bundles them into /app/fonts/ directory
+# 3. Font patcher loads and embeds them at runtime as base64 data URLs
+```
+
+If fonts fail to download during build, the system gracefully falls back to browser default fonts.
+
 ## Architecture
 
 ```mermaid

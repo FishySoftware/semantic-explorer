@@ -22,10 +22,12 @@ try:
     # Try relative imports (for package execution)
     from .models import VisualizationTransformJob, VisualizationConfig
     from .llm_namer import LLMProvider
+    from .font_patcher import patch_html_fonts
 except ImportError:
     # Fallback to absolute imports (for direct script execution)
     from models import VisualizationTransformJob, VisualizationConfig
     from llm_namer import LLMProvider
+    from font_patcher import patch_html_fonts
 
 logger = logging.getLogger(__name__)
 
@@ -638,6 +640,10 @@ class VisualizationProcessor:
             if html_content is None or len(html_content) == 0:
                 logger.error("Failed to generate HTML from interactive figure")
                 raise RuntimeError("Failed to generate HTML from interactive figure")
+
+            # Patch HTML to use local embedded fonts instead of Google Fonts
+            logger.debug("Patching HTML to use local embedded fonts...")
+            html_content = patch_html_fonts(html_content)
 
             viz_elapsed = time.time() - viz_start
             logger.info(

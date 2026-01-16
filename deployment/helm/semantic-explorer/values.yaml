@@ -76,7 +76,7 @@ api:
     targetPort: 8080
     annotations: {}
   ingress:
-    enabled: false
+    enabled: true
     className: "nginx"
     annotations: {}
     hosts:
@@ -96,7 +96,7 @@ api:
       cpu: 4000m
       memory: 8Gi
   autoscaling:
-    enabled: false
+    enabled: true
     minReplicas: 3
     maxReplicas: 10
     targetCPUUtilizationPercentage: 70
@@ -198,7 +198,7 @@ workerCollections:
       cpu: 4000m
       memory: 2Gi
   autoscaling:
-    enabled: false
+    enabled: true
     minReplicas: 2
     maxReplicas: 10
     targetCPUUtilizationPercentage: 70
@@ -238,7 +238,7 @@ workerCollections:
   metrics:
     enabled: true
     serviceMonitor:
-      enabled: true
+      enabled: false
       interval: 15s
       scrapeTimeout: 5s
 
@@ -264,7 +264,7 @@ workerDatasets:
       cpu: 4000m
       memory: 8Gi
   autoscaling:
-    enabled: false
+    enabled: true
     minReplicas: 2
     maxReplicas: 8
     targetCPUUtilizationPercentage: 70
@@ -304,7 +304,7 @@ workerDatasets:
   metrics:
     enabled: true
     serviceMonitor:
-      enabled: true
+      enabled: false
       interval: 15s
       scrapeTimeout: 5s
 
@@ -475,7 +475,7 @@ postgresql:
         cpu: 500m
         memory: 256Mi
     serviceMonitor:
-      enabled: true
+      enabled: false
       interval: 30s
   podTemplate:
     merge:
@@ -515,10 +515,10 @@ nats:
   resources:
     requests:
       cpu: 100m
-      memory: 256Mi
+      memory: 2Gi
     limits:
       cpu: 2000m
-      memory: 2Gi
+      memory: 4Gi
 
 # Qdrant Configuration (Optional Infrastructure)
 # Disabled by default - configure external.* for production use
@@ -578,7 +578,7 @@ qdrant:
   metrics:
     enabled: true
     serviceMonitor:
-      enabled: true
+      enabled: false
       interval: 30s
   nodeSelector: {}
   tolerations: []
@@ -921,7 +921,7 @@ observability:
     metrics:
       enabled: true
       serviceMonitor:
-        enabled: true
+        enabled: false
         interval: 30s
     nodeSelector: {}
     tolerations: []
@@ -942,7 +942,7 @@ prometheus:
   server:
     retention: "15d"
     extraArgs:
-      - --web.enable-remote-write-receiver
+      web.enable-remote-write-receiver: ""
     persistentVolume:
       enabled: true
       size: 50Gi
@@ -1029,8 +1029,16 @@ grafana:
     enabled: false
     url: ""  # e.g., "http://grafana.monitoring:3000"
   # Grafana subchart configuration
+  image:
+    tag: "11.6.1"
   adminUser: admin
   adminPassword: ""  # Generate random if empty
+  # RBAC configuration - use namespaced permissions only
+  rbac:
+    namespaced: true
+  # Disable init container - not needed without persistence
+  initChownData:
+    enabled: false
   # Sidecar for auto-discovering dashboards from ConfigMaps
   sidecar:
     dashboards:
@@ -1039,10 +1047,30 @@ grafana:
       labelValue: "1"
       folder: /tmp/dashboards
       searchNamespace: ALL
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
     datasources:
       enabled: true
       label: grafana_datasource
       labelValue: "1"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
   # Datasources are provided via ConfigMap with grafana_datasource label
   # See templates/grafana-datasources-configmap.yaml
   # Install Quickwit datasource plugin
