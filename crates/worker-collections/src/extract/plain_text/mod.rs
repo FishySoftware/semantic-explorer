@@ -4,7 +4,8 @@ use unicode_normalization::UnicodeNormalization;
 use crate::extract::config::{ExtractionConfig, ExtractionOptions};
 use crate::extract::error::{ExtractionError, ExtractionResult};
 use crate::extract::{
-    archive, email, epub, html, json, legacy_doc, log, markdown, office, open_office, pdf, rtf, xml,
+    archive, email, epub, html, json, legacy_doc, legacy_ppt, legacy_xls, log, markdown, office,
+    open_office, pdf, rtf, xml,
 };
 
 /// Result of text extraction with optional metadata
@@ -109,8 +110,23 @@ fn process_application_type(
                 Ok(InternalExtraction::text_only(text))
             }
         }
-        "vnd.ms-excel"
-        | "vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        "vnd.ms-excel" => {
+            // Check if this is a legacy .xls (OLE/CFB format) or modern .xlsx
+            if legacy_xls::is_legacy_xls(buffer) {
+                let result = legacy_xls::extract_with_metadata(buffer, options)
+                    .map_err(|e| ExtractionError::parse_error("Legacy XLS", e.to_string()))?;
+                Ok(InternalExtraction {
+                    text: result.text,
+                    metadata: result.metadata,
+                })
+            } else {
+                // Try as modern .xlsx
+                let text = office::extract_text_from_spreadsheet(buffer)
+                    .map_err(|e| ExtractionError::parse_error("Excel", e.to_string()))?;
+                Ok(InternalExtraction::text_only(text))
+            }
+        }
+        "vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         | "vnd.openxmlformats-officedocument.spreadsheetml.template"
         | "vnd.ms-excel.sheet.macroEnabled.12"
         | "vnd.ms-excel.template.macroEnabled.12"
@@ -120,11 +136,23 @@ fn process_application_type(
                 .map_err(|e| ExtractionError::parse_error("Excel", e.to_string()))?;
             Ok(InternalExtraction::text_only(text))
         }
-        "mspowerpoint"
-        | "powerpoint"
-        | "vnd.ms-powerpoint"
-        | "x-mspowerpoint"
-        | "vnd.openxmlformats-officedocument.presentationml.presentation" => {
+        "mspowerpoint" | "powerpoint" | "vnd.ms-powerpoint" | "x-mspowerpoint" => {
+            // Check if this is a legacy .ppt (OLE/CFB format) or modern .pptx
+            if legacy_ppt::is_legacy_ppt(buffer) {
+                let result = legacy_ppt::extract_with_metadata(buffer, options)
+                    .map_err(|e| ExtractionError::parse_error("Legacy PPT", e.to_string()))?;
+                Ok(InternalExtraction {
+                    text: result.text,
+                    metadata: result.metadata,
+                })
+            } else {
+                // Try as modern .pptx
+                let text = office::extract_text_from_presentation(buffer)
+                    .map_err(|e| ExtractionError::parse_error("PowerPoint", e.to_string()))?;
+                Ok(InternalExtraction::text_only(text))
+            }
+        }
+        "vnd.openxmlformats-officedocument.presentationml.presentation" => {
             let text = office::extract_text_from_presentation(buffer)
                 .map_err(|e| ExtractionError::parse_error("PowerPoint", e.to_string()))?;
             Ok(InternalExtraction::text_only(text))

@@ -407,6 +407,7 @@ pub async fn update_embedded_dataset_last_processed_at_to(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn create_embedded_dataset_in_transaction(
     tx: &mut Transaction<'_, Postgres>,
     title: &str,

@@ -208,7 +208,7 @@ pub(crate) async fn get_embedders(
     decrypt_embedders_api_keys(encryption, embedders)
 }
 
-#[tracing::instrument(name = "database.create_embedder", skip(pool, create_embedder, encryption), fields(database.system = "postgresql", database.operation = "INSERT", owner_id = %user.username()))]
+#[tracing::instrument(name = "database.create_embedder", skip(pool, create_embedder, encryption), fields(database.system = "postgresql", database.operation = "INSERT", owner_id = %user.as_owner()))]
 pub(crate) async fn create_embedder(
     pool: &Pool<Postgres>,
     user: &AuthenticatedUser,
@@ -219,13 +219,13 @@ pub(crate) async fn create_embedder(
     let encrypted_api_key = encrypt_api_key(encryption, &create_embedder.api_key)?;
 
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, user.as_str()).await?;
+    super::rls::set_rls_user_tx(&mut tx, &user.as_owner()).await?;
 
     let start = Instant::now();
     let result = sqlx::query_as::<_, Embedder>(CREATE_EMBEDDER_QUERY)
         .bind(&create_embedder.name)
-        .bind(user.as_str())
-        .bind(user.username())
+        .bind(user.as_owner())
+        .bind(&**user)
         .bind(&create_embedder.provider)
         .bind(&create_embedder.base_url)
         .bind(&encrypted_api_key)
@@ -351,7 +351,7 @@ pub(crate) async fn get_recent_public_embedders(
     decrypt_embedders_api_keys(encryption, result?)
 }
 
-#[tracing::instrument(name = "database.grab_public_embedder", skip(pool, encryption), fields(database.system = "postgresql", database.operation = "INSERT", owner_id = %user.username(), embedder_id = %embedder_id))]
+#[tracing::instrument(name = "database.grab_public_embedder", skip(pool, encryption), fields(database.system = "postgresql", database.operation = "INSERT", owner_id = %user.as_owner(), embedder_id = %embedder_id))]
 pub(crate) async fn grab_public_embedder(
     pool: &Pool<Postgres>,
     user: &AuthenticatedUser,
@@ -359,13 +359,13 @@ pub(crate) async fn grab_public_embedder(
     encryption: &EncryptionService,
 ) -> Result<Embedder> {
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, user.as_str()).await?;
+    super::rls::set_rls_user_tx(&mut tx, &user.as_owner()).await?;
 
     let start = Instant::now();
     // The encrypted key is copied from the source embedder to the new one
     let result = sqlx::query_as::<_, Embedder>(GRAB_PUBLIC_EMBEDDER_QUERY)
-        .bind(user.as_str())
-        .bind(user.username())
+        .bind(user.as_owner())
+        .bind(&**user)
         .bind(embedder_id)
         .fetch_one(&mut *tx)
         .await;

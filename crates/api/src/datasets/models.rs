@@ -87,6 +87,14 @@ pub(crate) struct DatasetWithStats {
     pub(crate) total_chunks: i64,
 }
 
+#[derive(Serialize, ToSchema)]
+pub(crate) struct PaginatedDatasetList {
+    pub(crate) items: Vec<DatasetWithStats>,
+    pub(crate) total_count: i64,
+    pub(crate) limit: i64,
+    pub(crate) offset: i64,
+}
+
 #[derive(Serialize, Deserialize, ToSchema, FromRow)]
 pub(crate) struct CreateDatasetItems {
     #[serde(deserialize_with = "non_empty")]

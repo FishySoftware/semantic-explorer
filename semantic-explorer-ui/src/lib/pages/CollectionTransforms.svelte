@@ -97,6 +97,10 @@
 	let maxReconnectAttempts = 10;
 	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
+	// SSE batching for stats updates
+	let sseUpdateQueue = new SvelteSet<number>();
+	let sseUpdateTimer: ReturnType<typeof setTimeout> | null = null;
+
 	// Modal state
 	let showCreateModal = $state(false);
 
@@ -185,9 +189,10 @@
 			const data: PaginatedResponse = await response.json();
 			transforms = data.items;
 			totalCount = data.total_count;
-			for (const transform of transforms) {
-				fetchStatsForTransform(transform.collection_transform_id);
-			}
+
+			// Fetch stats in batch for all transforms
+			const transformIds = transforms.map((t) => t.collection_transform_id);
+			await fetchBatchStats(transformIds);
 		} catch (e) {
 			const message = formatError(e, 'Failed to fetch collection transforms');
 			error = message;
@@ -236,6 +241,55 @@
 		}
 	}
 
+	async function fetchBatchStats(transformIds: number[]) {
+		if (transformIds.length === 0) return;
+
+		try {
+			const response = await fetch('/api/collection-transforms/batch-stats', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ collection_transform_ids: transformIds }),
+			});
+
+			if (response.ok) {
+				const batchStats: Record<number, any> = await response.json();
+				for (const [idStr, stats] of Object.entries(batchStats)) {
+					const id = parseInt(idStr, 10);
+					statsMap.set(id, stats);
+				}
+				statsMap = statsMap; // Trigger reactivity
+			} else {
+				console.error('Failed to fetch batch stats:', await response.text());
+			}
+		} catch (e) {
+			console.error('Failed to fetch batch stats:', e);
+		}
+	}
+
+	function queueSSEStatsUpdate(transformId: number) {
+		// Add to queue
+		sseUpdateQueue.add(transformId);
+
+		// Clear existing timer
+		if (sseUpdateTimer) {
+			clearTimeout(sseUpdateTimer);
+		}
+
+		// Batch updates: wait 100ms to collect multiple events, then fetch in batch
+		sseUpdateTimer = setTimeout(() => {
+			const idsToUpdate = Array.from(sseUpdateQueue);
+			sseUpdateQueue.clear();
+
+			if (idsToUpdate.length === 1) {
+				// Single update - use individual endpoint
+				fetchStatsForTransform(idsToUpdate[0]);
+			} else {
+				// Multiple updates - use batch endpoint
+				fetchBatchStats(idsToUpdate);
+			}
+		}, 100);
+	}
+
 	function closeFailedFilesModal() {
 		showFailedFilesModal = false;
 		failedFilesTransformTitle = '';
@@ -248,7 +302,8 @@
 			if (!response.ok) {
 				throw new Error(`Failed to fetch collections: ${response.statusText}`);
 			}
-			collections = await response.json();
+			const data = await response.json();
+			collections = data.collections ?? [];
 		} catch (e) {
 			console.error('Failed to fetch collections:', e);
 		}
@@ -260,7 +315,8 @@
 			if (!response.ok) {
 				throw new Error(`Failed to fetch datasets: ${response.statusText}`);
 			}
-			datasets = await response.json();
+			const data = await response.json();
+			datasets = data.items ?? [];
 		} catch (e) {
 			console.error('Failed to fetch datasets:', e);
 		}
@@ -380,8 +436,8 @@
 					const statusUpdate = JSON.parse(event.data);
 					// Handle status update - refresh specific transform or trigger refetch
 					if (statusUpdate.collection_transform_id) {
-						// Refresh stats for the specific transform
-						fetchStatsForTransform(statusUpdate.collection_transform_id);
+						// Queue stats update for batching (reduces requests during high-frequency updates)
+						queueSSEStatsUpdate(statusUpdate.collection_transform_id);
 					}
 				} catch (e) {
 					console.error('Failed to parse SSE status event:', e);

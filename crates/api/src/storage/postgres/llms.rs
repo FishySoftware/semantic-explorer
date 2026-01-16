@@ -215,7 +215,7 @@ pub(crate) async fn get_recent_public_llms(
     decrypt_llms_api_keys(encryption, result?)
 }
 
-#[tracing::instrument(name = "database.create_llm", skip(pool, create_llm, encryption), fields(database.system = "postgresql", database.operation = "INSERT", owner_id = %user.username()))]
+#[tracing::instrument(name = "database.create_llm", skip(pool, create_llm, encryption), fields(database.system = "postgresql", database.operation = "INSERT", owner_id = %user.as_owner()))]
 pub(crate) async fn create_llm(
     pool: &Pool<Postgres>,
     user: &AuthenticatedUser,
@@ -226,13 +226,13 @@ pub(crate) async fn create_llm(
     let encrypted_api_key = encrypt_api_key(encryption, &create_llm.api_key)?;
 
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, user.as_str()).await?;
+    super::rls::set_rls_user_tx(&mut tx, &user.as_owner()).await?;
 
     let start = Instant::now();
     let result = sqlx::query_as::<_, LargeLanguageModel>(CREATE_LLM_QUERY)
         .bind(&create_llm.name)
-        .bind(user.as_str())
-        .bind(user.username())
+        .bind(user.as_owner())
+        .bind(&**user)
         .bind(&create_llm.provider)
         .bind(&create_llm.base_url)
         .bind(&encrypted_api_key)
@@ -310,7 +310,7 @@ pub(crate) async fn update_llm(
     decrypt_llm_api_key(encryption, llm)
 }
 
-#[tracing::instrument(name = "database.grab_public_llm", skip(pool, encryption), fields(database.system = "postgresql", database.operation = "INSERT", owner_id = %user.username(), llm_id = %llm_id))]
+#[tracing::instrument(name = "database.grab_public_llm", skip(pool, encryption), fields(database.system = "postgresql", database.operation = "INSERT", owner_id = %user.as_owner(), llm_id = %llm_id))]
 pub(crate) async fn grab_public_llm(
     pool: &Pool<Postgres>,
     user: &AuthenticatedUser,
@@ -318,13 +318,13 @@ pub(crate) async fn grab_public_llm(
     encryption: &EncryptionService,
 ) -> Result<LargeLanguageModel> {
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, user.as_str()).await?;
+    super::rls::set_rls_user_tx(&mut tx, &user.as_owner()).await?;
 
     let start = Instant::now();
     // The encrypted key is copied from the source LLM to the new one
     let result = sqlx::query_as::<_, LargeLanguageModel>(GRAB_PUBLIC_LLM_QUERY)
-        .bind(user.as_str())
-        .bind(user.username())
+        .bind(user.as_owner())
+        .bind(&**user)
         .bind(llm_id)
         .fetch_one(&mut *tx)
         .await;

@@ -21,7 +21,6 @@ pub(crate) async fn process_file_job(
     ctx: WorkerContext,
 ) -> Result<()> {
     let start_time = Instant::now();
-    info!("Processing file job");
 
     // Get the actual S3 bucket name from environment
     let s3_bucket_name = match env::var("S3_BUCKET_NAME") {
@@ -270,8 +269,6 @@ pub(crate) async fn process_file_job(
         error!(error = %e, "Failed to upload chunks");
         return Err(anyhow::anyhow!("Failed to upload chunks: {}", e));
     }
-
-    info!("Chunks uploaded successfully");
 
     let duration = start_time.elapsed().as_secs_f64();
     record_worker_job("transform-file", duration, "success");

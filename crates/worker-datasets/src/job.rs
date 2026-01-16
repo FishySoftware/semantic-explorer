@@ -202,15 +202,7 @@ pub(crate) async fn process_vector_job(job: DatasetTransformJob, ctx: WorkerCont
         .await
         .is_ok();
 
-    if job.wipe_collection && collection_exists {
-        info!("Deleting collection for fresh start");
-        qdrant_client
-            .delete_collection(&job.collection_name)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to delete collection: {e}"))?;
-    }
-
-    if !collection_exists || job.wipe_collection {
+    if !collection_exists {
         info!(
             vector_size = embedding_size,
             distance = "Cosine",

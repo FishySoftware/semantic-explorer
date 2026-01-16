@@ -9,6 +9,8 @@ mod epub;
 mod html;
 mod json;
 mod legacy_doc;
+mod legacy_ppt;
+mod legacy_xls;
 mod log;
 mod markdown;
 mod office;

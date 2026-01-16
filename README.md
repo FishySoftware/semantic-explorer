@@ -9,7 +9,7 @@ Production-grade semantic exploration platform with advanced caching, real-time 
 ## 🎯 Core Features
 
 ### Document Processing
-- 📄 **Multi-format Support** - PDF, Microsoft Office, OpenDocument, HTML, XML, plain text
+- 📄 **Multi-format Support** - PDF, Microsoft Office (modern and legacy), OpenDocument, HTML, XML, plain text
 - 🔄 **Async Job Processing** - Background workers handle extraction, embedding, visualization via NATS JetStream
 - 📊 **Structured Datasets** - Automatic chunking, deduplication, metadata extraction
 - 🎯 **Custom Transforms** - Collection, Dataset, and Visualization pipeline stages

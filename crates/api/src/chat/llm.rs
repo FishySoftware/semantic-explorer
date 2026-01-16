@@ -376,9 +376,7 @@ pub(crate) async fn generate_response_stream(
 
                     match serde_json::from_str::<serde_json::Value>(data) {
                         Ok(json) => {
-                            tracing::debug!(json = %json, provider = %provider_clone, "Parsed LLM stream JSON");
                             if let Some(content) = extract_content_from_provider(&json, &provider_clone) {
-                                tracing::debug!(content = %content, "Extracted content from LLM stream");
                                 yield Ok(content);
                             } else {
                                 tracing::debug!("No content extracted from LLM stream JSON");

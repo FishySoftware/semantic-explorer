@@ -31,8 +31,6 @@ pub struct CreateDatasetTransform {
     pub embedder_ids: Vec<i32>, // Must have at least 1 embedder
     #[serde(default)]
     pub embedding_batch_size: Option<i32>,
-    #[serde(default)]
-    pub wipe_collection: bool,
 }
 
 /// Request to update an existing Dataset Transform

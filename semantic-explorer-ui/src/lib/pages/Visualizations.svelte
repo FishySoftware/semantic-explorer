@@ -23,6 +23,8 @@
 		onViewVisualization?: (_id: number) => void;
 	}
 
+	import { createPollingInterval } from '../utils/polling';
+
 	let { onViewVisualization }: Props = $props();
 
 	let transforms = $state<VisualizationTransform[]>([]);
@@ -30,8 +32,10 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let searchQuery = $state('');
-	let pollInterval: number | null = null;
 	let transformPendingDelete = $state<VisualizationTransform | null>(null);
+
+	let pollingController: ReturnType<typeof createPollingInterval> | null = null;
+	let isLoadingTransforms = false;
 
 	onMount(async () => {
 		await loadTransforms();
@@ -43,29 +47,44 @@
 	});
 
 	function startPolling() {
-		// Poll for updates every 3 seconds if any transforms are processing or pending
-		pollInterval = window.setInterval(async () => {
-			const hasProcessing = transforms.some(
-				(t) => t.last_run_status === 'processing' || t.last_run_status === 'pending'
-			);
-			if (hasProcessing) {
-				await loadTransforms();
+		// Create managed polling with deduplication
+		pollingController = createPollingInterval(
+			async () => {
+				// Check if any transforms are processing or pending
+				const hasProcessing = transforms.some(
+					(t) => t.last_run_status === 'processing' || t.last_run_status === 'pending'
+				);
+
+				// Only load if there's processing work and we're not already loading
+				if (hasProcessing && !isLoadingTransforms) {
+					await loadTransforms();
+				}
+			},
+			{
+				interval: 3000,
+				shouldContinue: () => true, // Always continue polling
+				onError: (error) => {
+					console.error('Polling error:', error);
+					// Continue polling despite errors
+				},
 			}
-		}, 3000);
+		);
 	}
 
 	function stopPolling() {
-		if (pollInterval !== null) {
-			clearInterval(pollInterval);
-			pollInterval = null;
+		if (pollingController) {
+			pollingController.stop();
+			pollingController = null;
 		}
 	}
 
 	async function loadTransforms() {
-		if (!loading) {
-			// Silent refresh for polling - don't show loading state
+		const isInitialLoad = loading;
+		if (isInitialLoad) {
+			loading = true;
 		}
 		error = null;
+		isLoadingTransforms = true;
 
 		try {
 			const params = new SvelteURLSearchParams();
@@ -86,9 +105,14 @@
 			await loadCompletedVisualizations();
 		} catch (err) {
 			error = formatError(err);
-			toastStore.error(error);
+			if (isInitialLoad) {
+				toastStore.error(error);
+			}
 		} finally {
-			loading = false;
+			isLoadingTransforms = false;
+			if (isInitialLoad) {
+				loading = false;
+			}
 		}
 	}
 

@@ -309,23 +309,8 @@ pub(crate) async fn get_file_with_size_check(
     key: &str,
 ) -> Result<Vec<u8>> {
     let start = Instant::now();
-
-    tracing::debug!(
-        bucket = %bucket,
-        key = %key,
-        "Checking file size before download"
-    );
-
     // Use single-bucket architecture
     let (actual_bucket, actual_key) = get_collection_s3_path(bucket, key)?;
-
-    tracing::info!(
-        bucket = %bucket,
-        key = %key,
-        actual_bucket = %actual_bucket,
-        actual_key = %actual_key,
-        "Resolved S3 path for download"
-    );
 
     // First, check file size using head_object
     let head_result = client
@@ -471,12 +456,6 @@ pub(crate) async fn copy_bucket_files(
 ) -> Result<usize> {
     let start = Instant::now();
     let mut copied_count = 0;
-
-    tracing::info!(
-        source_bucket = %source_bucket,
-        destination_bucket = %destination_bucket,
-        "Copying all files from source bucket to destination bucket"
-    );
 
     // First, create the destination bucket
     match s3_client

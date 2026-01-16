@@ -35,6 +35,8 @@ CREATE INDEX IF NOT EXISTS idx_collections_title_tsvector
   ON collections USING GIN (to_tsvector('english', title));
 CREATE INDEX IF NOT EXISTS idx_collections_tags 
   ON collections USING GIN (tags);
+CREATE INDEX IF NOT EXISTS idx_collections_title ON collections(title);
+CREATE INDEX IF NOT EXISTS idx_collections_owner_title ON collections(owner_id, title);
 
 CREATE TABLE IF NOT EXISTS datasets (
     dataset_id          SERIAL PRIMARY KEY,
@@ -44,6 +46,8 @@ CREATE TABLE IF NOT EXISTS datasets (
     owner_display_name  TEXT                     NOT NULL,
     tags                TEXT[]                   NOT NULL DEFAULT '{}',
     is_public           BOOLEAN                  NOT NULL DEFAULT FALSE,
+    item_count          INTEGER                  NOT NULL DEFAULT 0,
+    total_chunks        BIGINT                   NOT NULL DEFAULT 0,
     created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
@@ -55,6 +59,8 @@ CREATE INDEX IF NOT EXISTS idx_datasets_title_tsvector
   ON datasets USING GIN (to_tsvector('english', title));
 CREATE INDEX IF NOT EXISTS idx_datasets_tags 
   ON datasets USING GIN (tags);
+CREATE INDEX IF NOT EXISTS idx_datasets_title ON datasets(title);
+CREATE INDEX IF NOT EXISTS idx_datasets_owner_title ON datasets(owner_id, title);
 
 CREATE TABLE IF NOT EXISTS dataset_items (
     item_id          SERIAL PRIMARY KEY,
@@ -72,6 +78,65 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_dataset_items_dataset_title_unique ON data
 CREATE INDEX IF NOT EXISTS idx_dataset_items_name 
   ON dataset_items(title) 
   WHERE title IS NOT NULL;
+
+-- ============================================================================
+-- Collection File Count Cache
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS collection_file_counts (
+    collection_id   INTEGER                  NOT NULL PRIMARY KEY REFERENCES collections(collection_id) ON DELETE CASCADE,
+    file_count      BIGINT                   NOT NULL DEFAULT 0,
+    cached_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_collection_file_counts_cached_at ON collection_file_counts(cached_at);
+
+-- ============================================================================
+-- Dataset Stats Triggers
+-- ============================================================================
+
+-- Trigger function to update dataset stats on INSERT/DELETE/UPDATE of dataset_items
+CREATE OR REPLACE FUNCTION update_dataset_stats() RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        -- Update stats for the new/updated dataset
+        UPDATE datasets
+        SET
+            item_count = (SELECT COUNT(*) FROM dataset_items WHERE dataset_id = NEW.dataset_id),
+            total_chunks = (SELECT COALESCE(SUM(jsonb_array_length(chunks)), 0) FROM dataset_items WHERE dataset_id = NEW.dataset_id),
+            updated_at = NOW()
+        WHERE dataset_id = NEW.dataset_id;
+        RETURN NEW;
+    ELSIF TG_OP = 'DELETE' THEN
+        -- Update stats after deletion
+        UPDATE datasets
+        SET
+            item_count = (SELECT COUNT(*) FROM dataset_items WHERE dataset_id = OLD.dataset_id),
+            total_chunks = (SELECT COALESCE(SUM(jsonb_array_length(chunks)), 0) FROM dataset_items WHERE dataset_id = OLD.dataset_id),
+            updated_at = NOW()
+        WHERE dataset_id = OLD.dataset_id;
+        RETURN OLD;
+    ELSIF TG_OP = 'UPDATE' THEN
+        -- Update stats if chunks changed
+        IF OLD.chunks IS DISTINCT FROM NEW.chunks THEN
+            UPDATE datasets
+            SET
+                total_chunks = (SELECT COALESCE(SUM(jsonb_array_length(chunks)), 0) FROM dataset_items WHERE dataset_id = NEW.dataset_id),
+                updated_at = NOW()
+            WHERE dataset_id = NEW.dataset_id;
+        END IF;
+        RETURN NEW;
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create trigger on dataset_items to maintain stats
+DROP TRIGGER IF EXISTS trg_update_dataset_stats ON dataset_items;
+CREATE TRIGGER trg_update_dataset_stats
+AFTER INSERT OR DELETE OR UPDATE OF chunks ON dataset_items
+FOR EACH ROW
+EXECUTE FUNCTION update_dataset_stats();
 
 -- ============================================================================
 -- Embedders & LLMs
@@ -326,26 +391,6 @@ CREATE INDEX IF NOT EXISTS idx_chat_message_retrieved_docs ON chat_message_retri
 -- ============================================================================
 -- Audit & Compliance
 -- ============================================================================
-
-CREATE TABLE IF NOT EXISTS user_sessions (
-    session_id          UUID PRIMARY KEY,
-    user_id             TEXT                     NOT NULL,
-    username_display    TEXT                     NOT NULL,
-    id_token_hash       TEXT                     NOT NULL,
-    access_token_hash   TEXT                     NOT NULL,
-    expires_at          TIMESTAMP WITH TIME ZONE NOT NULL,
-    ip_address          TEXT                     NULL,
-    user_agent          TEXT                     NULL,
-    created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    last_activity_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    revoked_at          TIMESTAMP WITH TIME ZONE NULL
-);
-
--- Optimized indexes for user sessions
-CREATE INDEX IF NOT EXISTS idx_user_sessions_user_active ON user_sessions(user_id, expires_at DESC) 
-    WHERE revoked_at IS NULL;
-CREATE INDEX IF NOT EXISTS idx_user_sessions_expires ON user_sessions(expires_at) 
-    WHERE revoked_at IS NULL AND expires_at > NOW();
 
 CREATE TABLE IF NOT EXISTS audit_events (
     audit_event_id   BIGSERIAL PRIMARY KEY,

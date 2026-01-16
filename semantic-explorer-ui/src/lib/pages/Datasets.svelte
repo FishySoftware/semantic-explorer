@@ -18,6 +18,13 @@
 		total_chunks?: number;
 	}
 
+	interface PaginatedDatasetList {
+		items: Dataset[];
+		total_count: number;
+		limit: number;
+		offset: number;
+	}
+
 	let { onViewDataset: handleViewDataset } = $props<{
 		onViewDataset: (_: number) => void;
 	}>();
@@ -34,6 +41,9 @@
 	let datasets = $state<Dataset[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+	let totalCount = $state(0);
+	let currentOffset = $state(0);
+	const pageSize = 20;
 
 	let searchQuery = $state('');
 
@@ -67,12 +77,16 @@
 			if (searchQuery.trim()) {
 				params.append('search', searchQuery.trim());
 			}
-			const url = params.toString() ? `/api/datasets?${params.toString()}` : '/api/datasets';
+			params.append('limit', pageSize.toString());
+			params.append('offset', currentOffset.toString());
+			const url = `/api/datasets?${params.toString()}`;
 			const response = await fetch(url);
 			if (!response.ok) {
 				throw new Error(`Failed to fetch datasets: ${response.statusText}`);
 			}
-			datasets = await response.json();
+			const data: PaginatedDatasetList = await response.json();
+			datasets = data.items;
+			totalCount = data.total_count;
 		} catch (e) {
 			const message = formatError(e, 'Failed to fetch datasets');
 			error = message;
@@ -188,12 +202,25 @@
 	// Refetch when search query changes
 	$effect(() => {
 		searchQuery;
+		currentOffset = 0; // Reset to first page when searching
 		fetchDatasets();
 	});
 
 	onMount(() => {
 		fetchDatasets();
 	});
+
+	function goToPreviousPage() {
+		currentOffset = Math.max(0, currentOffset - pageSize);
+		fetchDatasets();
+	}
+
+	function goToNextPage() {
+		if (currentOffset + pageSize < totalCount) {
+			currentOffset += pageSize;
+			fetchDatasets();
+		}
+	}
 </script>
 
 <div class="max-w-7xl mx-auto">
@@ -459,6 +486,30 @@
 					{/each}
 				</TableBody>
 			</Table>
+
+			<!-- Pagination Controls -->
+			<div class="mt-6 flex items-center justify-between">
+				<div class="text-sm text-gray-600 dark:text-gray-400">
+					Showing {currentOffset + 1}-{Math.min(currentOffset + pageSize, totalCount)} of {totalCount}
+					datasets
+				</div>
+				<div class="flex gap-2">
+					<button
+						onclick={goToPreviousPage}
+						disabled={currentOffset === 0}
+						class="px-4 py-2 rounded border border-gray-300 dark:border-gray-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100 dark:hover:bg-gray-700"
+					>
+						Previous
+					</button>
+					<button
+						onclick={goToNextPage}
+						disabled={currentOffset + pageSize >= totalCount}
+						class="px-4 py-2 rounded border border-gray-300 dark:border-gray-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100 dark:hover:bg-gray-700"
+					>
+						Next
+					</button>
+				</div>
+			</div>
 		</div>
 	{/if}
 </div>

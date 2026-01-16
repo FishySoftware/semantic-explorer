@@ -28,7 +28,6 @@
 	let selectedDatasetId = $state<number | null>(null);
 	let selectedEmbedderIds = $state<number[]>([]);
 	let transformTitle = $state('');
-	let wipeCollection = $state(false);
 	let embeddingBatchSize = $state<number | null>(null);
 
 	// Auto-generate title when opening the modal for new transforms
@@ -62,7 +61,8 @@
 			loadingDatasets = true;
 			const response = await fetch('/api/datasets');
 			if (!response.ok) throw new Error('Failed to fetch datasets');
-			datasets = await response.json();
+			const data = await response.json();
+			datasets = data.items ?? [];
 		} catch (e) {
 			console.error('Failed to fetch datasets:', e);
 		} finally {
@@ -120,7 +120,6 @@
 					source_dataset_id: selectedDatasetId,
 					embedder_ids: selectedEmbedderIds,
 					embedding_batch_size: embeddingBatchSize,
-					wipe_collection: wipeCollection,
 				}),
 			});
 
@@ -149,7 +148,6 @@
 		transformTitle = '';
 		selectedDatasetId = datasetId ?? null;
 		selectedEmbedderIds = [];
-		wipeCollection = false;
 		embeddingBatchSize = null;
 		error = null;
 		open = false;
@@ -277,21 +275,6 @@
 					process faster.
 				</p>
 			</div>
-
-			<!-- Wipe Collection Checkbox -->
-			<label class="flex items-center gap-2 cursor-pointer">
-				<input
-					type="checkbox"
-					bind:checked={wipeCollection}
-					class="w-4 h-4 text-blue-600 rounded focus:ring-2"
-				/>
-				<span class="text-sm text-gray-700 dark:text-gray-300">
-					Wipe existing Qdrant collection
-					<span class="text-xs text-gray-500 dark:text-gray-400"
-						>(Warning: This deletes all existing data)</span
-					>
-				</span>
-			</label>
 		</div>
 
 		<!-- Actions -->

@@ -118,18 +118,12 @@ async fn process_dataset_transform_scan(
         .map(|v| v as usize)
         .unwrap_or(100);
 
-    let wipe_collection = transform
-        .job_config
-        .get("wipe_collection")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
     let embedded_datasets_count = embedded_datasets_list.len();
     let mut total_jobs = 0;
 
     for embedded_dataset in embedded_datasets_list {
         // Get embedder configuration (convert owner to AuthenticatedUser for storage layer)
-        let user = AuthenticatedUser(transform.owner.clone());
+        let user = AuthenticatedUser(transform.owner_display_name.clone());
         let embedder =
             embedders::get_embedder(pool, &user, embedded_dataset.embedder_id, encryption).await?;
 
@@ -229,11 +223,10 @@ async fn process_dataset_transform_scan(
                 dataset_id: transform.source_dataset_id,
                 dataset_transform_id: transform.dataset_transform_id,
                 embedded_dataset_id: embedded_dataset.embedded_dataset_id,
-                owner: transform.owner.clone(),
+                owner_id: transform.owner_id.clone(),
                 embedder_config: embedder_config.clone(),
                 vector_database_config: vector_db_config.clone(),
                 collection_name: embedded_dataset.collection_name.clone(),
-                wipe_collection,
                 batch_size: Some(embedding_batch_size),
             };
 
@@ -269,7 +262,6 @@ async fn process_dataset_transform_scan(
                 &vector_db_config,
                 &bucket,
                 embedding_batch_size,
-                wipe_collection,
             )
             .await?;
             total_jobs += items_created;
@@ -296,7 +288,6 @@ async fn create_batches_from_dataset_items(
     vector_db_config: &VectorDatabaseConfig,
     bucket: &str,
     embedding_batch_size: usize,
-    wipe_collection: bool,
 ) -> Result<usize> {
     // Use timestamp-based tracking to identify new items that need processing
     let last_processed_at = embedded_dataset.last_processed_at;
@@ -411,11 +402,10 @@ async fn create_batches_from_dataset_items(
             dataset_id: transform.source_dataset_id,
             dataset_transform_id: transform.dataset_transform_id,
             embedded_dataset_id: embedded_dataset.embedded_dataset_id,
-            owner: transform.owner.clone(),
+            owner_id: transform.owner_id.clone(),
             embedder_config: embedder_config.clone(),
             vector_database_config: vector_db_config.clone(),
             collection_name: embedded_dataset.collection_name.clone(),
-            wipe_collection: wipe_collection && batch_idx == 0, // Only wipe on first batch
             batch_size: Some(embedding_batch_size),
         };
 

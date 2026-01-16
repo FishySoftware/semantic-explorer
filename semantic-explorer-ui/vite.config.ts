@@ -10,6 +10,11 @@ export default defineConfig({
 			$lib: path.resolve('./src/lib'),
 		},
 	},
+	css: {
+		lightningcss: {
+			cssModules: false,
+		},
+	},
 	build: {
 		// Increase chunk size warning limit for large visualization and syntax highlighting libraries
 		// These are lazy-loaded so the large size is acceptable
@@ -48,5 +53,13 @@ export default defineConfig({
 			},
 		},
 	},
-	plugins: [tailwindcss(), svelte()],
+	plugins: [
+		tailwindcss({
+			// Disable lightningcss minification and let Vite handle it with proper Svelte support
+			optimize: {
+				minify: false,
+			},
+		}),
+		svelte(),
+	],
 });

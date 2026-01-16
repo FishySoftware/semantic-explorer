@@ -36,6 +36,11 @@
 	};
 </script>
 
-<span class="px-3 py-1 text-sm rounded-lg {variantClasses[status]}">
+<span
+	class="px-3 py-1 text-sm rounded-lg font-medium {variantClasses[status]}"
+	role="status"
+	aria-live="polite"
+	aria-label={`Status: ${label || defaultLabels[status]}`}
+>
 	{label || defaultLabels[status]}
 </span>

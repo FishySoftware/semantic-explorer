@@ -249,6 +249,7 @@ pub async fn create_dataset_transform(
     source_dataset_id: i32,
     embedder_ids: &[i32],
     owner: &str,
+    owner_display_name: &str,
     job_config: &serde_json::Value,
 ) -> Result<(DatasetTransform, Vec<EmbeddedDataset>)> {
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
@@ -260,6 +261,7 @@ pub async fn create_dataset_transform(
         .bind(source_dataset_id)
         .bind(embedder_ids.to_vec())
         .bind(owner)
+        .bind(owner_display_name)
         .bind(job_config)
         .fetch_one(&mut *tx)
         .await
@@ -274,6 +276,7 @@ pub async fn create_dataset_transform(
             source_dataset_id,
             *embedder_id,
             owner,
+            owner_display_name,
             &transform.title,
         )
         .await
@@ -355,6 +358,27 @@ pub async fn get_dataset_transform_stats(
         .fetch_one(pool)
         .await?;
     Ok(stats)
+}
+
+pub async fn get_batch_dataset_transform_stats(
+    pool: &Pool<Postgres>,
+    dataset_transform_ids: &[i32],
+) -> Result<std::collections::HashMap<i32, DatasetTransformStats>> {
+    use std::collections::HashMap;
+    let mut stats_map = HashMap::new();
+
+    for &id in dataset_transform_ids {
+        match get_dataset_transform_stats(pool, id).await {
+            Ok(stats) => {
+                stats_map.insert(id, stats);
+            }
+            Err(e) => {
+                tracing::warn!("Failed to get stats for dataset transform {}: {:?}", id, e);
+            }
+        }
+    }
+
+    Ok(stats_map)
 }
 
 // Helper functions

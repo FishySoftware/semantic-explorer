@@ -77,7 +77,7 @@ services:
       - otel-collector
     restart: unless-stopped
     environment:
-      - RUST_LOG=warn,actix_web_prom=error,worker_collections=debug
+      - RUST_LOG=info,actix_web_prom=error,worker-collections=debug
       - LOG_FORMAT=pretty
       - NATS_URL=nats://nats-1:4222
       - AWS_ACCESS_KEY_ID=test_access_key
@@ -97,16 +97,23 @@ services:
       context: ../../
       dockerfile: crates/worker-datasets/Dockerfile
     depends_on:
-      - nats-1
-      - nats-2
-      - nats-3
-      - minio-1
-      - minio-init
-      - qdrant
-      - otel-collector
+      nats-1:
+        condition: service_healthy
+      nats-2:
+        condition: service_healthy
+      nats-3:
+        condition: service_healthy
+      minio-1:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      qdrant:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
     restart: unless-stopped
     environment:
-      - RUST_LOG=warn,actix_web_prom=error,worker_datasets=debug
+      - RUST_LOG=info,actix_web_prom=error,worker-datasets=debug
       - LOG_FORMAT=pretty
       - NATS_URL=nats://nats-1:4222
       - AWS_ACCESS_KEY_ID=test_access_key
@@ -116,6 +123,8 @@ services:
       - S3_BUCKET_NAME=semantic-explorer-local
       - S3_FORCE_PATH_STYLE=true
       - QDRANT_URL=http://qdrant:6334
+      - QDRANT_TIMEOUT_SECS=30
+      - QDRANT_CONNECT_TIMEOUT_SECS=10
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
       - SERVICE_NAME=worker-datasets
       - ENCRYPTION_MASTER_KEY=e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4
@@ -127,13 +136,20 @@ services:
       context: ../../crates/worker-visualizations-py
       dockerfile: Dockerfile
     depends_on:
-      - nats-1
-      - nats-2
-      - nats-3
-      - qdrant
-      - minio-1
-      - minio-init
-      - otel-collector
+      nats-1:
+        condition: service_healthy
+      nats-2:
+        condition: service_healthy
+      nats-3:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      minio-1:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      otel-collector:
+        condition: service_started
     restart: unless-stopped
     environment:
       - NATS_URL=nats://nats-1:4222
@@ -293,6 +309,12 @@ services:
     environment:
       - QDRANT__GPU__INDEXING=1
       - NVIDIA_VISIBLE_DEVICES=all
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     deploy:
       resources:
         reservations:
@@ -474,6 +496,7 @@ services:
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
       - '--web.enable-lifecycle'
+      - '--web.enable-remote-write-receiver'
     ports:
       - "9090:9090"
     volumes:
@@ -498,6 +521,8 @@ services:
       - quickwit
       - prometheus
     restart: unless-stopped
+    mem_limit: 2g
+    mem_reservation: 1g
     networks:
       - semantic-explorer-net
 

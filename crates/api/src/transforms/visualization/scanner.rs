@@ -42,7 +42,7 @@ pub async fn trigger_visualization_transform_scan(
     };
 
     // Verify ownership
-    if transform.owner != owner {
+    if transform.owner_id != owner {
         return Err(anyhow::anyhow!("Access denied"));
     }
 
@@ -205,7 +205,7 @@ pub async fn trigger_visualization_transform_scan(
         job_id: Uuid::new_v4(),
         visualization_transform_id,
         visualization_id: visualization.visualization_id,
-        owner: owner.to_string(),
+        owner_id: owner.to_string(),
         embedded_dataset_id: transform.embedded_dataset_id,
         qdrant_collection_name: embedded_dataset.collection_name.clone(),
         visualization_config,

@@ -14,13 +14,6 @@ const GET_COLLECTION_QUERY: &str = r#"
     WHERE collection_id = $1
 "#;
 
-const GET_COLLECTIONS_QUERY: &str = r#"
-    SELECT collection_id, title, details, owner_id, owner_display_name, bucket, tags, is_public, created_at, updated_at 
-    FROM collections
-    ORDER BY created_at DESC
-    LIMIT 1000
-"#;
-
 const GET_COLLECTIONS_PAGINATED_QUERY: &str = r#"
     SELECT collection_id, title, details, owner_id, owner_display_name, bucket, tags, is_public, created_at, updated_at
     FROM collections
@@ -35,15 +28,15 @@ const COUNT_COLLECTIONS_QUERY: &str = r#"
 const SEARCH_COLLECTIONS_QUERY: &str = r#"
     SELECT collection_id, title, details, owner_id, owner_display_name, bucket, tags, is_public, created_at, updated_at
     FROM collections
-    WHERE (title ILIKE $1 OR details ILIKE $1 OR $2 = ANY(tags))
+    WHERE owner_id = $1 AND (title ILIKE $2 OR details ILIKE $2 OR $3 = ANY(tags))
     ORDER BY created_at DESC
-    LIMIT $3 OFFSET $4
+    LIMIT $4 OFFSET $5
 "#;
 
 const COUNT_SEARCH_COLLECTIONS_QUERY: &str = r#"
     SELECT COUNT(*) as count
     FROM collections
-    WHERE (title ILIKE $1 OR details ILIKE $1 OR $2 = ANY(tags))
+    WHERE owner_id = $1 AND (title ILIKE $2 OR details ILIKE $2 OR $3 = ANY(tags))
 "#;
 
 const CREATE_COLLECTION_QUERY: &str = r#"
@@ -94,6 +87,21 @@ const GET_PUBLIC_COLLECTION_QUERY: &str = r#"
     WHERE collection_id = $1 AND is_public = TRUE
 "#;
 
+const UPSERT_COLLECTION_FILE_COUNT_QUERY: &str = r#"
+    INSERT INTO collection_file_counts (collection_id, file_count, cached_at)
+    VALUES ($1, $2, NOW())
+    ON CONFLICT (collection_id)
+    DO UPDATE SET file_count = $2, cached_at = NOW()
+"#;
+
+const GET_COLLECTION_FILE_COUNT_QUERY: &str = r#"
+    SELECT file_count FROM collection_file_counts WHERE collection_id = $1
+"#;
+
+const GET_COLLECTIONS_FILE_COUNTS_BATCH_QUERY: &str = r#"
+    SELECT collection_id, file_count FROM collection_file_counts WHERE collection_id = ANY($1)
+"#;
+
 #[tracing::instrument(name = "database.get_collection", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner_id = %owner_id, collection_id = %collection_id))]
 pub(crate) async fn get_collection(
     pool: &Pool<Postgres>,
@@ -116,28 +124,6 @@ pub(crate) async fn get_collection(
     let collection = result?;
     tx.commit().await?;
     Ok(collection)
-}
-
-#[tracing::instrument(name = "database.get_collections", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner_id = %owner_id))]
-pub(crate) async fn get_collections(
-    pool: &Pool<Postgres>,
-    owner_id: &str,
-) -> Result<Vec<Collection>> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
-
-    let start = Instant::now();
-    let result = sqlx::query_as::<_, Collection>(GET_COLLECTIONS_QUERY)
-        .fetch_all(&mut *tx)
-        .await;
-
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "collections", duration, success);
-
-    let collections = result?;
-    tx.commit().await?;
-    Ok(collections)
 }
 
 #[tracing::instrument(name = "database.get_collections_paginated", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner_id = %owner_id, limit = %limit, offset = %offset))]
@@ -191,6 +177,7 @@ pub(crate) async fn search_collections(
 
     // Get search results
     let collections_result = sqlx::query_as::<_, Collection>(SEARCH_COLLECTIONS_QUERY)
+        .bind(owner_id)
         .bind(&search_pattern)
         .bind(search_query)
         .bind(limit)
@@ -200,6 +187,7 @@ pub(crate) async fn search_collections(
 
     // Get total count of search results
     let count_result: Result<(i64,), sqlx::Error> = sqlx::query_as(COUNT_SEARCH_COLLECTIONS_QUERY)
+        .bind(owner_id)
         .bind(&search_pattern)
         .bind(search_query)
         .fetch_one(&mut *tx)
@@ -217,6 +205,7 @@ pub(crate) async fn search_collections(
 }
 
 #[tracing::instrument(name = "database.create_collection", skip(pool), fields(database.system = "postgresql", database.operation = "INSERT", title = %title, owner_id = %owner_id))]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn create_collection(
     pool: &Pool<Postgres>,
     title: &str,
@@ -427,4 +416,102 @@ pub(crate) async fn update_collection(
     let collection = result?;
     tx.commit().await?;
     Ok(collection)
+}
+
+#[tracing::instrument(name = "database.upsert_collection_file_count", skip(pool), fields(database.system = "postgresql", database.operation = "INSERT_UPDATE", collection_id = %collection_id, file_count = %file_count))]
+pub(crate) async fn upsert_collection_file_count(
+    pool: &Pool<Postgres>,
+    collection_id: i32,
+    file_count: i64,
+) -> Result<()> {
+    let start = Instant::now();
+    let result = sqlx::query(UPSERT_COLLECTION_FILE_COUNT_QUERY)
+        .bind(collection_id)
+        .bind(file_count)
+        .execute(pool)
+        .await;
+
+    let duration = start.elapsed().as_secs_f64();
+    let success = result.is_ok();
+    record_database_query("INSERT_UPDATE", "collection_file_counts", duration, success);
+
+    result?;
+    Ok(())
+}
+
+#[tracing::instrument(name = "database.get_collection_file_count", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", collection_id = %collection_id))]
+pub(crate) async fn get_collection_file_count(
+    pool: &Pool<Postgres>,
+    collection_id: i32,
+) -> Result<Option<i64>> {
+    let start = Instant::now();
+    let result: Option<(i64,)> = sqlx::query_as(GET_COLLECTION_FILE_COUNT_QUERY)
+        .bind(collection_id)
+        .fetch_optional(pool)
+        .await?;
+
+    let duration = start.elapsed().as_secs_f64();
+    record_database_query("SELECT", "collection_file_counts", duration, true);
+
+    Ok(result.map(|(count,)| count))
+}
+
+#[tracing::instrument(name = "database.get_collections_file_counts_batch", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT"))]
+pub(crate) async fn get_collections_file_counts_batch(
+    pool: &Pool<Postgres>,
+    collection_ids: Vec<i32>,
+) -> Result<std::collections::HashMap<i32, i64>> {
+    if collection_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let start = Instant::now();
+    let results: Vec<(i32, i64)> = sqlx::query_as(GET_COLLECTIONS_FILE_COUNTS_BATCH_QUERY)
+        .bind(&collection_ids)
+        .fetch_all(pool)
+        .await?;
+
+    let duration = start.elapsed().as_secs_f64();
+    record_database_query("SELECT", "collection_file_counts", duration, true);
+
+    Ok(results.into_iter().collect())
+}
+
+#[tracing::instrument(name = "storage.count_s3_files_for_collection", skip(s3_client), fields(bucket = %bucket, owner_id = %owner_id, collection_id = %collection_id))]
+pub(crate) async fn count_s3_files_for_collection(
+    s3_client: &Client,
+    bucket: &str,
+    owner_id: &str,
+    collection_id: i32,
+) -> Result<i64> {
+    let prefix = format!("{}/{}/", owner_id, collection_id);
+    let mut count: i64 = 0;
+    let mut continuation_token: Option<String> = None;
+
+    loop {
+        let mut request = s3_client
+            .list_objects_v2()
+            .bucket(bucket)
+            .prefix(&prefix)
+            .max_keys(1000);
+
+        if let Some(token) = continuation_token {
+            request = request.continuation_token(token);
+        }
+
+        let response = request
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to list S3 objects: {}", e))?;
+
+        count += response.contents().len() as i64;
+
+        if response.is_truncated().unwrap_or(false) {
+            continuation_token = response.next_continuation_token().map(|s| s.to_string());
+        } else {
+            break;
+        }
+    }
+
+    Ok(count)
 }

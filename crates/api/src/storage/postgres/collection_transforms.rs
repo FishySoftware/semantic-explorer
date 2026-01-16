@@ -251,6 +251,7 @@ pub async fn get_active_collection_transforms(
     Ok(transforms)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn create_collection_transform(
     pool: &Pool<Postgres>,
     title: &str,
@@ -330,6 +331,31 @@ pub async fn get_collection_transform_stats(
         .fetch_one(pool)
         .await?;
     Ok(stats)
+}
+
+pub async fn get_batch_collection_transform_stats(
+    pool: &Pool<Postgres>,
+    collection_transform_ids: &[i32],
+) -> Result<std::collections::HashMap<i32, CollectionTransformStats>> {
+    use std::collections::HashMap;
+    let mut stats_map = HashMap::new();
+
+    for &id in collection_transform_ids {
+        match get_collection_transform_stats(pool, id).await {
+            Ok(stats) => {
+                stats_map.insert(id, stats);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to get stats for collection transform {}: {:?}",
+                    id,
+                    e
+                );
+            }
+        }
+    }
+
+    Ok(stats_map)
 }
 
 pub async fn get_processed_files(

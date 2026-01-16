@@ -63,6 +63,7 @@ impl FromRequest for AuthenticatedUser {
                     None => {
                         events::auth_failed(
                             "unknown",
+                            "unknown",
                             "user has no username in the user info claim",
                             client_ip.as_deref(),
                         );
@@ -75,6 +76,7 @@ impl FromRequest for AuthenticatedUser {
             }
             Err(e) => {
                 events::auth_failed(
+                    "anonymous",
                     "anonymous",
                     "authentication failed - invalid or missing token",
                     client_ip.as_deref(),

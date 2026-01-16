@@ -43,8 +43,6 @@ pub struct DatasetTransformJob {
     pub vector_database_config: VectorDatabaseConfig,
     pub collection_name: String,
     #[serde(default)]
-    pub wipe_collection: bool,
-    #[serde(default)]
     pub batch_size: Option<usize>,
 }
 
