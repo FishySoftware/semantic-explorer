@@ -6,70 +6,9 @@ on:
       - 'v*.*.*'
 
 jobs:
-  # Detect which components have changed
-  detect-changes:
-    runs-on: ubuntu-latest
-    outputs:
-      api: ${{ steps.filter.outputs.api }}
-      worker-collections: ${{ steps.filter.outputs.worker-collections }}
-      worker-datasets: ${{ steps.filter.outputs.worker-datasets }}
-      worker-visualizations-py: ${{ steps.filter.outputs.worker-visualizations-py }}
-      core: ${{ steps.filter.outputs.core }}
-      ui: ${{ steps.filter.outputs.ui }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Detect changes
-        id: filter
-        run: |
-          # Get the previous tag
-          PREVIOUS_TAG=$(git tag --sort=-v:refname | sed -n '2p')
-          echo "Comparing $PREVIOUS_TAG to current tag"
-          
-          # Check for changes in each component
-          if git diff --name-only $PREVIOUS_TAG HEAD | grep -E '^(crates/api/|semantic-explorer-ui/)'; then
-            echo "api=true" >> $GITHUB_OUTPUT
-          else
-            echo "api=false" >> $GITHUB_OUTPUT
-          fi
-          
-          if git diff --name-only $PREVIOUS_TAG HEAD | grep -E '^crates/(worker-collections|core)/'; then
-            echo "worker-collections=true" >> $GITHUB_OUTPUT
-          else
-            echo "worker-collections=false" >> $GITHUB_OUTPUT
-          fi
-          
-          if git diff --name-only $PREVIOUS_TAG HEAD | grep -E '^crates/(worker-datasets|core)/'; then
-            echo "worker-datasets=true" >> $GITHUB_OUTPUT
-          else
-            echo "worker-datasets=false" >> $GITHUB_OUTPUT
-          fi
-          
-          if git diff --name-only $PREVIOUS_TAG HEAD | grep -E '^crates/worker-visualizations-py/'; then
-            echo "worker-visualizations-py=true" >> $GITHUB_OUTPUT
-          else
-            echo "worker-visualizations-py=false" >> $GITHUB_OUTPUT
-          fi
-          
-          if git diff --name-only $PREVIOUS_TAG HEAD | grep -E '^crates/core/'; then
-            echo "core=true" >> $GITHUB_OUTPUT
-          else
-            echo "core=false" >> $GITHUB_OUTPUT
-          fi
-          
-          if git diff --name-only $PREVIOUS_TAG HEAD | grep -E '^semantic-explorer-ui/'; then
-            echo "ui=true" >> $GITHUB_OUTPUT
-          else
-            echo "ui=false" >> $GITHUB_OUTPUT
-          fi
-
+  
   # Build API image
   build-api:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.api == 'true' || needs.detect-changes.outputs.core == 'true' || needs.detect-changes.outputs.ui == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -118,8 +57,6 @@ jobs:
 
   # Build Worker Collections image
   build-worker-collections:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.worker-collections == 'true' || needs.detect-changes.outputs.core == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -165,8 +102,6 @@ jobs:
 
   # Build Worker Datasets image
   build-worker-datasets:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.worker-datasets == 'true' || needs.detect-changes.outputs.core == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -212,8 +147,6 @@ jobs:
 
   # Build Worker Visualizations Python image
   build-worker-visualizations-py:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.worker-visualizations-py == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -259,21 +192,13 @@ jobs:
 
   # Summary job
   summary:
-    needs: [detect-changes, build-api, build-worker-collections, build-worker-datasets, build-worker-visualizations-py]
+    needs: [build-api, build-worker-collections, build-worker-datasets, build-worker-visualizations-py]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Generate build summary
         run: |
           echo "# Build Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## Change Detection" >> $GITHUB_STEP_SUMMARY
-          echo "- **API:** ${{ needs.detect-changes.outputs.api }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Worker Collections:** ${{ needs.detect-changes.outputs.worker-collections }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Worker Datasets:** ${{ needs.detect-changes.outputs.worker-datasets }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Worker Visualizations Python:** ${{ needs.detect-changes.outputs.worker-visualizations-py }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Core:** ${{ needs.detect-changes.outputs.core }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **UI:** ${{ needs.detect-changes.outputs.ui }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## Build Results" >> $GITHUB_STEP_SUMMARY
           echo "- **API:** ${{ needs.build-api.result }}" >> $GITHUB_STEP_SUMMARY
