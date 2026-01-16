@@ -42,7 +42,7 @@ const GET_VISUALIZATION_WITH_OWNER_QUERY: &str = r#"
            v.html_s3_key, v.point_count, v.cluster_count, v.error_message, v.stats_json, v.created_at
     FROM visualizations v
     INNER JOIN visualization_transforms vt ON v.visualization_transform_id = vt.visualization_transform_id
-    WHERE v.visualization_id = $1 AND vt.owner = $2
+    WHERE v.visualization_id = $1 AND v.visualization_transform_id = $2 AND vt.owner_id = $3
 "#;
 
 const GET_LATEST_VISUALIZATION_QUERY: &str = r#"
@@ -114,6 +114,7 @@ pub async fn get_visualization(
 pub async fn get_visualization_with_owner(
     pool: &Pool<Postgres>,
     visualization_id: i32,
+    transform_id: i32,
     owner: &str,
 ) -> Result<Visualization> {
     let mut tx = pool.begin().await?;
@@ -121,6 +122,7 @@ pub async fn get_visualization_with_owner(
 
     let visualization = sqlx::query_as::<_, Visualization>(GET_VISUALIZATION_WITH_OWNER_QUERY)
         .bind(visualization_id)
+        .bind(transform_id)
         .bind(owner)
         .fetch_one(&mut *tx)
         .await?;

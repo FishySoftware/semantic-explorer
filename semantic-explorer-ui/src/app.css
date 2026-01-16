@@ -188,14 +188,14 @@
 	}
 }
 
-:global(.animate-fadeIn) {
+.animate-fadeIn {
 	animation: fadeIn 150ms ease-in-out;
 }
 
-:global(.animate-slideInUp) {
+.animate-slideInUp {
 	animation: slideInUp 200ms ease-out;
 }
 
-:global(.animate-slideInDown) {
+.animate-slideInDown {
 	animation: slideInDown 200ms ease-out;
 }

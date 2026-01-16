@@ -257,7 +257,7 @@ async def handle_job(
         jobId=job.job_id,
         visualizationTransformId=job.visualization_transform_id,
         visualizationId=job.visualization_id,
-        owner=job.owner,
+        ownerId=job.owner_id,
         status="processing",
     )
 
@@ -272,7 +272,7 @@ async def handle_job(
             jobId=job.job_id,
             visualizationTransformId=job.visualization_transform_id,
             visualizationId=job.visualization_id,
-            owner=job.owner,
+            ownerId=job.owner_id,
             status="processing",
             statsJson={"stage": "starting", "progress_percent": 0},
         )
@@ -291,7 +291,7 @@ async def handle_job(
                 jobId=job.job_id,
                 visualizationTransformId=job.visualization_transform_id,
                 visualizationId=job.visualization_id,
-                owner_id=job.owner_id,
+                ownerId=job.owner_id,
                 status="processing",
                 statsJson={"stage": stage, "progress_percent": progress_percent},
             )
@@ -323,7 +323,7 @@ async def handle_job(
         s3_start = time.time()
         logger.debug(f"Starting S3 upload for job {job.job_id}")
         s3_key = await s3_storage.upload_visualization(
-            owner=job.owner,
+            owner=job.owner_id,
             transform_id=job.visualization_transform_id,
             visualization_id=job.visualization_id,
             html_content=processed_result["html"],

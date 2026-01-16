@@ -488,7 +488,7 @@
 			</Table>
 
 			<!-- Pagination Controls -->
-			<div class="mt-6 flex items-center justify-between">
+			<div class="mt-6 px-4 pb-4 flex items-center justify-between">
 				<div class="text-sm text-gray-600 dark:text-gray-400">
 					Showing {currentOffset + 1}-{Math.min(currentOffset + pageSize, totalCount)} of {totalCount}
 					datasets
@@ -497,14 +497,14 @@
 					<button
 						onclick={goToPreviousPage}
 						disabled={currentOffset === 0}
-						class="px-4 py-2 rounded border border-gray-300 dark:border-gray-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100 dark:hover:bg-gray-700"
+						class="px-4 py-2 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100 dark:hover:bg-gray-700"
 					>
 						Previous
 					</button>
 					<button
 						onclick={goToNextPage}
 						disabled={currentOffset + pageSize >= totalCount}
-						class="px-4 py-2 rounded border border-gray-300 dark:border-gray-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100 dark:hover:bg-gray-700"
+						class="px-4 py-2 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100 dark:hover:bg-gray-700"
 					>
 						Next
 					</button>

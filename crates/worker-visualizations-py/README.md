@@ -236,7 +236,7 @@ sequenceDiagram
 ```
 
 > **Note**: The `htmlS3Key` contains just the filename. The full S3 path is constructed as:
-> `s3://{S3_BUCKET_NAME}/collections/visualizations-{visualizationTransformId}/{htmlS3Key}`
+> `s3://{S3_BUCKET_NAME}/visualizations/{visualizationTransformId}/{htmlS3Key}`
 
 ### Progress Updates
 

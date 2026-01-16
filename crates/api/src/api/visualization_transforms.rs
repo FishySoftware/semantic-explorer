@@ -655,19 +655,16 @@ pub async fn get_visualization(
 ) -> impl Responder {
     let (transform_id, visualization_id) = path.into_inner();
 
-    // Get visualization with owner check - ensures the visualization belongs to a transform owned by the user
+    // Get visualization with owner check - ensures the visualization belongs to the specified transform and is owned by the user
     match visualization_transforms::get_visualization_with_owner(
         &postgres_pool,
         visualization_id,
-        &user,
+        transform_id,
+        &user.as_owner(),
     )
     .await
     {
         Ok(visualization) => {
-            // Verify the visualization belongs to the specified transform
-            if visualization.visualization_transform_id != transform_id {
-                return not_found("Visualization not found for this transform".to_string());
-            }
             events::resource_read(
                 &user.as_owner(),
                 &user,
@@ -767,23 +764,40 @@ pub async fn download_visualization_html(
 ) -> impl Responder {
     let (transform_id, visualization_id) = path.into_inner();
 
-    // Get visualization with owner check - this verifies both the visualization exists and belongs to the user's transform
+    // Get visualization with owner check - this verifies all three conditions:
+    // 1. The visualization exists
+    // 2. It belongs to the specified transform_id
+    // 3. The user owns that transform
     let visualization = match visualization_transforms::get_visualization_with_owner(
         &postgres_pool,
         visualization_id,
-        &user,
+        transform_id,
+        &user.as_owner(),
     )
     .await
     {
-        Ok(visualization) => {
-            // Verify the visualization belongs to the specified transform
-            if visualization.visualization_transform_id != transform_id {
-                return not_found("Visualization not found for this transform".to_string());
-            }
-            visualization
-        }
+        Ok(visualization) => visualization,
         Err(e) => {
             error!("Failed to fetch visualization for user {}: {}", *user, e);
+            // Check if the visualization exists but HTML hasn't been generated yet
+            if let Ok(vis) =
+                visualization_transforms::get_visualization(&postgres_pool, visualization_id).await
+            {
+                if vis.status == "pending" || vis.status == "processing" {
+                    return HttpResponse::Accepted().json(serde_json::json!({
+                        "error": "Processing",
+                        "message": format!("Visualization is still being processed (status: {})", vis.status),
+                        "status": vis.status
+                    }));
+                }
+                if vis.html_s3_key.is_none() {
+                    return HttpResponse::BadRequest().json(serde_json::json!({
+                        "error": "NotReady",
+                        "message": "Visualization processing completed but HTML file is not available",
+                        "status": vis.status
+                    }));
+                }
+            }
             return not_found("Visualization not found".to_string());
         }
     };
@@ -792,15 +806,34 @@ pub async fn download_visualization_html(
     let html_s3_key = match visualization.html_s3_key {
         Some(key) => key,
         None => {
-            return not_found("No HTML file available for this visualization".to_string());
+            if visualization.status == "pending" || visualization.status == "processing" {
+                return HttpResponse::Accepted().json(serde_json::json!({
+                    "error": "Processing",
+                    "message": format!("Visualization is still being processed (status: {})", visualization.status),
+                    "status": visualization.status
+                }));
+            }
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "error": "NotReady",
+                "message": "Visualization processing completed but HTML file is not available",
+                "status": visualization.status
+            }));
         }
     };
 
-    // Bucket name is derived from transform ID (same pattern as Python worker)
-    let bucket = format!("visualizations-{}", transform_id);
+    // Bucket name - using single-bucket architecture (configured via env or default)
+    let bucket =
+        std::env::var("S3_BUCKET_NAME").unwrap_or_else(|_| "semantic-explorer-local".to_string());
 
     // Download the file from S3
-    match crate::storage::s3::get_file_with_size_check(&s3_client, &bucket, &html_s3_key).await {
+    // html_s3_key is the full path including 'visualizations/{transform_id}/...'
+    match semantic_explorer_core::storage::get_file_with_size_check(
+        &s3_client,
+        &bucket,
+        &html_s3_key,
+    )
+    .await
+    {
         Ok(file_data) => {
             let filename = format!("visualization-{}-{}.html", transform_id, visualization_id);
             HttpResponse::Ok()

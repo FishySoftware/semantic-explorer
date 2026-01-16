@@ -85,10 +85,10 @@ class S3Storage:
             )
 
             # Generate S3 path using single-bucket architecture
-            # Pattern: collections/visualizations-{transform_id}/{filename}
+            # Pattern: visualizations/{transform_id}/{filename}
             timestamp_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             filename = f"visualization-{timestamp_str}.html"
-            s3_key = f"collections/visualizations-{transform_id}/{filename}"
+            s3_key = f"visualizations/{transform_id}/{filename}"
             content_size = len(html_content.encode("utf-8"))
 
             # Upload to S3
@@ -115,8 +115,8 @@ class S3Storage:
                 f"Successfully uploaded to s3://{self.bucket_name}/{s3_key} in {upload_elapsed:.3f}s "
                 f"(size: {content_size} bytes, put: {put_elapsed:.3f}s)"
             )
-            # Return only the filename - the Rust API will reconstruct the full path
-            return filename
+            # Return the full S3 key - the Rust API expects the complete path
+            return s3_key
 
         except Exception as e:
             upload_elapsed = time.time() - upload_start
@@ -148,7 +148,7 @@ class S3Storage:
         url_start = time.time()
         try:
             # Construct full S3 key using single-bucket architecture
-            full_s3_key = f"collections/visualizations-{transform_id}/{s3_key}"
+            full_s3_key = f"visualizations/{transform_id}/{s3_key}"
             logger.debug(f"Generating presigned URL for {self.bucket_name}/{full_s3_key}")
 
             # Generate presigned URL
@@ -195,7 +195,7 @@ class S3Storage:
         delete_start = time.time()
         try:
             # Construct full S3 key using single-bucket architecture
-            full_s3_key = f"collections/visualizations-{transform_id}/{s3_key}"
+            full_s3_key = f"visualizations/{transform_id}/{s3_key}"
             logger.debug(f"Starting deletion of s3://{self.bucket_name}/{full_s3_key}")
 
             logger.debug(

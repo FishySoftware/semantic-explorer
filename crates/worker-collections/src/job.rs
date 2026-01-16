@@ -248,7 +248,10 @@ pub(crate) async fn process_file_job(
     }
 
     let chunks_key = format!("chunks/{}.json", job.job_id);
-    let full_chunks_key = format!("collections/{}/{}", job.collection_id, chunks_key);
+    let full_chunks_key = format!(
+        "transforms/collection-transforms/{}/{}",
+        job.collection_transform_id, chunks_key
+    );
     let chunks_json = serde_json::to_vec(&chunks_with_metadata)?;
     let chunks_size = chunks_json.len();
 

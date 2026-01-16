@@ -11,9 +11,7 @@ export default defineConfig({
 		},
 	},
 	css: {
-		lightningcss: {
-			cssModules: false,
-		},
+		transformer: 'postcss', // Use PostCSS instead of lightningcss for Svelte compatibility
 	},
 	build: {
 		// Increase chunk size warning limit for large visualization and syntax highlighting libraries

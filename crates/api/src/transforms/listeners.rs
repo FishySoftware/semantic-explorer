@@ -538,7 +538,10 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
         }
     };
 
-    let full_chunks_key = format!("collections/{}/{}", result.bucket, result.chunks_file_key);
+    let full_chunks_key = format!(
+        "transforms/collection-transforms/{}/{}",
+        result.collection_transform_id, result.chunks_file_key
+    );
 
     let chunks_content =
         match get_file_with_size_check(&ctx.s3_client, &s3_bucket_name, &full_chunks_key).await {
@@ -801,19 +804,20 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
             }
 
             // Clean up the batch file from S3 after successful processing and database recording
-            // The bucket name is derived from the embedded dataset ID (S3-safe)
-            let bucket = format!("embedded-dataset-{}", embedded_dataset.embedded_dataset_id);
-            if let Err(e) = delete_file(&ctx.s3_client, &bucket, &result.batch_file_key).await {
+            // Use single-bucket architecture
+            let s3_bucket = std::env::var("S3_BUCKET_NAME")
+                .unwrap_or_else(|_| "semantic-explorer-local".to_string());
+            if let Err(e) = delete_file(&ctx.s3_client, &s3_bucket, &result.batch_file_key).await {
                 // Log the error but don't fail the overall operation
                 // The batch was successfully processed and recorded, cleanup failure is non-critical
                 warn!(
-                    "Failed to cleanup batch file {} from bucket {}: {}. Manual cleanup may be required.",
-                    result.batch_file_key, bucket, e
+                    "Failed to cleanup batch file s3://{}/{}: {}. Manual cleanup may be required.",
+                    s3_bucket, result.batch_file_key, e
                 );
             } else {
                 info!(
-                    "Cleaned up batch file {} from bucket {}",
-                    result.batch_file_key, bucket
+                    "Cleaned up batch file s3://{}/{}",
+                    s3_bucket, result.batch_file_key
                 );
             }
 

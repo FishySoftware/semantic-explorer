@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::models::{DatasetTransformJob, EmbedderConfig, VectorDatabaseConfig};
-use semantic_explorer_core::storage::{DocumentUpload, ensure_bucket_exists, upload_document};
+use semantic_explorer_core::storage::{DocumentUpload, upload_document};
 
 use crate::auth::AuthenticatedUser;
 use crate::embedded_datasets::EmbeddedDataset;
@@ -144,18 +144,16 @@ async fn process_dataset_transform_scan(
         // Use the minimum of configured batch size and embedder's max_batch_size
         let embedding_batch_size = configured_batch_size.min(embedder.max_batch_size as usize);
 
-        // The bucket name is derived from the embedded dataset ID (S3-safe)
-        // Using just the ID ensures bucket names are valid (no @, dots in wrong places, etc.)
-        let bucket = format!("embedded-dataset-{}", embedded_dataset.embedded_dataset_id);
+        // Use single-bucket architecture with embedded-datasets prefix
+        let s3_bucket = std::env::var("S3_BUCKET_NAME")
+            .unwrap_or_else(|_| "semantic-explorer-local".to_string());
+        let embedded_dataset_prefix = format!(
+            "embedded-datasets/embedded-dataset-{}",
+            embedded_dataset.embedded_dataset_id
+        );
 
-        // Ensure the S3 bucket exists
-        if let Err(e) = ensure_bucket_exists(s3, &bucket).await {
-            error!(
-                "Failed to ensure bucket exists for embedded dataset {}: {}. Skipping.",
-                embedded_dataset.embedded_dataset_id, e
-            );
-            continue;
-        }
+        // Note: No need to ensure bucket exists as it should already exist
+        // The main bucket is created during infrastructure setup
 
         // Get processed batches for this embedded dataset
         let processed_batches =
@@ -171,23 +169,26 @@ async fn process_dataset_transform_scan(
         let mut continuation_token: Option<String> = None;
 
         loop {
-            let files = match s3::list_files(s3, &bucket, 100, continuation_token.as_deref()).await
-            {
-                Ok(files) => files,
-                Err(e) => {
-                    error!(
-                        "Failed to list files in bucket '{}': {}. Will create new batches.",
-                        bucket, e
-                    );
-                    break;
-                }
-            };
+            let files =
+                match s3::list_files(s3, &s3_bucket, 100, continuation_token.as_deref()).await {
+                    Ok(files) => files,
+                    Err(e) => {
+                        error!(
+                            "Failed to list files in bucket '{}': {}. Will create new batches.",
+                            s3_bucket, e
+                        );
+                        break;
+                    }
+                };
             if files.files.is_empty() {
                 break;
             }
 
             for file in files.files {
-                if file.key.starts_with("batches/") {
+                if file
+                    .key
+                    .starts_with(&format!("{}/batches/", embedded_dataset_prefix))
+                {
                     existing_batch_files.insert(file.key);
                 }
             }
@@ -219,7 +220,7 @@ async fn process_dataset_transform_scan(
             let job = DatasetTransformJob {
                 job_id: Uuid::new_v4(),
                 batch_file_key: batch_file_key.clone(),
-                bucket: bucket.clone(),
+                bucket: s3_bucket.clone(),
                 dataset_id: transform.source_dataset_id,
                 dataset_transform_id: transform.dataset_transform_id,
                 embedded_dataset_id: embedded_dataset.embedded_dataset_id,
@@ -260,7 +261,8 @@ async fn process_dataset_transform_scan(
                 &embedded_dataset,
                 &embedder_config,
                 &vector_db_config,
-                &bucket,
+                &s3_bucket,
+                &embedded_dataset_prefix,
                 embedding_batch_size,
             )
             .await?;
@@ -286,7 +288,8 @@ async fn create_batches_from_dataset_items(
     embedded_dataset: &EmbeddedDataset,
     embedder_config: &EmbedderConfig,
     vector_db_config: &VectorDatabaseConfig,
-    bucket: &str,
+    s3_bucket: &str,
+    embedded_dataset_prefix: &str,
     embedding_batch_size: usize,
 ) -> Result<usize> {
     // Use timestamp-based tracking to identify new items that need processing
@@ -365,14 +368,15 @@ async fn create_batches_from_dataset_items(
     let chunks_per_batch = embedding_batch_size * 10; // Create larger batches for efficiency
 
     for (batch_idx, batch_chunk) in all_batch_items.chunks(chunks_per_batch).enumerate() {
-        let batch_key = format!("batches/batch-{}-{}.json", batch_idx, Uuid::new_v4());
+        let batch_filename = format!("batch-{}-{}.json", batch_idx, Uuid::new_v4());
+        let batch_key = format!("{}/batches/{}", embedded_dataset_prefix, batch_filename);
         let batch_json = serde_json::to_vec(batch_chunk)?;
 
-        // Upload batch to S3
+        // Upload batch to S3 using single-bucket architecture
         if let Err(e) = upload_document(
             s3,
             DocumentUpload {
-                collection_id: bucket.to_string(),
+                collection_id: s3_bucket.to_string(),
                 name: batch_key.clone(),
                 content: batch_json,
                 mime_type: "application/json".to_string(),
@@ -381,24 +385,26 @@ async fn create_batches_from_dataset_items(
         .await
         {
             error!(
-                "Failed to upload batch {} to bucket '{}': {}",
-                batch_key, bucket, e
+                "Failed to upload batch {} to s3://{}/{}: {}",
+                batch_filename, s3_bucket, batch_key, e
             );
             continue;
         }
 
         info!(
-            "Uploaded batch {} with {} chunks for embedded dataset {}",
-            batch_key,
+            "Uploaded batch {} with {} chunks for embedded dataset {} (s3://{}/{})",
+            batch_filename,
             batch_chunk.len(),
-            embedded_dataset.embedded_dataset_id
+            embedded_dataset.embedded_dataset_id,
+            s3_bucket,
+            batch_key
         );
 
         // Dispatch job for this batch
         let job = DatasetTransformJob {
             job_id: Uuid::new_v4(),
             batch_file_key: batch_key.clone(),
-            bucket: bucket.to_string(),
+            bucket: s3_bucket.to_string(),
             dataset_id: transform.source_dataset_id,
             dataset_transform_id: transform.dataset_transform_id,
             embedded_dataset_id: embedded_dataset.embedded_dataset_id,

@@ -55,6 +55,10 @@
 </div>
 
 <style>
+	:global([role='menu'] li) {
+		list-style: none;
+		list-style-type: none;
+	}
 	:global([role='tooltip'] li) {
 		list-style: none;
 	}
