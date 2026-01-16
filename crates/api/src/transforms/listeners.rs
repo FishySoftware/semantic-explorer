@@ -52,7 +52,9 @@ struct TransformStatusUpdate {
 }
 
 /// Publish a transform status update to NATS for SSE streaming.
-/// Subject format: transforms.{type}.status.{owner}.{resource_id}.{transform_id}
+/// Subject format: sse.transforms.{type}.status.{owner}.{resource_id}.{transform_id}
+/// NOTE: Uses sse. prefix to avoid being captured by JetStream TRANSFORM_STATUS stream,
+/// which is used for worker results (CollectionTransformResult, etc.)
 async fn publish_transform_status(
     nats: &NatsClient,
     transform_type: &str,
@@ -63,7 +65,7 @@ async fn publish_transform_status(
     error: Option<&str>,
 ) {
     let subject = format!(
-        "transforms.{}.status.{}.{}.{}",
+        "sse.transforms.{}.status.{}.{}.{}",
         transform_type, owner, resource_id, transform_id
     );
 
@@ -378,7 +380,7 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
     // Fetch the transform first to get collection_id for status updates
     let transform = match collection_transforms::get_collection_transform(
         &ctx.postgres_pool,
-        &result.owner,
+        &result.owner_id,
         result.collection_transform_id,
     )
     .await
@@ -387,7 +389,7 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
         Err(e) => {
             error!(
                 "Failed to get collection transform {} for owner {}: {}",
-                result.collection_transform_id, result.owner, e
+                result.collection_transform_id, result.owner_id, e
             );
             return;
         }
@@ -444,7 +446,7 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
         publish_transform_status(
             &ctx.nats_client,
             "collection",
-            &result.owner,
+            &result.owner_id,
             transform.collection_id,
             result.collection_transform_id,
             "failed",
@@ -482,7 +484,7 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
         publish_transform_status(
             &ctx.nats_client,
             "collection",
-            &result.owner,
+            &result.owner_id,
             transform.collection_id,
             result.collection_transform_id,
             "failed",
@@ -515,7 +517,7 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
         publish_transform_status(
             &ctx.nats_client,
             "collection",
-            &result.owner,
+            &result.owner_id,
             transform.collection_id,
             result.collection_transform_id,
             "failed",
@@ -536,12 +538,9 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
         }
     };
 
-    let full_chunks_key = format!("collections/{}/{}", result.bucket, result.chunks_file_key);
-
-    info!(
-        bucket = %s3_bucket_name,
-        key = %full_chunks_key,
-        "Attempting to download chunks"
+    let full_chunks_key = format!(
+        "transforms/collection-transforms/{}/{}",
+        result.collection_transform_id, result.chunks_file_key
     );
 
     let chunks_content =
@@ -603,7 +602,7 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
         publish_transform_status(
             &ctx.nats_client,
             "collection",
-            &result.owner,
+            &result.owner_id,
             transform.collection_id,
             result.collection_transform_id,
             "failed",
@@ -636,7 +635,7 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
     publish_transform_status(
         &ctx.nats_client,
         "collection",
-        &result.owner,
+        &result.owner_id,
         transform.collection_id,
         result.collection_transform_id,
         "completed",
@@ -660,7 +659,7 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
     // Validate ownership by fetching the embedded dataset
     let embedded_dataset = match embedded_datasets::get_embedded_dataset(
         &ctx.postgres_pool,
-        &result.owner,
+        &result.owner_id,
         result.embedded_dataset_id,
     )
     .await
@@ -669,7 +668,7 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
         Err(e) => {
             error!(
                 "Embedded dataset {} not found or access denied for owner {}: {}",
-                result.embedded_dataset_id, result.owner, e
+                result.embedded_dataset_id, result.owner_id, e
             );
             return;
         }
@@ -758,7 +757,7 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
             publish_transform_status(
                 &ctx.nats_client,
                 "dataset",
-                &result.owner,
+                &result.owner_id,
                 embedded_dataset.source_dataset_id,
                 result.dataset_transform_id,
                 "failed",
@@ -805,19 +804,20 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
             }
 
             // Clean up the batch file from S3 after successful processing and database recording
-            // The bucket name is derived from the embedded dataset ID (S3-safe)
-            let bucket = format!("embedded-dataset-{}", embedded_dataset.embedded_dataset_id);
-            if let Err(e) = delete_file(&ctx.s3_client, &bucket, &result.batch_file_key).await {
+            // Use single-bucket architecture
+            let s3_bucket = std::env::var("S3_BUCKET_NAME")
+                .unwrap_or_else(|_| "semantic-explorer-local".to_string());
+            if let Err(e) = delete_file(&ctx.s3_client, &s3_bucket, &result.batch_file_key).await {
                 // Log the error but don't fail the overall operation
                 // The batch was successfully processed and recorded, cleanup failure is non-critical
                 warn!(
-                    "Failed to cleanup batch file {} from bucket {}: {}. Manual cleanup may be required.",
-                    result.batch_file_key, bucket, e
+                    "Failed to cleanup batch file s3://{}/{}: {}. Manual cleanup may be required.",
+                    s3_bucket, result.batch_file_key, e
                 );
             } else {
                 info!(
-                    "Cleaned up batch file {} from bucket {}",
-                    result.batch_file_key, bucket
+                    "Cleaned up batch file s3://{}/{}",
+                    s3_bucket, result.batch_file_key
                 );
             }
 
@@ -825,7 +825,7 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
             publish_transform_status(
                 &ctx.nats_client,
                 "dataset",
-                &result.owner,
+                &result.owner_id,
                 embedded_dataset.source_dataset_id,
                 result.dataset_transform_id,
                 "completed",
@@ -1002,7 +1002,7 @@ async fn handle_visualization_result(result: VisualizationTransformResult, ctx: 
     publish_transform_status(
         &ctx.nats_client,
         "visualization",
-        &result.owner,
+        &result.owner_id,
         visualization_transform.embedded_dataset_id,
         result.visualization_transform_id,
         status,
@@ -1059,7 +1059,7 @@ fn start_dataset_transform_scan_listener(context: TransformContext, nats_client:
                     let s3_client = context.s3_client.clone();
                     let nats = nats_client.clone();
                     let encryption = context.encryption.clone();
-                    let owner = job.owner.clone();
+                    let owner = job.owner_id.clone();
                     let dataset_transform_id = job.dataset_transform_id;
 
                     actix_web::rt::spawn(async move {

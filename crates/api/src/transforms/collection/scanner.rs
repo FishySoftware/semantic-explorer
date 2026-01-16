@@ -138,7 +138,7 @@ async fn process_collection_transform_scan(
     );
 
     let collection =
-        collections::get_collection(pool, &transform.owner, transform.collection_id).await?;
+        collections::get_collection(pool, &transform.owner_id, transform.collection_id).await?;
 
     // Get already processed files
     let processed = get_processed_files(pool, transform.collection_transform_id).await?;
@@ -175,7 +175,7 @@ async fn process_collection_transform_scan(
     // Get embedder config if semantic chunking is used
     let embedder_config = match get_embedder_config_for_chunking(
         pool,
-        &transform.owner,
+        &transform.owner_id,
         &chunking_config,
         encryption,
     )
@@ -221,7 +221,7 @@ async fn process_collection_transform_scan(
                     bucket: collection.bucket.clone(),
                     collection_id: transform.collection_id,
                     collection_transform_id: transform.collection_transform_id,
-                    owner: transform.owner.clone(),
+                    owner_id: transform.owner_id.clone(),
                     extraction_config: extraction_config.clone(),
                     chunking_config: chunking_config.clone(),
                     embedder_config: embedder_config.clone(),
@@ -256,6 +256,17 @@ async fn process_collection_transform_scan(
         "Collection transform scan finished for {}. Found {} files, sent {} jobs.",
         transform.collection_transform_id, files_found, jobs_sent
     );
+
+    // Cache the file count for this collection
+    if let Err(e) =
+        collections::upsert_collection_file_count(pool, transform.collection_id, files_found as i64)
+            .await
+    {
+        warn!(
+            "Failed to cache file count for collection {}: {:?}",
+            transform.collection_id, e
+        );
+    }
 
     Ok(())
 }

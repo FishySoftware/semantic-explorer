@@ -57,9 +57,9 @@
 	});
 </script>
 
-<Navbar fluid class="shrink-0 border-b border-gray-200 dark:border-gray-700">
-	<NavBrand href="/#">
-		<img src={svelteLogo} class="mr-3 h-6 sm:h-9" alt="App Logo" />
+<Navbar fluid class="shrink-0 border-b border-gray-200 dark:border-gray-700" role="banner">
+	<NavBrand href="/#" aria-label="Semantic Explorer">
+		<img src={svelteLogo} class="mr-3 h-6 sm:h-9" alt="Semantic Explorer logo" />
 		<span class="self-center whitespace-nowrap text-xl font-semibold dark:text-white">
 			{appName}
 		</span>
@@ -67,20 +67,30 @@
 
 	<div class="flex items-center gap-3">
 		{#if !loading}
-			<div class="flex items-center gap-2 cursor-pointer" id="user-menu-button">
+			<div
+				class="flex items-center gap-2 cursor-pointer"
+				id="user-menu-button"
+				role="button"
+				tabindex="0"
+				aria-label="User menu"
+				aria-haspopup="menu"
+				aria-expanded="false"
+			>
 				{#if userName}
 					<span class="text-sm font-medium dark:text-white">{userName}</span>
 				{/if}
 				{#if userAvatar}
-					<Avatar src={userAvatar} />
+					<Avatar src={userAvatar} alt={userName} />
 				{:else}
-					<Avatar />
+					<Avatar alt="User avatar" />
 				{/if}
 			</div>
 
 			<Dropdown
 				triggeredBy="#user-menu-button"
 				class="w-48 bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700"
+				role="menu"
+				aria-label="User preferences"
 			>
 				{#if userName}
 					<div class="px-4 py-3 text-sm text-gray-900 dark:text-white">
@@ -96,20 +106,23 @@
 				{#each ['light', 'dark', 'system'] as theme (theme)}
 					<DropdownItem
 						onclick={() => selectTheme(theme as Theme)}
+						role="menuitem"
 						class="flex items-center justify-between text-gray-900 dark:text-white cursor-pointer"
+						aria-label={`Switch to ${getThemeLabel(theme as Theme)} theme`}
 					>
 						<span class="flex items-center gap-2">
 							{#if theme === 'light'}
-								<SunSolid class="w-4 h-4" />
+								<SunSolid class="w-4 h-4" aria-hidden="true" />
 							{:else if theme === 'dark'}
-								<MoonSolid class="w-4 h-4" />
+								<MoonSolid class="w-4 h-4" aria-hidden="true" />
 							{:else}
-								<DesktopPcSolid class="w-4 h-4" />
+								<DesktopPcSolid class="w-4 h-4" aria-hidden="true" />
 							{/if}
 							{getThemeLabel(theme as Theme)}
 						</span>
 						{#if currentTheme === theme}
-							<span class="w-2 h-2 bg-blue-600 dark:bg-blue-400 rounded-full"></span>
+							<span class="w-2 h-2 bg-blue-600 dark:bg-blue-400 rounded-full" aria-hidden="true"
+							></span>
 						{/if}
 					</DropdownItem>
 				{/each}

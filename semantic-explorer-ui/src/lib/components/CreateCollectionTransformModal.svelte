@@ -47,7 +47,6 @@
 	let autoCreateDatasetTransform = $state(false);
 	let selectedDatasetTransformEmbedderIds = $state<number[]>([]);
 	let datasetTransformBatchSize = $state<number | null>(null);
-	let datasetTransformWipeCollection = $state(false);
 
 	$effect(() => {
 		if (open) {
@@ -122,7 +121,8 @@
 			loadingCollections = true;
 			const response = await fetch('/api/collections');
 			if (!response.ok) throw new Error('Failed to fetch collections');
-			const allCollections: Collection[] = await response.json();
+			const data = await response.json();
+			const allCollections: Collection[] = data.collections ?? [];
 			// Filter to only collections with files
 			collections = allCollections.filter((c) => (c.file_count ?? 0) > 0);
 		} catch (e) {
@@ -137,7 +137,8 @@
 			loadingDatasets = true;
 			const response = await fetch('/api/datasets');
 			if (!response.ok) throw new Error('Failed to fetch datasets');
-			datasets = await response.json();
+			const data = await response.json();
+			datasets = data.items ?? [];
 			// Default to first dataset if available, otherwise 'new'
 			if (datasets.length > 0 && datasetOption === 'new') {
 				// Keep 'new' as default, but first dataset is available as secondary option
@@ -276,22 +277,33 @@
 
 			// Create dataset transform if auto-create is enabled
 			if (autoCreateDatasetTransform && selectedDatasetTransformEmbedderIds.length > 0) {
-				const datasetTransformResponse = await fetch('/api/dataset-transforms', {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({
-						title: `${transformTitle}-embeddings`,
-						source_dataset_id: targetDatasetId,
-						embedder_ids: selectedDatasetTransformEmbedderIds,
-						embedding_batch_size: datasetTransformBatchSize,
-						wipe_collection: datasetTransformWipeCollection,
-					}),
-				});
+				try {
+					const datasetTransformResponse = await fetch('/api/dataset-transforms', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({
+							title: `${transformTitle}-embeddings`,
+							source_dataset_id: targetDatasetId,
+							embedder_ids: selectedDatasetTransformEmbedderIds,
+							embedding_batch_size: datasetTransformBatchSize,
+						}),
+					});
 
-				if (!datasetTransformResponse.ok) {
-					const errorText = await datasetTransformResponse.text();
-					console.error('Failed to create dataset transform:', errorText);
-					// Don't fail the whole operation, just log it
+					if (!datasetTransformResponse.ok) {
+						const errorText = await datasetTransformResponse.text();
+						console.error('Failed to create dataset transform:', errorText, {
+							title: `${transformTitle}-embeddings`,
+							source_dataset_id: targetDatasetId,
+							embedder_ids: selectedDatasetTransformEmbedderIds,
+							embedding_batch_size: datasetTransformBatchSize,
+						});
+						toastStore.error(
+							'Failed to create dataset transform. Please check your selections and try again.'
+						);
+					}
+				} catch (e) {
+					console.error('Error creating dataset transform:', e);
+					toastStore.error('Error creating dataset transform. Please try again.');
 				}
 			}
 
@@ -315,7 +327,6 @@
 		autoCreateDatasetTransform = false;
 		selectedDatasetTransformEmbedderIds = [];
 		datasetTransformBatchSize = null;
-		datasetTransformWipeCollection = false;
 		extractionStrategy = 'plain_text';
 		preserveFormatting = false;
 		extractTables = true;
@@ -827,21 +838,6 @@
 								values process faster.
 							</p>
 						</div>
-
-						<!-- Wipe Collection Checkbox -->
-						<label class="flex items-center gap-2 cursor-pointer">
-							<input
-								type="checkbox"
-								bind:checked={datasetTransformWipeCollection}
-								class="w-4 h-4 text-blue-600 rounded focus:ring-2"
-							/>
-							<span class="text-sm text-gray-700 dark:text-gray-300">
-								Wipe existing Qdrant collection
-								<span class="text-xs text-gray-500 dark:text-gray-400"
-									>(Warning: This deletes all existing data)</span
-								>
-							</span>
-						</label>
 					</div>
 				{/if}
 			</div>

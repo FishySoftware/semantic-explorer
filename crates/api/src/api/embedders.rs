@@ -72,7 +72,12 @@ pub(crate) async fn get_embedder(
     .await
     {
         Ok(embedder) => {
-            events::resource_read(&user, ResourceType::Embedder, &embedder_id.to_string());
+            events::resource_read(
+                &user.as_owner(),
+                &user,
+                ResourceType::Embedder,
+                &embedder_id.to_string(),
+            );
             HttpResponse::Ok().json(embedder)
         }
         Err(e) => {
@@ -116,6 +121,7 @@ pub(crate) async fn create_embedder(
         Ok(embedder) => {
             events::resource_created_with_request(
                 &req,
+                &user.as_owner(),
                 &user,
                 ResourceType::Embedder,
                 &embedder.embedder_id.to_string(),
@@ -170,14 +176,20 @@ pub(crate) async fn update_embedder(
     .await
     {
         Ok(embedder) => {
-            events::resource_updated(&user, ResourceType::Embedder, &embedder_id.to_string());
+            events::resource_updated(
+                &user.as_owner(),
+                &user,
+                ResourceType::Embedder,
+                &embedder_id.to_string(),
+            );
 
             // Audit log configuration changes if sensitive fields were updated
             if let Some(api_key) = &update_embedder.api_key
                 && !api_key.is_empty()
             {
                 crate::audit::events::configuration_changed(
-                    &user.0,
+                    &user.as_owner(),
+                    &user,
                     ResourceType::Embedder,
                     &embedder_id.to_string(),
                     "api_key",
@@ -185,7 +197,8 @@ pub(crate) async fn update_embedder(
             }
             if update_embedder.name.is_some() {
                 crate::audit::events::configuration_changed(
-                    &user.0,
+                    &user.as_owner(),
+                    &user,
                     ResourceType::Embedder,
                     &embedder_id.to_string(),
                     "name",
@@ -224,6 +237,7 @@ pub(crate) async fn delete_embedder(
         Ok(()) => {
             events::resource_deleted_with_request(
                 &req,
+                &user.as_owner(),
                 &user,
                 ResourceType::Embedder,
                 &embedder_id.to_string(),
@@ -414,21 +428,14 @@ pub(crate) async fn test_embedder(
     };
 
     match result {
-        Ok(dimensions) => {
-            tracing::info!(
-                embedder_id = embedder_id,
-                dimensions = dimensions,
-                "embedder test successful"
-            );
-            HttpResponse::Ok().json(TestEmbedderResponse {
-                success: true,
-                message: format!(
-                    "embedder test successful - received {} dimensional embeddings",
-                    dimensions
-                ),
-                dimensions: Some(dimensions),
-            })
-        }
+        Ok(dimensions) => HttpResponse::Ok().json(TestEmbedderResponse {
+            success: true,
+            message: format!(
+                "embedder test successful - received {} dimensional embeddings",
+                dimensions
+            ),
+            dimensions: Some(dimensions),
+        }),
         Err(error) => {
             tracing::warn!(
                 embedder_id = embedder_id,

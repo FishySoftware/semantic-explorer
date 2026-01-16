@@ -86,7 +86,12 @@ pub(crate) async fn get_llm(
 ) -> impl Responder {
     match llms::get_llm(&postgres_pool.into_inner(), &user, *llm_id, &encryption).await {
         Ok(llm) => {
-            events::resource_read(&user, ResourceType::LlmProvider, &llm_id.to_string());
+            events::resource_read(
+                &user.as_owner(),
+                &user,
+                ResourceType::LlmProvider,
+                &llm_id.to_string(),
+            );
             HttpResponse::Ok().json(llm)
         }
         Err(e) => {
@@ -128,6 +133,7 @@ pub(crate) async fn create_llm(
         Ok(llm) => {
             events::resource_created_with_request(
                 &req,
+                &user.as_owner(),
                 &user,
                 ResourceType::LlmProvider,
                 &llm.llm_id.to_string(),
@@ -179,14 +185,20 @@ pub(crate) async fn update_llm(
     .await
     {
         Ok(llm) => {
-            events::resource_updated(&user, ResourceType::LlmProvider, &llm_id.to_string());
+            events::resource_updated(
+                &user.as_owner(),
+                &user,
+                ResourceType::LlmProvider,
+                &llm_id.to_string(),
+            );
 
             // Audit log configuration changes if sensitive fields were updated
             if let Some(api_key) = &update_llm.api_key
                 && !api_key.is_empty()
             {
                 crate::audit::events::configuration_changed(
-                    &user.0,
+                    &user.as_owner(),
+                    &user,
                     ResourceType::LlmProvider,
                     &llm_id.to_string(),
                     "api_key",
@@ -194,7 +206,8 @@ pub(crate) async fn update_llm(
             }
             if update_llm.name.is_some() {
                 crate::audit::events::configuration_changed(
-                    &user.0,
+                    &user.as_owner(),
+                    &user,
                     ResourceType::LlmProvider,
                     &llm_id.to_string(),
                     "name",
@@ -233,6 +246,7 @@ pub(crate) async fn delete_llm(
         Ok(()) => {
             events::resource_deleted_with_request(
                 &req,
+                &user.as_owner(),
                 &user,
                 ResourceType::LlmProvider,
                 &llm_id.to_string(),

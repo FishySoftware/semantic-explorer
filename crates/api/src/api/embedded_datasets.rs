@@ -65,7 +65,7 @@ pub async fn get_embedded_datasets(
     user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
 ) -> impl Responder {
-    match embedded_datasets::get_embedded_datasets(&postgres_pool, &user).await {
+    match embedded_datasets::get_embedded_datasets(&postgres_pool, &user.as_owner()).await {
         Ok(datasets) => HttpResponse::Ok().json(datasets),
         Err(e) => {
             error!("Failed to fetch embedded datasets: {}", e);
@@ -97,9 +97,16 @@ pub async fn get_embedded_dataset(
     path: Path<i32>,
 ) -> impl Responder {
     let id = path.into_inner();
-    match embedded_datasets::get_embedded_dataset_with_details(&postgres_pool, &user, id).await {
+    match embedded_datasets::get_embedded_dataset_with_details(&postgres_pool, &user.as_owner(), id)
+        .await
+    {
         Ok(dataset) => {
-            events::resource_read(&user, ResourceType::Dataset, &id.to_string());
+            events::resource_read(
+                &user.as_owner(),
+                &user,
+                ResourceType::Dataset,
+                &id.to_string(),
+            );
             HttpResponse::Ok().json(dataset)
         }
         Err(e) => {
@@ -134,22 +141,21 @@ pub async fn delete_embedded_dataset(
     let embedded_dataset_id = path.into_inner();
 
     // First get the embedded dataset to retrieve the collection name
-    let embedded_dataset =
-        match embedded_datasets::get_embedded_dataset(&postgres_pool, &user, embedded_dataset_id)
-            .await
-        {
-            Ok(dataset) => dataset,
-            Err(e) => {
-                error!("Failed to find embedded dataset: {}", e);
-                return not_found(format!("Embedded dataset not found: {}", e));
-            }
-        };
+    let embedded_dataset = match embedded_datasets::get_embedded_dataset(
+        &postgres_pool,
+        &user.as_owner(),
+        embedded_dataset_id,
+    )
+    .await
+    {
+        Ok(dataset) => dataset,
+        Err(e) => {
+            error!("Failed to find embedded dataset: {}", e);
+            return not_found(format!("Embedded dataset not found: {}", e));
+        }
+    };
 
     // Delete the Qdrant collection
-    info!(
-        "Deleting Qdrant collection: {}",
-        embedded_dataset.collection_name
-    );
     if let Err(e) = qdrant_client
         .delete_collection(&embedded_dataset.collection_name)
         .await
@@ -163,8 +169,12 @@ pub async fn delete_embedded_dataset(
     }
 
     // Delete the database entry
-    match embedded_datasets::delete_embedded_dataset(&postgres_pool, &user, embedded_dataset_id)
-        .await
+    match embedded_datasets::delete_embedded_dataset(
+        &postgres_pool,
+        &user.as_owner(),
+        embedded_dataset_id,
+    )
+    .await
     {
         Ok(_) => {
             info!(
@@ -173,6 +183,7 @@ pub async fn delete_embedded_dataset(
             );
             events::resource_deleted_with_request(
                 &req,
+                &user.as_owner(),
                 &user,
                 ResourceType::Dataset,
                 &embedded_dataset_id.to_string(),
@@ -210,7 +221,12 @@ pub async fn get_embedded_dataset_stats(
 ) -> impl Responder {
     let embedded_dataset_id = path.into_inner();
 
-    match embedded_datasets::get_embedded_dataset(&postgres_pool, &user, embedded_dataset_id).await
+    match embedded_datasets::get_embedded_dataset(
+        &postgres_pool,
+        &user.as_owner(),
+        embedded_dataset_id,
+    )
+    .await
     {
         Ok(_) => {
             match embedded_datasets::get_embedded_dataset_stats(&postgres_pool, embedded_dataset_id)
@@ -253,7 +269,7 @@ pub async fn get_batch_embedded_dataset_stats(
 
     // Verify all embedded datasets belong to the user
     for &id in embedded_dataset_ids {
-        match embedded_datasets::get_embedded_dataset(&postgres_pool, &user, id).await {
+        match embedded_datasets::get_embedded_dataset(&postgres_pool, &user.as_owner(), id).await {
             Ok(_) => {}
             Err(_) => {
                 return not_found(format!("Embedded dataset {} not found", id));
@@ -301,16 +317,19 @@ pub async fn get_embedded_dataset_points(
     let embedded_dataset_id = path.into_inner();
 
     // Verify embedded dataset exists and belongs to user
-    let embedded_dataset =
-        match embedded_datasets::get_embedded_dataset(&postgres_pool, &user, embedded_dataset_id)
-            .await
-        {
-            Ok(dataset) => dataset,
-            Err(e) => {
-                error!("Embedded dataset not found: {}", e);
-                return not_found(format!("Embedded dataset not found: {}", e));
-            }
-        };
+    let embedded_dataset = match embedded_datasets::get_embedded_dataset(
+        &postgres_pool,
+        &user.as_owner(),
+        embedded_dataset_id,
+    )
+    .await
+    {
+        Ok(dataset) => dataset,
+        Err(e) => {
+            error!("Embedded dataset not found: {}", e);
+            return not_found(format!("Embedded dataset not found: {}", e));
+        }
+    };
 
     // Get collection info for total count
     let collection_info = match qdrant_client
@@ -414,16 +433,19 @@ pub async fn get_point_vector(
     let (embedded_dataset_id, point_id) = path.into_inner();
 
     // Verify embedded dataset exists and belongs to user
-    let embedded_dataset =
-        match embedded_datasets::get_embedded_dataset(&postgres_pool, &user, embedded_dataset_id)
-            .await
-        {
-            Ok(dataset) => dataset,
-            Err(e) => {
-                error!("Embedded dataset not found: {}", e);
-                return not_found(format!("Embedded dataset not found: {}", e));
-            }
-        };
+    let embedded_dataset = match embedded_datasets::get_embedded_dataset(
+        &postgres_pool,
+        &user.as_owner(),
+        embedded_dataset_id,
+    )
+    .await
+    {
+        Ok(dataset) => dataset,
+        Err(e) => {
+            error!("Embedded dataset not found: {}", e);
+            return not_found(format!("Embedded dataset not found: {}", e));
+        }
+    };
 
     // Convert the string point_id to a PointId
     // Try to parse as UUID first, then as u64
@@ -513,7 +535,12 @@ pub async fn get_processed_batches(
 ) -> impl Responder {
     let embedded_dataset_id = path.into_inner();
 
-    match embedded_datasets::get_embedded_dataset(&postgres_pool, &user, embedded_dataset_id).await
+    match embedded_datasets::get_embedded_dataset(
+        &postgres_pool,
+        &user.as_owner(),
+        embedded_dataset_id,
+    )
+    .await
     {
         Ok(_) => {
             match embedded_datasets::get_processed_batches(&postgres_pool, embedded_dataset_id)
@@ -556,7 +583,7 @@ pub async fn get_embedded_datasets_for_dataset(
 ) -> impl Responder {
     match embedded_datasets::get_embedded_datasets_for_dataset(
         &postgres_pool,
-        &user,
+        &user.as_owner(),
         path.into_inner(),
     )
     .await
@@ -608,18 +635,15 @@ pub async fn update_embedded_dataset(
 
     match embedded_datasets::update_embedded_dataset_title(
         &postgres_pool,
-        &user,
+        &user.as_owner(),
         embedded_dataset_id,
         body.title.trim(),
     )
     .await
     {
         Ok(dataset) => {
-            info!(
-                "Updated embedded dataset {} with new title",
-                embedded_dataset_id
-            );
             events::resource_updated(
+                &user.as_owner(),
                 &user,
                 ResourceType::Dataset,
                 &embedded_dataset_id.to_string(),

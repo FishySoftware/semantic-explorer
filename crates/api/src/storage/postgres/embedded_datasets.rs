@@ -15,14 +15,14 @@ pub struct EmbeddedDatasetInfo {
 
 const GET_EMBEDDED_DATASET_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner, collection_name, created_at, updated_at, last_processed_at
+           owner_id, owner_display_name, collection_name, created_at, updated_at, last_processed_at
     FROM embedded_datasets
     WHERE embedded_dataset_id = $1
 "#;
 
 const GET_EMBEDDED_DATASETS_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner, collection_name, created_at, updated_at, last_processed_at
+           owner_id, owner_display_name, collection_name, created_at, updated_at, last_processed_at
     FROM embedded_datasets
     WHERE 1=1
     ORDER BY created_at DESC
@@ -30,7 +30,7 @@ const GET_EMBEDDED_DATASETS_QUERY: &str = r#"
 
 const GET_EMBEDDED_DATASETS_FOR_DATASET_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner, collection_name, created_at, updated_at, last_processed_at
+           owner_id, owner_display_name, collection_name, created_at, updated_at, last_processed_at
     FROM embedded_datasets
     WHERE source_dataset_id = $1
     ORDER BY created_at DESC
@@ -38,7 +38,7 @@ const GET_EMBEDDED_DATASETS_FOR_DATASET_QUERY: &str = r#"
 
 const GET_EMBEDDED_DATASETS_FOR_TRANSFORM_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner, collection_name, created_at, updated_at, last_processed_at
+           owner_id, owner_display_name, collection_name, created_at, updated_at, last_processed_at
     FROM embedded_datasets
     WHERE dataset_transform_id = $1
     ORDER BY created_at DESC
@@ -53,21 +53,22 @@ const GET_EMBEDDED_DATASET_WITH_DETAILS_QUERY: &str = r#"
         d.title as source_dataset_title,
         ed.embedder_id,
         e.name as embedder_name,
-        ed.owner,
+        ed.owner_id,
+        ed.owner_display_name,
         ed.collection_name,
         ed.created_at,
         ed.updated_at
     FROM embedded_datasets ed
     INNER JOIN datasets d ON d.dataset_id = ed.source_dataset_id
     INNER JOIN embedders e ON e.embedder_id = ed.embedder_id
-    WHERE ed.owner = $1 AND ed.embedded_dataset_id = $2
+    WHERE ed.owner_id = $1 AND ed.embedded_dataset_id = $2
 "#;
 
 const CREATE_EMBEDDED_DATASET_QUERY: &str = r#"
-    INSERT INTO embedded_datasets (title, dataset_transform_id, source_dataset_id, embedder_id, owner, collection_name)
-    VALUES ($1, $2, $3, $4, $5, $6)
+    INSERT INTO embedded_datasets (title, dataset_transform_id, source_dataset_id, embedder_id, owner_id, owner_display_name, collection_name)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
     RETURNING embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-              owner, collection_name, created_at, updated_at, last_processed_at
+              owner_id, owner_display_name, collection_name, created_at, updated_at, last_processed_at
 "#;
 
 const UPDATE_EMBEDDED_DATASET_COLLECTION_NAME_QUERY: &str = r#"
@@ -76,16 +77,16 @@ const UPDATE_EMBEDDED_DATASET_COLLECTION_NAME_QUERY: &str = r#"
         updated_at = NOW()
     WHERE embedded_dataset_id = $1
     RETURNING embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-              owner, collection_name, created_at, updated_at, last_processed_at
+              owner_id, owner_display_name, collection_name, created_at, updated_at, last_processed_at
 "#;
 
 const UPDATE_EMBEDDED_DATASET_TITLE_QUERY: &str = r#"
     UPDATE embedded_datasets
     SET title = $2,
         updated_at = NOW()
-    WHERE embedded_dataset_id = $1 AND owner = $3
+    WHERE embedded_dataset_id = $1 AND owner_id = $3
     RETURNING embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-              owner, collection_name, created_at, updated_at, last_processed_at
+              owner_id, owner_display_name, collection_name, created_at, updated_at, last_processed_at
 "#;
 
 const DELETE_EMBEDDED_DATASET_QUERY: &str = r#"
@@ -158,14 +159,15 @@ const GET_EMBEDDED_DATASET_WITH_DETAILS_BATCH: &str = r#"
             d.title as source_dataset_title,
             ed.embedder_id,
             e.name as embedder_name,
-            ed.owner,
+            ed.owner_id,
+            ed.owner_display_name,
             ed.collection_name,
             ed.created_at,
             ed.updated_at
         FROM embedded_datasets ed
         INNER JOIN datasets d ON d.dataset_id = ed.source_dataset_id
         INNER JOIN embedders e ON e.embedder_id = ed.embedder_id
-        WHERE ed.owner = $1 AND ed.embedded_dataset_id = ANY($2)
+        WHERE ed.owner_id = $1 AND ed.embedded_dataset_id = ANY($2)
         ORDER BY ed.embedded_dataset_id
         "#;
 
@@ -405,13 +407,15 @@ pub async fn update_embedded_dataset_last_processed_at_to(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn create_embedded_dataset_in_transaction(
     tx: &mut Transaction<'_, Postgres>,
     title: &str,
     dataset_transform_id: i32,
     source_dataset_id: i32,
     embedder_id: i32,
-    owner: &str,
+    owner_id: &str,
+    owner_display_name: &str,
     collection_name: &str,
 ) -> Result<EmbeddedDataset> {
     let mut embedded_dataset = sqlx::query_as::<_, EmbeddedDataset>(CREATE_EMBEDDED_DATASET_QUERY)
@@ -419,13 +423,14 @@ pub async fn create_embedded_dataset_in_transaction(
         .bind(dataset_transform_id)
         .bind(source_dataset_id)
         .bind(embedder_id)
-        .bind(owner)
+        .bind(owner_id)
+        .bind(owner_display_name)
         .bind(collection_name)
         .fetch_one(&mut **tx)
         .await?;
 
     let actual_collection_name =
-        EmbeddedDataset::generate_collection_name(embedded_dataset.embedded_dataset_id, owner);
+        EmbeddedDataset::generate_collection_name(embedded_dataset.embedded_dataset_id, owner_id);
     embedded_dataset =
         sqlx::query_as::<_, EmbeddedDataset>(UPDATE_EMBEDDED_DATASET_COLLECTION_NAME_QUERY)
             .bind(embedded_dataset.embedded_dataset_id)

@@ -41,7 +41,8 @@ pub struct ChatMessagesResponse {
 #[derive(Serialize, Deserialize, ToSchema, Clone, Debug, FromRow)]
 pub(crate) struct ChatSession {
     pub session_id: String,
-    pub owner: String,
+    pub owner_id: String,
+    pub owner_display_name: String,
     pub embedded_dataset_id: i32,
     pub llm_id: i32,
     pub title: String,

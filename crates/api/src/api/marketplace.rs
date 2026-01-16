@@ -258,6 +258,7 @@ pub(crate) async fn grab_collection(
     match collections::grab_public_collection(
         &postgres_pool.into_inner(),
         &s3_client.into_inner(),
+        &user.as_owner(),
         &user,
         *collection_id,
     )
@@ -267,7 +268,8 @@ pub(crate) async fn grab_collection(
             // Audit log the marketplace grab
             crate::audit::events::marketplace_grab(
                 &req,
-                &user.0,
+                &user.as_owner(),
+                &user,
                 crate::audit::ResourceType::Collection,
                 &collection_id.to_string(),
             );
@@ -299,12 +301,20 @@ pub(crate) async fn grab_dataset(
     dataset_id: Path<i32>,
     req: actix_web::HttpRequest,
 ) -> impl Responder {
-    match datasets::grab_public_dataset(&postgres_pool.into_inner(), &user, *dataset_id).await {
+    match datasets::grab_public_dataset(
+        &postgres_pool.into_inner(),
+        &user.as_owner(),
+        &user,
+        *dataset_id,
+    )
+    .await
+    {
         Ok(dataset) => {
             // Audit log the marketplace grab
             crate::audit::events::marketplace_grab(
                 &req,
-                &user.0,
+                &user.as_owner(),
+                &user,
                 crate::audit::ResourceType::Dataset,
                 &dataset_id.to_string(),
             );
@@ -349,7 +359,8 @@ pub(crate) async fn grab_embedder(
             // Audit log the marketplace grab
             crate::audit::events::marketplace_grab(
                 &req,
-                &user.0,
+                &user.as_owner(),
+                &user,
                 crate::audit::ResourceType::Embedder,
                 &embedder_id.to_string(),
             );
@@ -387,7 +398,8 @@ pub(crate) async fn grab_llm(
             // Audit log the marketplace grab
             crate::audit::events::marketplace_grab(
                 &req,
-                &user.0,
+                &user.as_owner(),
+                &user,
                 crate::audit::ResourceType::LlmProvider,
                 &llm_id.to_string(),
             );

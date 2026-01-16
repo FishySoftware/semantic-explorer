@@ -48,8 +48,8 @@ pub async fn retrieve_documents(
         .collection_info(&collection_name)
         .await
         .map_err(|e| {
-            error!(error = ?e, collection = %collection_name, "failed to get collection info");
-            format!("failed to access collection: {e:?}")
+            error!(error = %e, collection = %collection_name, "failed to get collection info");
+            format!("failed to access collection: {e}")
         })?;
 
     debug!(collection = %collection_name, "collection found");
@@ -85,8 +85,8 @@ pub async fn retrieve_documents(
         .search_points(search_builder)
         .await
         .map_err(|e| {
-            error!(error = ?e, "failed to search Qdrant");
-            format!("failed to search Qdrant: {e:?}")
+            error!(error = %e, "failed to search Qdrant");
+            format!("failed to search Qdrant: {e}")
         })?;
 
     debug!(

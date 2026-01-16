@@ -70,6 +70,7 @@ async fn store_audit_event(pool: &Pool<Postgres>, event: &AuditEvent) -> Result<
         &format!("{:?}", event.event_type),
         &format!("{:?}", event.outcome),
         &event.user,
+        &event.user_display,
         event.request_id.as_deref(),
         event.client_ip.as_deref(),
         event

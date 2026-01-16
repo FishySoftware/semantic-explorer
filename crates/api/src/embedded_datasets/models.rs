@@ -13,7 +13,8 @@ pub struct EmbeddedDataset {
     pub dataset_transform_id: i32, // Parent Dataset Transform
     pub source_dataset_id: i32,
     pub embedder_id: i32, // Single embedder
-    pub owner: String,
+    pub owner_id: String,
+    pub owner_display_name: String,
     pub collection_name: String, // Qdrant collection name
     #[schema(value_type = String, format = DateTime)]
     pub created_at: DateTime<Utc>,
@@ -34,7 +35,8 @@ pub struct EmbeddedDatasetWithDetails {
     pub source_dataset_title: String,
     pub embedder_id: i32,
     pub embedder_name: String,
-    pub owner: String,
+    pub owner_id: String,
+    pub owner_display_name: String,
     pub collection_name: String,
     #[schema(value_type = String, format = DateTime)]
     pub created_at: DateTime<Utc>,

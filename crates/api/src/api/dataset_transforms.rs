@@ -110,7 +110,12 @@ pub async fn get_dataset_transform(
     let id = path.into_inner();
     match dataset_transforms::get_dataset_transform(&postgres_pool, &user.as_owner(), id).await {
         Ok(transform) => {
-            events::resource_read(&user, ResourceType::Transform, &id.to_string());
+            events::resource_read(
+                &user.as_owner(),
+                &user,
+                ResourceType::Transform,
+                &id.to_string(),
+            );
             HttpResponse::Ok().json(transform)
         }
         Err(e) => {
@@ -150,7 +155,6 @@ pub async fn create_dataset_transform(
 
     let job_config = serde_json::json!({
         "embedding_batch_size": body.embedding_batch_size.unwrap_or(100),
-        "wipe_collection": body.wipe_collection,
     });
 
     match dataset_transforms::create_dataset_transform(
@@ -159,6 +163,7 @@ pub async fn create_dataset_transform(
         body.source_dataset_id,
         &body.embedder_ids,
         &user.as_owner(),
+        &user.0,
         &job_config,
     )
     .await
@@ -168,6 +173,7 @@ pub async fn create_dataset_transform(
             let dataset_transform_id = transform.dataset_transform_id;
             events::resource_created_with_request(
                 &req,
+                &user.as_owner(),
                 &user,
                 ResourceType::Transform,
                 &dataset_transform_id.to_string(),
@@ -175,7 +181,7 @@ pub async fn create_dataset_transform(
             let scan_job = semantic_explorer_core::models::DatasetTransformScanJob {
                 job_id: Uuid::new_v4(),
                 dataset_transform_id,
-                owner: user.to_string(),
+                owner_id: user.as_owner(),
             };
 
             if let Ok(payload) = serde_json::to_vec(&scan_job) {
@@ -262,7 +268,12 @@ pub async fn update_dataset_transform(
     .await
     {
         Ok((transform, embedded_datasets)) => {
-            events::resource_updated(&user, ResourceType::Transform, &id.to_string());
+            events::resource_updated(
+                &user.as_owner(),
+                &user,
+                ResourceType::Transform,
+                &id.to_string(),
+            );
             HttpResponse::Ok().json(serde_json::json!({
                 "transform": transform,
                 "embedded_datasets": embedded_datasets,
@@ -338,6 +349,7 @@ pub async fn delete_dataset_transform(
         Ok(_) => {
             events::resource_deleted_with_request(
                 &req,
+                &user.as_owner(),
                 &user,
                 ResourceType::Transform,
                 &dataset_transform_id.to_string(),
@@ -494,6 +506,56 @@ pub async fn get_dataset_transform_stats(
             error!("Dataset transform not found: {}", e);
             HttpResponse::NotFound().json(serde_json::json!({
                 "error": format!("Dataset transform not found: {}", e)
+            }))
+        }
+    }
+}
+
+#[derive(Deserialize, utoipa::ToSchema, Debug)]
+pub struct BatchDatasetTransformStatsRequest {
+    pub dataset_transform_ids: Vec<i32>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/dataset-transforms/batch-stats",
+    tag = "Dataset Transforms",
+    request_body = BatchDatasetTransformStatsRequest,
+    responses(
+        (status = 200, description = "Batch transform statistics"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Dataset transform not found"),
+    ),
+)]
+#[post("/api/dataset-transforms/batch-stats")]
+#[tracing::instrument(name = "get_batch_dataset_transform_stats", skip(user, postgres_pool))]
+pub async fn get_batch_dataset_transform_stats(
+    user: AuthenticatedUser,
+    postgres_pool: Data<Pool<Postgres>>,
+    body: Json<BatchDatasetTransformStatsRequest>,
+) -> impl Responder {
+    let transform_ids = &body.dataset_transform_ids;
+
+    // Verify ownership
+    for &id in transform_ids {
+        match dataset_transforms::get_dataset_transform(&postgres_pool, &user.as_owner(), id).await
+        {
+            Ok(_) => {}
+            Err(_) => {
+                return HttpResponse::NotFound().json(serde_json::json!({
+                    "error": format!("Dataset transform {} not found", id)
+                }));
+            }
+        }
+    }
+
+    match dataset_transforms::get_batch_dataset_transform_stats(&postgres_pool, transform_ids).await
+    {
+        Ok(stats_map) => HttpResponse::Ok().json(stats_map),
+        Err(e) => {
+            error!("Failed to get batch stats: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to fetch batch statistics"
             }))
         }
     }
@@ -692,8 +754,12 @@ pub async fn get_dataset_transform_batches(
     let offset = query.offset.unwrap_or(0);
 
     // Verify the transform exists and user has access
-    match dataset_transforms::get_dataset_transform(&postgres_pool, &user, dataset_transform_id)
-        .await
+    match dataset_transforms::get_dataset_transform(
+        &postgres_pool,
+        &user.as_owner(),
+        dataset_transform_id,
+    )
+    .await
     {
         Ok(_) => {
             let result = if let Some(status) = &query.status {
@@ -776,8 +842,12 @@ pub async fn get_dataset_transform_batch(
     let batch_id = batch_id.into_inner();
 
     // Verify the transform exists and user has access
-    match dataset_transforms::get_dataset_transform(&postgres_pool, &user, dataset_transform_id)
-        .await
+    match dataset_transforms::get_dataset_transform(
+        &postgres_pool,
+        &user.as_owner(),
+        dataset_transform_id,
+    )
+    .await
     {
         Ok(_) => {
             match dataset_transform_batches::get_batch(&postgres_pool, batch_id).await {
@@ -831,8 +901,12 @@ pub async fn get_dataset_transform_batch_stats(
     let dataset_transform_id = path.into_inner();
 
     // Verify the transform exists and user has access
-    match dataset_transforms::get_dataset_transform(&postgres_pool, &user, dataset_transform_id)
-        .await
+    match dataset_transforms::get_dataset_transform(
+        &postgres_pool,
+        &user.as_owner(),
+        dataset_transform_id,
+    )
+    .await
     {
         Ok(_) => {
             match dataset_transform_batches::get_batch_stats(&postgres_pool, dataset_transform_id)
@@ -891,11 +965,11 @@ pub async fn stream_dataset_transform_status(
     // Create SSE stream
     let stream = async_stream::stream! {
         // Subscribe to dataset transform status updates
-        // Subject format: transforms.dataset.status.{owner}.{dataset_id}.{transform_id}
-        // Use wildcards for flexible filtering at subscription level
+        // Subject format: sse.transforms.dataset.status.{owner}.{dataset_id}.{transform_id}
+        // Uses sse. prefix to receive only SSE updates (not JetStream worker results)
         let subject = match dataset_id_filter {
-            Some(dataset_id) => format!("transforms.dataset.status.{}.{}.*", owner, dataset_id),
-            None => format!("transforms.dataset.status.{}.>", owner),
+            Some(dataset_id) => format!("sse.transforms.dataset.status.{}.{}.*", owner, dataset_id),
+            None => format!("sse.transforms.dataset.status.{}.>", owner),
         };
 
         let mut subscriber = match nats.subscribe(subject.clone()).await {

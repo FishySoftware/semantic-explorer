@@ -10,6 +10,7 @@
 	import TransformsList from '../components/TransformsList.svelte';
 	import { ArrowLeftIcon, ArrowsExpandIcon } from '../utils/icons';
 	import { formatError, toastStore } from '../utils/notifications';
+	import { createPollingInterval } from '../utils/polling';
 	import { createSSEConnection, type SSEConnection } from '../utils/sse';
 	import { formatDate } from '../utils/ui-helpers';
 
@@ -133,7 +134,8 @@
 		embedders: number[];
 	} | null>(null);
 	let transformProgressStats = $state<Record<string, any> | null>(null);
-	let transformProgressPollInterval: ReturnType<typeof setInterval> | null = null;
+	let transformProgressPollingController: ReturnType<typeof createPollingInterval> | null = null;
+	let isPollingTransformProgress = false;
 
 	// SSE connection for real-time transform status updates
 	let datasetSSE: SSEConnection | null = null;
@@ -201,7 +203,8 @@
 			if (!response.ok) {
 				throw new Error(`Failed to fetch datasets: ${response.statusText}`);
 			}
-			const datasets: Dataset[] = await response.json();
+			const data = await response.json();
+			const datasets: Dataset[] = data.items ?? [];
 			dataset = datasets.find((d) => d.dataset_id === datasetId) || null;
 			if (!dataset) {
 				throw new Error('Dataset not found');
@@ -440,23 +443,42 @@
 	}
 
 	function startTransformProgressPolling() {
-		if (transformProgressPollInterval) {
-			clearInterval(transformProgressPollInterval);
+		// Stops any existing polling
+		if (transformProgressPollingController) {
+			transformProgressPollingController.stop();
 		}
 
 		// Fetch stats immediately before starting interval
 		fetchTransformProgressStats();
 
-		// Poll every 1 second for updates
-		transformProgressPollInterval = setInterval(() => {
-			fetchTransformProgressStats();
-		}, 1000);
+		// Create managed polling with deduplication to prevent race conditions
+		transformProgressPollingController = createPollingInterval(
+			async () => {
+				if (isPollingTransformProgress) return;
+				isPollingTransformProgress = true;
+				try {
+					await fetchTransformProgressStats();
+				} finally {
+					isPollingTransformProgress = false;
+				}
+			},
+			{
+				interval: 1000,
+				shouldContinue: () => {
+					// Continue polling only if transform is still active
+					return activeTransformProgress !== null;
+				},
+				onError: (error, retryCount) => {
+					console.debug(`Transform progress polling error (attempt ${retryCount}):`, error);
+				},
+			}
+		);
 	}
 
 	function stopTransformProgressPolling() {
-		if (transformProgressPollInterval) {
-			clearInterval(transformProgressPollInterval);
-			transformProgressPollInterval = null;
+		if (transformProgressPollingController) {
+			transformProgressPollingController.stop();
+			transformProgressPollingController = null;
 		}
 	}
 
@@ -673,6 +695,7 @@
 
 	onDestroy(() => {
 		datasetSSE?.disconnect();
+		transformProgressPollingController?.stop();
 		// Clean up any pending search fetch
 		if (searchFetchTimeout) {
 			clearTimeout(searchFetchTimeout);

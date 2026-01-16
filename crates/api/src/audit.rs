@@ -84,8 +84,10 @@ pub struct AuditEvent {
     pub event_type: AuditEventType,
     /// Outcome of the action
     pub outcome: AuditOutcome,
-    /// Username
+    /// Hashed user ID for infrastructure consistency
     pub user: String,
+    /// Display name for human-readable audit logs
+    pub user_display: String,
     /// Request ID for correlation
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
@@ -105,7 +107,13 @@ pub struct AuditEvent {
 
 impl AuditEvent {
     /// Create a new audit event with the current timestamp
-    pub fn new(event_type: AuditEventType, outcome: AuditOutcome, user: impl Into<String>) -> Self {
+    /// `user` is the hashed user ID, `user_display` is the real username for display
+    pub fn new(
+        event_type: AuditEventType,
+        outcome: AuditOutcome,
+        user: impl Into<String>,
+        user_display: impl Into<String>,
+    ) -> Self {
         let timestamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map(|d| {
@@ -120,6 +128,7 @@ impl AuditEvent {
             event_type,
             outcome,
             user: user.into(),
+            user_display: user_display.into(),
             request_id: None,
             client_ip: None,
             resource_type: None,
@@ -202,6 +211,7 @@ impl AuditEvent {
             &format!("{:?}", self.event_type),
             &format!("{:?}", self.outcome),
             &self.user,
+            &self.user_display,
             self.request_id.as_deref(),
             self.client_ip.as_deref(),
             self.resource_type
@@ -284,13 +294,18 @@ pub mod events {
     /// Log a successful resource creation with request context
     pub fn resource_created_with_request(
         req: &HttpRequest,
-        user: &str,
+        user_id: &str,
+        user_display: &str,
         resource_type: ResourceType,
         resource_id: &str,
     ) {
-        let mut event =
-            AuditEvent::new(AuditEventType::ResourceCreate, AuditOutcome::Success, user)
-                .with_resource(resource_type, resource_id);
+        let mut event = AuditEvent::new(
+            AuditEventType::ResourceCreate,
+            AuditOutcome::Success,
+            user_id,
+            user_display,
+        )
+        .with_resource(resource_type, resource_id);
         if let Some(id) = get_request_id(req) {
             event = event.with_request_id(id);
         }
@@ -314,9 +329,19 @@ pub mod events {
     }
 
     /// Log a successful resource read
-    pub fn resource_read(user: &str, resource_type: ResourceType, resource_id: &str) {
-        let event = AuditEvent::new(AuditEventType::ResourceRead, AuditOutcome::Success, user)
-            .with_resource(resource_type, resource_id);
+    pub fn resource_read(
+        user_id: &str,
+        user_display: &str,
+        resource_type: ResourceType,
+        resource_id: &str,
+    ) {
+        let event = AuditEvent::new(
+            AuditEventType::ResourceRead,
+            AuditOutcome::Success,
+            user_id,
+            user_display,
+        )
+        .with_resource(resource_type, resource_id);
         event.log();
 
         // Try to publish to NATS, fall back to direct database write if unavailable
@@ -337,9 +362,19 @@ pub mod events {
     }
 
     /// Log a successful resource update
-    pub fn resource_updated(user: &str, resource_type: ResourceType, resource_id: &str) {
-        let event = AuditEvent::new(AuditEventType::ResourceUpdate, AuditOutcome::Success, user)
-            .with_resource(resource_type, resource_id);
+    pub fn resource_updated(
+        user_id: &str,
+        user_display: &str,
+        resource_type: ResourceType,
+        resource_id: &str,
+    ) {
+        let event = AuditEvent::new(
+            AuditEventType::ResourceUpdate,
+            AuditOutcome::Success,
+            user_id,
+            user_display,
+        )
+        .with_resource(resource_type, resource_id);
         event.log();
 
         // Try to publish to NATS, fall back to direct database write if unavailable
@@ -362,13 +397,18 @@ pub mod events {
     /// Log a successful resource deletion with request context
     pub fn resource_deleted_with_request(
         req: &HttpRequest,
-        user: &str,
+        user_id: &str,
+        user_display: &str,
         resource_type: ResourceType,
         resource_id: &str,
     ) {
-        let mut event =
-            AuditEvent::new(AuditEventType::ResourceDelete, AuditOutcome::Success, user)
-                .with_resource(resource_type, resource_id);
+        let mut event = AuditEvent::new(
+            AuditEventType::ResourceDelete,
+            AuditOutcome::Success,
+            user_id,
+            user_display,
+        )
+        .with_resource(resource_type, resource_id);
         if let Some(id) = get_request_id(req) {
             event = event.with_request_id(id);
         }
@@ -392,9 +432,14 @@ pub mod events {
     }
 
     /// Log an authentication failure
-    pub fn auth_failed(user: &str, reason: &str, client_ip: Option<&str>) {
-        let mut event = AuditEvent::new(AuditEventType::AuthFailed, AuditOutcome::Failure, user)
-            .with_details(reason);
+    pub fn auth_failed(user_id: &str, user_display: &str, reason: &str, client_ip: Option<&str>) {
+        let mut event = AuditEvent::new(
+            AuditEventType::AuthFailed,
+            AuditOutcome::Failure,
+            user_id,
+            user_display,
+        )
+        .with_details(reason);
         if let Some(ip) = client_ip {
             event = event.with_client_ip(ip);
         }
@@ -419,7 +464,8 @@ pub mod events {
 
     /// Log an unauthorized access attempt
     pub fn unauthorized_access(
-        user: &str,
+        user_id: &str,
+        user_display: &str,
         resource_type: ResourceType,
         resource_id: &str,
         reason: &str,
@@ -427,7 +473,8 @@ pub mod events {
         let event = AuditEvent::new(
             AuditEventType::UnauthorizedAccess,
             AuditOutcome::Denied,
-            user,
+            user_id,
+            user_display,
         )
         .with_resource(resource_type, resource_id)
         .with_details(reason);
@@ -451,11 +498,12 @@ pub mod events {
     }
 
     /// Log a validation failure
-    pub fn validation_failed(user: &str, field: &str, reason: &str) {
+    pub fn validation_failed(user_id: &str, user_display: &str, field: &str, reason: &str) {
         let event = AuditEvent::new(
             AuditEventType::ValidationFailed,
             AuditOutcome::Failure,
-            user,
+            user_id,
+            user_display,
         )
         .with_details(format!("{}: {}", field, reason));
         event.log();
@@ -478,9 +526,19 @@ pub mod events {
     }
 
     /// Log a chat message
-    pub fn chat_message_sent(req: &HttpRequest, user: &str, session_id: &str) {
-        let mut event = AuditEvent::new(AuditEventType::ChatMessage, AuditOutcome::Success, user)
-            .with_resource(ResourceType::Session, session_id);
+    pub fn chat_message_sent(
+        req: &HttpRequest,
+        user_id: &str,
+        user_display: &str,
+        session_id: &str,
+    ) {
+        let mut event = AuditEvent::new(
+            AuditEventType::ChatMessage,
+            AuditOutcome::Success,
+            user_id,
+            user_display,
+        )
+        .with_resource(ResourceType::Session, session_id);
         if let Some(request_id) = get_request_id(req) {
             event = event.with_request_id(request_id);
         }
@@ -504,9 +562,19 @@ pub mod events {
     }
 
     /// Log a search request
-    pub fn search_request(req: &HttpRequest, user: &str, collection_ids: &[String]) {
-        let mut event = AuditEvent::new(AuditEventType::SearchRequest, AuditOutcome::Success, user)
-            .with_details(format!("collections: {}", collection_ids.join(", ")));
+    pub fn search_request(
+        req: &HttpRequest,
+        user_id: &str,
+        user_display: &str,
+        collection_ids: &[String],
+    ) {
+        let mut event = AuditEvent::new(
+            AuditEventType::SearchRequest,
+            AuditOutcome::Success,
+            user_id,
+            user_display,
+        )
+        .with_details(format!("collections: {}", collection_ids.join(", ")));
         if let Some(request_id) = get_request_id(req) {
             event = event.with_request_id(request_id);
         }
@@ -530,10 +598,21 @@ pub mod events {
     }
 
     /// Log a file download
-    pub fn file_downloaded(req: &HttpRequest, user: &str, collection_id: i32, filename: &str) {
-        let mut event = AuditEvent::new(AuditEventType::FileDownload, AuditOutcome::Success, user)
-            .with_resource(ResourceType::Collection, collection_id.to_string())
-            .with_details(filename);
+    pub fn file_downloaded(
+        req: &HttpRequest,
+        user_id: &str,
+        user_display: &str,
+        collection_id: i32,
+        filename: &str,
+    ) {
+        let mut event = AuditEvent::new(
+            AuditEventType::FileDownload,
+            AuditOutcome::Success,
+            user_id,
+            user_display,
+        )
+        .with_resource(ResourceType::Collection, collection_id.to_string())
+        .with_details(filename);
         if let Some(request_id) = get_request_id(req) {
             event = event.with_request_id(request_id);
         }
@@ -558,7 +637,8 @@ pub mod events {
 
     /// Log a configuration change (e.g., embedder/LLM API key update)
     pub fn configuration_changed(
-        user: &str,
+        user_id: &str,
+        user_display: &str,
         resource_type: ResourceType,
         resource_id: &str,
         field: &str,
@@ -566,7 +646,8 @@ pub mod events {
         let event = AuditEvent::new(
             AuditEventType::ConfigurationChange,
             AuditOutcome::Success,
-            user,
+            user_id,
+            user_display,
         )
         .with_resource(resource_type, resource_id)
         .with_details(format!("field: {}", field));
@@ -592,13 +673,18 @@ pub mod events {
     /// Log a marketplace operation (grab collection, grab dataset, etc.)
     pub fn marketplace_grab(
         req: &HttpRequest,
-        user: &str,
+        user_id: &str,
+        user_display: &str,
         resource_type: ResourceType,
         resource_id: &str,
     ) {
-        let mut event =
-            AuditEvent::new(AuditEventType::MarketplaceGrab, AuditOutcome::Success, user)
-                .with_resource(resource_type, resource_id);
+        let mut event = AuditEvent::new(
+            AuditEventType::MarketplaceGrab,
+            AuditOutcome::Success,
+            user_id,
+            user_display,
+        )
+        .with_resource(resource_type, resource_id);
         if let Some(request_id) = get_request_id(req) {
             event = event.with_request_id(request_id);
         }
@@ -622,11 +708,18 @@ pub mod events {
     }
 
     /// Log a file validation failure during upload
-    pub fn file_validation_failed(user: &str, collection_id: i32, filename: &str, reason: &str) {
+    pub fn file_validation_failed(
+        user_id: &str,
+        user_display: &str,
+        collection_id: i32,
+        filename: &str,
+        reason: &str,
+    ) {
         let event = AuditEvent::new(
             AuditEventType::ValidationFailed,
             AuditOutcome::Failure,
-            user,
+            user_id,
+            user_display,
         )
         .with_resource(ResourceType::Collection, collection_id.to_string())
         .with_details(format!("file: {}; reason: {}", filename, reason));

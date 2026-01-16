@@ -34,8 +34,6 @@ api:
     DATABASE_URL: "postgres://user:password@postgres.example.com:5432/semantic_explorer"
     NATS_URL: "nats://nats.example.com:4222"
     QDRANT_URL: "http://qdrant.example.com:6333"
-    S3_BUCKET: "semantic-explorer"
-    S3_ENDPOINT: "https://s3.example.com"
     OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
 
 # Worker Collections - Development
@@ -97,9 +95,17 @@ workerVisualizationsPy:
   env:
     NATS_URL: "nats://nats.example.com:4222"
     QDRANT_URL: "http://qdrant.example.com:6333"
-    S3_BUCKET: "semantic-explorer"
-    S3_ENDPOINT: "https://s3.example.com"
     OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+
+# Storage configuration for external S3
+storage:
+  s3:
+    endpoint: "https://s3.example.com"
+    region: "us-east-1"
+    bucketName: "semantic-explorer"
+    forcePathStyle: false
+    accessKeyId: ""  # Set via secret
+    secretAccessKey: ""  # Set via secret
 
 # All infrastructure services DISABLED - using external
 postgresql:
@@ -112,10 +118,6 @@ postgresql:
     username: user
     existingSecret: "external-postgresql-secret"
     passwordKey: "password"
-
-  enabled: false
-  external:
-    enabled: true
 
 nats:
   enabled: false
@@ -136,16 +138,6 @@ minio:
     endpoint: "https://s3.example.com"
     region: "us-east-1"
     bucket: "semantic-explorer"
-    existingSecret: "external-s3-secret"
-    accessKeyIdKey: "access-key-id"
-    secretAccessKeyKey: "secret-access-key"
-
-# Storage Configuration (S3-compatible)
-storage:
-  s3:
-    endpoint: "https://s3.example.com"
-    region: "us-east-1"
-    bucketName: "semantic-explorer"
     existingSecret: "external-s3-secret"
     accessKeyIdKey: "access-key-id"
     secretAccessKeyKey: "secret-access-key"

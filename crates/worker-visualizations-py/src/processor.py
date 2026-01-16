@@ -79,7 +79,7 @@ class VisualizationProcessor:
             f"Fetching vectors from Qdrant collection: {job.qdrant_collection_name}"
         )
         vectors, _ids, texts = await self._fetch_vectors_from_qdrant(
-            job.qdrant_collection_name, job.owner
+            job.qdrant_collection_name, job.owner_id
         )
         if progress_callback:
             await progress_callback("fetching_vectors", 20)

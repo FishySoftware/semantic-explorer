@@ -20,6 +20,13 @@
 		file_count?: number;
 	}
 
+	interface PaginatedCollectionList {
+		collections: Collection[];
+		total_count: number;
+		limit: number;
+		offset: number;
+	}
+
 	let { onViewCollection: handleViewCollection } = $props<{
 		onViewCollection: (_: number) => void;
 	}>();
@@ -36,6 +43,9 @@
 	let collections = $state<Collection[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+	let totalCount = $state(0);
+	let currentOffset = $state(0);
+	const pageSize = 20;
 
 	let searchQuery = $state('');
 
@@ -68,18 +78,18 @@
 			error = null;
 			const params = new SvelteURLSearchParams();
 			if (searchQuery.trim()) {
-				params.append('q', searchQuery.trim());
+				params.append('search', searchQuery.trim());
 			}
-			const url = params.toString()
-				? `/api/collections/search?${params.toString()}`
-				: '/api/collections';
+			params.append('limit', pageSize.toString());
+			params.append('offset', currentOffset.toString());
+			const url = `/api/collections?${params.toString()}`;
 			const response = await fetch(url);
 			if (!response.ok) {
 				throw new Error(`Failed to fetch collections: ${response.statusText}`);
 			}
-			const data = await response.json();
-			// Handle both paginated and non-paginated responses
-			collections = Array.isArray(data) ? data : data.collections || [];
+			const data: PaginatedCollectionList = await response.json();
+			collections = data.collections;
+			totalCount = data.total_count;
 		} catch (e) {
 			const message = formatError(e, 'Failed to fetch collections');
 			error = message;
@@ -168,6 +178,7 @@
 	// Refetch when search query changes
 	$effect(() => {
 		if (searchQuery !== undefined) {
+			currentOffset = 0; // Reset to first page when searching
 			fetchCollections();
 		}
 	});
@@ -175,6 +186,18 @@
 	onMount(() => {
 		fetchCollections();
 	});
+
+	function goToPreviousPage() {
+		currentOffset = Math.max(0, currentOffset - pageSize);
+		fetchCollections();
+	}
+
+	function goToNextPage() {
+		if (currentOffset + pageSize < totalCount) {
+			currentOffset += pageSize;
+			fetchCollections();
+		}
+	}
 </script>
 
 <div class="max-w-7xl mx-auto">
@@ -422,6 +445,30 @@
 					{/each}
 				</TableBody>
 			</Table>
+
+			<!-- Pagination Controls -->
+			<div class="mt-6 px-4 pb-4 flex items-center justify-between">
+				<div class="text-sm text-gray-600 dark:text-gray-400">
+					Showing {currentOffset + 1}-{Math.min(currentOffset + pageSize, totalCount)} of {totalCount}
+					collections
+				</div>
+				<div class="flex gap-2">
+					<button
+						onclick={goToPreviousPage}
+						disabled={currentOffset === 0}
+						class="px-4 py-2 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100 dark:hover:bg-gray-700"
+					>
+						Previous
+					</button>
+					<button
+						onclick={goToNextPage}
+						disabled={currentOffset + pageSize >= totalCount}
+						class="px-4 py-2 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100 dark:hover:bg-gray-700"
+					>
+						Next
+					</button>
+				</div>
+			</div>
 		</div>
 	{/if}
 </div>

@@ -42,33 +42,33 @@ fn decrypt_llms_api_keys(
 }
 
 const GET_LLM_QUERY: &str = r#"
-    SELECT llm_id, name, owner, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at
+    SELECT llm_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at
     FROM llms
     WHERE llm_id = $1
 "#;
 
 const GET_LLMS_QUERY: &str = r#"
-    SELECT llm_id, name, owner, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at
+    SELECT llm_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at
     FROM llms
     ORDER BY created_at DESC
 "#;
 
 const GET_LLMS_WITH_SEARCH_QUERY: &str = r#"
-    SELECT llm_id, name, owner, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at
+    SELECT llm_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at
     FROM llms
     WHERE name ILIKE $1
     ORDER BY created_at DESC
 "#;
 
 const GET_PUBLIC_LLMS_QUERY: &str = r#"
-    SELECT llm_id, name, owner, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at
+    SELECT llm_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at
     FROM llms
     WHERE is_public = TRUE
     ORDER BY created_at DESC
 "#;
 
 const GET_RECENT_PUBLIC_LLMS_QUERY: &str = r#"
-    SELECT llm_id, name, owner, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at
+    SELECT llm_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at
     FROM llms
     WHERE is_public = TRUE
     ORDER BY updated_at DESC
@@ -76,9 +76,9 @@ const GET_RECENT_PUBLIC_LLMS_QUERY: &str = r#"
 "#;
 
 const CREATE_LLM_QUERY: &str = r#"
-    INSERT INTO llms (name, owner, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
-    RETURNING llm_id, name, owner, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at
+    INSERT INTO llms (name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+    RETURNING llm_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at
 "#;
 
 const DELETE_LLM_QUERY: &str = r#"
@@ -94,15 +94,15 @@ const UPDATE_LLM_QUERY: &str = r#"
         is_public = COALESCE($6, is_public),
         updated_at = NOW()
     WHERE llm_id = $1
-    RETURNING llm_id, name, owner, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at
+    RETURNING llm_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at
 "#;
 
 const GRAB_PUBLIC_LLM_QUERY: &str = r#"
-    INSERT INTO llms (name, owner, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at)
-    SELECT name || ' - grabbed', $1, provider, base_url, api_key_encrypted, config, FALSE, NOW(), NOW()
+    INSERT INTO llms (name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at)
+    SELECT name || ' - grabbed', $1, $2, provider, base_url, api_key_encrypted, config, FALSE, NOW(), NOW()
     FROM llms
-    WHERE llm_id = $2 AND is_public = TRUE
-    RETURNING llm_id, name, owner, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at
+    WHERE llm_id = $3 AND is_public = TRUE
+    RETURNING llm_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at
 "#;
 
 #[tracing::instrument(name = "database.get_llm", skip(pool, encryption), fields(database.system = "postgresql", database.operation = "SELECT", username = %user.as_str(), llm_id = %llm_id))]
@@ -215,7 +215,7 @@ pub(crate) async fn get_recent_public_llms(
     decrypt_llms_api_keys(encryption, result?)
 }
 
-#[tracing::instrument(name = "database.create_llm", skip(pool, create_llm, encryption), fields(database.system = "postgresql", database.operation = "INSERT", username = %user.as_str()))]
+#[tracing::instrument(name = "database.create_llm", skip(pool, create_llm, encryption), fields(database.system = "postgresql", database.operation = "INSERT", owner_id = %user.as_owner()))]
 pub(crate) async fn create_llm(
     pool: &Pool<Postgres>,
     user: &AuthenticatedUser,
@@ -226,12 +226,13 @@ pub(crate) async fn create_llm(
     let encrypted_api_key = encrypt_api_key(encryption, &create_llm.api_key)?;
 
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, user.as_str()).await?;
+    super::rls::set_rls_user_tx(&mut tx, &user.as_owner()).await?;
 
     let start = Instant::now();
     let result = sqlx::query_as::<_, LargeLanguageModel>(CREATE_LLM_QUERY)
         .bind(&create_llm.name)
-        .bind(user.as_str())
+        .bind(user.as_owner())
+        .bind(&**user)
         .bind(&create_llm.provider)
         .bind(&create_llm.base_url)
         .bind(&encrypted_api_key)
@@ -309,7 +310,7 @@ pub(crate) async fn update_llm(
     decrypt_llm_api_key(encryption, llm)
 }
 
-#[tracing::instrument(name = "database.grab_public_llm", skip(pool, encryption), fields(database.system = "postgresql", database.operation = "INSERT", username = %user.as_str(), llm_id = %llm_id))]
+#[tracing::instrument(name = "database.grab_public_llm", skip(pool, encryption), fields(database.system = "postgresql", database.operation = "INSERT", owner_id = %user.as_owner(), llm_id = %llm_id))]
 pub(crate) async fn grab_public_llm(
     pool: &Pool<Postgres>,
     user: &AuthenticatedUser,
@@ -317,12 +318,13 @@ pub(crate) async fn grab_public_llm(
     encryption: &EncryptionService,
 ) -> Result<LargeLanguageModel> {
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, user.as_str()).await?;
+    super::rls::set_rls_user_tx(&mut tx, &user.as_owner()).await?;
 
     let start = Instant::now();
     // The encrypted key is copied from the source LLM to the new one
     let result = sqlx::query_as::<_, LargeLanguageModel>(GRAB_PUBLIC_LLM_QUERY)
-        .bind(user.as_str())
+        .bind(user.as_owner())
+        .bind(&**user)
         .bind(llm_id)
         .fetch_one(&mut *tx)
         .await;

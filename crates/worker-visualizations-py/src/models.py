@@ -196,7 +196,7 @@ class VisualizationTransformJob(BaseModel):
     job_id: UUID
     visualization_transform_id: int
     visualization_id: int
-    owner: str
+    owner_id: str
     embedded_dataset_id: int
     qdrant_collection_name: str
     visualization_config: VisualizationConfig
@@ -213,7 +213,7 @@ class VisualizationTransformResult(BaseModel):
     job_id: UUID = Field(alias="jobId")
     visualization_transform_id: int = Field(alias="visualizationTransformId")
     visualization_id: int = Field(alias="visualizationId")
-    owner: str
+    owner_id: str = Field(alias="ownerId")
     status: str  # "processing", "completed", "failed"
     html_s3_key: Optional[str] = Field(default=None, alias="htmlS3Key")
     point_count: Optional[int] = Field(default=None, alias="pointCount")

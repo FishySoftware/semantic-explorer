@@ -24,7 +24,9 @@ The `worker-collections` service processes uploaded documents via NATS JetStream
 | **Microsoft Office** | Word | `.docx`, `.docm`, `.dotx`, `.dotm` | Full text with paragraph structure |
 | | Legacy Word | `.doc` | OLE/CFB format extraction |
 | | Excel | `.xlsx`, `.xlsm`, `.xltx`, `.xltm` | Cell values with sheet organization |
+| | Legacy Excel | `.xls` | BIFF/OLE format extraction (Excel 97-2003) |
 | | PowerPoint | `.pptx`, `.pptm` | Slide text and speaker notes |
+| | Legacy PowerPoint | `.ppt` | OLE/CFB format extraction (PowerPoint 97-2003) |
 | **OpenDocument** | Writer | `.odt` | Full text extraction with metadata |
 | | Calc | `.ods` | Cell value extraction |
 | | Impress | `.odp` | Slide text extraction |
@@ -58,6 +60,8 @@ src/
 │   ├── office/          # Microsoft Office (DOCX/XLSX/PPTX)
 │   ├── open_office/     # OpenDocument (ODT/ODS/ODP)
 │   ├── legacy_doc/      # Legacy .doc (OLE/CFB format)
+│   ├── legacy_ppt/      # Legacy .ppt (OLE/CFB format)
+│   ├── legacy_xls/      # Legacy .xls (BIFF/OLE format)
 │   ├── epub/            # EPUB ebook extraction
 │   ├── rtf/             # RTF document extraction
 │   ├── html/            # HTML web document extraction

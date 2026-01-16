@@ -56,7 +56,8 @@ pub(crate) struct Dataset {
     pub(crate) dataset_id: i32,
     pub(crate) title: String,
     pub(crate) details: Option<String>,
-    pub(crate) owner: String,
+    pub(crate) owner_id: String,
+    pub(crate) owner_display_name: String,
     pub(crate) tags: Vec<String>,
     pub(crate) is_public: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -72,7 +73,8 @@ pub(crate) struct DatasetWithStats {
     pub(crate) dataset_id: i32,
     pub(crate) title: String,
     pub(crate) details: Option<String>,
-    pub(crate) owner: String,
+    pub(crate) owner_id: String,
+    pub(crate) owner_display_name: String,
     pub(crate) tags: Vec<String>,
     pub(crate) is_public: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -83,6 +85,14 @@ pub(crate) struct DatasetWithStats {
     pub(crate) updated_at: Option<DateTime<Utc>>,
     pub(crate) item_count: i64,
     pub(crate) total_chunks: i64,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct PaginatedDatasetList {
+    pub(crate) items: Vec<DatasetWithStats>,
+    pub(crate) total_count: i64,
+    pub(crate) limit: i64,
+    pub(crate) offset: i64,
 }
 
 #[derive(Serialize, Deserialize, ToSchema, FromRow)]

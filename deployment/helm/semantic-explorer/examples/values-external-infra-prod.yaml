@@ -53,8 +53,6 @@ api:
     DATABASE_URL: "postgres://user:password@postgres.prod.example.com:5432/semantic_explorer"
     NATS_URL: "nats://nats1.prod.example.com:4222,nats2.prod.example.com:4222,nats3.prod.example.com:4222"
     QDRANT_URL: "http://qdrant.prod.example.com:6333"
-    S3_BUCKET: "semantic-explorer-prod"
-    S3_ENDPOINT: "https://s3.prod.example.com"
     OTEL_EXPORTER_OTLP_ENDPOINT: "http://observability.prod.example.com:4317"
 
 # Worker Collections - Production
@@ -136,9 +134,17 @@ workerVisualizationsPy:
   env:
     NATS_URL: "nats://nats1.prod.example.com:4222,nats2.prod.example.com:4222,nats3.prod.example.com:4222"
     QDRANT_URL: "http://qdrant.prod.example.com:6333"
-    S3_BUCKET: "semantic-explorer-prod"
-    S3_ENDPOINT: "https://s3.prod.example.com"
     OTEL_EXPORTER_OTLP_ENDPOINT: "http://observability.prod.example.com:4317"
+
+# Storage configuration for external S3
+storage:
+  s3:
+    endpoint: "https://s3.prod.example.com"
+    region: "us-east-1"
+    bucketName: "semantic-explorer-prod"
+    forcePathStyle: false
+    accessKeyId: ""  # Set via secret
+    secretAccessKey: ""  # Set via secret
 
 # All infrastructure services DISABLED - using external managed services
 postgresql:
@@ -152,11 +158,6 @@ postgresql:
     existingSecret: "external-postgresql-secret"
     passwordKey: "password"
     sslMode: verify-full
-
-  enabled: false
-  external:
-    enabled: true
-    passwordKey: "password"
 
 nats:
   enabled: false
@@ -183,15 +184,6 @@ minio:
     accessKeyIdKey: "access-key-id"
     secretAccessKeyKey: "secret-access-key"
 
-# Storage Configuration (S3-compatible)
-storage:
-  s3:
-    endpoint: "https://s3.prod.example.com"
-    region: "us-east-1"
-    bucketName: "semantic-explorer-prod"
-    existingSecret: "external-s3-secret"
-    accessKeyIdKey: "access-key-id"
-    secretAccessKeyKey: "secret-access-key"
 
 # Dex - OIDC Provider
 dex:

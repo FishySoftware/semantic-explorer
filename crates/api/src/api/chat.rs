@@ -41,10 +41,18 @@ pub(crate) async fn create_chat_session(
     postgres_pool: Data<Pool<Postgres>>,
     request: Json<CreateChatSessionRequest>,
 ) -> impl Responder {
-    match chat::create_chat_session(&postgres_pool.into_inner(), &user.as_owner(), &request).await {
+    match chat::create_chat_session(
+        &postgres_pool.into_inner(),
+        &user.as_owner(),
+        &user,
+        &request,
+    )
+    .await
+    {
         Ok(session) => {
             events::resource_created_with_request(
                 &req,
+                &user.as_owner(),
                 &user,
                 ResourceType::Session,
                 &session.session_id,
@@ -122,7 +130,7 @@ pub(crate) async fn get_chat_session(
 ) -> impl Responder {
     match chat::get_chat_session(&postgres_pool.into_inner(), &session_id, &user.as_owner()).await {
         Ok(session) => {
-            events::resource_read(&user, ResourceType::Session, &session_id);
+            events::resource_read(&user.as_owner(), &user, ResourceType::Session, &session_id);
             HttpResponse::Ok().json(ChatSessionResponse {
                 session_id: session.session_id,
                 embedded_dataset_id: session.embedded_dataset_id,
@@ -162,7 +170,13 @@ pub(crate) async fn delete_chat_session(
         .await
     {
         Ok(()) => {
-            events::resource_deleted_with_request(&req, &user, ResourceType::Session, &session_id);
+            events::resource_deleted_with_request(
+                &req,
+                &user.as_owner(),
+                &user,
+                ResourceType::Session,
+                &session_id,
+            );
             HttpResponse::NoContent().finish()
         }
         Err(e) => {
@@ -294,7 +308,7 @@ pub(crate) async fn send_chat_message(
     }
 
     // Track chat message sent
-    events::chat_message_sent(&req, &user, &session_id);
+    events::chat_message_sent(&req, &user.as_owner(), &user, &session_id);
 
     // Retrieve relevant documents using RAG
     let mut rag_config = RAGConfig::default();
@@ -453,7 +467,7 @@ pub(crate) async fn stream_chat_message(
     }
 
     // Track chat message sent
-    events::chat_message_sent(&req, &user, &session_id);
+    events::chat_message_sent(&req, &user.as_owner(), &user, &session_id);
 
     // Retrieve RAG documents
     let mut rag_config = RAGConfig::default();
@@ -832,7 +846,7 @@ pub(crate) async fn regenerate_chat_message(
     }
 
     // Track regeneration event
-    events::chat_message_sent(&req, &user, &message.session_id);
+    events::chat_message_sent(&req, &user.as_owner(), &user, &message.session_id);
 
     // Return updated message
     let response = ChatResponse {

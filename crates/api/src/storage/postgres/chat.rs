@@ -9,26 +9,26 @@ use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::observability::record_database_query;
 
 const CREATE_SESSION_QUERY: &str = r#"
-    INSERT INTO chat_sessions (session_id, owner, embedded_dataset_id, llm_id, title, created_at, updated_at)
-    VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-    RETURNING session_id, owner, embedded_dataset_id, llm_id, title, created_at, updated_at
+    INSERT INTO chat_sessions (session_id, owner_id, owner_display_name, embedded_dataset_id, llm_id, title, created_at, updated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+    RETURNING session_id, owner_id, owner_display_name, embedded_dataset_id, llm_id, title, created_at, updated_at
 "#;
 
 const GET_SESSION_QUERY: &str = r#"
-    SELECT session_id, owner, embedded_dataset_id, llm_id, title, created_at, updated_at
+    SELECT session_id, owner_id, owner_display_name, embedded_dataset_id, llm_id, title, created_at, updated_at
     FROM chat_sessions
-    WHERE session_id = $1 AND owner = $2
+    WHERE session_id = $1 AND owner_id = $2
 "#;
 
 const GET_SESSIONS_QUERY: &str = r#"
-    SELECT session_id, owner, embedded_dataset_id, llm_id, title, created_at, updated_at
+    SELECT session_id, owner_id, owner_display_name, embedded_dataset_id, llm_id, title, created_at, updated_at
     FROM chat_sessions
     WHERE 1=1
     ORDER BY updated_at DESC
 "#;
 
 const DELETE_SESSION_QUERY: &str = r#"
-    DELETE FROM chat_sessions WHERE session_id = $1 AND owner = $2
+    DELETE FROM chat_sessions WHERE session_id = $1 AND owner_id = $2
 "#;
 
 const CREATE_MESSAGE_QUERY: &str = r#"
@@ -91,10 +91,11 @@ const GET_RETRIEVED_DOCUMENTS_QUERY: &str = r#"
     ORDER BY similarity_score DESC
 "#;
 
-#[tracing::instrument(name = "database.create_chat_session", skip(pool), fields(database.system = "postgresql", database.operation = "INSERT", owner = %owner))]
+#[tracing::instrument(name = "database.create_chat_session", skip(pool), fields(database.system = "postgresql", database.operation = "INSERT", owner_id = %owner_id))]
 pub(crate) async fn create_chat_session(
     pool: &Pool<Postgres>,
-    owner: &str,
+    owner_id: &str,
+    owner_display_name: &str,
     request: &CreateChatSessionRequest,
 ) -> Result<ChatSession> {
     let start = Instant::now();
@@ -107,11 +108,12 @@ pub(crate) async fn create_chat_session(
     });
 
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
     let result = sqlx::query_as::<_, ChatSession>(CREATE_SESSION_QUERY)
         .bind(&session_id)
-        .bind(owner)
+        .bind(owner_id)
+        .bind(owner_display_name)
         .bind(request.embedded_dataset_id)
         .bind(request.llm_id)
         .bind(&title)
@@ -127,20 +129,20 @@ pub(crate) async fn create_chat_session(
     Ok(session)
 }
 
-#[tracing::instrument(name = "database.get_chat_session", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner = %owner))]
+#[tracing::instrument(name = "database.get_chat_session", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner_id = %owner_id))]
 pub(crate) async fn get_chat_session(
     pool: &Pool<Postgres>,
     session_id: &str,
-    owner: &str,
+    owner_id: &str,
 ) -> Result<ChatSession> {
     let start = Instant::now();
 
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
     let result = sqlx::query_as::<_, ChatSession>(GET_SESSION_QUERY)
         .bind(session_id)
-        .bind(owner)
+        .bind(owner_id)
         .fetch_one(&mut *tx)
         .await;
 
@@ -153,15 +155,15 @@ pub(crate) async fn get_chat_session(
     Ok(session)
 }
 
-#[tracing::instrument(name = "database.get_chat_sessions", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner = %owner))]
+#[tracing::instrument(name = "database.get_chat_sessions", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner_id = %owner_id))]
 pub(crate) async fn get_chat_sessions(
     pool: &Pool<Postgres>,
-    owner: &str,
+    owner_id: &str,
 ) -> Result<Vec<ChatSession>> {
     let start = Instant::now();
 
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
     let result = sqlx::query_as::<_, ChatSession>(GET_SESSIONS_QUERY)
         .fetch_all(&mut *tx)
@@ -176,20 +178,20 @@ pub(crate) async fn get_chat_sessions(
     Ok(sessions)
 }
 
-#[tracing::instrument(name = "database.delete_chat_session", skip(pool), fields(database.system = "postgresql", database.operation = "DELETE", owner = %owner))]
+#[tracing::instrument(name = "database.delete_chat_session", skip(pool), fields(database.system = "postgresql", database.operation = "DELETE", owner_id = %owner_id))]
 pub(crate) async fn delete_chat_session(
     pool: &Pool<Postgres>,
     session_id: &str,
-    owner: &str,
+    owner_id: &str,
 ) -> Result<()> {
     let start = Instant::now();
 
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
     let result = sqlx::query(DELETE_SESSION_QUERY)
         .bind(session_id)
-        .bind(owner)
+        .bind(owner_id)
         .execute(&mut *tx)
         .await;
 

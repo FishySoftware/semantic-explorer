@@ -51,7 +51,8 @@ fn default_truncate_strategy() -> String {
 pub(crate) struct Embedder {
     pub(crate) embedder_id: i32,
     pub(crate) name: String,
-    pub(crate) owner: String,
+    pub(crate) owner_id: String,
+    pub(crate) owner_display_name: String,
     pub(crate) provider: String,
     pub(crate) base_url: String,
     #[sqlx(rename = "api_key_encrypted")]

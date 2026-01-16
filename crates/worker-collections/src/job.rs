@@ -21,7 +21,6 @@ pub(crate) async fn process_file_job(
     ctx: WorkerContext,
 ) -> Result<()> {
     let start_time = Instant::now();
-    info!("Processing file job");
 
     // Get the actual S3 bucket name from environment
     let s3_bucket_name = match env::var("S3_BUCKET_NAME") {
@@ -249,7 +248,10 @@ pub(crate) async fn process_file_job(
     }
 
     let chunks_key = format!("chunks/{}.json", job.job_id);
-    let full_chunks_key = format!("collections/{}/{}", job.collection_id, chunks_key);
+    let full_chunks_key = format!(
+        "transforms/collection-transforms/{}/{}",
+        job.collection_transform_id, chunks_key
+    );
     let chunks_json = serde_json::to_vec(&chunks_with_metadata)?;
     let chunks_size = chunks_json.len();
 
@@ -270,8 +272,6 @@ pub(crate) async fn process_file_job(
         error!(error = %e, "Failed to upload chunks");
         return Err(anyhow::anyhow!("Failed to upload chunks: {}", e));
     }
-
-    info!("Chunks uploaded successfully");
 
     let duration = start_time.elapsed().as_secs_f64();
     record_worker_job("transform-file", duration, "success");
@@ -301,7 +301,7 @@ async fn send_result(
     let result_msg = CollectionTransformResult {
         job_id: job.job_id,
         collection_transform_id: job.collection_transform_id,
-        owner: job.owner.clone(),
+        owner_id: job.owner_id.clone(),
         source_file_key: job.source_file_key.clone(),
         bucket: job.bucket.clone(),
         chunks_file_key: chunks_key,
@@ -312,7 +312,7 @@ async fn send_result(
     };
 
     let subject = semantic_explorer_core::status::collection_status_subject(
-        &job.owner,
+        &job.owner_id,
         job.collection_id,
         job.collection_transform_id,
     );

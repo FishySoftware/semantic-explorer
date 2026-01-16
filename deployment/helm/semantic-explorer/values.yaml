@@ -772,11 +772,11 @@ observability:
       pullPolicy: IfNotPresent
     resources:
       requests:
-        cpu: 200m
-        memory: 256Mi
+        cpu: 500m
+        memory: 512Mi
       limits:
-        cpu: 1000m
-        memory: 1Gi
+        cpu: 2000m
+        memory: 2Gi
     config:
       extensions:
         health_check:
@@ -792,11 +792,12 @@ observability:
       processors:
         batch:
           timeout: 10s
-          send_batch_size: 1024
+          send_batch_size: 128
+          send_batch_max_size: 256
         memory_limiter:
           check_interval: 1s
-          limit_mib: 512
-          spike_limit_mib: 128
+          limit_mib: 1024
+          spike_limit_mib: 256
       exporters:
         prometheus:
           endpoint: "0.0.0.0:8889"
@@ -940,6 +941,8 @@ prometheus:
   # Server configuration
   server:
     retention: "15d"
+    extraArgs:
+      - --web.enable-remote-write-receiver
     persistentVolume:
       enabled: true
       size: 50Gi

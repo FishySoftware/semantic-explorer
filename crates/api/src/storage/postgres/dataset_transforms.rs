@@ -19,14 +19,14 @@ fn validate_sort_direction(direction: &str) -> Result<String> {
 }
 
 const GET_DATASET_TRANSFORM_QUERY: &str = r#"
-    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner, is_enabled,
+    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
            job_config, created_at, updated_at
     FROM dataset_transforms
     WHERE dataset_transform_id = $1
 "#;
 
 const GET_DATASET_TRANSFORMS_FOR_DATASET_QUERY: &str = r#"
-    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner, is_enabled,
+    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
            job_config, created_at, updated_at
     FROM dataset_transforms
     WHERE source_dataset_id = $1
@@ -34,7 +34,7 @@ const GET_DATASET_TRANSFORMS_FOR_DATASET_QUERY: &str = r#"
 "#;
 
 const GET_ACTIVE_DATASET_TRANSFORMS_QUERY: &str = r#"
-    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner, is_enabled,
+    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
            job_config, created_at, updated_at
     FROM dataset_transforms
     WHERE is_enabled = TRUE
@@ -42,9 +42,9 @@ const GET_ACTIVE_DATASET_TRANSFORMS_QUERY: &str = r#"
 "#;
 
 const CREATE_DATASET_TRANSFORM_QUERY: &str = r#"
-    INSERT INTO dataset_transforms (title, source_dataset_id, embedder_ids, owner, job_config)
-    VALUES ($1, $2, $3, $4, $5)
-    RETURNING dataset_transform_id, title, source_dataset_id, embedder_ids, owner, is_enabled,
+    INSERT INTO dataset_transforms (title, source_dataset_id, embedder_ids, owner_id, owner_display_name, job_config)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    RETURNING dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
               job_config, created_at, updated_at
 "#;
 
@@ -56,7 +56,7 @@ const UPDATE_DATASET_TRANSFORM_QUERY: &str = r#"
         job_config = COALESCE($5, job_config),
         updated_at = NOW()
     WHERE dataset_transform_id = $1
-    RETURNING dataset_transform_id, title, source_dataset_id, embedder_ids, owner, is_enabled,
+    RETURNING dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
               job_config, created_at, updated_at
 "#;
 
@@ -66,25 +66,25 @@ const DELETE_DATASET_TRANSFORM_QUERY: &str = r#"
 "#;
 
 const COUNT_DATASET_TRANSFORMS_QUERY: &str =
-    "SELECT COUNT(*) as count FROM dataset_transforms WHERE owner = $1";
+    "SELECT COUNT(*) as count FROM dataset_transforms WHERE owner_id = $1";
 const COUNT_DATASET_TRANSFORMS_WITH_SEARCH_QUERY: &str =
-    "SELECT COUNT(*) as count FROM dataset_transforms WHERE title ILIKE $1 AND owner = $2";
+    "SELECT COUNT(*) as count FROM dataset_transforms WHERE title ILIKE $1 AND owner_id = $2";
 
 // Note: ORDER BY clause is built dynamically with validated identifiers
 // Column names cannot be parameterized in PostgreSQL, so we validate and use format!
 const GET_DATASET_TRANSFORMS_PAGINATED_BASE: &str = r#"
-    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner, is_enabled,
+    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
            job_config, created_at, updated_at
     FROM dataset_transforms
-    WHERE owner = $1
+    WHERE owner_id = $1
 "#;
 
 const GET_DATASET_TRANSFORMS_PAGINATED_WITH_SEARCH_BASE: &str = r#"
-    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner, is_enabled,
+    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
            job_config, created_at, updated_at
     FROM dataset_transforms
     WHERE title ILIKE $1
-    AND owner = $2
+    AND owner_id = $2
 "#;
 
 const GET_DATASET_TRANSFORM_STATS_QUERY: &str = r#"
@@ -249,6 +249,7 @@ pub async fn create_dataset_transform(
     source_dataset_id: i32,
     embedder_ids: &[i32],
     owner: &str,
+    owner_display_name: &str,
     job_config: &serde_json::Value,
 ) -> Result<(DatasetTransform, Vec<EmbeddedDataset>)> {
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
@@ -260,6 +261,7 @@ pub async fn create_dataset_transform(
         .bind(source_dataset_id)
         .bind(embedder_ids.to_vec())
         .bind(owner)
+        .bind(owner_display_name)
         .bind(job_config)
         .fetch_one(&mut *tx)
         .await
@@ -274,6 +276,7 @@ pub async fn create_dataset_transform(
             source_dataset_id,
             *embedder_id,
             owner,
+            owner_display_name,
             &transform.title,
         )
         .await
@@ -357,6 +360,27 @@ pub async fn get_dataset_transform_stats(
     Ok(stats)
 }
 
+pub async fn get_batch_dataset_transform_stats(
+    pool: &Pool<Postgres>,
+    dataset_transform_ids: &[i32],
+) -> Result<std::collections::HashMap<i32, DatasetTransformStats>> {
+    use std::collections::HashMap;
+    let mut stats_map = HashMap::new();
+
+    for &id in dataset_transform_ids {
+        match get_dataset_transform_stats(pool, id).await {
+            Ok(stats) => {
+                stats_map.insert(id, stats);
+            }
+            Err(e) => {
+                tracing::warn!("Failed to get stats for dataset transform {}: {:?}", id, e);
+            }
+        }
+    }
+
+    Ok(stats_map)
+}
+
 // Helper functions
 
 /// Creates an embedded dataset within a transaction
@@ -365,14 +389,15 @@ async fn create_embedded_dataset_internal(
     dataset_transform_id: i32,
     source_dataset_id: i32,
     embedder_id: i32,
-    owner: &str,
+    owner_id: &str,
+    owner_display_name: &str,
     dataset_transform_title: &str,
 ) -> Result<EmbeddedDataset> {
     // Import the create function from embedded_datasets module
     use crate::storage::postgres::embedded_datasets::create_embedded_dataset_in_transaction;
 
     let title = format!("{dataset_transform_title}-{embedder_id}");
-    let collection_name = EmbeddedDataset::generate_collection_name(0, owner); // Will be updated with actual ID
+    let collection_name = EmbeddedDataset::generate_collection_name(0, owner_id); // Will be updated with actual ID
 
     create_embedded_dataset_in_transaction(
         tx,
@@ -380,7 +405,8 @@ async fn create_embedded_dataset_internal(
         dataset_transform_id,
         source_dataset_id,
         embedder_id,
-        owner,
+        owner_id,
+        owner_display_name,
         &collection_name,
     )
     .await
@@ -421,7 +447,8 @@ async fn sync_embedded_datasets(
             transform.dataset_transform_id,
             transform.source_dataset_id,
             embedder_id,
-            &transform.owner,
+            &transform.owner_id,
+            &transform.owner_display_name,
             &transform.title,
         )
         .await?;

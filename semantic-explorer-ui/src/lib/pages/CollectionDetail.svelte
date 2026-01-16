@@ -127,20 +127,33 @@
 	let fileStatuses = $state<FileStatus[]>([]);
 	let fileInputRef = $state<HTMLInputElement | undefined>();
 	let updatingPublic = $state(false);
-	let uploadPollInterval: ReturnType<typeof setInterval> | null = null;
 	let allowedFileTypes = $state<string>(''); // MIME types for file input accept attribute
 
 	// SSE connection for real-time transform status updates
 	let sseConnection: SSEConnection | null = null;
 
-	onMount(async () => {
-		await Promise.all([
+	onMount(() => {
+		// Load initial data
+		Promise.all([
 			fetchCollection(),
 			fetchFiles(),
 			fetchCollectionTransforms(),
 			fetchAllowedFileTypes(),
 		]);
 		connectSSE();
+
+		// Warn user if they try to leave while uploading
+		const handleBeforeUnload = (event: Event) => {
+			if (uploading) {
+				event.preventDefault();
+			}
+		};
+
+		window.addEventListener('beforeunload', handleBeforeUnload);
+
+		return () => {
+			window.removeEventListener('beforeunload', handleBeforeUnload);
+		};
 	});
 
 	onDestroy(() => {
@@ -166,13 +179,7 @@
 		});
 	}
 
-	$effect(() => {
-		return () => {
-			if (uploadPollInterval) {
-				clearInterval(uploadPollInterval);
-			}
-		};
-	});
+	// Cleanup polling on unmount is handled by controller.stop()
 
 	async function fetchCollectionTransforms() {
 		try {
@@ -233,7 +240,8 @@
 			if (!response.ok) {
 				throw new Error(`Failed to fetch collections: ${response.statusText}`);
 			}
-			const collections: Collection[] = await response.json();
+			const data = await response.json();
+			const collections: Collection[] = data.collections ?? [];
 			collection = collections.find((c) => c.collection_id === collectionId) || null;
 			if (!collection) {
 				throw new Error('Collection not found');
@@ -429,12 +437,13 @@
 			return;
 		}
 
+		const batchSize = 25; // Upload 25 files at a time
 		uploading = true;
 		uploadProgress = {
 			completed: 0,
 			total: files.length,
 			currentBatch: 1,
-			totalBatches: Math.ceil(files.length / 1), // Upload one file at a time to prevent UI blocking
+			totalBatches: Math.ceil(files.length / batchSize),
 		};
 
 		// Initialize file statuses
@@ -444,85 +453,97 @@
 			progress: 0,
 		}));
 
-		// Start polling for file list updates while uploading
-		startUploadPolling();
-
 		const fileArray = Array.from(files);
 		const completedFiles: string[] = [];
 		const failedFiles: string[] = [];
 
 		try {
-			// Upload files one at a time to prevent blocking and allow real-time feedback
-			for (let i = 0; i < fileArray.length; i++) {
-				const file = fileArray[i];
-				const fileIndex = fileStatuses.findIndex((f) => f.name === file.name);
+			// Upload files in batches of 25 to balance performance and real-time feedback
+			for (let i = 0; i < fileArray.length; i += batchSize) {
+				const currentBatch = Math.floor(i / batchSize) + 1;
+				const batch = fileArray.slice(i, Math.min(i + batchSize, fileArray.length));
 
-				if (fileIndex >= 0) {
-					fileStatuses[fileIndex].status = 'uploading';
-					fileStatuses[fileIndex].progress = 0;
-					fileStatuses = fileStatuses; // Trigger reactivity
-				}
+				// Upload all files in this batch in parallel
+				const uploadPromises = batch.map(async (file) => {
+					const fileIndex = fileStatuses.findIndex((f) => f.name === file.name);
 
-				const formData = new FormData();
-				formData.append('files', file);
-
-				try {
-					const response = await fetch(`/api/collections/${collectionId}/files`, {
-						method: 'POST',
-						body: formData,
-					});
-
-					if (!response.ok) {
-						throw new Error(`HTTP ${response.status}`);
+					if (fileIndex >= 0) {
+						fileStatuses[fileIndex].status = 'uploading';
+						fileStatuses[fileIndex].progress = 0;
+						fileStatuses = fileStatuses; // Trigger reactivity
 					}
 
-					const result = await response.json();
+					const formData = new FormData();
+					formData.append('files', file);
 
-					if (result.completed && result.completed.length > 0) {
-						completedFiles.push(...result.completed);
-						if (fileIndex >= 0) {
-							fileStatuses[fileIndex].status = 'completed';
-							fileStatuses[fileIndex].progress = 100;
+					try {
+						const response = await fetch(`/api/collections/${collectionId}/files`, {
+							method: 'POST',
+							body: formData,
+						});
+
+						if (!response.ok) {
+							throw new Error(`HTTP ${response.status}`);
 						}
-					} else if (result.failed && result.failed.length > 0) {
-						failedFiles.push(...result.failed);
+
+						const result = await response.json();
+
+						if (result.completed && result.completed.length > 0) {
+							completedFiles.push(...result.completed);
+							if (fileIndex >= 0) {
+								fileStatuses[fileIndex].status = 'completed';
+								fileStatuses[fileIndex].progress = 100;
+							}
+						} else if (result.failed && result.failed.length > 0) {
+							failedFiles.push(...result.failed);
+							if (fileIndex >= 0) {
+								fileStatuses[fileIndex].status = 'failed';
+								fileStatuses[fileIndex].error = 'Upload failed';
+							}
+						}
+					} catch (e) {
+						failedFiles.push(file.name);
 						if (fileIndex >= 0) {
 							fileStatuses[fileIndex].status = 'failed';
-							fileStatuses[fileIndex].error = 'Upload failed';
+							fileStatuses[fileIndex].error = formatError(e, 'Upload error');
 						}
 					}
-				} catch (e) {
-					failedFiles.push(file.name);
-					if (fileIndex >= 0) {
-						fileStatuses[fileIndex].status = 'failed';
-						fileStatuses[fileIndex].error = formatError(e, 'Upload error');
-					}
-				}
 
-				// Update progress
+					// Update file statuses after each individual file upload
+					fileStatuses = fileStatuses; // Trigger reactivity
+				});
+
+				// Wait for all files in this batch to complete
+				await Promise.all(uploadPromises);
+
+				// Update progress after batch completes
 				uploadProgress = {
 					completed: completedFiles.length + failedFiles.length,
 					total: fileArray.length,
-					currentBatch: Math.min(1, Math.ceil((i + 1) / 1)),
-					totalBatches: 1,
+					currentBatch: currentBatch,
+					totalBatches: Math.ceil(fileArray.length / batchSize),
 				};
 
 				fileStatuses = fileStatuses; // Trigger reactivity
-
-				// Small delay between file uploads to allow UI updates
-				await new Promise((resolve) => setTimeout(resolve, 100));
 			}
 
-			// Stop polling and fetch final file list
-			stopUploadPolling();
-			await fetchFiles();
-
-			// Show success/failure summary
+			// Update counts and first page only after all uploads complete
 			if (completedFiles.length > 0) {
-				currentPage = 0;
-				currentPageIndex = 0;
-				paginationHistory = [null];
-				totalCount = null;
+				// Update total count to reflect newly uploaded files
+				if (totalCount !== null) {
+					totalCount += completedFiles.length;
+				}
+
+				// Only refresh the first page if we're not on page 1, otherwise files are already there
+				if (currentPageIndex === 0) {
+					// Refresh the first page to update file list
+					await fetchFiles();
+				} else {
+					// If user is on a different page, just update the total count
+					if (paginatedFiles) {
+						paginatedFiles.total_count = totalCount;
+					}
+				}
 
 				toastStore.success(
 					`Successfully uploaded ${completedFiles.length} file${completedFiles.length === 1 ? '' : 's'}`
@@ -538,33 +559,11 @@
 			toastStore.error(formatError(e, 'Failed to upload files'));
 		} finally {
 			uploading = false;
-			stopUploadPolling();
 			// Keep the status panel visible for a moment after completion
 			setTimeout(() => {
 				uploadProgress = null;
 				fileStatuses = [];
 			}, 2000);
-		}
-	}
-
-	function startUploadPolling() {
-		// Poll every 1 second to refresh the file list while uploading
-		if (uploadPollInterval) {
-			clearInterval(uploadPollInterval);
-		}
-
-		uploadPollInterval = setInterval(() => {
-			// Fetch files in background without blocking
-			fetchFiles().catch(() => {
-				// Silently ignore polling errors
-			});
-		}, 1000);
-	}
-
-	function stopUploadPolling() {
-		if (uploadPollInterval) {
-			clearInterval(uploadPollInterval);
-			uploadPollInterval = null;
 		}
 	}
 

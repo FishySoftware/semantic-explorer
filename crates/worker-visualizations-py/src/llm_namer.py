@@ -30,7 +30,6 @@ class LLMProvider:
         """Initialize LLM provider (clients created on-demand per request)."""
         self.request_count = 0
         logger.info("LLM Provider initialized (clients will be created on-demand)")
-        logger.debug("LLM Provider ready for topic naming requests")
 
     async def generate_topic_name(self, texts: List[str], llm_config: LLMConfig) -> str:
         """

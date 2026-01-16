@@ -61,12 +61,12 @@ pub(crate) async fn search(
         .iter()
         .map(|id| id.to_string())
         .collect();
-    events::search_request(&req, &user, &dataset_ids);
+    events::search_request(&req, &user.as_owner(), &user, &dataset_ids);
 
     // Batch fetch all embedded datasets and embedders upfront to avoid N+1 queries
     let embedded_datasets_map = match embedded_datasets::get_embedded_datasets_with_details_batch(
         &postgres_pool,
-        &user,
+        &user.as_owner(),
         &search_request.embedded_dataset_ids,
     )
     .await

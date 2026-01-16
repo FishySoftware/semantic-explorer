@@ -16,43 +16,51 @@
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS collections (
-    collection_id    SERIAL PRIMARY KEY,
-    title            TEXT                     NOT NULL,
-    details          TEXT                     NULL,
-    owner            TEXT                     NOT NULL,
-    bucket           TEXT                     NOT NULL,
-    tags             TEXT[]                   NOT NULL DEFAULT '{}',
-    is_public        BOOLEAN                  NOT NULL DEFAULT FALSE,
-    created_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    updated_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    collection_id       SERIAL PRIMARY KEY,
+    title               TEXT                     NOT NULL,
+    details             TEXT                     NULL,
+    owner_id            TEXT                     NOT NULL,
+    owner_display_name  TEXT                     NOT NULL,
+    bucket              TEXT                     NOT NULL,
+    tags                TEXT[]                   NOT NULL DEFAULT '{}',
+    is_public           BOOLEAN                  NOT NULL DEFAULT FALSE,
+    created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
 -- Optimized indexes for collections
-CREATE INDEX IF NOT EXISTS idx_collections_owner_created ON collections(owner, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_collections_owner_created ON collections(owner_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_collections_is_public ON collections(is_public) WHERE is_public = TRUE;
 CREATE INDEX IF NOT EXISTS idx_collections_title_tsvector 
   ON collections USING GIN (to_tsvector('english', title));
 CREATE INDEX IF NOT EXISTS idx_collections_tags 
   ON collections USING GIN (tags);
+CREATE INDEX IF NOT EXISTS idx_collections_title ON collections(title);
+CREATE INDEX IF NOT EXISTS idx_collections_owner_title ON collections(owner_id, title);
 
 CREATE TABLE IF NOT EXISTS datasets (
-    dataset_id       SERIAL PRIMARY KEY,
-    title            TEXT                     NOT NULL,
-    details          TEXT                     NULL,
-    owner            TEXT                     NOT NULL,
-    tags             TEXT[]                   NOT NULL DEFAULT '{}',
-    is_public        BOOLEAN                  NOT NULL DEFAULT FALSE,
-    created_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    updated_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    dataset_id          SERIAL PRIMARY KEY,
+    title               TEXT                     NOT NULL,
+    details             TEXT                     NULL,
+    owner_id            TEXT                     NOT NULL,
+    owner_display_name  TEXT                     NOT NULL,
+    tags                TEXT[]                   NOT NULL DEFAULT '{}',
+    is_public           BOOLEAN                  NOT NULL DEFAULT FALSE,
+    item_count          INTEGER                  NOT NULL DEFAULT 0,
+    total_chunks        BIGINT                   NOT NULL DEFAULT 0,
+    created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
 -- Optimized indexes for datasets
-CREATE INDEX IF NOT EXISTS idx_datasets_owner_created ON datasets(owner, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_datasets_owner_created ON datasets(owner_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_datasets_is_public ON datasets(is_public) WHERE is_public = TRUE;
 CREATE INDEX IF NOT EXISTS idx_datasets_title_tsvector 
   ON datasets USING GIN (to_tsvector('english', title));
 CREATE INDEX IF NOT EXISTS idx_datasets_tags 
   ON datasets USING GIN (tags);
+CREATE INDEX IF NOT EXISTS idx_datasets_title ON datasets(title);
+CREATE INDEX IF NOT EXISTS idx_datasets_owner_title ON datasets(owner_id, title);
 
 CREATE TABLE IF NOT EXISTS dataset_items (
     item_id          SERIAL PRIMARY KEY,
@@ -72,13 +80,73 @@ CREATE INDEX IF NOT EXISTS idx_dataset_items_name
   WHERE title IS NOT NULL;
 
 -- ============================================================================
+-- Collection File Count Cache
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS collection_file_counts (
+    collection_id   INTEGER                  NOT NULL PRIMARY KEY REFERENCES collections(collection_id) ON DELETE CASCADE,
+    file_count      BIGINT                   NOT NULL DEFAULT 0,
+    cached_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_collection_file_counts_cached_at ON collection_file_counts(cached_at);
+
+-- ============================================================================
+-- Dataset Stats Triggers
+-- ============================================================================
+
+-- Trigger function to update dataset stats on INSERT/DELETE/UPDATE of dataset_items
+CREATE OR REPLACE FUNCTION update_dataset_stats() RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        -- Update stats for the new/updated dataset
+        UPDATE datasets
+        SET
+            item_count = (SELECT COUNT(*) FROM dataset_items WHERE dataset_id = NEW.dataset_id),
+            total_chunks = (SELECT COALESCE(SUM(jsonb_array_length(chunks)), 0) FROM dataset_items WHERE dataset_id = NEW.dataset_id),
+            updated_at = NOW()
+        WHERE dataset_id = NEW.dataset_id;
+        RETURN NEW;
+    ELSIF TG_OP = 'DELETE' THEN
+        -- Update stats after deletion
+        UPDATE datasets
+        SET
+            item_count = (SELECT COUNT(*) FROM dataset_items WHERE dataset_id = OLD.dataset_id),
+            total_chunks = (SELECT COALESCE(SUM(jsonb_array_length(chunks)), 0) FROM dataset_items WHERE dataset_id = OLD.dataset_id),
+            updated_at = NOW()
+        WHERE dataset_id = OLD.dataset_id;
+        RETURN OLD;
+    ELSIF TG_OP = 'UPDATE' THEN
+        -- Update stats if chunks changed
+        IF OLD.chunks IS DISTINCT FROM NEW.chunks THEN
+            UPDATE datasets
+            SET
+                total_chunks = (SELECT COALESCE(SUM(jsonb_array_length(chunks)), 0) FROM dataset_items WHERE dataset_id = NEW.dataset_id),
+                updated_at = NOW()
+            WHERE dataset_id = NEW.dataset_id;
+        END IF;
+        RETURN NEW;
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create trigger on dataset_items to maintain stats
+DROP TRIGGER IF EXISTS trg_update_dataset_stats ON dataset_items;
+CREATE TRIGGER trg_update_dataset_stats
+AFTER INSERT OR DELETE OR UPDATE OF chunks ON dataset_items
+FOR EACH ROW
+EXECUTE FUNCTION update_dataset_stats();
+
+-- ============================================================================
 -- Embedders & LLMs
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS embedders (
     embedder_id          SERIAL PRIMARY KEY,
     name                 TEXT                     NOT NULL,
-    owner                TEXT                     NOT NULL,
+    owner_id             TEXT                     NOT NULL,
+    owner_display_name   TEXT                     NOT NULL,
     provider             TEXT                     NOT NULL,
     base_url             TEXT                     NOT NULL,
     api_key_encrypted    TEXT                     NULL,
@@ -95,16 +163,17 @@ CREATE TABLE IF NOT EXISTS embedders (
 );
 
 -- Optimized indexes for embedders
-CREATE INDEX IF NOT EXISTS idx_embedders_owner_public ON embedders(owner, is_public);
+CREATE INDEX IF NOT EXISTS idx_embedders_owner_public ON embedders(owner_id, is_public);
 CREATE INDEX IF NOT EXISTS idx_embedders_provider ON embedders(provider);
 CREATE INDEX IF NOT EXISTS idx_embedders_is_public ON embedders(is_public) WHERE is_public = TRUE;
 CREATE INDEX IF NOT EXISTS idx_embedders_owner_created 
-  ON embedders(owner, created_at DESC);
+  ON embedders(owner_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS llms (
     llm_id               SERIAL PRIMARY KEY,
     name                 TEXT                     NOT NULL,
-    owner                TEXT                     NOT NULL,
+    owner_id             TEXT                     NOT NULL,
+    owner_display_name   TEXT                     NOT NULL,
     provider             TEXT                     NOT NULL,
     base_url             TEXT                     NOT NULL,
     api_key_encrypted    TEXT                     NULL,
@@ -116,11 +185,11 @@ CREATE TABLE IF NOT EXISTS llms (
 );
 
 -- Optimized indexes for LLMs
-CREATE INDEX IF NOT EXISTS idx_llms_owner_public ON llms(owner, is_public);
+CREATE INDEX IF NOT EXISTS idx_llms_owner_public ON llms(owner_id, is_public);
 CREATE INDEX IF NOT EXISTS idx_llms_provider ON llms(provider);
 CREATE INDEX IF NOT EXISTS idx_llms_is_public ON llms(is_public) WHERE is_public = TRUE;
 CREATE INDEX IF NOT EXISTS idx_llms_owner_created 
-  ON llms(owner, created_at DESC);
+  ON llms(owner_id, created_at DESC);
 
 -- ============================================================================
 -- Transform Pipeline
@@ -131,7 +200,8 @@ CREATE TABLE IF NOT EXISTS collection_transforms (
     title                   TEXT                     NOT NULL,
     collection_id           INTEGER                  NOT NULL REFERENCES collections(collection_id) ON DELETE CASCADE,
     dataset_id              INTEGER                  NOT NULL REFERENCES datasets(dataset_id) ON DELETE CASCADE,
-    owner                   TEXT                     NOT NULL,
+    owner_id                TEXT                     NOT NULL,
+    owner_display_name      TEXT                     NOT NULL,
     is_enabled              BOOLEAN                  NOT NULL DEFAULT TRUE,
     chunk_size              INTEGER                  NOT NULL DEFAULT 200,
     job_config              JSONB                    NOT NULL DEFAULT '{}',
@@ -140,10 +210,10 @@ CREATE TABLE IF NOT EXISTS collection_transforms (
 );
 
 -- Optimized indexes for collection_transforms
-CREATE INDEX IF NOT EXISTS idx_collection_transforms_owner_created ON collection_transforms(owner, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_collection_transforms_owner_created ON collection_transforms(owner_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_collection_transforms_collection ON collection_transforms(collection_id, is_enabled);
 CREATE INDEX IF NOT EXISTS idx_collection_transforms_dataset ON collection_transforms(dataset_id);
-CREATE INDEX IF NOT EXISTS idx_collection_transforms_enabled ON collection_transforms(owner, is_enabled) WHERE is_enabled = TRUE;
+CREATE INDEX IF NOT EXISTS idx_collection_transforms_enabled ON collection_transforms(owner_id, is_enabled) WHERE is_enabled = TRUE;
 CREATE INDEX IF NOT EXISTS idx_collection_transforms_enabled_created 
   ON collection_transforms(is_enabled, created_at DESC) 
   WHERE is_enabled = TRUE;
@@ -153,7 +223,8 @@ CREATE TABLE IF NOT EXISTS dataset_transforms (
     title                TEXT                     NOT NULL,
     source_dataset_id    INTEGER                  NOT NULL REFERENCES datasets(dataset_id) ON DELETE CASCADE,
     embedder_ids         INTEGER[]                NOT NULL DEFAULT '{}',
-    owner                TEXT                     NOT NULL,
+    owner_id             TEXT                     NOT NULL,
+    owner_display_name   TEXT                     NOT NULL,
     is_enabled           BOOLEAN                  NOT NULL DEFAULT TRUE,
     job_config           JSONB                    NOT NULL DEFAULT '{}',
     created_at           TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
@@ -161,9 +232,9 @@ CREATE TABLE IF NOT EXISTS dataset_transforms (
 );
 
 -- Optimized indexes for dataset_transforms
-CREATE INDEX IF NOT EXISTS idx_dataset_transforms_owner_created ON dataset_transforms(owner, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_dataset_transforms_owner_created ON dataset_transforms(owner_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_dataset_transforms_source_enabled ON dataset_transforms(source_dataset_id, is_enabled);
-CREATE INDEX IF NOT EXISTS idx_dataset_transforms_enabled ON dataset_transforms(owner, is_enabled) WHERE is_enabled = TRUE;
+CREATE INDEX IF NOT EXISTS idx_dataset_transforms_enabled ON dataset_transforms(owner_id, is_enabled) WHERE is_enabled = TRUE;
 CREATE INDEX IF NOT EXISTS idx_dataset_transforms_enabled_created 
   ON dataset_transforms(is_enabled, created_at DESC) 
   WHERE is_enabled = TRUE;
@@ -174,7 +245,8 @@ CREATE TABLE IF NOT EXISTS embedded_datasets (
     dataset_transform_id INTEGER                  NOT NULL REFERENCES dataset_transforms(dataset_transform_id) ON DELETE CASCADE,
     source_dataset_id    INTEGER                  NOT NULL REFERENCES datasets(dataset_id) ON DELETE CASCADE,
     embedder_id          INTEGER                  NOT NULL REFERENCES embedders(embedder_id) ON DELETE CASCADE,
-    owner                TEXT                     NOT NULL,
+    owner_id             TEXT                     NOT NULL,
+    owner_display_name   TEXT                     NOT NULL,
     collection_name      TEXT                     NOT NULL,
     last_processed_at    TIMESTAMP WITH TIME ZONE NULL,
     created_at           TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
@@ -183,7 +255,7 @@ CREATE TABLE IF NOT EXISTS embedded_datasets (
 );
 
 -- Optimized indexes for embedded_datasets
-CREATE INDEX IF NOT EXISTS idx_embedded_datasets_owner_created ON embedded_datasets(owner, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_embedded_datasets_owner_created ON embedded_datasets(owner_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_embedded_datasets_transform ON embedded_datasets(dataset_transform_id);
 CREATE INDEX IF NOT EXISTS idx_embedded_datasets_collection ON embedded_datasets(collection_name);
 CREATE INDEX IF NOT EXISTS idx_embedded_datasets_last_processed ON embedded_datasets(embedded_dataset_id, last_processed_at);
@@ -209,7 +281,8 @@ CREATE TABLE IF NOT EXISTS visualization_transforms (
     visualization_transform_id SERIAL PRIMARY KEY,
     title                      TEXT                     NOT NULL,
     embedded_dataset_id        INTEGER                  NOT NULL REFERENCES embedded_datasets(embedded_dataset_id) ON DELETE CASCADE,
-    owner                      TEXT                     NOT NULL,
+    owner_id                   TEXT                     NOT NULL,
+    owner_display_name         TEXT                     NOT NULL,
     is_enabled                 BOOLEAN                  NOT NULL DEFAULT TRUE,
     reduced_collection_name    TEXT                     NULL,
     topics_collection_name     TEXT                     NULL,
@@ -223,9 +296,9 @@ CREATE TABLE IF NOT EXISTS visualization_transforms (
 );
 
 -- Optimized indexes for visualization_transforms
-CREATE INDEX IF NOT EXISTS idx_visualization_transforms_owner_created ON visualization_transforms(owner, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_visualization_transforms_owner_created ON visualization_transforms(owner_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_visualization_transforms_embedded_enabled ON visualization_transforms(embedded_dataset_id, is_enabled);
-CREATE INDEX IF NOT EXISTS idx_visualization_transforms_enabled ON visualization_transforms(owner, is_enabled) WHERE is_enabled = TRUE;
+CREATE INDEX IF NOT EXISTS idx_visualization_transforms_enabled ON visualization_transforms(owner_id, is_enabled) WHERE is_enabled = TRUE;
 CREATE INDEX IF NOT EXISTS idx_visualization_transforms_status ON visualization_transforms(last_run_status) WHERE last_run_status IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS visualizations (
@@ -269,7 +342,8 @@ CREATE INDEX IF NOT EXISTS idx_transform_processed_files_processed_at ON transfo
 
 CREATE TABLE IF NOT EXISTS chat_sessions (
     session_id          TEXT PRIMARY KEY,
-    owner               TEXT                     NOT NULL,
+    owner_id            TEXT                     NOT NULL,
+    owner_display_name  TEXT                     NOT NULL,
     embedded_dataset_id INTEGER                  NOT NULL REFERENCES embedded_datasets(embedded_dataset_id) ON DELETE CASCADE,
     llm_id              INTEGER                  NOT NULL REFERENCES llms(llm_id) ON DELETE CASCADE,
     title               TEXT                     NOT NULL DEFAULT '',
@@ -278,10 +352,10 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 );
 
 -- Optimized indexes for chat_sessions  
-CREATE INDEX IF NOT EXISTS idx_chat_sessions_owner_updated ON chat_sessions(owner, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_owner_updated ON chat_sessions(owner_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_embedded_dataset ON chat_sessions(embedded_dataset_id);
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_created 
-  ON chat_sessions(owner, created_at DESC);
+  ON chat_sessions(owner_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS chat_messages (
     message_id          SERIAL PRIMARY KEY,
@@ -319,21 +393,23 @@ CREATE INDEX IF NOT EXISTS idx_chat_message_retrieved_docs ON chat_message_retri
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS audit_events (
-    audit_event_id  BIGSERIAL PRIMARY KEY,
-    timestamp       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    event_type      TEXT                     NOT NULL,
-    outcome         TEXT                     NOT NULL,
-    username        TEXT                     NOT NULL,
-    request_id      TEXT                     NULL,
-    client_ip       INET                     NULL,
-    resource_type   TEXT                     NULL,
-    resource_id     TEXT                     NULL,
-    details         TEXT                     NULL
+    audit_event_id   BIGSERIAL PRIMARY KEY,
+    timestamp        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    event_type       TEXT                     NOT NULL,
+    outcome          TEXT                     NOT NULL,
+    user_id          TEXT                     NOT NULL,
+    username_display TEXT                     NOT NULL,
+    request_id       TEXT                     NULL,
+    client_ip        INET                     NULL,
+    resource_type    TEXT                     NULL,
+    resource_id      TEXT                     NULL,
+    details          TEXT                     NULL
 );
 
 -- Optimized indexes for audit queries (most common patterns)
 CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp ON audit_events(timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_audit_events_username_timestamp ON audit_events(username, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_events_user_timestamp ON audit_events(user_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_events_username_display_timestamp ON audit_events(username_display, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_events_type_timestamp ON audit_events(event_type, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_events_resource ON audit_events(resource_type, resource_id) WHERE resource_type IS NOT NULL;
 
@@ -362,43 +438,43 @@ ALTER TABLE chat_message_retrieved_documents ENABLE ROW LEVEL SECURITY;
 CREATE POLICY collections_access_policy ON collections
     FOR ALL
     USING (
-        owner = current_setting('app.current_user', TRUE)::text
+        owner_id = current_setting('app.current_user', TRUE)::text
         OR is_public = TRUE
     );
 
 CREATE POLICY collections_modify_policy ON collections
     FOR INSERT
-    WITH CHECK (owner = current_setting('app.current_user', TRUE)::text);
+    WITH CHECK (owner_id = current_setting('app.current_user', TRUE)::text);
 
 CREATE POLICY collections_update_policy ON collections
     FOR UPDATE
-    USING (owner = current_setting('app.current_user', TRUE)::text)
-    WITH CHECK (owner = current_setting('app.current_user', TRUE)::text);
+    USING (owner_id = current_setting('app.current_user', TRUE)::text)
+    WITH CHECK (owner_id = current_setting('app.current_user', TRUE)::text);
 
 CREATE POLICY collections_delete_policy ON collections
     FOR DELETE
-    USING (owner = current_setting('app.current_user', TRUE)::text);
+    USING (owner_id = current_setting('app.current_user', TRUE)::text);
 
 -- Datasets RLS Policies
 CREATE POLICY datasets_access_policy ON datasets
     FOR ALL
     USING (
-        owner = current_setting('app.current_user', TRUE)::text
+        owner_id = current_setting('app.current_user', TRUE)::text
         OR is_public = TRUE
     );
 
 CREATE POLICY datasets_modify_policy ON datasets
     FOR INSERT
-    WITH CHECK (owner = current_setting('app.current_user', TRUE)::text);
+    WITH CHECK (owner_id = current_setting('app.current_user', TRUE)::text);
 
 CREATE POLICY datasets_update_policy ON datasets
     FOR UPDATE
-    USING (owner = current_setting('app.current_user', TRUE)::text)
-    WITH CHECK (owner = current_setting('app.current_user', TRUE)::text);
+    USING (owner_id = current_setting('app.current_user', TRUE)::text)
+    WITH CHECK (owner_id = current_setting('app.current_user', TRUE)::text);
 
 CREATE POLICY datasets_delete_policy ON datasets
     FOR DELETE
-    USING (owner = current_setting('app.current_user', TRUE)::text);
+    USING (owner_id = current_setting('app.current_user', TRUE)::text);
 
 -- Dataset Items RLS Policies (inherits access from parent dataset)
 CREATE POLICY dataset_items_access_policy ON dataset_items
@@ -408,7 +484,7 @@ CREATE POLICY dataset_items_access_policy ON dataset_items
             SELECT 1 FROM datasets d
             WHERE d.dataset_id = dataset_items.dataset_id
             AND (
-                d.owner = current_setting('app.current_user', TRUE)::text
+                d.owner_id = current_setting('app.current_user', TRUE)::text
                 OR d.is_public = TRUE
             )
         )
@@ -420,7 +496,7 @@ CREATE POLICY dataset_items_modify_policy ON dataset_items
         EXISTS (
             SELECT 1 FROM datasets d
             WHERE d.dataset_id = dataset_items.dataset_id
-            AND d.owner = current_setting('app.current_user', TRUE)::text
+            AND d.owner_id = current_setting('app.current_user', TRUE)::text
         )
     );
 
@@ -430,7 +506,7 @@ CREATE POLICY dataset_items_update_policy ON dataset_items
         EXISTS (
             SELECT 1 FROM datasets d
             WHERE d.dataset_id = dataset_items.dataset_id
-            AND d.owner = current_setting('app.current_user', TRUE)::text
+            AND d.owner_id = current_setting('app.current_user', TRUE)::text
         )
     );
 
@@ -440,7 +516,7 @@ CREATE POLICY dataset_items_delete_policy ON dataset_items
         EXISTS (
             SELECT 1 FROM datasets d
             WHERE d.dataset_id = dataset_items.dataset_id
-            AND d.owner = current_setting('app.current_user', TRUE)::text
+            AND d.owner_id = current_setting('app.current_user', TRUE)::text
         )
     );
 
@@ -448,97 +524,97 @@ CREATE POLICY dataset_items_delete_policy ON dataset_items
 CREATE POLICY embedders_access_policy ON embedders
     FOR ALL
     USING (
-        owner = current_setting('app.current_user', TRUE)::text
+        owner_id = current_setting('app.current_user', TRUE)::text
         OR is_public = TRUE
     );
 
 CREATE POLICY embedders_modify_policy ON embedders
     FOR INSERT
-    WITH CHECK (owner = current_setting('app.current_user', TRUE)::text);
+    WITH CHECK (owner_id = current_setting('app.current_user', TRUE)::text);
 
 CREATE POLICY embedders_update_policy ON embedders
     FOR UPDATE
-    USING (owner = current_setting('app.current_user', TRUE)::text)
-    WITH CHECK (owner = current_setting('app.current_user', TRUE)::text);
+    USING (owner_id = current_setting('app.current_user', TRUE)::text)
+    WITH CHECK (owner_id = current_setting('app.current_user', TRUE)::text);
 
 CREATE POLICY embedders_delete_policy ON embedders
     FOR DELETE
-    USING (owner = current_setting('app.current_user', TRUE)::text);
+    USING (owner_id = current_setting('app.current_user', TRUE)::text);
 
 -- LLMs RLS Policies
 CREATE POLICY llms_access_policy ON llms
     FOR ALL
     USING (
-        owner = current_setting('app.current_user', TRUE)::text
+        owner_id = current_setting('app.current_user', TRUE)::text
         OR is_public = TRUE
     );
 
 CREATE POLICY llms_modify_policy ON llms
     FOR INSERT
-    WITH CHECK (owner = current_setting('app.current_user', TRUE)::text);
+    WITH CHECK (owner_id = current_setting('app.current_user', TRUE)::text);
 
 CREATE POLICY llms_update_policy ON llms
     FOR UPDATE
-    USING (owner = current_setting('app.current_user', TRUE)::text)
-    WITH CHECK (owner = current_setting('app.current_user', TRUE)::text);
+    USING (owner_id = current_setting('app.current_user', TRUE)::text)
+    WITH CHECK (owner_id = current_setting('app.current_user', TRUE)::text);
 
 CREATE POLICY llms_delete_policy ON llms
     FOR DELETE
-    USING (owner = current_setting('app.current_user', TRUE)::text);
+    USING (owner_id = current_setting('app.current_user', TRUE)::text);
 
 -- Collection Transforms RLS Policies
 CREATE POLICY collection_transforms_access_policy ON collection_transforms
     FOR ALL
-    USING (owner = current_setting('app.current_user', TRUE)::text);
+    USING (owner_id = current_setting('app.current_user', TRUE)::text);
 
 CREATE POLICY collection_transforms_modify_policy ON collection_transforms
     FOR INSERT
-    WITH CHECK (owner = current_setting('app.current_user', TRUE)::text);
+    WITH CHECK (owner_id = current_setting('app.current_user', TRUE)::text);
 
 CREATE POLICY collection_transforms_update_policy ON collection_transforms
     FOR UPDATE
-    USING (owner = current_setting('app.current_user', TRUE)::text)
-    WITH CHECK (owner = current_setting('app.current_user', TRUE)::text);
+    USING (owner_id = current_setting('app.current_user', TRUE)::text)
+    WITH CHECK (owner_id = current_setting('app.current_user', TRUE)::text);
 
 CREATE POLICY collection_transforms_delete_policy ON collection_transforms
     FOR DELETE
-    USING (owner = current_setting('app.current_user', TRUE)::text);
+    USING (owner_id = current_setting('app.current_user', TRUE)::text);
 
 -- Dataset Transforms RLS Policies
 CREATE POLICY dataset_transforms_access_policy ON dataset_transforms
     FOR ALL
-    USING (owner = current_setting('app.current_user', TRUE)::text);
+    USING (owner_id = current_setting('app.current_user', TRUE)::text);
 
 CREATE POLICY dataset_transforms_modify_policy ON dataset_transforms
     FOR INSERT
-    WITH CHECK (owner = current_setting('app.current_user', TRUE)::text);
+    WITH CHECK (owner_id = current_setting('app.current_user', TRUE)::text);
 
 CREATE POLICY dataset_transforms_update_policy ON dataset_transforms
     FOR UPDATE
-    USING (owner = current_setting('app.current_user', TRUE)::text)
-    WITH CHECK (owner = current_setting('app.current_user', TRUE)::text);
+    USING (owner_id = current_setting('app.current_user', TRUE)::text)
+    WITH CHECK (owner_id = current_setting('app.current_user', TRUE)::text);
 
 CREATE POLICY dataset_transforms_delete_policy ON dataset_transforms
     FOR DELETE
-    USING (owner = current_setting('app.current_user', TRUE)::text);
+    USING (owner_id = current_setting('app.current_user', TRUE)::text);
 
 -- Embedded Datasets RLS Policies
 CREATE POLICY embedded_datasets_access_policy ON embedded_datasets
     FOR ALL
-    USING (owner = current_setting('app.current_user', TRUE)::text);
+    USING (owner_id = current_setting('app.current_user', TRUE)::text);
 
 CREATE POLICY embedded_datasets_modify_policy ON embedded_datasets
     FOR INSERT
-    WITH CHECK (owner = current_setting('app.current_user', TRUE)::text);
+    WITH CHECK (owner_id = current_setting('app.current_user', TRUE)::text);
 
 CREATE POLICY embedded_datasets_update_policy ON embedded_datasets
     FOR UPDATE
-    USING (owner = current_setting('app.current_user', TRUE)::text)
-    WITH CHECK (owner = current_setting('app.current_user', TRUE)::text);
+    USING (owner_id = current_setting('app.current_user', TRUE)::text)
+    WITH CHECK (owner_id = current_setting('app.current_user', TRUE)::text);
 
 CREATE POLICY embedded_datasets_delete_policy ON embedded_datasets
     FOR DELETE
-    USING (owner = current_setting('app.current_user', TRUE)::text);
+    USING (owner_id = current_setting('app.current_user', TRUE)::text);
 
 -- Dataset Transform Batches RLS Policies (inherits from dataset_transforms)
 CREATE POLICY dataset_transform_batches_access_policy ON dataset_transform_batches
@@ -547,27 +623,27 @@ CREATE POLICY dataset_transform_batches_access_policy ON dataset_transform_batch
         EXISTS (
             SELECT 1 FROM dataset_transforms dt
             WHERE dt.dataset_transform_id = dataset_transform_batches.dataset_transform_id
-            AND dt.owner = current_setting('app.current_user', TRUE)::text
+            AND dt.owner_id = current_setting('app.current_user', TRUE)::text
         )
     );
 
 -- Visualization Transforms RLS Policies
 CREATE POLICY visualization_transforms_access_policy ON visualization_transforms
     FOR ALL
-    USING (owner = current_setting('app.current_user', TRUE)::text);
+    USING (owner_id = current_setting('app.current_user', TRUE)::text);
 
 CREATE POLICY visualization_transforms_modify_policy ON visualization_transforms
     FOR INSERT
-    WITH CHECK (owner = current_setting('app.current_user', TRUE)::text);
+    WITH CHECK (owner_id = current_setting('app.current_user', TRUE)::text);
 
 CREATE POLICY visualization_transforms_update_policy ON visualization_transforms
     FOR UPDATE
-    USING (owner = current_setting('app.current_user', TRUE)::text)
-    WITH CHECK (owner = current_setting('app.current_user', TRUE)::text);
+    USING (owner_id = current_setting('app.current_user', TRUE)::text)
+    WITH CHECK (owner_id = current_setting('app.current_user', TRUE)::text);
 
 CREATE POLICY visualization_transforms_delete_policy ON visualization_transforms
     FOR DELETE
-    USING (owner = current_setting('app.current_user', TRUE)::text);
+    USING (owner_id = current_setting('app.current_user', TRUE)::text);
 
 -- Visualizations RLS Policies (inherits from visualization_transforms)
 CREATE POLICY visualizations_access_policy ON visualizations
@@ -576,7 +652,7 @@ CREATE POLICY visualizations_access_policy ON visualizations
         EXISTS (
             SELECT 1 FROM visualization_transforms vt
             WHERE vt.visualization_transform_id = visualizations.visualization_transform_id
-            AND vt.owner = current_setting('app.current_user', TRUE)::text
+            AND vt.owner_id = current_setting('app.current_user', TRUE)::text
         )
     );
 
@@ -588,7 +664,7 @@ CREATE POLICY transform_processed_files_collection_transforms ON transform_proce
         AND EXISTS (
             SELECT 1 FROM collection_transforms ct
             WHERE ct.collection_transform_id = transform_processed_files.transform_id
-            AND ct.owner = current_setting('app.current_user', TRUE)::text
+            AND ct.owner_id = current_setting('app.current_user', TRUE)::text
         )
     );
 
@@ -599,7 +675,7 @@ CREATE POLICY transform_processed_files_dataset_transforms ON transform_processe
         AND EXISTS (
             SELECT 1 FROM dataset_transforms dt
             WHERE dt.dataset_transform_id = transform_processed_files.transform_id
-            AND dt.owner = current_setting('app.current_user', TRUE)::text
+            AND dt.owner_id = current_setting('app.current_user', TRUE)::text
         )
     );
 
@@ -610,27 +686,27 @@ CREATE POLICY transform_processed_files_visualization_transforms ON transform_pr
         AND EXISTS (
             SELECT 1 FROM visualization_transforms vt
             WHERE vt.visualization_transform_id = transform_processed_files.transform_id
-            AND vt.owner = current_setting('app.current_user', TRUE)::text
+            AND vt.owner_id = current_setting('app.current_user', TRUE)::text
         )
     );
 
 -- Chat Sessions RLS Policies
 CREATE POLICY chat_sessions_access_policy ON chat_sessions
     FOR ALL
-    USING (owner = current_setting('app.current_user', TRUE)::text);
+    USING (owner_id = current_setting('app.current_user', TRUE)::text);
 
 CREATE POLICY chat_sessions_modify_policy ON chat_sessions
     FOR INSERT
-    WITH CHECK (owner = current_setting('app.current_user', TRUE)::text);
+    WITH CHECK (owner_id = current_setting('app.current_user', TRUE)::text);
 
 CREATE POLICY chat_sessions_update_policy ON chat_sessions
     FOR UPDATE
-    USING (owner = current_setting('app.current_user', TRUE)::text)
-    WITH CHECK (owner = current_setting('app.current_user', TRUE)::text);
+    USING (owner_id = current_setting('app.current_user', TRUE)::text)
+    WITH CHECK (owner_id = current_setting('app.current_user', TRUE)::text);
 
 CREATE POLICY chat_sessions_delete_policy ON chat_sessions
     FOR DELETE
-    USING (owner = current_setting('app.current_user', TRUE)::text);
+    USING (owner_id = current_setting('app.current_user', TRUE)::text);
 
 -- Chat Messages RLS Policies (inherits from chat_sessions)
 CREATE POLICY chat_messages_access_policy ON chat_messages
@@ -639,7 +715,7 @@ CREATE POLICY chat_messages_access_policy ON chat_messages
         EXISTS (
             SELECT 1 FROM chat_sessions cs
             WHERE cs.session_id = chat_messages.session_id
-            AND cs.owner = current_setting('app.current_user', TRUE)::text
+            AND cs.owner_id = current_setting('app.current_user', TRUE)::text
         )
     );
 
@@ -651,7 +727,7 @@ CREATE POLICY chat_message_retrieved_documents_access_policy ON chat_message_ret
             SELECT 1 FROM chat_messages cm
             JOIN chat_sessions cs ON cs.session_id = cm.session_id
             WHERE cm.message_id = chat_message_retrieved_documents.message_id
-            AND cs.owner = current_setting('app.current_user', TRUE)::text
+            AND cs.owner_id = current_setting('app.current_user', TRUE)::text
         )
     );
 

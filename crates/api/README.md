@@ -280,7 +280,7 @@ The `job_config` field contains extraction and chunking configuration:
 
 **Chunking Strategies**: `fixed`, `sentence`, `recursive`, `markdown`, `table`, `code`, `token`, `semantic`
 
-**Supported Formats**: PDF, DOCX, XLSX, PPTX, DOC (legacy), ODT, ODS, ODP, EPUB, RTF, HTML, XML, JSON, NDJSON, CSV, EML, LOG, MD, ZIP, TAR.GZ
+**Supported Formats**: PDF, DOCX, XLSX, PPTX, DOC/XLS/PPT (legacy), ODT, ODS, ODP, EPUB, RTF, HTML, XML, JSON, NDJSON, CSV, EML, LOG, MD, ZIP, TAR.GZ
 
 See `worker-collections` README for complete configuration options.
 

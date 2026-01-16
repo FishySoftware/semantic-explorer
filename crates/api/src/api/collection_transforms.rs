@@ -113,7 +113,12 @@ pub async fn get_collection_transform(
         .await
     {
         Ok(transform) => {
-            events::resource_read(&user, ResourceType::Transform, &id.to_string());
+            events::resource_read(
+                &user.as_owner(),
+                &user,
+                ResourceType::Transform,
+                &id.to_string(),
+            );
             HttpResponse::Ok().json(transform)
         }
         Err(e) => {
@@ -156,6 +161,7 @@ pub async fn create_collection_transform(
         body.collection_id,
         body.dataset_id,
         &user.as_owner(),
+        &user,
         body.chunk_size,
         &body.job_config,
     )
@@ -181,6 +187,7 @@ pub async fn create_collection_transform(
             }
             events::resource_created_with_request(
                 &req,
+                &user.as_owner(),
                 &user,
                 ResourceType::Transform,
                 &collection_transform_id.to_string(),
@@ -236,7 +243,12 @@ pub async fn update_collection_transform(
     .await
     {
         Ok(transform) => {
-            events::resource_updated(&user, ResourceType::Transform, &id.to_string());
+            events::resource_updated(
+                &user.as_owner(),
+                &user,
+                ResourceType::Transform,
+                &id.to_string(),
+            );
             HttpResponse::Ok().json(transform)
         }
         Err(e) => {
@@ -274,6 +286,7 @@ pub async fn delete_collection_transform(
         Ok(_) => {
             events::resource_deleted_with_request(
                 &req,
+                &user.as_owner(),
                 &user,
                 ResourceType::Transform,
                 &id.to_string(),
@@ -375,6 +388,61 @@ pub async fn get_collection_transform_stats(
         Err(e) => {
             error!("Collection transform not found: {}", e);
             not_found(format!("Collection transform not found: {}", e))
+        }
+    }
+}
+
+#[derive(Deserialize, utoipa::ToSchema, Debug)]
+pub struct BatchCollectionTransformStatsRequest {
+    pub collection_transform_ids: Vec<i32>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/collection-transforms/batch-stats",
+    tag = "Collection Transforms",
+    request_body = BatchCollectionTransformStatsRequest,
+    responses(
+        (status = 200, description = "Batch transform statistics"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Collection transform not found"),
+    ),
+)]
+#[post("/api/collection-transforms/batch-stats")]
+#[tracing::instrument(
+    name = "get_batch_collection_transform_stats",
+    skip(user, postgres_pool)
+)]
+pub async fn get_batch_collection_transform_stats(
+    user: AuthenticatedUser,
+    postgres_pool: Data<Pool<Postgres>>,
+    body: Json<BatchCollectionTransformStatsRequest>,
+) -> impl Responder {
+    let transform_ids = &body.collection_transform_ids;
+
+    // Verify ownership of all transforms
+    for &id in transform_ids {
+        match collection_transforms::get_collection_transform(&postgres_pool, &user.as_owner(), id)
+            .await
+        {
+            Ok(_) => {}
+            Err(_) => {
+                return HttpResponse::NotFound().json(serde_json::json!({
+                    "error": format!("Collection transform {} not found", id)
+                }));
+            }
+        }
+    }
+
+    match collection_transforms::get_batch_collection_transform_stats(&postgres_pool, transform_ids)
+        .await
+    {
+        Ok(stats_map) => HttpResponse::Ok().json(stats_map),
+        Err(e) => {
+            error!("Failed to get batch stats: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to fetch batch statistics"
+            }))
         }
     }
 }
@@ -521,11 +589,11 @@ pub async fn stream_collection_transform_status(
     // Create SSE stream
     let stream = async_stream::stream! {
         // Subscribe to collection transform status updates
-        // Subject format: transforms.collection.status.{owner}.{collection_id}.{transform_id}
-        // Use wildcards for flexible filtering at subscription level
+        // Subject format: sse.transforms.collection.status.{owner}.{collection_id}.{transform_id}
+        // Uses sse. prefix to receive only SSE updates (not JetStream worker results)
         let subject = match collection_id_filter {
-            Some(collection_id) => format!("transforms.collection.status.{}.{}.*", owner, collection_id),
-            None => format!("transforms.collection.status.{}.>", owner),
+            Some(collection_id) => format!("sse.transforms.collection.status.{}.{}.*", owner, collection_id),
+            None => format!("sse.transforms.collection.status.{}.>", owner),
         };
 
         let mut subscriber = match nats.subscribe(subject.clone()).await {

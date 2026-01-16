@@ -96,14 +96,19 @@
 				throw new Error('Failed to fetch data');
 			}
 
-			const allCollections = await collectionsRes.json();
-			const allDatasets = await datasetsRes.json();
-			const allEmbeddedDatasets = await embeddedDatasetsRes.json();
+			const collectionsData = await collectionsRes.json();
+			const datasetsData = await datasetsRes.json();
+			const embeddedDatasetsData = await embeddedDatasetsRes.json();
 			const allVisualizations: Visualization[] = await visualizationsRes.json();
 			publicCollections = await publicCollectionsRes.json();
 			publicDatasets = await publicDatasetsRes.json();
 			publicEmbedders = await publicEmbeddersRes.json();
 			publicLLMs = await publicLLMsRes.json();
+
+			// Extract arrays from paginated responses
+			const allCollections = collectionsData.collections || collectionsData;
+			const allDatasets = datasetsData.items || datasetsData;
+			const allEmbeddedDatasets = embeddedDatasetsData.embedded_datasets || embeddedDatasetsData;
 
 			collections = allCollections
 				.sort(

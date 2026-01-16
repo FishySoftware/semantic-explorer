@@ -11,7 +11,8 @@ pub struct DatasetTransform {
     pub title: String,
     pub source_dataset_id: i32,
     pub embedder_ids: Vec<i32>, // Array of embedder IDs (1-N)
-    pub owner: String,
+    pub owner_id: String,
+    pub owner_display_name: String,
     pub is_enabled: bool,
     #[schema(value_type = Object)]
     pub job_config: serde_json::Value, // batch size, wipe settings
@@ -30,8 +31,6 @@ pub struct CreateDatasetTransform {
     pub embedder_ids: Vec<i32>, // Must have at least 1 embedder
     #[serde(default)]
     pub embedding_batch_size: Option<i32>,
-    #[serde(default)]
-    pub wipe_collection: bool,
 }
 
 /// Request to update an existing Dataset Transform
