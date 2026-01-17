@@ -10,15 +10,6 @@ use tracing::warn;
 
 use crate::storage::s3::models::{CollectionFile, DocumentUpload, PaginatedFiles};
 
-// Maximum file size for API downloads: 100MB
-// NOTE: Limit prevents:
-// - Memory exhaustion from large file downloads
-// - DoS attacks via resource consumption
-// - Timeout issues in API requests
-// Production deployments should use direct S3 presigned URLs for large files.
-// FUTURE: Make configurable via STORAGE_MAX_DOWNLOAD_SIZE env var if needed
-const MAX_DOWNLOAD_SIZE_BYTES: i64 = 100 * 1024 * 1024;
-
 pub(crate) async fn initialize_client() -> Result<aws_sdk_s3::Client> {
     let aws_region = env::var("AWS_REGION")?;
     let aws_access_key = env::var("AWS_ACCESS_KEY_ID")?;
@@ -51,42 +42,30 @@ pub(crate) async fn initialize_client() -> Result<aws_sdk_s3::Client> {
     Ok(client)
 }
 
-/// Get S3 bucket and key for collection files
-/// Uses single-bucket architecture: S3_BUCKET_NAME/collections/{collection_id}/{filename}
-fn get_collection_s3_path(collection_id: &str, key: &str) -> Result<(String, String)> {
-    let s3_bucket =
-        env::var("S3_BUCKET_NAME").context("S3_BUCKET_NAME is required for S3 operations")?;
-    let full_key = format!("collections/{}/{}", collection_id, key);
-    Ok((s3_bucket, full_key))
-}
-
-/// Get S3 bucket and prefix for listing collection files
-fn get_collection_s3_prefix(collection_id: &str) -> Result<(String, String)> {
-    let s3_bucket =
-        env::var("S3_BUCKET_NAME").context("S3_BUCKET_NAME is required for S3 operations")?;
-    let prefix = format!("collections/{}/", collection_id);
-    Ok((s3_bucket, prefix))
-}
-
-#[tracing::instrument(name = "s3.upload_document", skip(client, document), fields(storage.system = "s3", bucket = %document.collection_id, key = %document.name, size = document.content.len()))]
-pub(crate) async fn upload_document(client: &Client, document: DocumentUpload) -> Result<()> {
+/// Upload document to collection using single-bucket architecture
+/// Uses: S3_BUCKET_NAME/collections/{collection_id}/{filename}
+#[tracing::instrument(name = "s3.upload_document", skip(client, bucket_name, document), fields(storage.system = "s3", collection_id = %document.collection_id, key = %document.name, size = document.content.len()))]
+pub(crate) async fn upload_document(
+    client: &Client,
+    bucket_name: &str,
+    document: DocumentUpload,
+) -> Result<()> {
     let start = Instant::now();
     let file_size = document.content.len() as u64;
+    let key = format!("collections/{}/{}", document.collection_id, document.name);
 
     tracing::debug!(
-        bucket = %document.collection_id,
+        bucket = %bucket_name,
+        collection_id = %document.collection_id,
         key = %document.name,
         size = file_size,
         mime_type = %document.mime_type,
         "Uploading document to S3"
     );
 
-    // Use single-bucket architecture
-    let (bucket, key) = get_collection_s3_path(&document.collection_id, &document.name)?;
-
     let result = client
         .put_object()
-        .bucket(&bucket)
+        .bucket(bucket_name)
         .key(&key)
         .body(document.content.into())
         .content_type(&document.mime_type)
@@ -100,7 +79,7 @@ pub(crate) async fn upload_document(client: &Client, document: DocumentUpload) -
     match &result {
         Ok(_) => {
             tracing::debug!(
-                bucket = %bucket,
+                bucket = %bucket_name,
                 key = %key,
                 duration_ms = duration * 1000.0,
                 "Successfully uploaded document to S3"
@@ -108,7 +87,8 @@ pub(crate) async fn upload_document(client: &Client, document: DocumentUpload) -
         }
         Err(e) => {
             tracing::error!(
-                bucket = %document.collection_id,
+                bucket = %bucket_name,
+                collection_id = %document.collection_id,
                 key = %document.name,
                 error = %e,
                 duration_ms = duration * 1000.0,
@@ -121,31 +101,25 @@ pub(crate) async fn upload_document(client: &Client, document: DocumentUpload) -
     Ok(())
 }
 
-#[tracing::instrument(name = "s3.list_files", skip(s3_client), fields(storage.system = "s3", bucket = %bucket, page_size = %page_size))]
+/// Uses: S3_BUCKET_NAME/collections/{collection_id}/
+#[tracing::instrument(name = "s3.list_files", skip(s3_client, bucket_name), fields(storage.system = "s3", collection_id = %collection_id, page_size = %page_size))]
 pub(crate) async fn list_files(
     s3_client: &Client,
-    bucket: &str,
+    bucket_name: &str,
+    collection_id: &str,
     page_size: i32,
     continuation_token: Option<&str>,
 ) -> Result<PaginatedFiles> {
     let start = Instant::now();
+    let prefix = format!("collections/{}/", collection_id);
 
     tracing::debug!(
-        bucket = %bucket,
+        bucket = %bucket_name,
+        collection_id = %collection_id,
         page_size = page_size,
         has_continuation_token = continuation_token.is_some(),
-        "Listing files in S3 bucket"
+        "Listing files for collection"
     );
-
-    // Convert to new single-bucket format
-    let (actual_bucket, prefix) = if bucket.chars().all(|c| c.is_numeric()) {
-        // Old format: bucket is collection_id
-        let s3_bucket =
-            env::var("S3_BUCKET_NAME").context("S3_BUCKET_NAME is required for S3 operations")?;
-        (s3_bucket, format!("collections/{}/", bucket))
-    } else {
-        (bucket.to_string(), String::new())
-    };
 
     let mut files = Vec::new();
     let page_size_usize = page_size as usize;
@@ -154,7 +128,7 @@ pub(crate) async fn list_files(
     // Build the paginator request
     let mut request = s3_client
         .list_objects_v2()
-        .bucket(&actual_bucket)
+        .bucket(bucket_name)
         .prefix(&prefix);
 
     // If we have a continuation token, use it as start_after
@@ -170,7 +144,7 @@ pub(crate) async fn list_files(
             Ok(output) => output,
             Err(e) => {
                 tracing::error!(
-                    bucket = %actual_bucket,
+                    bucket = %bucket_name,
                     prefix = %prefix,
                     error = %e,
                     "Failed to list files in S3 bucket"
@@ -227,11 +201,12 @@ pub(crate) async fn list_files(
     record_storage_operation("list", duration, None, true);
 
     tracing::debug!(
-        bucket = %bucket,
+        bucket = %bucket_name,
+        collection_id = %collection_id,
         file_count = files.len(),
         has_more = has_more,
         duration_ms = duration * 1000.0,
-        "Successfully listed files from S3 bucket"
+        "Successfully listed files for collection"
     );
 
     Ok(PaginatedFiles {
@@ -244,23 +219,29 @@ pub(crate) async fn list_files(
     })
 }
 
-#[tracing::instrument(name = "s3.get_file", skip(client), fields(storage.system = "s3", bucket = %bucket, key = %key))]
-pub(crate) async fn get_file(client: &Client, bucket: &str, key: &str) -> Result<Vec<u8>> {
+/// Get file from collection using single-bucket architecture
+/// Uses: S3_BUCKET_NAME/collections/{collection_id}/{filename}
+#[tracing::instrument(name = "s3.get_file", skip(client, bucket_name), fields(storage.system = "s3", collection_id = %collection_id, key = %key))]
+pub(crate) async fn get_file(
+    client: &Client,
+    bucket_name: &str,
+    collection_id: &str,
+    key: &str,
+) -> Result<Vec<u8>> {
     let start = Instant::now();
+    let full_key = format!("collections/{}/{}", collection_id, key);
 
     tracing::debug!(
-        bucket = %bucket,
+        bucket = %bucket_name,
+        collection_id = %collection_id,
         key = %key,
         "Retrieving file from S3"
     );
 
-    // Use single-bucket architecture
-    let (actual_bucket, actual_key) = get_collection_s3_path(bucket, key)?;
-
     let result = client
         .get_object()
-        .bucket(&actual_bucket)
-        .key(&actual_key)
+        .bucket(bucket_name)
+        .key(&full_key)
         .send()
         .await;
 
@@ -274,7 +255,8 @@ pub(crate) async fn get_file(client: &Client, bucket: &str, key: &str) -> Result
             record_storage_operation("download", duration, Some(file_size), true);
 
             tracing::debug!(
-                bucket = %bucket,
+                bucket = %bucket_name,
+                collection_id = %collection_id,
                 key = %key,
                 size = file_size,
                 duration_ms = duration * 1000.0,
@@ -288,7 +270,8 @@ pub(crate) async fn get_file(client: &Client, bucket: &str, key: &str) -> Result
             record_storage_operation("download", duration, None, false);
 
             tracing::error!(
-                bucket = %bucket,
+                bucket = %bucket_name,
+                collection_id = %collection_id,
                 key = %key,
                 error = %e,
                 duration_ms = duration * 1000.0,
@@ -301,66 +284,74 @@ pub(crate) async fn get_file(client: &Client, bucket: &str, key: &str) -> Result
 }
 
 /// Get file with size validation to prevent OOM on large downloads
-/// Returns error if file exceeds MAX_DOWNLOAD_SIZE_BYTES (100MB)
-#[tracing::instrument(name = "s3.get_file_with_size_check", skip(client), fields(storage.system = "s3", bucket = %bucket, key = %key))]
+/// Returns error if file exceeds the configured max_download_size_bytes
+#[tracing::instrument(name = "s3.get_file_with_size_check", skip(client, bucket_name), fields(storage.system = "s3", collection_id = %collection_id, key = %key))]
 pub(crate) async fn get_file_with_size_check(
     client: &Client,
-    bucket: &str,
+    bucket_name: &str,
+    collection_id: &str,
     key: &str,
+    max_download_size_bytes: i64,
 ) -> Result<Vec<u8>> {
     let start = Instant::now();
-    // Use single-bucket architecture
-    let (actual_bucket, actual_key) = get_collection_s3_path(bucket, key)?;
+    let full_key = format!("collections/{}/{}", collection_id, key);
 
     // First, check file size using head_object
     let head_result = client
         .head_object()
-        .bucket(&actual_bucket)
-        .key(&actual_key)
+        .bucket(bucket_name)
+        .key(&full_key)
         .send()
         .await
         .context("Failed to get file metadata")?;
 
     let file_size = head_result.content_length().unwrap_or(0);
 
-    if file_size > MAX_DOWNLOAD_SIZE_BYTES {
+    if file_size > max_download_size_bytes {
         let duration = start.elapsed().as_secs_f64();
         record_storage_operation("download", duration, None, false);
         warn!(
-            bucket = %bucket,
+            bucket = %bucket_name,
+            collection_id = %collection_id,
             key = %key,
             file_size_mb = file_size / (1024 * 1024),
-            max_size_mb = MAX_DOWNLOAD_SIZE_BYTES / (1024 * 1024),
+            max_size_mb = max_download_size_bytes / (1024 * 1024),
             "File exceeds maximum download size limit"
         );
         bail!(
             "File size ({} MB) exceeds maximum download limit of {} MB",
             file_size / (1024 * 1024),
-            MAX_DOWNLOAD_SIZE_BYTES / (1024 * 1024)
+            max_download_size_bytes / (1024 * 1024)
         );
     }
 
     // Size is acceptable, proceed with download
-    get_file(client, bucket, key).await
+    get_file(client, bucket_name, collection_id, key).await
 }
 
-#[tracing::instrument(name = "s3.delete_file", skip(client), fields(storage.system = "s3", bucket = %bucket, key = %key))]
-pub(crate) async fn delete_file(client: &Client, bucket: &str, key: &str) -> Result<()> {
+/// Delete file from collection using single-bucket architecture
+/// Uses: S3_BUCKET_NAME/collections/{collection_id}/{filename}
+#[tracing::instrument(name = "s3.delete_file", skip(client, bucket_name), fields(storage.system = "s3", collection_id = %collection_id, key = %key))]
+pub(crate) async fn delete_file(
+    client: &Client,
+    bucket_name: &str,
+    collection_id: &str,
+    key: &str,
+) -> Result<()> {
     let start = Instant::now();
+    let full_key = format!("collections/{}/{}", collection_id, key);
 
     tracing::debug!(
-        bucket = %bucket,
+        bucket = %bucket_name,
+        collection_id = %collection_id,
         key = %key,
         "Deleting file from S3"
     );
 
-    // Use single-bucket architecture
-    let (actual_bucket, actual_key) = get_collection_s3_path(bucket, key)?;
-
     let result = client
         .delete_object()
-        .bucket(&actual_bucket)
-        .key(&actual_key)
+        .bucket(bucket_name)
+        .key(&full_key)
         .send()
         .await;
 
@@ -371,7 +362,8 @@ pub(crate) async fn delete_file(client: &Client, bucket: &str, key: &str) -> Res
     match &result {
         Ok(_) => {
             tracing::info!(
-                bucket = %bucket,
+                bucket = %bucket_name,
+                collection_id = %collection_id,
                 key = %key,
                 duration_ms = duration * 1000.0,
                 "Successfully deleted file from S3"
@@ -379,7 +371,8 @@ pub(crate) async fn delete_file(client: &Client, bucket: &str, key: &str) -> Res
         }
         Err(e) => {
             tracing::error!(
-                bucket = %bucket,
+                bucket = %bucket_name,
+                collection_id = %collection_id,
                 key = %key,
                 error = %e,
                 duration_ms = duration * 1000.0,
@@ -392,24 +385,21 @@ pub(crate) async fn delete_file(client: &Client, bucket: &str, key: &str) -> Res
     Ok(())
 }
 
-#[tracing::instrument(name = "s3.count_files", skip(client), fields(storage.system = "s3", bucket = %bucket))]
-pub(crate) async fn count_files(client: &Client, bucket: &str) -> Result<i64> {
+/// Count files for a specific collection in the single-bucket architecture
+/// Uses: S3_BUCKET_NAME/collections/{collection_id}/
+#[tracing::instrument(name = "s3.count_collection_files", skip(client, bucket_name), fields(storage.system = "s3", collection_id = %collection_id))]
+pub(crate) async fn count_collection_files(
+    client: &Client,
+    bucket_name: &str,
+    collection_id: i32,
+) -> Result<i64> {
     let start = Instant::now();
     let mut count = 0i64;
-
-    // Convert to new single-bucket format
-    let (actual_bucket, prefix) = if bucket.chars().all(|c| c.is_numeric()) {
-        // Old format: bucket is collection_id
-        let s3_bucket =
-            env::var("S3_BUCKET_NAME").context("S3_BUCKET_NAME is required for S3 operations")?;
-        (s3_bucket, format!("collections/{}/", bucket))
-    } else {
-        (bucket.to_string(), String::new())
-    };
+    let prefix = format!("collections/{}/", collection_id);
 
     let mut paginator = client
         .list_objects_v2()
-        .bucket(&actual_bucket)
+        .bucket(bucket_name)
         .prefix(&prefix)
         .into_paginator()
         .send();
@@ -419,7 +409,7 @@ pub(crate) async fn count_files(client: &Client, bucket: &str) -> Result<i64> {
             Ok(output) => output,
             Err(e) => {
                 tracing::error!(
-                    bucket = %actual_bucket,
+                    bucket = %bucket_name,
                     prefix = %prefix,
                     error = %e,
                     "Failed to count files in S3 bucket. Check network connectivity and bucket existence."
@@ -440,10 +430,11 @@ pub(crate) async fn count_files(client: &Client, bucket: &str) -> Result<i64> {
     record_storage_operation("count", duration, None, true);
 
     tracing::debug!(
-        bucket = %bucket,
+        bucket = %bucket_name,
+        collection_id = %collection_id,
         file_count = count,
         duration_ms = duration * 1000.0,
-        "Successfully counted files in S3 bucket"
+        "Successfully counted files for collection"
     );
 
     Ok(count)
@@ -549,18 +540,26 @@ pub(crate) async fn copy_bucket_files(
 
     Ok(copied_count)
 }
-#[tracing::instrument(name = "s3.empty_bucket", skip(client), fields(storage.system = "s3", bucket = %bucket))]
-pub(crate) async fn empty_bucket(client: &Client, bucket: &str) -> Result<()> {
+/// Empty all files in a collection using single-bucket architecture
+/// Uses: S3_BUCKET_NAME/collections/{collection_id}/
+#[tracing::instrument(name = "s3.empty_collection", skip(client, bucket_name), fields(storage.system = "s3", collection_id = %collection_id))]
+pub(crate) async fn empty_collection(
+    client: &Client,
+    bucket_name: &str,
+    collection_id: i32,
+) -> Result<()> {
     let start = Instant::now();
+    let prefix = format!("collections/{}/", collection_id);
 
-    tracing::debug!(bucket = %bucket, "Emptying S3 bucket");
-
-    // Use single-bucket architecture: S3_BUCKET_NAME/collections/{collection_id}/
-    let (actual_bucket, prefix) = get_collection_s3_prefix(bucket)?;
+    tracing::debug!(
+        bucket = %bucket_name,
+        collection_id = %collection_id,
+        "Emptying collection files from S3"
+    );
 
     let mut paginator = client
         .list_objects_v2()
-        .bucket(&actual_bucket)
+        .bucket(bucket_name)
         .prefix(&prefix)
         .into_paginator()
         .send();
@@ -573,9 +572,10 @@ pub(crate) async fn empty_bucket(client: &Client, bucket: &str) -> Result<()> {
             Ok(output) => output,
             Err(e) => {
                 tracing::error!(
-                    bucket = %bucket,
+                    bucket = %bucket_name,
+                    collection_id = %collection_id,
                     error = %e,
-                    "Failed to list objects in bucket"
+                    "Failed to list objects in collection"
                 );
                 return Err(e.into());
             }
@@ -606,7 +606,7 @@ pub(crate) async fn empty_bucket(client: &Client, bucket: &str) -> Result<()> {
 
             match client
                 .delete_objects()
-                .bucket(&actual_bucket)
+                .bucket(bucket_name)
                 .delete(
                     aws_sdk_s3::types::Delete::builder()
                         .set_objects(Some(delete_objects))
@@ -621,7 +621,8 @@ pub(crate) async fn empty_bucket(client: &Client, bucket: &str) -> Result<()> {
                     deleted_count += deleted.len();
                     if !deleted.is_empty() {
                         tracing::debug!(
-                            bucket = %bucket,
+                            bucket = %bucket_name,
+                            collection_id = %collection_id,
                             count = deleted.len(),
                             "Batch deleted objects"
                         );
@@ -630,7 +631,8 @@ pub(crate) async fn empty_bucket(client: &Client, bucket: &str) -> Result<()> {
                     if !errors.is_empty() {
                         for error in errors {
                             tracing::warn!(
-                                bucket = %bucket,
+                                bucket = %bucket_name,
+                                collection_id = %collection_id,
                                 key = %error.key().unwrap_or("unknown"),
                                 code = %error.code().unwrap_or("unknown"),
                                 message = %error.message().unwrap_or("unknown"),
@@ -641,7 +643,8 @@ pub(crate) async fn empty_bucket(client: &Client, bucket: &str) -> Result<()> {
                 }
                 Err(e) => {
                     tracing::error!(
-                        bucket = %bucket,
+                        bucket = %bucket_name,
+                        collection_id = %collection_id,
                         error = %e,
                         "Failed to batch delete objects"
                     );
@@ -652,13 +655,14 @@ pub(crate) async fn empty_bucket(client: &Client, bucket: &str) -> Result<()> {
     }
 
     let duration = start.elapsed().as_secs_f64();
-    record_storage_operation("empty_bucket", duration, None, true);
+    record_storage_operation("empty_collection", duration, None, true);
 
     tracing::info!(
-        bucket = %bucket,
+        bucket = %bucket_name,
+        collection_id = %collection_id,
         deleted_count = deleted_count,
         duration_ms = duration * 1000.0,
-        "Successfully emptied bucket"
+        "Successfully emptied collection"
     );
 
     Ok(())

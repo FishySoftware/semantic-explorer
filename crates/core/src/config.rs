@@ -18,6 +18,7 @@ pub struct AppConfig {
     pub observability: ObservabilityConfig,
     pub tls: TlsConfig,
     pub oidc_session: OidcSessionConfig,
+    pub inference: InferenceConfig,
 }
 
 /// Database configuration
@@ -62,6 +63,12 @@ pub struct S3Config {
     pub endpoint_url: String,
     /// Single S3 bucket for all collections (replaces per-collection buckets)
     pub bucket_name: String,
+    /// Maximum file size for downloads via API (in bytes)
+    /// Prevents memory exhaustion and DoS attacks
+    pub max_download_size_bytes: i64,
+    /// Maximum file size for uploads via API (in bytes)
+    /// Should match server's multipart form limits
+    pub max_upload_size_bytes: i64,
 }
 
 /// Server configuration
@@ -126,6 +133,15 @@ pub struct OidcSessionConfig {
     pub inactivity_timeout_secs: u64,
 }
 
+/// Local inference API configuration
+#[derive(Debug, Clone)]
+pub struct InferenceConfig {
+    /// URL of the local inference API service
+    pub url: String,
+    /// Request timeout in seconds
+    pub timeout_secs: u64,
+}
+
 impl AppConfig {
     /// Load configuration from environment variables.
     ///
@@ -141,6 +157,7 @@ impl AppConfig {
             observability: ObservabilityConfig::from_env()?,
             tls: TlsConfig::from_env()?,
             oidc_session: OidcSessionConfig::from_env()?,
+            inference: InferenceConfig::from_env()?,
         })
     }
 }
@@ -237,6 +254,10 @@ impl QdrantConfig {
 
 impl S3Config {
     pub fn from_env() -> Result<Self> {
+        // Default limits: 100MB for downloads, 1GB for uploads
+        let default_max_download = (100 * 1024 * 1024).to_string(); // 100MB
+        let default_max_upload = (1024 * 1024 * 1024).to_string(); // 1GB
+
         Ok(Self {
             region: env::var("AWS_REGION").context("AWS_REGION is required")?,
             access_key_id: env::var("AWS_ACCESS_KEY_ID")
@@ -245,6 +266,14 @@ impl S3Config {
                 .context("AWS_SECRET_ACCESS_KEY is required")?,
             endpoint_url: env::var("AWS_ENDPOINT_URL").context("AWS_ENDPOINT_URL is required")?,
             bucket_name: env::var("S3_BUCKET_NAME").context("S3_BUCKET_NAME is required")?,
+            max_download_size_bytes: env::var("S3_MAX_DOWNLOAD_SIZE_BYTES")
+                .unwrap_or(default_max_download)
+                .parse()
+                .context("S3_MAX_DOWNLOAD_SIZE_BYTES must be a number")?,
+            max_upload_size_bytes: env::var("S3_MAX_UPLOAD_SIZE_BYTES")
+                .unwrap_or(default_max_upload)
+                .parse()
+                .context("S3_MAX_UPLOAD_SIZE_BYTES must be a number")?,
         })
     }
 }
@@ -397,6 +426,19 @@ impl OidcSessionConfig {
                 .unwrap_or_else(|_| "1800".to_string()) // 30 minutes default
                 .parse()
                 .context("OIDC_INACTIVITY_TIMEOUT_SECS must be a number")?,
+        })
+    }
+}
+
+impl InferenceConfig {
+    pub fn from_env() -> Result<Self> {
+        Ok(Self {
+            url: env::var("INFERENCE_API_URL")
+                .unwrap_or_else(|_| "http://localhost:8090".to_string()),
+            timeout_secs: env::var("INFERENCE_API_TIMEOUT_SECS")
+                .unwrap_or_else(|_| "120".to_string())
+                .parse()
+                .context("INFERENCE_API_TIMEOUT_SECS must be a number")?,
         })
     }
 }

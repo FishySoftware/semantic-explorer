@@ -119,6 +119,10 @@ flowchart TB
         wv["📊 Visualizations<br/>UMAP · HDBSCAN<br/><i>Python</i>"]
     end
 
+    subgraph inference ["🚀 LOCAL INFERENCE"]
+        inf["Inference API<br/>fastembed · ONNX<br/><i>CUDA GPU</i>"]
+    end
+
     subgraph queue ["📨 MESSAGE QUEUE"]
         nats["NATS JetStream"]
         streams["Streams: Collections · Datasets · Visualizations · Status · DLQ"]
@@ -159,13 +163,15 @@ flowchart TB
     api --> storage
     workers --> storage
 
-    %% External API calls
+    %% External API calls (or local inference)
     wd --> emb
+    wd -.-> inf
     wv --> llm
 
     %% Observability (dashed)
     api -.-> otel
     workers -.-> otel
+    inf -.-> otel
     otel --> prom & qw
     prom & qw --> graf
 ```
@@ -319,10 +325,17 @@ semantic-explorer/
 │   ├── worker-datasets/        # Embedding generation worker
 │   │   └── embedder.rs        # Embedding logic
 │   │
-│   └── worker-visualizations-py/  # Python UMAP worker
-│       ├── processor.py        # Clustering logic
-│       ├── storage.py          # Result persistence
-│       └── llm_namer.py        # LLM naming service
+│   ├── worker-visualizations-py/  # Python UMAP worker
+│   │   ├── processor.py        # Clustering logic
+│   │   ├── storage.py          # Result persistence
+│   │   └── llm_namer.py        # LLM naming service
+│   │
+│   └── inference-api/          # Local inference service (CUDA GPU)
+│       ├── embedding.rs        # Text embedding with fastembed
+│       ├── reranker.rs         # Cross-encoder reranking
+│       ├── config.rs           # Configuration (GPU, TLS, HF)
+│       ├── Dockerfile          # CPU-only (musl static)
+│       └── Dockerfile.cuda     # GPU with CUDA 12.x
 │
 ├── semantic-explorer-ui/       # Svelte frontend
 │   └── src/

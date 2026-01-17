@@ -52,21 +52,21 @@ pub struct EmbedderConfig {
 }
 
 const GET_EMBEDDER_QUERY: &str = r#"
-    SELECT embedder_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, batch_size, max_batch_size, dimensions, max_input_tokens, truncate_strategy, collection_name, is_public, created_at, updated_at
+    SELECT embedder_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, batch_size, dimensions, max_input_tokens, truncate_strategy, collection_name, is_public, created_at, updated_at
     FROM embedders
     WHERE embedder_id = $1
 "#;
 
 const GET_EMBEDDERS_QUERY: &str = r#"
-    SELECT embedder_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, batch_size, max_batch_size, dimensions, max_input_tokens, truncate_strategy, collection_name, is_public, created_at, updated_at
+    SELECT embedder_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, batch_size, dimensions, max_input_tokens, truncate_strategy, collection_name, is_public, created_at, updated_at
     FROM embedders
     ORDER BY created_at DESC
 "#;
 
 const CREATE_EMBEDDER_QUERY: &str = r#"
-    INSERT INTO embedders (name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, batch_size, max_batch_size, dimensions, max_input_tokens, truncate_strategy, collection_name, is_public, created_at, updated_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
-    RETURNING embedder_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, batch_size, max_batch_size, dimensions, max_input_tokens, truncate_strategy, collection_name, is_public, created_at, updated_at
+    INSERT INTO embedders (name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, batch_size, dimensions, max_input_tokens, truncate_strategy, collection_name, is_public, created_at, updated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
+    RETURNING embedder_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, batch_size, dimensions, max_input_tokens, truncate_strategy, collection_name, is_public, created_at, updated_at
 "#;
 
 const DELETE_EMBEDDER_QUERY: &str = r#"
@@ -74,14 +74,14 @@ const DELETE_EMBEDDER_QUERY: &str = r#"
 "#;
 
 const GET_PUBLIC_EMBEDDERS_QUERY: &str = r#"
-    SELECT embedder_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, batch_size, max_batch_size, dimensions, max_input_tokens, truncate_strategy, collection_name, is_public, created_at, updated_at
+    SELECT embedder_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, batch_size, dimensions, max_input_tokens, truncate_strategy, collection_name, is_public, created_at, updated_at
     FROM embedders
     WHERE is_public = TRUE
     ORDER BY created_at DESC
 "#;
 
 const GET_RECENT_PUBLIC_EMBEDDERS_QUERY: &str = r#"
-    SELECT embedder_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, batch_size, max_batch_size, dimensions, max_input_tokens, truncate_strategy, collection_name, is_public, created_at, updated_at
+    SELECT embedder_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, batch_size, dimensions, max_input_tokens, truncate_strategy, collection_name, is_public, created_at, updated_at
     FROM embedders
     WHERE is_public = TRUE
     ORDER BY updated_at DESC
@@ -89,11 +89,11 @@ const GET_RECENT_PUBLIC_EMBEDDERS_QUERY: &str = r#"
 "#;
 
 const GRAB_PUBLIC_EMBEDDER_QUERY: &str = r#"
-    INSERT INTO embedders (name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, batch_size, max_batch_size, dimensions, max_input_tokens, truncate_strategy, collection_name, is_public, created_at, updated_at)
-    SELECT name || ' - grabbed', $1, $2, provider, base_url, api_key_encrypted, config, batch_size, max_batch_size, dimensions, max_input_tokens, truncate_strategy, NULL, FALSE, NOW(), NOW()
+    INSERT INTO embedders (name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, batch_size, dimensions, max_input_tokens, truncate_strategy, collection_name, is_public, created_at, updated_at)
+    SELECT name || ' - grabbed', $1, $2, provider, base_url, api_key_encrypted, config, batch_size, dimensions, max_input_tokens, truncate_strategy, NULL, FALSE, NOW(), NOW()
     FROM embedders
     WHERE embedder_id = $3 AND is_public = TRUE
-    RETURNING embedder_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, batch_size, max_batch_size, dimensions, max_input_tokens, truncate_strategy, collection_name, is_public, created_at, updated_at
+    RETURNING embedder_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, batch_size, dimensions, max_input_tokens, truncate_strategy, collection_name, is_public, created_at, updated_at
 "#;
 
 const UPDATE_EMBEDDER_QUERY: &str = r#"
@@ -103,15 +103,14 @@ const UPDATE_EMBEDDER_QUERY: &str = r#"
         api_key_encrypted = COALESCE($4, api_key_encrypted),
         config = COALESCE($5, config),
         batch_size = COALESCE($6, batch_size),
-        max_batch_size = COALESCE($7, max_batch_size),
-        dimensions = COALESCE($8, dimensions),
-        max_input_tokens = COALESCE($9, max_input_tokens),
-        truncate_strategy = COALESCE($10, truncate_strategy),
-        collection_name = COALESCE($11, collection_name),
-        is_public = COALESCE($12, is_public),
+        dimensions = COALESCE($7, dimensions),
+        max_input_tokens = COALESCE($8, max_input_tokens),
+        truncate_strategy = COALESCE($9, truncate_strategy),
+        collection_name = COALESCE($10, collection_name),
+        is_public = COALESCE($11, is_public),
         updated_at = NOW()
     WHERE embedder_id = $1
-    RETURNING embedder_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, batch_size, max_batch_size, dimensions, max_input_tokens, truncate_strategy, collection_name, is_public, created_at, updated_at
+    RETURNING embedder_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, batch_size, dimensions, max_input_tokens, truncate_strategy, collection_name, is_public, created_at, updated_at
 "#;
 
 const GET_EMBEDDER_BY_ID_QUERY: &str = r#"
@@ -122,7 +121,7 @@ const GET_EMBEDDER_BY_ID_QUERY: &str = r#"
 
 const GET_EMBEDDERS_BATCH: &str = r#"
         SELECT embedder_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, batch_size,
-               max_batch_size, dimensions, max_input_tokens, truncate_strategy, collection_name,
+               dimensions, max_input_tokens, truncate_strategy, collection_name,
                is_public, created_at, updated_at
         FROM embedders
         WHERE embedder_id = ANY($1)
@@ -231,7 +230,6 @@ pub(crate) async fn create_embedder(
         .bind(&encrypted_api_key)
         .bind(&create_embedder.config)
         .bind(create_embedder.batch_size)
-        .bind(create_embedder.max_batch_size)
         .bind(create_embedder.dimensions)
         .bind(create_embedder.max_input_tokens)
         .bind(&create_embedder.truncate_strategy)
@@ -296,7 +294,6 @@ pub(crate) async fn update_embedder(
         .bind(&encrypted_api_key)
         .bind(&update_embedder.config)
         .bind(update_embedder.batch_size)
-        .bind(update_embedder.max_batch_size)
         .bind(update_embedder.dimensions)
         .bind(update_embedder.max_input_tokens)
         .bind(&update_embedder.truncate_strategy)

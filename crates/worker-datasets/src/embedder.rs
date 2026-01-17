@@ -6,6 +6,12 @@ use semantic_explorer_core::models::EmbedderConfig;
 
 const DEFAULT_OPENAI_BATCH_SIZE: usize = 2048;
 const DEFAULT_COHERE_BATCH_SIZE: usize = 96;
+const DEFAULT_LOCAL_BATCH_SIZE: usize = 256;
+
+/// Get the inference API URL from environment or use default
+fn get_inference_api_url() -> String {
+    std::env::var("INFERENCE_API_URL").unwrap_or_else(|_| "http://localhost:8090".to_string())
+}
 
 static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
     reqwest::Client::builder()
@@ -31,6 +37,7 @@ pub async fn generate_batch_embeddings(
         match config.provider.as_str() {
             "openai" => DEFAULT_OPENAI_BATCH_SIZE,
             "cohere" => DEFAULT_COHERE_BATCH_SIZE,
+            "local" => DEFAULT_LOCAL_BATCH_SIZE,
             _ => return Err(anyhow::anyhow!("Unsupported provider: {}", config.provider)),
         }
     };
@@ -57,7 +64,7 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
 
     let (url, body, needs_bearer_auth) = match config.provider.as_str() {
         "openai" => {
-            let model = config.model.as_deref().unwrap_or("text-embedding-ada-002");
+            let model = &config.model;
             let body = serde_json::json!({
                 "input": texts,
                 "model": model,
@@ -66,7 +73,7 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
             (url, body, true)
         }
         "cohere" => {
-            let model = config.model.as_deref().unwrap_or("embed-english-v3.0");
+            let model = &config.model;
             let input_type = config
                 .config
                 .get("input_type")
@@ -100,6 +107,17 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
                 format!("{}/embed", base)
             };
             (url, body, true)
+        }
+        "local" => {
+            // Local inference via inference-api service (URL from INFERENCE_API_URL env var)
+            let model = &config.model;
+            let body = serde_json::json!({
+                "texts": texts,
+                "model": model,
+            });
+            let inference_url = get_inference_api_url();
+            let url = format!("{}/api/embed/batch", inference_url.trim_end_matches('/'));
+            (url, body, false)
         }
         _ => return Err(anyhow::anyhow!("Unsupported provider: {}", config.provider)),
     };
@@ -197,6 +215,13 @@ fn parse_embeddings_response(
             } else {
                 Err(anyhow::anyhow!("Missing embeddings in Cohere response"))
             }
+        }
+        "local" => {
+            // Local inference-api returns { embeddings: [[...], [...]], model: "...", count: N }
+            response_body
+                .get("embeddings")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .ok_or_else(|| anyhow::anyhow!("Invalid local inference response"))
         }
         _ => Err(anyhow::anyhow!("Unsupported provider parsing")),
     }

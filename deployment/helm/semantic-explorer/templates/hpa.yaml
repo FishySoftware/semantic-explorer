@@ -164,4 +164,33 @@ spec:
       targetAverageUtilization: {{ .Values.workerVisualizationsPy.autoscaling.targetMemoryUtilizationPercentage }}
       {{- end }}
   {{- end }}
+{{- end }}---
+{{- if .Values.inferenceApi.autoscaling.enabled }}
+apiVersion: {{ include "semantic-explorer.hpa.apiVersion" . }}
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-inference-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.inferenceApi.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: {{ include "semantic-explorer.fullname" . }}-inference-api
+  minReplicas: {{ .Values.inferenceApi.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.inferenceApi.autoscaling.maxReplicas }}
+  metrics:
+  {{- if .Values.inferenceApi.autoscaling.targetCPUUtilizationPercentage }}
+  - type: Resource
+    resource:
+      name: cpu
+      {{- if semverCompare ">=1.23-0" .Capabilities.KubeVersion.GitVersion }}
+      target:
+        type: Utilization
+        averageUtilization: {{ .Values.inferenceApi.autoscaling.targetCPUUtilizationPercentage }}
+      {{- else }}
+      targetAverageUtilization: {{ .Values.inferenceApi.autoscaling.targetCPUUtilizationPercentage }}
+      {{- end }}
+  {{- end }}
 {{- end }}

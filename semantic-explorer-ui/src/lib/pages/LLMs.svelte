@@ -54,18 +54,6 @@
 			models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-4', 'gpt-3.5-turbo'],
 			config: { model: 'gpt-4o' },
 		},
-		anthropic: {
-			url: 'https://api.anthropic.com/v1',
-			models: [
-				'claude-opus-4-20250514',
-				'claude-sonnet-4-20250514',
-				'claude-3-5-sonnet-20241022',
-				'claude-3-5-haiku-20241022',
-				'claude-3-opus-20240229',
-				'claude-3-haiku-20240307',
-			],
-			config: { model: 'claude-sonnet-4-20250514' },
-		},
 		cohere: {
 			url: 'https://api.cohere.com/v2',
 			models: [
@@ -96,21 +84,6 @@
 					},
 					body: JSON.stringify({
 						model: config.model || 'gpt-4o',
-						messages: [{ role: 'user', content: testPrompt }],
-						max_tokens: 10,
-					}),
-				});
-			} else if (formProvider === 'anthropic') {
-				response = await fetch(`${formBaseUrl}/messages`, {
-					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json',
-						'x-api-key': formApiKey,
-						'anthropic-version': '2023-06-01',
-						'anthropic-dangerous-direct-browser-access': 'true',
-					},
-					body: JSON.stringify({
-						model: config.model || 'claude-sonnet-4-20250514',
 						messages: [{ role: 'user', content: testPrompt }],
 						max_tokens: 10,
 					}),
@@ -147,8 +120,6 @@
 			let responseText = '';
 			if (formProvider === 'openai') {
 				responseText = result.choices?.[0]?.message?.content || '';
-			} else if (formProvider === 'anthropic') {
-				responseText = result.content?.[0]?.text || '';
 			} else if (formProvider === 'cohere') {
 				responseText =
 					result.message?.content?.[0]?.text || result.text || result.generations?.[0]?.text || '';
@@ -371,7 +342,7 @@
 <div class="max-w-7xl mx-auto">
 	<PageHeader
 		title="LLMs"
-		description="Manage Large Language Model configurations. Define OpenAI, Anthropic, Cohere, or custom LLM providers that can be used for chat, completions, and AI-powered features."
+		description="Manage Large Language Model configurations. Define OpenAI, Cohere, or custom LLM providers that can be used for chat, completions, and AI-powered features."
 	/>
 
 	<div class="flex justify-between items-center mb-4">
@@ -436,7 +407,6 @@
 								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white disabled:opacity-50"
 							>
 								<option value="openai">OpenAI</option>
-								<option value="anthropic">Anthropic</option>
 								<option value="cohere">Cohere</option>
 								<option value="custom">Custom</option>
 							</select>

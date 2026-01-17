@@ -1,9 +1,23 @@
+use actix_web_prom::{PrometheusMetrics, PrometheusMetricsBuilder};
 use anyhow::Result;
 use opentelemetry::{
     KeyValue, global,
     metrics::{Counter, Gauge, Histogram, Meter},
+    trace::TracerProvider,
 };
-use std::sync::OnceLock;
+use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
+use opentelemetry_otlp::{LogExporter, SpanExporter, WithExportConfig};
+use opentelemetry_sdk::{
+    Resource,
+    logs::SdkLoggerProvider,
+    metrics::SdkMeterProvider,
+    propagation::TraceContextPropagator,
+    trace::{RandomIdGenerator, Sampler, SdkTracerProvider},
+};
+use std::{sync::OnceLock, time::Duration};
+use tracing_subscriber::{
+    EnvFilter, Layer, Registry, layer::SubscriberExt, util::SubscriberInitExt,
+};
 
 pub struct Metrics {
     pub database_query_total: Counter<u64>,
@@ -57,6 +71,14 @@ pub struct Metrics {
     // Worker job failure tracking
     pub worker_job_failures_total: Counter<u64>,
     pub worker_job_retries_total: Counter<u64>,
+    // Inference API metrics
+    pub inference_embed_requests_total: Counter<u64>,
+    pub inference_embed_duration: Histogram<f64>,
+    pub inference_embed_items_total: Counter<u64>,
+    pub inference_embed_per_item_duration: Histogram<f64>,
+    pub inference_rerank_requests_total: Counter<u64>,
+    pub inference_rerank_duration: Histogram<f64>,
+    pub inference_rerank_documents_total: Counter<u64>,
 }
 
 impl Metrics {
@@ -291,6 +313,42 @@ impl Metrics {
             .with_description("Total number of worker job retries")
             .build();
 
+        // Inference API metrics
+        let inference_embed_requests_total = meter
+            .u64_counter("inference_embed_requests_total")
+            .with_description("Total number of embedding requests")
+            .build();
+
+        let inference_embed_duration = meter
+            .f64_histogram("inference_embed_duration_seconds")
+            .with_description("Duration of embedding requests in seconds")
+            .build();
+
+        let inference_embed_items_total = meter
+            .u64_counter("inference_embed_items_total")
+            .with_description("Total number of items embedded")
+            .build();
+
+        let inference_embed_per_item_duration = meter
+            .f64_histogram("inference_embed_per_item_duration_seconds")
+            .with_description("Average duration per item in embedding requests")
+            .build();
+
+        let inference_rerank_requests_total = meter
+            .u64_counter("inference_rerank_requests_total")
+            .with_description("Total number of reranking requests")
+            .build();
+
+        let inference_rerank_duration = meter
+            .f64_histogram("inference_rerank_duration_seconds")
+            .with_description("Duration of reranking requests in seconds")
+            .build();
+
+        let inference_rerank_documents_total = meter
+            .u64_counter("inference_rerank_documents_total")
+            .with_description("Total number of documents reranked")
+            .build();
+
         Self {
             database_query_total,
             database_query_duration,
@@ -336,6 +394,13 @@ impl Metrics {
             sse_connection_duration,
             worker_job_failures_total,
             worker_job_retries_total,
+            inference_embed_requests_total,
+            inference_embed_duration,
+            inference_embed_items_total,
+            inference_embed_per_item_duration,
+            inference_rerank_requests_total,
+            inference_rerank_duration,
+            inference_rerank_documents_total,
         }
     }
 }
@@ -793,4 +858,182 @@ pub fn record_histogram(_name: &str, value: f64, labels: &[(&str, &str)]) {
     // Note: This is a simplified implementation - for production use,
     // consider pre-registering histograms in the Metrics struct
     metrics.http_request_duration.record(value, &attributes);
+}
+
+/// Record embedding request metrics
+pub fn record_embed_request(model: &str, item_count: u64, duration_secs: f64, success: bool) {
+    let metrics = get_metrics();
+    let status = if success { "success" } else { "error" };
+
+    metrics.inference_embed_requests_total.add(
+        1,
+        &[
+            KeyValue::new("model", model.to_string()),
+            KeyValue::new("status", status.to_string()),
+        ],
+    );
+
+    metrics.inference_embed_duration.record(
+        duration_secs,
+        &[
+            KeyValue::new("model", model.to_string()),
+            KeyValue::new("status", status.to_string()),
+        ],
+    );
+
+    if success {
+        metrics
+            .inference_embed_items_total
+            .add(item_count, &[KeyValue::new("model", model.to_string())]);
+
+        // Calculate per-item duration
+        if item_count > 0 {
+            let per_item_duration = duration_secs / item_count as f64;
+            metrics.inference_embed_per_item_duration.record(
+                per_item_duration,
+                &[KeyValue::new("model", model.to_string())],
+            );
+        }
+    }
+}
+
+/// Record reranking request metrics
+pub fn record_rerank_request(model: &str, document_count: u64, duration_secs: f64, success: bool) {
+    let metrics = get_metrics();
+    let status = if success { "success" } else { "error" };
+
+    metrics.inference_rerank_requests_total.add(
+        1,
+        &[
+            KeyValue::new("model", model.to_string()),
+            KeyValue::new("status", status.to_string()),
+        ],
+    );
+
+    metrics.inference_rerank_duration.record(
+        duration_secs,
+        &[
+            KeyValue::new("model", model.to_string()),
+            KeyValue::new("status", status.to_string()),
+        ],
+    );
+
+    if success {
+        metrics
+            .inference_rerank_documents_total
+            .add(document_count, &[KeyValue::new("model", model.to_string())]);
+    }
+}
+
+/// Initialize observability for API services (actix-web based services)
+/// Returns PrometheusMetrics that can be attached to actix-web App
+pub fn init_observability_api(
+    service_prefix: &str,
+    endpoints_to_exclude: &[(&str, Option<&str>)],
+    service_name: &str,
+    otlp_endpoint: &str,
+    log_format: &str,
+) -> Result<PrometheusMetrics> {
+    let use_json = log_format.to_lowercase() == "json";
+
+    let resource = Resource::builder()
+        .with_service_name(service_name.to_string())
+        .build();
+
+    let grpc_endpoint = if otlp_endpoint.ends_with("/v1/traces") {
+        otlp_endpoint.trim_end_matches("/v1/traces").to_string()
+    } else {
+        otlp_endpoint.to_string()
+    };
+
+    // Build span exporter with proper timeout configuration
+    let trace_exporter = SpanExporter::builder()
+        .with_tonic()
+        .with_endpoint(grpc_endpoint.clone())
+        .with_timeout(Duration::from_secs(10))
+        .build()?;
+
+    // Configure batch exporter to not exceed max message size
+    let tracer_provider = SdkTracerProvider::builder()
+        .with_batch_exporter(trace_exporter)
+        .with_resource(resource.clone())
+        .with_id_generator(RandomIdGenerator::default())
+        .with_sampler(Sampler::AlwaysOn)
+        .build();
+    global::set_tracer_provider(tracer_provider);
+    tracing::info!("OpenTelemetry tracer initialized successfully");
+
+    let log_exporter = LogExporter::builder()
+        .with_tonic()
+        .with_endpoint(grpc_endpoint)
+        .with_timeout(Duration::from_secs(10))
+        .build()?;
+
+    let logger_provider = SdkLoggerProvider::builder()
+        .with_batch_exporter(log_exporter)
+        .with_resource(resource.clone())
+        .build();
+
+    let mut prometheus_builder = PrometheusMetricsBuilder::new(service_prefix).endpoint("/metrics");
+
+    // Add exclusions
+    for (path, regex_pattern) in endpoints_to_exclude {
+        if let Some(regex) = regex_pattern {
+            prometheus_builder = prometheus_builder.exclude_regex(*regex);
+        } else {
+            prometheus_builder = prometheus_builder.exclude(*path);
+        }
+    }
+
+    let prometheus = prometheus_builder
+        .build()
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    let prometheus_exporter = opentelemetry_prometheus::exporter().build()?;
+
+    let meter_provider = SdkMeterProvider::builder()
+        .with_reader(prometheus_exporter)
+        .with_resource(resource.clone())
+        .build();
+
+    global::set_meter_provider(meter_provider);
+    global::set_text_map_propagator(TraceContextPropagator::new());
+
+    init_metrics_otel().map_err(|e| anyhow::anyhow!("Failed to initialize core metrics: {}", e))?;
+
+    let env_filter = EnvFilter::try_from_default_env()
+        .or_else(|_| EnvFilter::try_new("info"))
+        .expect("failed to initialize tracing filter layer");
+
+    // Use JSON format for structured logging in production, human-readable for development
+    let format_layer = if use_json {
+        tracing_subscriber::fmt::layer()
+            .json()
+            .with_current_span(false)
+            .with_span_list(false)
+            .with_target(true)
+            .with_file(true)
+            .flatten_event(true)
+            .boxed()
+    } else {
+        tracing_subscriber::fmt::layer()
+            .with_ansi(true)
+            .with_target(true)
+            .with_file(true)
+            .with_line_number(true)
+            .boxed()
+    };
+
+    let tracer = global::tracer_provider().tracer(service_name.to_string());
+    let otel_trace_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+    let otel_log_layer = OpenTelemetryTracingBridge::new(&logger_provider);
+
+    Registry::default()
+        .with(env_filter)
+        .with(format_layer)
+        .with(otel_trace_layer)
+        .with(otel_log_layer)
+        .try_init()?;
+
+    Ok(prometheus)
 }

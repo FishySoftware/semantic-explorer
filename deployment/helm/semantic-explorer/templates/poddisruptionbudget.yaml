@@ -75,4 +75,18 @@ spec:
   selector:
     matchLabels:
       {{- include "semantic-explorer.workerVisualizationsPy.selectorLabels" . | nindent 6 }}
+{{- end }}---
+{{- if and .Values.inferenceApi.enabled .Values.inferenceApi.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-inference-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.inferenceApi.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.inferenceApi.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "semantic-explorer.inferenceApi.selectorLabels" . | nindent 6 }}
 {{- end }}

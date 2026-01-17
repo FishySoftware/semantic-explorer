@@ -47,6 +47,21 @@
             "problemMatcher": []
         },
         {
+            "label": "Run Inference API",
+            "type": "shell",
+            "command": "set -a && source .env && set +a && ./run_with_cuda.sh run",
+            "options": {
+                "cwd": "${workspaceFolder}/crates/inference-api"
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "echo": true,
+                "focus": false
+            },
+            "problemMatcher": []
+        },
+        {
             "label": "Run Worker Visualizations",
             "type": "shell",
             "command": "set -a && source .env && set +a && source venv/bin/activate && python src/main.py",

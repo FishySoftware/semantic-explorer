@@ -78,6 +78,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_dataset_items_dataset_title_unique ON data
 CREATE INDEX IF NOT EXISTS idx_dataset_items_name 
   ON dataset_items(title) 
   WHERE title IS NOT NULL;
+-- Index for efficient ORDER BY item_id DESC pagination within a dataset
+CREATE INDEX IF NOT EXISTS idx_dataset_items_dataset_item_desc 
+  ON dataset_items(dataset_id, item_id DESC);
 
 -- ============================================================================
 -- Collection File Count Cache
@@ -152,7 +155,6 @@ CREATE TABLE IF NOT EXISTS embedders (
     api_key_encrypted    TEXT                     NULL,
     config               JSONB                    NOT NULL DEFAULT '{}',
     batch_size           INTEGER                  NOT NULL DEFAULT 100,
-    max_batch_size       INTEGER                  NOT NULL DEFAULT 96,
     dimensions           INTEGER                  NOT NULL DEFAULT 1536,
     max_input_tokens     INTEGER                  NOT NULL DEFAULT 8191,
     truncate_strategy    VARCHAR(50)              NOT NULL DEFAULT 'NONE',

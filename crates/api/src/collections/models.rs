@@ -76,7 +76,7 @@ pub(crate) struct CollectionSearchQuery {
 }
 
 fn default_collection_limit() -> i64 {
-    100
+    10
 }
 
 #[derive(Serialize, ToSchema)]

@@ -37,6 +37,14 @@ const GET_COLLECTION_TRANSFORMS_FOR_COLLECTION_QUERY: &str = r#"
     ORDER BY created_at DESC
 "#;
 
+const GET_COLLECTION_TRANSFORMS_FOR_DATASET_QUERY: &str = r#"
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
+           chunk_size, job_config, created_at, updated_at
+    FROM collection_transforms
+    WHERE dataset_id = $1
+    ORDER BY created_at DESC
+"#;
+
 const GET_ACTIVE_COLLECTION_TRANSFORMS_QUERY: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
            chunk_size, job_config, created_at, updated_at
@@ -234,6 +242,24 @@ pub async fn get_collection_transforms_for_collection(
     let transforms =
         sqlx::query_as::<_, CollectionTransform>(GET_COLLECTION_TRANSFORMS_FOR_COLLECTION_QUERY)
             .bind(collection_id)
+            .fetch_all(&mut *tx)
+            .await?;
+
+    tx.commit().await?;
+    Ok(transforms)
+}
+
+pub async fn get_collection_transforms_for_dataset(
+    pool: &Pool<Postgres>,
+    owner: &str,
+    dataset_id: i32,
+) -> Result<Vec<CollectionTransform>> {
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
+    let transforms =
+        sqlx::query_as::<_, CollectionTransform>(GET_COLLECTION_TRANSFORMS_FOR_DATASET_QUERY)
+            .bind(dataset_id)
             .fetch_all(&mut *tx)
             .await?;
 

@@ -701,3 +701,52 @@ Quickwit gRPC port for init container
 {{- define "semantic-explorer.quickwit.grpcPort" -}}
 {{- .Values.observability.quickwit.service.grpc.port | default 7281 }}
 {{- end }}
+{{/*
+Inference API labels
+*/}}
+{{- define "semantic-explorer.inferenceApi.labels" -}}
+helm.sh/chart: {{ include "semantic-explorer.chart" . }}
+{{ include "semantic-explorer.inferenceApi.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+app.kubernetes.io/component: inference-api
+{{- with .Values.commonLabels }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{/*
+Inference API selector labels
+*/}}
+{{- define "semantic-explorer.inferenceApi.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "semantic-explorer.name" . }}-inference-api
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: inference-api
+{{- end }}
+
+{{/*
+Inference API service account name
+*/}}
+{{- define "semantic-explorer.inferenceApi.serviceAccountName" -}}
+{{- if .Values.inferenceApi.serviceAccount.create }}
+{{- default (printf "%s-inference-api" (include "semantic-explorer.fullname" .)) .Values.inferenceApi.serviceAccount.name }}
+{{- else }}
+{{- default "default" .Values.inferenceApi.serviceAccount.name }}
+{{- end }}
+{{- end }}
+
+{{/*
+Inference API image
+*/}}
+{{- define "semantic-explorer.inferenceApi.image" -}}
+{{- $registry := include "semantic-explorer.imageRegistry" (dict "registry" .Values.inferenceApi.image.registry "global" .Values.global) }}
+{{- $repository := .Values.inferenceApi.image.repository }}
+{{- $tag := .Values.inferenceApi.image.tag | default .Chart.AppVersion }}
+{{- if $registry }}
+{{- printf "%s/%s:%s" $registry $repository $tag }}
+{{- else }}
+{{- printf "%s:%s" $repository $tag }}
+{{- end }}
+{{- end }}

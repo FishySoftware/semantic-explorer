@@ -401,6 +401,137 @@ workerVisualizationsPy:
   metrics:
     enabled: false
 
+# Inference API Configuration (GPU-accelerated embeddings and reranking)
+inferenceApi:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: jofish89/inference-api
+    tag: "latest"
+    pullPolicy: Always
+  statefulset:
+    podManagementPolicy: Parallel
+    updateStrategy:
+      type: RollingUpdate
+      rollingUpdate:
+        partition: 0
+  service:
+    type: ClusterIP
+    port: 8090
+    targetPort: 8090
+    annotations: {}
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 8Gi
+      nvidia.com/gpu: 1
+    limits:
+      cpu: 4000m
+      memory: 16Gi
+      nvidia.com/gpu: 1
+  autoscaling:
+    enabled: false  # GPU nodes typically don't benefit from autoscaling
+    minReplicas: 2
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 70
+  livenessProbe:
+    httpGet:
+      path: /health/live
+      port: 8090
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+  readinessProbe:
+    httpGet:
+      path: /health/ready
+      port: 8090
+    initialDelaySeconds: 30
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+    successThreshold: 1
+  startupProbe:
+    httpGet:
+      path: /health/live
+      port: 8090
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 30  # Allow 5 minutes for model loading
+    successThreshold: 1
+  env:
+    RUST_LOG: "warn,inference_api=info"
+    LOG_FORMAT: "json"
+    INFERENCE_HOSTNAME: "0.0.0.0"
+    INFERENCE_PORT: "8090"
+    # GPU/CUDA configuration - let Kubernetes manage device allocation
+    INFERENCE_CUDA_ENABLED: "true"
+    # INFERENCE_CUDA_DEVICE_ID is not set - use CUDA_VISIBLE_DEVICES from k8s
+    INFERENCE_CUDA_MEMORY_LIMIT: "0"  # 0 = no limit
+    INFERENCE_CUDA_GRAPH: "false"
+    # Model configuration
+    INFERENCE_PRELOAD_MODELS: "BAAI/bge-small-en-v1.5,BAAI/bge-reranker-base"
+    INFERENCE_DEFAULT_EMBEDDING_MODEL: "BAAI/bge-small-en-v1.5"
+    INFERENCE_DEFAULT_RERANKER_MODEL: "BAAI/bge-reranker-base"
+    INFERENCE_MAX_BATCH_SIZE: "256"
+    # HuggingFace cache directory - mounted from PVC
+    HF_HOME: "/models"
+    # For airgapped deployments, set HF_ENDPOINT to your Artifactory proxy
+    # HF_ENDPOINT: "https://artifactory.company.com/huggingface"
+  envFrom: []
+  # GPU node selector - adjust labels based on your cluster
+  nodeSelector:
+    nvidia.com/gpu: "true"
+  # Tolerations for GPU nodes if they're tainted
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values:
+                    - inference-api
+            topologyKey: kubernetes.io/hostname
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  priorityClassName: ""
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: "sa-semantic-explorer-inference-api"
+  podAnnotations: {}
+  podLabels: {}
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 15s
+      scrapeTimeout: 5s
+  # Persistent volume for model cache
+  persistence:
+    enabled: true
+    storageClass: ""  # Use default storage class or specify
+    accessMode: ReadWriteOnce
+    size: 50Gi  # Adjust based on models you plan to cache
+    mountPath: /models
+    # For ReadWriteMany, models can be shared across pods
+    # For ReadWriteOnce, each pod gets its own cache
+  # Optional: TensorRT cache for optimization
+  tensorrtCache:
+    enabled: false
+    size: 10Gi
+    mountPath: /tensorrt-cache
+
 # PostgreSQL Configuration (Optional Infrastructure)
 # Disabled by default - configure external.* for production use
 # When enabled: true, deploys PostgreSQL subchart (CloudNativePG)
@@ -749,6 +880,10 @@ storage:
     existingSecret: ""
     accessKeyIdKey: "aws-access-key-id"
     secretAccessKeyKey: "aws-secret-access-key"
+    # File Size Limits (in bytes)
+    # Prevents memory exhaustion and DoS attacks
+    maxDownloadSizeBytes: 104857600   # 100MB default - max file size for API downloads
+    maxUploadSizeBytes: 1073741824    # 1GB default - max file size for uploads
 
 # Encryption Configuration
 # IMPORTANT: Configure master key for production deployments

@@ -13,7 +13,7 @@
 		base_url: string;
 		api_key: string | null;
 		config: Record<string, any>;
-		max_batch_size?: number;
+		batch_size?: number;
 		dimensions?: number;
 		collection_name: string;
 		is_public: boolean;
@@ -57,7 +57,7 @@
 	let editFormApiKey = $state('');
 	let editFormBaseUrl = $state('');
 	let editFormConfig = $state('');
-	let editFormMaxBatchSize = $state(96);
+	let editFormBatchSize = $state(100);
 	let editFormDimensions = $state(1536);
 	let editFormMaxInputTokens = $state(8191);
 	let editFormTruncateStrategy = $state('NONE');
@@ -148,7 +148,7 @@
 		editFormApiKey = embedder.api_key || '';
 		editFormBaseUrl = embedder.base_url;
 		editFormConfig = JSON.stringify(embedder.config, null, 2);
-		editFormMaxBatchSize = embedder.max_batch_size ?? 96;
+		editFormBatchSize = embedder.batch_size ?? 100;
 		editFormDimensions = embedder.dimensions ?? 1536;
 		editFormMaxInputTokens = (embedder as any).max_input_tokens ?? 8191;
 		editFormTruncateStrategy = (embedder as any).truncate_strategy ?? 'NONE';
@@ -174,7 +174,7 @@
 				base_url: editFormBaseUrl,
 				api_key: editFormApiKey || null,
 				config,
-				max_batch_size: editFormMaxBatchSize,
+				batch_size: editFormBatchSize,
 				dimensions: editFormDimensions,
 				max_input_tokens: editFormMaxInputTokens,
 				truncate_strategy: editFormTruncateStrategy,
@@ -395,7 +395,7 @@
 							<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
 								<div class="text-sm font-medium text-gray-600 dark:text-gray-400">Batch Size</div>
 								<div class="text-lg font-semibold text-gray-900 dark:text-white mt-1">
-									{embedder.max_batch_size || 'Not specified'}
+									{embedder.batch_size || 'Not specified'}
 								</div>
 							</div>
 						</div>
@@ -532,7 +532,7 @@
 											<input
 												id="edit-batch-size"
 												type="number"
-												bind:value={editFormMaxBatchSize}
+												bind:value={editFormBatchSize}
 												class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 											/>
 										</div>

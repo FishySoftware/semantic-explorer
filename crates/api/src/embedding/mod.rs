@@ -36,6 +36,19 @@ pub async fn generate_embedding(
             });
             (endpoint, body, true)
         }
+        "local" => {
+            // Local inference via inference-api service
+            let model = config
+                .get("model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("BAAI/bge-small-en-v1.5");
+            let endpoint = format!("{}/api/embed", base_url.trim_end_matches('/'));
+            let body = serde_json::json!({
+                "text": query,
+                "model": model,
+            });
+            (endpoint, body, false)
+        }
         _ => {
             return Err(anyhow::anyhow!(
                 "Unsupported embedding provider: {}",
@@ -89,6 +102,16 @@ pub async fn generate_embedding(
             } else {
                 Err(anyhow::anyhow!("Invalid Cohere response format"))
             }
+        }
+        "local" => {
+            // Local inference-api returns embeddings array
+            let embeddings = response
+                .get("embeddings")
+                .and_then(|e| e.as_array())
+                .and_then(|arr| arr.first())
+                .and_then(|e| serde_json::from_value(e.clone()).ok())
+                .ok_or_else(|| anyhow::anyhow!("Invalid local inference response format"))?;
+            Ok(embeddings)
         }
         _ => Err(anyhow::anyhow!("Unsupported provider: {}", provider)),
     }

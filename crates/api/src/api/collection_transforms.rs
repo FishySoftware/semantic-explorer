@@ -141,12 +141,14 @@ pub async fn get_collection_transform(
 )]
 #[post("/api/collection-transforms")]
 #[tracing::instrument(name = "create_collection_transform", skip(user, postgres_pool, nats_client, s3_client, encryption, body, req), fields(title = %body.title))]
+#[allow(clippy::too_many_arguments)]
 pub async fn create_collection_transform(
     user: AuthenticatedUser,
     req: HttpRequest,
     postgres_pool: Data<Pool<Postgres>>,
     nats_client: Data<NatsClient>,
     s3_client: Data<S3Client>,
+    s3_config: Data<semantic_explorer_core::config::S3Config>,
     encryption: Data<EncryptionService>,
     body: Json<CreateCollectionTransform>,
 ) -> impl Responder {
@@ -174,6 +176,7 @@ pub async fn create_collection_transform(
                 &postgres_pool,
                 &nats_client,
                 &s3_client,
+                &s3_config.bucket_name,
                 collection_transform_id,
                 &user.as_owner(),
                 &encryption,
@@ -545,6 +548,42 @@ pub async fn get_collection_transforms_for_collection(
         Ok(transforms) => HttpResponse::Ok().json(transforms),
         Err(e) => {
             error!("Failed to fetch collection transforms: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to fetch collection transforms: {}", e)
+            }))
+        }
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/datasets/{dataset_id}/collection-transforms",
+    tag = "Collection Transforms",
+    params(
+        ("dataset_id" = i32, Path, description = "Dataset ID")
+    ),
+    responses(
+        (status = 200, description = "Collection transforms targeting this dataset", body = Vec<CollectionTransform>),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[get("/api/datasets/{dataset_id}/collection-transforms")]
+#[tracing::instrument(name = "get_collection_transforms_for_dataset", skip(user, postgres_pool), fields(dataset_id = %path.as_ref()))]
+pub async fn get_collection_transforms_for_dataset(
+    user: AuthenticatedUser,
+    postgres_pool: Data<Pool<Postgres>>,
+    path: Path<i32>,
+) -> impl Responder {
+    match collection_transforms::get_collection_transforms_for_dataset(
+        &postgres_pool,
+        &user.as_owner(),
+        path.into_inner(),
+    )
+    .await
+    {
+        Ok(transforms) => HttpResponse::Ok().json(transforms),
+        Err(e) => {
+            error!("Failed to fetch collection transforms for dataset: {}", e);
             HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": format!("Failed to fetch collection transforms: {}", e)
             }))

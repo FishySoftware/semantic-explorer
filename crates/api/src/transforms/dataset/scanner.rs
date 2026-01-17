@@ -110,14 +110,6 @@ async fn process_dataset_transform_scan(
         api_key: std::env::var("QDRANT_API_KEY").ok(),
     };
 
-    // Get batch size from job config
-    let configured_batch_size = transform
-        .job_config
-        .get("embedding_batch_size")
-        .and_then(|v| v.as_u64())
-        .map(|v| v as usize)
-        .unwrap_or(100);
-
     let embedded_datasets_count = embedded_datasets_list.len();
     let mut total_jobs = 0;
 
@@ -127,22 +119,26 @@ async fn process_dataset_transform_scan(
         let embedder =
             embedders::get_embedder(pool, &user, embedded_dataset.embedder_id, encryption).await?;
 
-        let embedder_config = EmbedderConfig {
-            provider: embedder.provider.clone(),
-            base_url: embedder.base_url.clone(),
-            api_key: embedder.api_key.clone(),
-            model: embedder
-                .config
-                .get("model")
-                .and_then(|m| m.as_str())
-                .map(|s| s.to_string()),
-            config: embedder.config.clone(),
-            max_batch_size: embedder.max_batch_size,
-            max_input_tokens: embedder.max_input_tokens,
-        };
+        // Extract model from embedder config - required field
+        let model = embedder
+            .config
+            .get("model")
+            .and_then(|m| m.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Embedder config must specify a 'model' field"))?
+            .to_string();
 
-        // Use the minimum of configured batch size and embedder's max_batch_size
-        let embedding_batch_size = configured_batch_size.min(embedder.max_batch_size as usize);
+        let embedder_config = EmbedderConfig::new(
+            embedder.provider.clone(),
+            embedder.base_url.clone(),
+            embedder.api_key.clone(),
+            model,
+            embedder.config.clone(),
+            embedder.batch_size,
+            embedder.max_input_tokens,
+        );
+
+        // Use the embedder's configured batch size
+        let embedding_batch_size = embedder.batch_size as usize;
 
         // Use single-bucket architecture with embedded-datasets prefix
         let s3_bucket = std::env::var("S3_BUCKET_NAME")
@@ -169,17 +165,24 @@ async fn process_dataset_transform_scan(
         let mut continuation_token: Option<String> = None;
 
         loop {
-            let files =
-                match s3::list_files(s3, &s3_bucket, 100, continuation_token.as_deref()).await {
-                    Ok(files) => files,
-                    Err(e) => {
-                        error!(
-                            "Failed to list files in bucket '{}': {}. Will create new batches.",
-                            s3_bucket, e
-                        );
-                        break;
-                    }
-                };
+            let files = match s3::list_files(
+                s3,
+                &s3_bucket,
+                &embedded_dataset_prefix,
+                100,
+                continuation_token.as_deref(),
+            )
+            .await
+            {
+                Ok(files) => files,
+                Err(e) => {
+                    error!(
+                        "Failed to list files in bucket '{}': {}. Will create new batches.",
+                        s3_bucket, e
+                    );
+                    break;
+                }
+            };
             if files.files.is_empty() {
                 break;
             }

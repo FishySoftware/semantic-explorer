@@ -71,11 +71,34 @@ pub struct EmbedderConfig {
     pub provider: String,
     pub base_url: String,
     pub api_key: Option<String>,
-    pub model: Option<String>,
+    pub model: String,
     pub config: serde_json::Value,
-    pub max_batch_size: i32,
+    pub batch_size: i32,
     #[serde(default = "default_max_input_tokens")]
     pub max_input_tokens: i32,
+}
+
+impl EmbedderConfig {
+    /// Create a new EmbedderConfig
+    pub fn new(
+        provider: String,
+        base_url: String,
+        api_key: Option<String>,
+        model: String,
+        config: serde_json::Value,
+        batch_size: i32,
+        max_input_tokens: i32,
+    ) -> Self {
+        Self {
+            provider,
+            base_url,
+            api_key,
+            model,
+            config,
+            batch_size,
+            max_input_tokens,
+        }
+    }
 }
 
 fn default_max_input_tokens() -> i32 {

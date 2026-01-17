@@ -45,7 +45,7 @@
 		base_url: string;
 		api_key: string | null;
 		config: Record<string, any>;
-		max_batch_size?: number;
+		batch_size?: number;
 		dimensions?: number;
 		collection_name: string;
 		created_at: string;

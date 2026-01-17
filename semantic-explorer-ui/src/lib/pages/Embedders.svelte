@@ -21,7 +21,7 @@
 		base_url: string;
 		api_key: string | null;
 		config: Record<string, any>;
-		max_batch_size?: number;
+		batch_size?: number;
 		dimensions?: number;
 		collection_name: string;
 		is_public: boolean;
@@ -51,7 +51,7 @@
 	let formBaseUrl = $state('https://api.openai.com/v1');
 	let formApiKey = $state('');
 	let formConfig = $state('{}');
-	let formMaxBatchSize = $state(96);
+	let formBatchSize = $state(100);
 	let formDimensions = $state(1536);
 	let formMaxInputTokens = $state(8191);
 	let formTruncateStrategy = $state('NONE');
@@ -70,61 +70,84 @@
 	let customEmbeddingTypes = $state('');
 	let customTruncate = $state('');
 	let userEditedName = $state(false);
+	let inferenceModels = $state<string[]>([]);
+	let inferenceModelDimensions = $state<Record<string, number>>({});
 
-	const modelDimensions: Record<string, number> = {
-		'text-embedding-3-small': 1536,
-		'text-embedding-3-large': 3072,
-		'text-embedding-ada-002': 1536,
-		'embed-v4.0': 1536,
-		'embed-english-v3.0': 1024,
-		'embed-multilingual-v3.0': 1024,
-		'embed-english-light-v3.0': 384,
-		'embed-multilingual-light-v3.0': 384,
-		'embed-english-v2.0': 4096,
-		'embed-english-light-v2.0': 1024,
-		'embed-multilingual-v2.0': 768,
-		'sentence-transformers/all-MiniLM-L6-v2': 384,
-		'sentence-transformers/all-mpnet-base-v2': 768,
-		'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2': 384,
-		'sentence-transformers/distiluse-base-multilingual-cased-v2': 512,
-		'BAAI/bge-small-en-v1.5': 384,
-		'BAAI/bge-base-en-v1.5': 768,
-		'BAAI/bge-large-en-v1.5': 1024,
-		'thenlper/gte-small': 384,
-		'thenlper/gte-base': 768,
-		'thenlper/gte-large': 1024,
-	};
+	// Dimension detection state
+	let dimensionDetectionStatus = $state<'idle' | 'detecting' | 'success' | 'error'>('idle');
+	let detectedDimensions = $state<number | null>(null);
+	let dimensionSource = $state<string>(''); // 'known', 'detected', 'configured'
+	let dimensionMessage = $state<string>('');
 
-	const providerDefaults: Record<string, ProviderDefaultConfig> = {
-		openai: {
-			url: 'https://api.openai.com/v1',
-			models: ['text-embedding-3-small', 'text-embedding-3-large', 'text-embedding-ada-002'],
-			config: { model: 'text-embedding-3-small', dimensions: 1536 },
-		},
-		cohere: {
-			url: 'https://api.cohere.com/v2/embed',
-			models: [
-				'embed-v4.0',
-				'embed-english-v3.0',
-				'embed-multilingual-v3.0',
-				'embed-english-light-v3.0',
-				'embed-multilingual-light-v3.0',
-				'embed-english-v2.0',
-				'embed-english-light-v2.0',
-				'embed-multilingual-v2.0',
-			],
-			inputTypes: ['clustering', 'search_document', 'search_query', 'classification', 'image'],
-			embeddingTypes: ['float', 'int8', 'uint8', 'binary', 'ubinary'],
-			truncate: ['NONE', 'START', 'END'],
-			config: {
-				model: 'embed-v4.0',
-				input_type: 'clustering',
-				embedding_types: ['float'],
-				truncate: 'NONE',
-				dimensions: 1024,
+	let localModelsForDisplay = $derived([...inferenceModels].sort((a, b) => a.localeCompare(b)));
+
+	function getProviderDefaults(): Record<string, ProviderDefaultConfig> {
+		const localDefaultModel = localModelsForDisplay[0] || '';
+		const localDefaultDimensions = inferenceModelDimensions[localDefaultModel] || 384;
+
+		return {
+			openai: {
+				url: 'https://api.openai.com/v1',
+				models: ['text-embedding-3-small', 'text-embedding-3-large', 'text-embedding-ada-002'],
+				config: { model: 'text-embedding-3-small', dimensions: 1536 },
 			},
-		},
-	};
+			cohere: {
+				url: 'https://api.cohere.com/v2/embed',
+				models: [
+					'embed-v4.0',
+					'embed-english-v3.0',
+					'embed-multilingual-v3.0',
+					'embed-english-light-v3.0',
+					'embed-multilingual-light-v3.0',
+					'embed-english-v2.0',
+					'embed-english-light-v2.0',
+					'embed-multilingual-v2.0',
+				],
+				inputTypes: ['clustering', 'search_document', 'search_query', 'classification', 'image'],
+				embeddingTypes: ['float', 'int8', 'uint8', 'binary', 'ubinary'],
+				truncate: ['NONE', 'START', 'END'],
+				config: {
+					model: 'embed-v4.0',
+					input_type: 'clustering',
+					embedding_types: ['float'],
+					truncate: 'NONE',
+					dimensions: 1024,
+				},
+			},
+			local: {
+				url: '', // URL is configured on the backend
+				models: localModelsForDisplay,
+				config: { model: localDefaultModel, dimensions: localDefaultDimensions },
+			},
+		};
+	}
+
+	let providerDefaults = $derived(getProviderDefaults());
+
+	async function fetchInferenceModels() {
+		try {
+			const response = await fetch('/api/inference/models/embedders');
+			if (!response.ok) {
+				console.error('Failed to fetch inference models:', response.statusText);
+				return;
+			}
+			const embedderModels = await response.json();
+			if (Array.isArray(embedderModels)) {
+				// Clear previous models and set new ones
+				inferenceModels = [...new Set(embedderModels.map((m: any) => m.id))].sort();
+				// Build dimensions map
+				const dimMap: Record<string, number> = {};
+				for (const model of embedderModels) {
+					if (model.dimensions) {
+						dimMap[model.id] = model.dimensions;
+					}
+				}
+				inferenceModelDimensions = dimMap;
+			}
+		} catch (e) {
+			console.error('Error fetching inference models:', e);
+		}
+	}
 
 	async function testEmbedderConnection() {
 		testMessage = '';
@@ -162,16 +185,17 @@
 						...(config.truncate && { truncate: config.truncate }),
 					}),
 				});
-			} else if (formProvider === 'huggingface') {
-				const model = config.model || 'sentence-transformers/all-MiniLM-L6-v2';
-				response = await fetch(`${formBaseUrl}/pipeline/feature-extraction/${model}`, {
+			} else if (formProvider === 'local') {
+				// Test local inference through the backend API
+				const model = config.model || 'BAAI/bge-small-en-v1.5';
+				response = await fetch('/api/inference/test', {
 					method: 'POST',
 					headers: {
 						'Content-Type': 'application/json',
-						...(formApiKey && { Authorization: `Bearer ${formApiKey}` }),
 					},
 					body: JSON.stringify({
-						inputs: testText,
+						model,
+						texts: testText,
 					}),
 				});
 			} else {
@@ -205,6 +229,8 @@
 				}
 			} else if (formProvider === 'openai') {
 				embeddingCount = result.data?.length || 0;
+			} else if (formProvider === 'local') {
+				embeddingCount = result.embeddings?.length || 0;
 			}
 
 			testMessage = `Connection successful! Generated ${embeddingCount} embedding(s).`;
@@ -213,6 +239,70 @@
 			testMessage = e.message || 'Test failed.';
 		}
 	}
+
+	async function autoDetectDimensions() {
+		if (!formProvider || (formProvider !== 'local' && !formApiKey)) {
+			dimensionDetectionStatus = 'error';
+			dimensionMessage = 'API key required for dimension detection';
+			return;
+		}
+
+		try {
+			dimensionDetectionStatus = 'detecting';
+			dimensionMessage = '';
+
+			const config = JSON.parse(formConfig);
+
+			const response = await fetch('/api/embedders/detect-dimensions', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					provider: formProvider,
+					base_url: formBaseUrl,
+					api_key: formApiKey || null,
+					config: config,
+				}),
+			});
+
+			if (!response.ok) {
+				throw new Error(`HTTP ${response.status}`);
+			}
+
+			const result = await response.json();
+
+			if (result.dimensions) {
+				detectedDimensions = result.dimensions;
+				formDimensions = result.dimensions;
+				dimensionSource = result.source;
+				dimensionDetectionStatus = 'success';
+				dimensionMessage = result.message;
+
+				// Update config with detected dimensions
+				const updatedConfig = { ...config, dimensions: result.dimensions };
+				formConfig = JSON.stringify(updatedConfig, null, 2);
+			} else {
+				dimensionDetectionStatus = 'error';
+				dimensionMessage = result.message || 'Failed to detect dimensions';
+			}
+		} catch (e: any) {
+			dimensionDetectionStatus = 'error';
+			dimensionMessage = e.message || 'Failed to detect dimensions';
+		}
+	}
+
+	// Check for dimension mismatches
+	let dimensionMismatch = $derived.by(() => {
+		if (!detectedDimensions || !formDimensions) return null;
+		if (detectedDimensions !== formDimensions) {
+			return {
+				detected: detectedDimensions,
+				configured: formDimensions,
+			};
+		}
+		return null;
+	});
 
 	function extractSearchParamFromHash() {
 		const hashParts = window.location.hash.split('?');
@@ -235,6 +325,7 @@
 
 	onMount(() => {
 		fetchEmbedders();
+		fetchInferenceModels();
 		extractSearchParamFromHash();
 	});
 
@@ -266,7 +357,7 @@
 	function openCreateForm() {
 		editingEmbedder = null;
 		formName = '';
-		formProvider = 'cohere';
+		formProvider = 'local';
 		formApiKey = '';
 		formIsPublic = false;
 		updateProviderDefaults();
@@ -295,7 +386,7 @@
 		formBaseUrl = embedder.base_url;
 		formApiKey = embedder.api_key || '';
 		formConfig = JSON.stringify(embedder.config, null, 2);
-		formMaxBatchSize = embedder.max_batch_size ?? 96;
+		formBatchSize = embedder.batch_size ?? 100;
 		formDimensions = embedder.dimensions ?? 1536;
 		formMaxInputTokens = (embedder as any).max_input_tokens ?? 8191;
 		formTruncateStrategy = (embedder as any).truncate_strategy ?? 'NONE';
@@ -354,13 +445,46 @@
 		if (defaults) {
 			formBaseUrl = defaults.url;
 			formConfig = JSON.stringify(defaults.config, null, 2);
-			localModel = defaults.models?.[0] || '';
+
+			// Reset model selection when switching providers to avoid accumulation
+			if (formProvider === 'local') {
+				// For local provider, use the first available inference model
+				localModel = defaults.models?.[0] || '';
+				customModel = '';
+			} else {
+				// For external providers, reset local model and use provider's default model
+				localModel = '';
+				customModel = '';
+				// Update the config with the provider's default model
+				let config: Record<string, any> = {};
+				try {
+					config = JSON.parse(formConfig);
+				} catch {
+					// Ignore parsing errors, use defaults
+					config = { ...defaults.config };
+				}
+				if (defaults.models?.[0]) {
+					config['model'] = defaults.models[0];
+					formConfig = JSON.stringify(config, null, 2);
+				}
+			}
+
 			localInputType = defaults.inputTypes?.[0] || '';
 			localDimensions =
-				defaults.config.dimensions || (localModel && modelDimensions[localModel]) || null;
-			formMaxBatchSize = 96;
+				defaults.config.dimensions || (localModel && inferenceModelDimensions[localModel]) || null;
+
+			// Set batch size based on provider
+			if (formProvider === 'openai') {
+				formBatchSize = 2048;
+			} else if (formProvider === 'cohere') {
+				formBatchSize = 96;
+			} else if (formProvider === 'local') {
+				formBatchSize = 256;
+			} else {
+				formBatchSize = 100;
+			}
+
 			formDimensions = localDimensions ?? 1536;
-			customModel = '';
 			customInputType = '';
 			customEmbeddingTypes = defaults.config.embedding_types
 				? defaults.config.embedding_types.join(', ')
@@ -379,8 +503,7 @@
 				base_url: formBaseUrl,
 				api_key: formApiKey || null,
 				config,
-				batch_size: editingEmbedder ? undefined : 50,
-				max_batch_size: formMaxBatchSize,
+				batch_size: formBatchSize,
 				dimensions: formDimensions,
 				max_input_tokens: formMaxInputTokens,
 				truncate_strategy: formTruncateStrategy,
@@ -529,28 +652,38 @@
 								disabled={!!editingEmbedder}
 								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white disabled:opacity-50"
 							>
+								<option value="local">Inference API</option>
 								<option value="openai">OpenAI</option>
 								<option value="cohere">Cohere</option>
-
-								<option value="custom">Custom</option>
 							</select>
 						</div>
 
-						<div>
-							<label
-								for="embedder-base-url"
-								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+						{#if formProvider === 'local'}
+							<div
+								class="pt-3 pb-3 mt-2 mb-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg"
 							>
-								Base URL
-							</label>
-							<input
-								id="embedder-base-url"
-								type="text"
-								bind:value={formBaseUrl}
-								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-								placeholder={providerDefaults[formProvider]?.url || ''}
-							/>
-						</div>
+								<p class=" p-2 text-sm text-blue-700 dark:text-blue-300">
+									<strong>Local Inference:</strong>
+									The inference API URL is configured on the server. No API key is required.
+								</p>
+							</div>
+						{:else}
+							<div>
+								<label
+									for="embedder-base-url"
+									class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+								>
+									Base URL
+								</label>
+								<input
+									id="embedder-base-url"
+									type="text"
+									bind:value={formBaseUrl}
+									class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									placeholder={providerDefaults[formProvider]?.url || ''}
+								/>
+							</div>
+						{/if}
 
 						<div>
 							<label
@@ -574,9 +707,18 @@
 									}
 									if (value !== '__custom__') {
 										config['model'] = value;
-										if (modelDimensions[value]) {
-											config['dimensions'] = modelDimensions[value];
-											localDimensions = modelDimensions[value];
+										const dimensions = inferenceModelDimensions[value];
+										if (dimensions) {
+											config['dimensions'] = dimensions;
+											localDimensions = dimensions;
+											formDimensions = dimensions;
+											dimensionSource = 'known';
+											dimensionMessage = `Known dimensions for ${value}`;
+										} else {
+											// Reset dimension info for unknown models
+											dimensionSource = '';
+											dimensionMessage = '';
+											detectedDimensions = null;
 										}
 										formConfig = JSON.stringify(config, null, 2);
 									}
@@ -615,21 +757,21 @@
 
 						<div>
 							<label
-								for="embedder-max-batch-size"
+								for="embedder-batch-size"
 								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
 							>
-								Max Batch Size
+								Batch Size
 							</label>
 							<input
-								id="embedder-max-batch-size"
+								id="embedder-batch-size"
 								type="number"
-								bind:value={formMaxBatchSize}
+								bind:value={formBatchSize}
 								min="1"
 								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-								placeholder="e.g., 96"
+								placeholder="e.g., 100"
 							/>
 							<div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-								Default: 96 (OpenAI/Cohere)
+								Number of texts to embed per API call
 							</div>
 						</div>
 						<div>
@@ -639,21 +781,53 @@
 							>
 								Dimensions
 							</label>
-							<input
-								id="embedder-dimensions"
-								type="number"
-								bind:value={formDimensions}
-								min="1"
-								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-								placeholder="e.g., 384, 768, 1536"
-							/>
+							<div class="flex gap-2">
+								<input
+									id="embedder-dimensions"
+									type="number"
+									bind:value={formDimensions}
+									min="1"
+									class="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									placeholder="e.g., 384, 768, 1536"
+								/>
+								<button
+									type="button"
+									onclick={autoDetectDimensions}
+									disabled={dimensionDetectionStatus === 'detecting' ||
+										(formProvider !== 'local' && !formApiKey)}
+									class="px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+								>
+									{#if dimensionDetectionStatus === 'detecting'}
+										Detecting...
+									{:else}
+										Auto-Detect
+									{/if}
+								</button>
+							</div>
 							<div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-								{#if localModel && localModel !== '__custom__' && modelDimensions[localModel]}
-									Default for {localModel}: {modelDimensions[localModel]}
+								{#if dimensionSource === 'known'}
+									<span class="text-green-600 dark:text-green-400">{dimensionMessage}</span>
+								{:else if dimensionSource === 'detected'}
+									<span class="text-blue-600 dark:text-blue-400">{dimensionMessage}</span>
+								{:else if localModel && localModel !== '__custom__' && inferenceModelDimensions[localModel]}
+									Default for {localModel}: {inferenceModelDimensions[localModel]}
 								{:else}
 									Enter embedding vector dimensions for this model
 								{/if}
 							</div>
+							{#if dimensionDetectionStatus === 'error'}
+								<div class="mt-1 text-xs text-red-600 dark:text-red-400">
+									{dimensionMessage}
+								</div>
+							{/if}
+							{#if dimensionMismatch}
+								<div
+									class="mt-1 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded px-2 py-1"
+								>
+									⚠️ Warning: Configured dimensions ({dimensionMismatch.configured}) don't match
+									detected dimensions ({dimensionMismatch.detected})
+								</div>
+							{/if}
 						</div>
 
 						<div>
@@ -847,15 +1021,16 @@
 								for="embedder-api-key"
 								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
 							>
-								API Key (optional)
+								API Key {formProvider === 'local' ? '(not required for local)' : '(optional)'}
 							</label>
 							<input
 								id="embedder-api-key"
 								type="password"
 								autocomplete="off"
 								bind:value={formApiKey}
-								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-								placeholder="Optional"
+								disabled={formProvider === 'local'}
+								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed"
+								placeholder={formProvider === 'local' ? 'Not required' : 'Optional'}
 							/>
 						</div>
 

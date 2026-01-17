@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/api",
     "crates/core",
+    "crates/inference-api",
     "crates/worker-collections",
     "crates/worker-datasets"
 ]
@@ -18,7 +19,7 @@ actix-web-prom = {version = "0.10.0", features = ["process"]}
 async-nats = { version = "0.45.0" }
 async-stream = { version = "0.3.6" }
 futures-util = { version = "0.3.31" }
-aws-sdk-s3 = {version = "1.119.0", features = ["behavior-version-latest"] }
+aws-sdk-s3 = {version = "1.120.0", features = ["behavior-version-latest"] }
 aws-config = { version = "1.8.12", features = ["rustls", "behavior-version-latest"] }
 qdrant-client = { version = "1.16.0"}
 sqlx = { version = "0.8.6", features = ["runtime-tokio-rustls", "postgres", "chrono", "time", "migrate", "macros", "json"], default-features = false }

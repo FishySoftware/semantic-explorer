@@ -132,7 +132,7 @@ async fn generate_batch_embeddings(
 
     let mut all_embeddings = Vec::new();
 
-    for batch in sentences.chunks(config.max_batch_size as usize) {
+    for batch in sentences.chunks(config.batch_size as usize) {
         let embeddings = call_embedder_api(config, batch).await?;
         all_embeddings.extend(embeddings);
     }
@@ -147,7 +147,7 @@ async fn call_embedder_api(config: &EmbedderConfig, texts: &[&str]) -> Result<Ve
 
     let (url, body) = match config.provider.as_str() {
         "openai" => {
-            let model = config.model.as_deref().unwrap_or("text-embedding-ada-002");
+            let model = &config.model;
             let body = serde_json::json!({
                 "input": texts,
                 "model": model,
@@ -156,7 +156,7 @@ async fn call_embedder_api(config: &EmbedderConfig, texts: &[&str]) -> Result<Ve
             (url, body)
         }
         "cohere" => {
-            let model = config.model.as_deref().unwrap_or("embed-english-v3.0");
+            let model = &config.model;
             let input_type = config
                 .config
                 .get("input_type")
@@ -178,6 +178,17 @@ async fn call_embedder_api(config: &EmbedderConfig, texts: &[&str]) -> Result<Ve
             };
             (url, body)
         }
+        "local" => {
+            // Local inference via inference-api service
+            let model = config.model.clone();
+            let base_url = get_inference_api_url();
+            let endpoint = format!("{}/api/embed/batch", base_url);
+            let body = serde_json::json!({
+                "texts": texts,
+                "model": model,
+            });
+            (endpoint, body)
+        }
         _ => {
             return Err(anyhow!(
                 "Unsupported embedder provider: {}",
@@ -190,8 +201,6 @@ async fn call_embedder_api(config: &EmbedderConfig, texts: &[&str]) -> Result<Ve
 
     if let Some(key) = &config.api_key {
         req = req.bearer_auth(key);
-    } else {
-        return Err(anyhow!("API key required for {} provider", config.provider));
     }
 
     let resp = req.send().await?;
@@ -253,10 +262,36 @@ async fn call_embedder_api(config: &EmbedderConfig, texts: &[&str]) -> Result<Ve
                 })
                 .collect::<Result<Vec<Vec<f32>>>>()?
         }
+        "local" => {
+            let embeddings_array = resp_json["embeddings"]
+                .as_array()
+                .ok_or_else(|| anyhow!("Invalid local inference response format"))?;
+
+            embeddings_array
+                .iter()
+                .map(|arr| {
+                    arr.as_array()
+                        .ok_or_else(|| anyhow!("Invalid embedding format"))
+                        .and_then(|a| {
+                            a.iter()
+                                .map(|v| {
+                                    v.as_f64()
+                                        .map(|f| f as f32)
+                                        .ok_or_else(|| anyhow!("Invalid embedding value"))
+                                })
+                                .collect()
+                        })
+                })
+                .collect::<Result<Vec<Vec<f32>>>>()?
+        }
         _ => return Err(anyhow!("Unsupported provider")),
     };
 
     Ok(embeddings)
+}
+
+fn get_inference_api_url() -> String {
+    std::env::var("INFERENCE_API_URL").unwrap_or_else(|_| "http://localhost:8090".to_string())
 }
 
 #[cfg(test)]

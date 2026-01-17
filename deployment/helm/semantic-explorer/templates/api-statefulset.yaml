@@ -176,6 +176,10 @@ spec:
           value: {{ include "semantic-explorer.storage.s3.forcePathStyle" . | quote }}
         - name: S3_BUCKET_NAME
           value: {{ .Values.storage.s3.bucketName }}
+        - name: S3_MAX_DOWNLOAD_SIZE_BYTES
+          value: {{ .Values.storage.s3.maxDownloadSizeBytes | quote }}
+        - name: S3_MAX_UPLOAD_SIZE_BYTES
+          value: {{ .Values.storage.s3.maxUploadSizeBytes | quote }}
         - name: ENCRYPTION_MASTER_KEY
           valueFrom:
             secretKeyRef:

@@ -13,8 +13,6 @@ pub(crate) struct CreateEmbedder {
     pub(crate) config: serde_json::Value,
     #[serde(default = "default_batch_size")]
     pub(crate) batch_size: i32,
-    #[serde(default = "default_max_batch_size")]
-    pub(crate) max_batch_size: i32,
     #[serde(default = "default_dimensions")]
     pub(crate) dimensions: i32,
     #[serde(default = "default_max_input_tokens")]
@@ -28,11 +26,7 @@ pub(crate) struct CreateEmbedder {
 }
 
 fn default_batch_size() -> i32 {
-    50
-}
-
-fn default_max_batch_size() -> i32 {
-    96 // OpenAI and Cohere default
+    100
 }
 
 fn default_dimensions() -> i32 {
@@ -60,7 +54,6 @@ pub(crate) struct Embedder {
     #[schema(value_type = Object)]
     pub(crate) config: serde_json::Value,
     pub(crate) batch_size: i32,
-    pub(crate) max_batch_size: i32,
     pub(crate) dimensions: i32,
     #[serde(default = "default_max_input_tokens")]
     pub(crate) max_input_tokens: i32,
@@ -81,7 +74,6 @@ pub(crate) struct UpdateEmbedder {
     #[schema(value_type = Object)]
     pub(crate) config: Option<serde_json::Value>,
     pub(crate) batch_size: Option<i32>,
-    pub(crate) max_batch_size: Option<i32>,
     pub(crate) dimensions: Option<i32>,
     pub(crate) max_input_tokens: Option<i32>,
     pub(crate) truncate_strategy: Option<String>,

@@ -16,6 +16,7 @@ The `semantic-explorer-core` crate is a library that provides foundational utili
 - **`secrets.rs`** - Secure `SecretString` wrapper for sensitive data handling
 - **`storage.rs`** - S3-compatible file storage client
 - **`subjects.rs`** - NATS subject constants and status subject builders for worker communication
+- **`tls.rs`** - Shared TLS/SSL configuration loading for actix-web servers
 - **`validation.rs`** - Input validation and sanitization
 - **`worker.rs`** - Worker patterns for async job processing
 - **`lib.rs`** - Module exports and public API
@@ -30,6 +31,7 @@ graph TB
         NATS[NATS JetStream<br/>Infrastructure]
         OTEL[OpenTelemetry<br/>Metrics & Tracing]
         HTTP[HTTP Client<br/>TLS/mTLS]
+        TLS[TLS Config<br/>SSL/HTTPS]
         MODELS[Shared Models<br/>& Types]
         VALIDATION[Input<br/>Validation]
     end
@@ -38,6 +40,7 @@ graph TB
         API[semantic-explorer<br/>API Server]
         WC[worker-collections]
         WD[worker-datasets]
+        INF[inference-api]
     end
 
     API --> CONFIG
@@ -45,6 +48,7 @@ graph TB
     API --> NATS
     API --> OTEL
     API --> HTTP
+    API --> TLS
     API --> MODELS
 
     WC --> CONFIG
@@ -58,6 +62,10 @@ graph TB
     WD --> NATS
     WD --> OTEL
     WD --> MODELS
+
+    INF --> CONFIG
+    INF --> TLS
+    INF --> OTEL
 ```
 
 ## Module Structure
@@ -70,6 +78,7 @@ graph TB
 | `encryption` | AES-256-GCM encryption for API keys and secrets at rest |
 | `secrets` | Secure handling of sensitive data with `SecretString` wrapper type |
 | `subjects` | NATS subject constants and status subject builders for worker communication |
+| `tls` | Shared TLS/SSL configuration loading for HTTPS servers |
 | `worker` | Generic worker framework for background job processing |
 | `observability` | OpenTelemetry metrics definitions and recording functions |
 | `http_client` | Shared HTTP client with TLS certificate support |

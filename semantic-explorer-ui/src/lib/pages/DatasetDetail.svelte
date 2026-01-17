@@ -199,16 +199,14 @@
 		try {
 			loading = true;
 			error = null;
-			const response = await fetch('/api/datasets');
+			const response = await fetch(`/api/datasets/${datasetId}`);
 			if (!response.ok) {
-				throw new Error(`Failed to fetch datasets: ${response.statusText}`);
+				if (response.status === 404) {
+					throw new Error('Dataset not found');
+				}
+				throw new Error(`Failed to fetch dataset: ${response.statusText}`);
 			}
-			const data = await response.json();
-			const datasets: Dataset[] = data.items ?? [];
-			dataset = datasets.find((d) => d.dataset_id === datasetId) || null;
-			if (!dataset) {
-				throw new Error('Dataset not found');
-			}
+			dataset = await response.json();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to fetch dataset';
 		} finally {
@@ -302,16 +300,22 @@
 		try {
 			transformsLoading = true;
 
-			// Fetch collection transforms (Collection → this Dataset)
-			const collectionResponse = await fetch('/api/collection-transforms');
+			// Fetch all transform data in parallel for efficiency using filtered endpoints
+			const [collectionResponse, datasetResponse, embeddedResponse] = await Promise.all([
+				// Fetch collection transforms targeting this Dataset
+				fetch(`/api/datasets/${datasetId}/collection-transforms`),
+				// Fetch dataset transforms (this Dataset → Embedded Datasets)
+				fetch(`/api/datasets/${datasetId}/transforms`),
+				// Fetch embedded datasets (created from this Dataset)
+				fetch(`/api/datasets/${datasetId}/embedded-datasets`),
+			]);
+
+			// Process collection transforms (already filtered by server)
 			if (collectionResponse.ok) {
-				const collectionData = await collectionResponse.json();
-				const allCollectionTransforms: CollectionTransform[] = Array.isArray(collectionData)
-					? collectionData
-					: collectionData.items || [];
-				collectionTransforms = allCollectionTransforms
-					.filter((t) => t.dataset_id === datasetId)
-					.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+				const collectionData: CollectionTransform[] = await collectionResponse.json();
+				collectionTransforms = collectionData.sort(
+					(a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+				);
 
 				// Fetch stats for each collection transform
 				for (const transform of collectionTransforms) {
@@ -319,16 +323,12 @@
 				}
 			}
 
-			// Fetch dataset transforms (this Dataset → Embedded Datasets)
-			const datasetResponse = await fetch('/api/dataset-transforms');
+			// Process dataset transforms (already filtered by server)
 			if (datasetResponse.ok) {
-				const datasetData = await datasetResponse.json();
-				const allDatasetTransforms: DatasetTransform[] = Array.isArray(datasetData)
-					? datasetData
-					: datasetData.items || [];
-				datasetTransforms = allDatasetTransforms
-					.filter((t) => t.source_dataset_id === datasetId)
-					.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+				const datasetData: DatasetTransform[] = await datasetResponse.json();
+				datasetTransforms = datasetData.sort(
+					(a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+				);
 
 				// Fetch stats for each dataset transform
 				for (const transform of datasetTransforms) {
@@ -336,16 +336,12 @@
 				}
 			}
 
-			// Fetch embedded datasets (created from this Dataset)
-			const embeddedResponse = await fetch('/api/embedded-datasets');
+			// Process embedded datasets (already filtered by server)
 			if (embeddedResponse.ok) {
-				const embeddedData = await embeddedResponse.json();
-				const allEmbeddedDatasets: EmbeddedDataset[] = Array.isArray(embeddedData)
-					? embeddedData
-					: embeddedData.items || [];
-				embeddedDatasets = allEmbeddedDatasets
-					.filter((ed) => ed.source_dataset_id === datasetId)
-					.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+				const embeddedData: EmbeddedDataset[] = await embeddedResponse.json();
+				embeddedDatasets = embeddedData.sort(
+					(a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+				);
 			}
 		} catch (e) {
 			toastStore.error(formatError(e, 'Failed to load related transforms'));

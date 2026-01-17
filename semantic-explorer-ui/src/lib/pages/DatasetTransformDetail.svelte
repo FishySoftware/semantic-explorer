@@ -428,9 +428,14 @@
 						</p>
 					</div>
 					<div>
-						<p class="text-sm text-gray-500 dark:text-gray-400 mb-1">To Process</p>
+						<p class="text-sm text-gray-500 dark:text-gray-400 mb-1">Remaining</p>
 						<p class="text-2xl font-bold text-purple-600 dark:text-purple-400">
-							{stats.total_chunks_to_process}
+							{Math.max(
+								0,
+								stats.total_chunks_to_process -
+									stats.total_chunks_embedded -
+									stats.total_chunks_failed
+							)}
 						</p>
 					</div>
 					<div>

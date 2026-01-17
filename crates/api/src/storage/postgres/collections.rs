@@ -102,6 +102,19 @@ const GET_COLLECTIONS_FILE_COUNTS_BATCH_QUERY: &str = r#"
     SELECT collection_id, file_count FROM collection_file_counts WHERE collection_id = ANY($1)
 "#;
 
+const INCREMENT_COLLECTION_FILE_COUNT_QUERY: &str = r#"
+    INSERT INTO collection_file_counts (collection_id, file_count, cached_at)
+    VALUES ($1, $2, NOW())
+    ON CONFLICT (collection_id)
+    DO UPDATE SET file_count = collection_file_counts.file_count + $2, cached_at = NOW()
+"#;
+
+const DECREMENT_COLLECTION_FILE_COUNT_QUERY: &str = r#"
+    UPDATE collection_file_counts
+    SET file_count = GREATEST(0, file_count - $2), cached_at = NOW()
+    WHERE collection_id = $1
+"#;
+
 #[tracing::instrument(name = "database.get_collection", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner_id = %owner_id, collection_id = %collection_id))]
 pub(crate) async fn get_collection(
     pool: &Pool<Postgres>,
@@ -477,41 +490,44 @@ pub(crate) async fn get_collections_file_counts_batch(
     Ok(results.into_iter().collect())
 }
 
-#[tracing::instrument(name = "storage.count_s3_files_for_collection", skip(s3_client), fields(bucket = %bucket, owner_id = %owner_id, collection_id = %collection_id))]
-pub(crate) async fn count_s3_files_for_collection(
-    s3_client: &Client,
-    bucket: &str,
-    owner_id: &str,
+#[tracing::instrument(name = "database.increment_collection_file_count", skip(pool), fields(database.system = "postgresql", database.operation = "INSERT_UPDATE", collection_id = %collection_id, increment_by = %increment_by))]
+pub(crate) async fn increment_collection_file_count(
+    pool: &Pool<Postgres>,
     collection_id: i32,
-) -> Result<i64> {
-    let prefix = format!("{}/{}/", owner_id, collection_id);
-    let mut count: i64 = 0;
-    let mut continuation_token: Option<String> = None;
+    increment_by: i64,
+) -> Result<()> {
+    let start = Instant::now();
+    let result = sqlx::query(INCREMENT_COLLECTION_FILE_COUNT_QUERY)
+        .bind(collection_id)
+        .bind(increment_by)
+        .execute(pool)
+        .await;
 
-    loop {
-        let mut request = s3_client
-            .list_objects_v2()
-            .bucket(bucket)
-            .prefix(&prefix)
-            .max_keys(1000);
+    let duration = start.elapsed().as_secs_f64();
+    let success = result.is_ok();
+    record_database_query("INSERT_UPDATE", "collection_file_counts", duration, success);
 
-        if let Some(token) = continuation_token {
-            request = request.continuation_token(token);
-        }
+    result?;
+    Ok(())
+}
 
-        let response = request
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to list S3 objects: {}", e))?;
+#[tracing::instrument(name = "database.decrement_collection_file_count", skip(pool), fields(database.system = "postgresql", database.operation = "UPDATE", collection_id = %collection_id, decrement_by = %decrement_by))]
+pub(crate) async fn decrement_collection_file_count(
+    pool: &Pool<Postgres>,
+    collection_id: i32,
+    decrement_by: i64,
+) -> Result<()> {
+    let start = Instant::now();
+    let result = sqlx::query(DECREMENT_COLLECTION_FILE_COUNT_QUERY)
+        .bind(collection_id)
+        .bind(decrement_by)
+        .execute(pool)
+        .await;
 
-        count += response.contents().len() as i64;
+    let duration = start.elapsed().as_secs_f64();
+    let success = result.is_ok();
+    record_database_query("UPDATE", "collection_file_counts", duration, success);
 
-        if response.is_truncated().unwrap_or(false) {
-            continuation_token = response.next_continuation_token().map(|s| s.to_string());
-        } else {
-            break;
-        }
-    }
-
-    Ok(count)
+    result?;
+    Ok(())
 }

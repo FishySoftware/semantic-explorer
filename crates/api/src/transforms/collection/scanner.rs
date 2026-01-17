@@ -24,6 +24,7 @@ pub(crate) fn initialize_scanner(
     postgres_pool: Pool<Postgres>,
     nats_client: NatsClient,
     s3_client: S3Client,
+    s3_bucket_name: String,
     encryption: EncryptionService,
 ) -> JoinHandle<()> {
     spawn(async move {
@@ -34,6 +35,7 @@ pub(crate) fn initialize_scanner(
                 &postgres_pool,
                 &nats_client,
                 &s3_client,
+                &s3_bucket_name,
                 &encryption,
             )
             .await
@@ -49,14 +51,22 @@ async fn scan_active_collection_transforms(
     pool: &Pool<Postgres>,
     nats: &NatsClient,
     s3: &S3Client,
+    s3_bucket_name: &str,
     encryption: &EncryptionService,
 ) -> Result<()> {
     let transforms = get_active_collection_transforms(pool).await?;
     info!("Scanning {} active collection transforms", transforms.len());
 
     for transform in transforms {
-        if let Err(e) =
-            process_collection_transform_scan(pool, nats, s3, &transform, encryption).await
+        if let Err(e) = process_collection_transform_scan(
+            pool,
+            nats,
+            s3,
+            s3_bucket_name,
+            &transform,
+            encryption,
+        )
+        .await
         {
             error!(
                 "Failed to process collection transform scan for {}: {}",
@@ -105,19 +115,23 @@ async fn get_embedder_config_for_chunking(
     let user = AuthenticatedUser(owner.to_string());
     let embedder = embedders::get_embedder(pool, &user, embedder_id, encryption).await?;
 
-    Ok(Some(EmbedderConfig {
-        provider: embedder.provider,
-        base_url: embedder.base_url,
-        api_key: embedder.api_key,
-        model: embedder
-            .config
-            .get("model")
-            .and_then(|m| m.as_str())
-            .map(|s| s.to_string()),
-        config: embedder.config,
-        max_batch_size: embedder.max_batch_size,
-        max_input_tokens: embedder.max_input_tokens,
-    }))
+    // Extract model from embedder config - required field
+    let model = embedder
+        .config
+        .get("model")
+        .and_then(|m| m.as_str())
+        .ok_or_else(|| anyhow::anyhow!("Embedder config must specify a 'model' field"))?
+        .to_string();
+
+    Ok(Some(EmbedderConfig::new(
+        embedder.provider,
+        embedder.base_url,
+        embedder.api_key,
+        model,
+        embedder.config,
+        embedder.batch_size,
+        embedder.max_input_tokens,
+    )))
 }
 
 #[tracing::instrument(
@@ -129,6 +143,7 @@ async fn process_collection_transform_scan(
     pool: &Pool<Postgres>,
     nats: &NatsClient,
     s3: &S3Client,
+    s3_bucket_name: &str,
     transform: &CollectionTransform,
     encryption: &EncryptionService,
 ) -> Result<()> {
@@ -198,8 +213,14 @@ async fn process_collection_transform_scan(
 
     // Iterate through all files in the collection bucket
     loop {
-        let files =
-            s3::list_files(s3, &collection.bucket, 100, continuation_token.as_deref()).await?;
+        let files = s3::list_files(
+            s3,
+            s3_bucket_name,
+            &collection.collection_id.to_string(),
+            100,
+            continuation_token.as_deref(),
+        )
+        .await?;
         if files.files.is_empty() {
             break;
         }
@@ -257,17 +278,6 @@ async fn process_collection_transform_scan(
         transform.collection_transform_id, files_found, jobs_sent
     );
 
-    // Cache the file count for this collection
-    if let Err(e) =
-        collections::upsert_collection_file_count(pool, transform.collection_id, files_found as i64)
-            .await
-    {
-        warn!(
-            "Failed to cache file count for collection {}: {:?}",
-            transform.collection_id, e
-        );
-    }
-
     Ok(())
 }
 
@@ -281,6 +291,7 @@ pub async fn trigger_collection_transform_scan(
     pool: &Pool<Postgres>,
     nats: &NatsClient,
     s3: &S3Client,
+    s3_bucket_name: &str,
     collection_transform_id: i32,
     owner: &str,
     encryption: &EncryptionService,
@@ -294,7 +305,8 @@ pub async fn trigger_collection_transform_scan(
     let transform = get_collection_transform(pool, owner, collection_transform_id).await?;
 
     // Process the scan immediately
-    process_collection_transform_scan(pool, nats, s3, &transform, encryption).await?;
+    process_collection_transform_scan(pool, nats, s3, s3_bucket_name, &transform, encryption)
+        .await?;
 
     info!(
         "Triggered collection transform scan for {}",

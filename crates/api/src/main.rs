@@ -11,6 +11,7 @@ mod embedding;
 mod errors;
 mod llms;
 mod observability;
+mod providers;
 mod search;
 mod storage;
 mod transforms;
@@ -26,8 +27,8 @@ use actix_web::{
 };
 use anyhow::Result;
 use dotenvy::dotenv;
-use semantic_explorer_core::config::AppConfig;
 use semantic_explorer_core::encryption::EncryptionService;
+use semantic_explorer_core::{config::AppConfig, tls::load_tls_config};
 use std::path::PathBuf;
 use tracing::info;
 use utoipa::OpenApi;
@@ -112,12 +113,15 @@ async fn main() -> Result<()> {
 
     let cors_origins = config.server.cors_allowed_origins.clone();
     let address_for_cors = address.clone();
+    let inference_config = config.inference.clone();
+    let max_upload_size = config.s3.max_upload_size_bytes as usize;
 
     // Start scanners for each transform type
     let collection_scanner_handle = transforms::collection::scanner::initialize_scanner(
         postgres_pool.clone(),
         nats_client.clone(),
         s3_client.clone(),
+        config.s3.bucket_name.clone(),
         encryption_service.clone(),
     );
 
@@ -180,16 +184,18 @@ async fn main() -> Result<()> {
             .wrap(openid_client.get_middleware())
             .configure(openid_client.configure_open_id())
             .app_data(web::Data::new(s3_client.clone()))
+            .app_data(web::Data::new(config.s3.clone()))
             .app_data(web::Data::new(qdrant_client.clone()))
             .app_data(web::Data::new(postgres_pool.clone()))
             .app_data(web::Data::new(nats_client.clone()))
             .app_data(web::Data::new(encryption_service.clone()))
             .app_data(
                 MultipartFormConfig::default()
-                    .total_limit(1024 * 1024 * 1024) // 1GB max per upload (in memory)
-                    .memory_limit(1024 * 1024 * 1024), // 1GB in memory (no temp files)
+                    .total_limit(max_upload_size)
+                    .memory_limit(max_upload_size), // Same limit for total and memory (no temp files)
             )
             .app_data(web::Data::new(static_files_directory.clone()))
+            .app_data(web::Data::new(inference_config.clone()))
             .into_utoipa_app()
             .openapi(ApiDoc::openapi())
             .service(api::collections::get_collections)
@@ -219,7 +225,11 @@ async fn main() -> Result<()> {
             .service(api::embedders::create_embedder)
             .service(api::embedders::update_embedder)
             .service(api::embedders::delete_embedder)
+            .service(api::embedders::detect_dimensions)
             .service(api::embedders::test_embedder)
+            .service(api::inference::test_inference_embedder)
+            .service(api::inference::list_inference_embedders)
+            .service(api::inference::list_inference_rerankers)
             .service(api::llms::get_llms)
             .service(api::llms::get_llm)
             .service(api::llms::create_llm)
@@ -249,6 +259,7 @@ async fn main() -> Result<()> {
             .service(api::collection_transforms::get_batch_collection_transform_stats)
             .service(api::collection_transforms::get_processed_files)
             .service(api::collection_transforms::get_collection_transforms_for_collection)
+            .service(api::collection_transforms::get_collection_transforms_for_dataset)
             .service(api::dataset_transforms::get_dataset_transforms)
             .service(api::dataset_transforms::stream_dataset_transform_status)
             .service(api::dataset_transforms::get_dataset_transform)
@@ -354,72 +365,4 @@ async fn main() -> Result<()> {
     info!("Server shutdown complete");
 
     Ok(())
-}
-
-/// Load rustls configuration from certificate and key files
-fn load_tls_config(cert_path: &str, key_path: &str) -> Result<rustls::ServerConfig> {
-    use std::fs;
-
-    // Load certificate
-    let cert_contents = fs::read_to_string(cert_path)
-        .map_err(|e| anyhow::anyhow!("Failed to read certificate file {}: {}", cert_path, e))?;
-
-    let cert_pem = pem::parse(&cert_contents)
-        .map_err(|e| anyhow::anyhow!("Failed to parse certificate PEM: {}", e))?;
-
-    if cert_pem.tag() != "CERTIFICATE" {
-        return Err(anyhow::anyhow!(
-            "Invalid certificate file: expected CERTIFICATE tag, got {}",
-            cert_pem.tag()
-        ));
-    }
-
-    let cert_der = cert_pem.contents().to_vec();
-    let cert_chain = vec![rustls::pki_types::CertificateDer::from(cert_der)];
-
-    // Load private key
-    let key_contents = fs::read_to_string(key_path)
-        .map_err(|e| anyhow::anyhow!("Failed to read key file {}: {}", key_path, e))?;
-
-    let key_pem = pem::parse(&key_contents)
-        .map_err(|e| anyhow::anyhow!("Failed to parse private key PEM: {}", e))?;
-
-    let key_der = key_pem.contents().to_vec();
-
-    // Support multiple key formats: PKCS#8, RSA, and EC
-    let private_key = match key_pem.tag() {
-        "PRIVATE KEY" => {
-            // PKCS#8 format
-            rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
-                key_der,
-            ))
-        }
-        "RSA PRIVATE KEY" => {
-            // PKCS#1 RSA format
-            rustls::pki_types::PrivateKeyDer::Pkcs1(rustls::pki_types::PrivatePkcs1KeyDer::from(
-                key_der,
-            ))
-        }
-        "EC PRIVATE KEY" => {
-            // SEC1 EC format
-            rustls::pki_types::PrivateKeyDer::Sec1(rustls::pki_types::PrivateSec1KeyDer::from(
-                key_der,
-            ))
-        }
-        tag => {
-            return Err(anyhow::anyhow!(
-                "Unsupported private key format: {}. Expected PRIVATE KEY, RSA PRIVATE KEY, or EC PRIVATE KEY",
-                tag
-            ));
-        }
-    };
-
-    // Build server config
-    let mut server_config = rustls::ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(cert_chain, private_key)
-        .map_err(|e| anyhow::anyhow!("Invalid certificate or key: {}", e))?;
-
-    server_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-    Ok(server_config)
 }

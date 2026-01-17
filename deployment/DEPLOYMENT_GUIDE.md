@@ -354,6 +354,7 @@ IMAGES=(
   "jofish89/worker-collections:latest"
   "jofish89/worker-datasets:latest"
   "jofish89/worker-visualizations-py:latest"
+  "jofish89/inference-api:cuda"
   "postgres:16.3-alpine"
   "nats:2.10-alpine"
   "qdrant/qdrant:v1.16.3"
@@ -465,6 +466,37 @@ workerVisualizationsPy:
     LOG_FORMAT: "json"
     HEALTH_CHECK_PORT: "8081"
   terminationGracePeriodSeconds: 300  # 5 minutes
+```
+
+### Inference API (Local Embedding/Reranking)
+
+| Variable | Value | Notes |
+|----------|-------|-------|
+| `INFERENCE_PORT` | `8090` | HTTP server port |
+| `INFERENCE_CUDA_ENABLED` | `true` | Enable GPU acceleration |
+| `INFERENCE_CUDA_DEVICE_ID` | `0` | GPU device ID |
+| `INFERENCE_PRELOAD_MODELS` | `BAAI/bge-small-en-v1.5,BAAI/bge-reranker-base` | Models to load at startup |
+| `HF_HOME` | `/models` | HuggingFace cache directory |
+| `HF_ENDPOINT` | (optional) | Artifactory/proxy URL for airgapped |
+
+```yaml
+inferenceApi:
+  enabled: true
+  resources:
+    limits:
+      nvidia.com/gpu: 1
+      memory: "16Gi"
+    requests:
+      nvidia.com/gpu: 1
+      memory: "8Gi"
+  env:
+    INFERENCE_CUDA_ENABLED: "true"
+    INFERENCE_PRELOAD_MODELS: "BAAI/bge-small-en-v1.5,BAAI/bge-reranker-base"
+    HF_HOME: "/models"
+  volumes:
+    models:
+      enabled: true
+      size: "50Gi"
 ```
 
 ## Health Checks and Monitoring

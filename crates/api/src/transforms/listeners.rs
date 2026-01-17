@@ -807,7 +807,17 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
             // Use single-bucket architecture
             let s3_bucket = std::env::var("S3_BUCKET_NAME")
                 .unwrap_or_else(|_| "semantic-explorer-local".to_string());
-            if let Err(e) = delete_file(&ctx.s3_client, &s3_bucket, &result.batch_file_key).await {
+
+            // Extract prefix and file key from batch_file_key
+            // Format: embedded-datasets/embedded-dataset-{id}/batch-{uuid}.jsonl
+            let parts: Vec<&str> = result.batch_file_key.rsplitn(2, '/').collect();
+            let (prefix, file_key) = if parts.len() == 2 {
+                (parts[1], parts[0])
+            } else {
+                ("", result.batch_file_key.as_str())
+            };
+
+            if let Err(e) = delete_file(&ctx.s3_client, &s3_bucket, prefix, file_key).await {
                 // Log the error but don't fail the overall operation
                 // The batch was successfully processed and recorded, cleanup failure is non-critical
                 warn!(

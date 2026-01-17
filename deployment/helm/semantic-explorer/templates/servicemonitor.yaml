@@ -54,3 +54,22 @@ spec:
     interval: {{ .Values.workerDatasets.metrics.serviceMonitor.interval }}
     scrapeTimeout: {{ .Values.workerDatasets.metrics.serviceMonitor.scrapeTimeout }}
 {{- end }}
+---
+{{- if and .Values.inferenceApi.enabled .Values.inferenceApi.metrics.enabled .Values.inferenceApi.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-inference-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.inferenceApi.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "semantic-explorer.inferenceApi.selectorLabels" . | nindent 6 }}
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: {{ .Values.inferenceApi.metrics.serviceMonitor.interval }}
+    scrapeTimeout: {{ .Values.inferenceApi.metrics.serviceMonitor.scrapeTimeout }}
+{{- end }}

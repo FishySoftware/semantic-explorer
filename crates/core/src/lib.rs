@@ -7,6 +7,7 @@ pub mod observability;
 pub mod secrets;
 pub mod storage;
 pub mod subjects;
+pub mod tls;
 pub mod validation;
 pub mod worker;
 

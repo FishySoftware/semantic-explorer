@@ -1,0 +1,160 @@
+{{- if .Values.inferenceApi.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-inference-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.inferenceApi.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  serviceName: {{ include "semantic-explorer.fullname" . }}-inference-api
+  {{- if not .Values.inferenceApi.autoscaling.enabled }}
+  replicas: {{ .Values.inferenceApi.replicaCount }}
+  {{- end }}
+  podManagementPolicy: {{ .Values.inferenceApi.statefulset.podManagementPolicy }}
+  updateStrategy:
+    {{- toYaml .Values.inferenceApi.statefulset.updateStrategy | nindent 4 }}
+  selector:
+    matchLabels:
+      {{- include "semantic-explorer.inferenceApi.selectorLabels" . | nindent 6 }}
+  {{- if .Values.inferenceApi.persistence.enabled }}
+  volumeClaimTemplates:
+  - metadata:
+      name: models
+    spec:
+      accessModes:
+        - {{ .Values.inferenceApi.persistence.accessMode }}
+      {{- if .Values.inferenceApi.persistence.storageClass }}
+      {{- if (eq "-" .Values.inferenceApi.persistence.storageClass) }}
+      storageClassName: ""
+      {{- else }}
+      storageClassName: {{ .Values.inferenceApi.persistence.storageClass | quote }}
+      {{- end }}
+      {{- end }}
+      resources:
+        requests:
+          storage: {{ .Values.inferenceApi.persistence.size | quote }}
+  {{- if .Values.inferenceApi.tensorrtCache.enabled }}
+  - metadata:
+      name: tensorrt-cache
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      {{- if .Values.inferenceApi.persistence.storageClass }}
+      {{- if (eq "-" .Values.inferenceApi.persistence.storageClass) }}
+      storageClassName: ""
+      {{- else }}
+      storageClassName: {{ .Values.inferenceApi.persistence.storageClass | quote }}
+      {{- end }}
+      {{- end }}
+      resources:
+        requests:
+          storage: {{ .Values.inferenceApi.tensorrtCache.size | quote }}
+  {{- end }}
+  {{- end }}
+  template:
+    metadata:
+      annotations:
+        {{- with .Values.inferenceApi.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "semantic-explorer.inferenceApi.selectorLabels" . | nindent 8 }}
+        {{- with .Values.inferenceApi.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "semantic-explorer.inferenceApi.serviceAccountName" . }}
+      securityContext:
+        # GPU pods require more permissive security context
+        runAsNonRoot: false
+        runAsUser: 0
+        fsGroup: 0
+      {{- with .Values.inferenceApi.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      containers:
+      - name: inference-api
+        image: {{ include "semantic-explorer.inferenceApi.image" . }}
+        imagePullPolicy: {{ .Values.inferenceApi.image.pullPolicy }}
+        securityContext:
+          # GPU access requires privileged mode
+          allowPrivilegeEscalation: true
+          capabilities:
+            add:
+              - SYS_ADMIN
+        ports:
+        - name: http
+          containerPort: 8090
+          protocol: TCP
+        - name: metrics
+          containerPort: 8090
+          protocol: TCP
+        env:
+        {{- range $key, $value := .Values.inferenceApi.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        {{- if .Values.observability.otelCollector.enabled }}
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: {{ include "semantic-explorer.otel.endpoint" . }}
+        - name: SERVICE_NAME
+          value: "inference-api"
+        {{- end }}
+        {{- with .Values.inferenceApi.envFrom }}
+        envFrom:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- if .Values.inferenceApi.livenessProbe }}
+        livenessProbe:
+          {{- toYaml .Values.inferenceApi.livenessProbe | nindent 10 }}
+        {{- end }}
+        {{- if .Values.inferenceApi.readinessProbe }}
+        readinessProbe:
+          {{- toYaml .Values.inferenceApi.readinessProbe | nindent 10 }}
+        {{- end }}
+        {{- if .Values.inferenceApi.startupProbe }}
+        startupProbe:
+          {{- toYaml .Values.inferenceApi.startupProbe | nindent 10 }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.inferenceApi.resources | nindent 10 }}
+        volumeMounts:
+        {{- if .Values.inferenceApi.persistence.enabled }}
+        - name: models
+          mountPath: {{ .Values.inferenceApi.persistence.mountPath }}
+        {{- end }}
+        {{- if .Values.inferenceApi.tensorrtCache.enabled }}
+        - name: tensorrt-cache
+          mountPath: {{ .Values.inferenceApi.tensorrtCache.mountPath }}
+        {{- end }}
+        - name: tmp
+          mountPath: /tmp
+        - name: cache
+          mountPath: /root/.cache
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: cache
+        emptyDir: {}
+      {{- with .Values.inferenceApi.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.inferenceApi.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.inferenceApi.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

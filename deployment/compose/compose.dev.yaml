@@ -36,6 +36,8 @@ services:
   #     - AWS_ENDPOINT_URL=http://minio-1:9000
   #     - S3_BUCKET_NAME=semantic-explorer-local
   #     - S3_FORCE_PATH_STYLE=true
+  #     - S3_MAX_DOWNLOAD_SIZE_BYTES=104857600
+  #     - S3_MAX_UPLOAD_SIZE_BYTES=1073741824
   #     - QDRANT_URL=http://qdrant:6334
   #     - QDRANT_TIMEOUT_SECS=30
   #     - QDRANT_CONNECT_TIMEOUT_SECS=10
@@ -86,6 +88,8 @@ services:
   #     - AWS_ENDPOINT_URL=http://minio-1:9000
   #     - S3_BUCKET_NAME=semantic-explorer-local
   #     - S3_FORCE_PATH_STYLE=true
+  #     - S3_MAX_DOWNLOAD_SIZE_BYTES=104857600
+  #     - S3_MAX_UPLOAD_SIZE_BYTES=1073741824
   #     - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
   #     - SERVICE_NAME=worker-collections
   #     - ENCRYPTION_MASTER_KEY=e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4
@@ -122,6 +126,8 @@ services:
   #     - AWS_ENDPOINT_URL=http://minio-1:9000
   #     - S3_BUCKET_NAME=semantic-explorer-local
   #     - S3_FORCE_PATH_STYLE=true
+  #     - S3_MAX_DOWNLOAD_SIZE_BYTES=104857600
+  #     - S3_MAX_UPLOAD_SIZE_BYTES=1073741824
   #     - QDRANT_URL=http://qdrant:6334
   #     - QDRANT_TIMEOUT_SECS=30
   #     - QDRANT_CONNECT_TIMEOUT_SECS=10
@@ -164,6 +170,8 @@ services:
   #     - AWS_REGION=us-east-1
   #     - S3_BUCKET_NAME=semantic-explorer-local
   #     - S3_FORCE_PATH_STYLE=true
+  #     - S3_MAX_DOWNLOAD_SIZE_BYTES=104857600
+  #     - S3_MAX_UPLOAD_SIZE_BYTES=1073741824
   #     - LOG_LEVEL=DEBUG
   #     - WORKER_ID=py-worker-dev-1
   #     - PROCESSING_TIMEOUT_SECS=3600
@@ -172,6 +180,50 @@ services:
   #     - ENCRYPTION_MASTER_KEY=e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4
   #   networks:
   #     - semantic-explorer-net
+
+  # # Local inference service for embeddings and reranking (CUDA GPU accelerated)
+  # inference-api:
+  #   build:
+  #     context: ../../
+  #     dockerfile: crates/inference-api/Dockerfile.cuda
+  #   restart: unless-stopped
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   environment:
+  #     - RUST_LOG=debug,inference_api=debug
+  #     - LOG_FORMAT=pretty
+  #     - INFERENCE_HOSTNAME=0.0.0.0
+  #     - INFERENCE_PORT=8090
+  #     # GPU Configuration: Set CUDA_VISIBLE_DEVICES to control which GPU(s) to use
+  #     # Examples: CUDA_VISIBLE_DEVICES=0 (first GPU), CUDA_VISIBLE_DEVICES=0,1 (multiple GPUs)
+  #     - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+  #     # Preload models at startup
+  #     - INFERENCE_PRELOAD_MODELS=BAAI/bge-small-en-v1.5,BAAI/bge-reranker-base
+  #     - INFERENCE_DEFAULT_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+  #     - INFERENCE_DEFAULT_RERANKER_MODEL=BAAI/bge-reranker-base
+  #     - INFERENCE_MAX_BATCH_SIZE=256
+  #     - HF_HOME=/models
+  #     - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+  #     - SERVICE_NAME=inference-api
+  #   volumes:
+  #     - inference_models:/models:rw
+  #     - tensorrt_cache:/tensorrt-cache:rw
+  #   ports:
+  #     - "8090:8090"
+  #   healthcheck:
+  #     test: ["CMD", "wget", "--spider", "-q", "http://localhost:8090/health/live"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 3
+  #     start_period: 120s
+  #   networks:
+  #     - semantic-explorer-net
+
 
   # MinIO distributed cluster - 4 nodes for production-like erasure coding
   # Console: http://localhost:9001
@@ -560,3 +612,5 @@ volumes:
   quickwit_data:
   prometheus_data:
   grafana_data:
+  inference_models:
+  tensorrt_cache:

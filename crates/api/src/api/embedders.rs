@@ -1,11 +1,4 @@
-use actix_web::{
-    HttpRequest, HttpResponse, Responder, ResponseError, delete, get, patch, post,
-    web::{Data, Json, Path},
-};
-use semantic_explorer_core::encryption::EncryptionService;
-use semantic_explorer_core::validation;
-use sqlx::{Pool, Postgres};
-
+use crate::providers::metadata::ModelMetadataService;
 use crate::{
     audit::{ResourceType, events},
     auth::AuthenticatedUser,
@@ -13,6 +6,29 @@ use crate::{
     errors::ApiError,
     storage::postgres::embedders,
 };
+use actix_web::{
+    HttpRequest, HttpResponse, Responder, ResponseError, delete, get, patch, post,
+    web::{Data, Json, Path},
+};
+use semantic_explorer_core::validation;
+use semantic_explorer_core::{config::InferenceConfig, encryption::EncryptionService};
+use sqlx::{Pool, Postgres};
+
+#[derive(serde::Deserialize, utoipa::ToSchema, Debug)]
+pub(crate) struct DetectDimensionsRequest {
+    provider: String,
+    base_url: String,
+    api_key: Option<String>,
+    config: serde_json::Value,
+}
+
+#[derive(serde::Serialize, utoipa::ToSchema)]
+pub(crate) struct DetectDimensionsResponse {
+    dimensions: Option<usize>,
+    detected: bool,
+    source: String, // "detected", "known", or "error"
+    message: String,
+}
 
 #[derive(serde::Serialize, utoipa::ToSchema)]
 pub(crate) struct TestEmbedderResponse {
@@ -253,6 +269,240 @@ pub(crate) async fn delete_embedder(
 
 #[utoipa::path(
     post,
+    path = "/api/embedders/detect-dimensions",
+    tag = "Embedders",
+    request_body = DetectDimensionsRequest,
+    responses(
+        (status = 200, description = "Dimension detection result", body = DetectDimensionsResponse),
+        (status = 400, description = "Bad Request"),
+        (status = 500, description = "Detection failed"),
+    ),
+)]
+#[post("/api/embedders/detect-dimensions")]
+#[tracing::instrument(name = "detect_dimensions", skip(_user, inference_config))]
+pub(crate) async fn detect_dimensions(
+    _user: AuthenticatedUser,
+    inference_config: Data<InferenceConfig>,
+    request: Json<DetectDimensionsRequest>,
+) -> impl Responder {
+    let req = request.into_inner();
+
+    // First try to get dimensions from known model metadata
+    let metadata_service = ModelMetadataService::new();
+    if let Some(model) = req.config.get("model").and_then(|v| v.as_str())
+        && let Some(known_dimensions) = metadata_service.get_dimensions(model)
+    {
+        return HttpResponse::Ok().json(DetectDimensionsResponse {
+            dimensions: Some(known_dimensions),
+            detected: false,
+            source: "known".to_string(),
+            message: format!("Using known dimensions for model {}", model),
+        });
+    }
+
+    // If not known, try to detect dimensions by making a test API call
+    let test_text = "Test embedding request for dimension detection";
+
+    let result = match req.provider.as_str() {
+        "openai" => {
+            let model = req
+                .config
+                .get("model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("text-embedding-ada-002");
+
+            let body = serde_json::json!({
+                "input": test_text,
+                "model": model,
+            });
+
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build();
+
+            match client {
+                Ok(c) => {
+                    let mut request_builder = c
+                        .post(format!("{}/embeddings", req.base_url.trim_end_matches('/')))
+                        .json(&body);
+
+                    if let Some(api_key) = &req.api_key {
+                        request_builder = request_builder.bearer_auth(api_key);
+                    }
+
+                    match request_builder.send().await {
+                        Ok(response) => {
+                            if !response.status().is_success() {
+                                Err(format!(
+                                    "HTTP {}: check API key and base URL",
+                                    response.status()
+                                ))
+                            } else {
+                                match response.json::<serde_json::Value>().await {
+                                    Ok(json) => {
+                                        if let Some(dims) = json["data"][0]["embedding"].as_array()
+                                        {
+                                            Ok(dims.len())
+                                        } else {
+                                            Err("unexpected response format".to_string())
+                                        }
+                                    }
+                                    Err(e) => Err(format!("failed to parse response: {}", e)),
+                                }
+                            }
+                        }
+                        Err(e) => Err(format!("{}", e)),
+                    }
+                }
+                Err(e) => Err(format!("failed to create HTTP client: {}", e)),
+            }
+        }
+        "cohere" => {
+            let model = req
+                .config
+                .get("model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("embed-english-v3.0");
+
+            let body = serde_json::json!({
+                "texts": [test_text],
+                "model": model,
+                "input_type": "search_document",
+            });
+
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build();
+
+            match client {
+                Ok(c) => {
+                    let base = req.base_url.trim_end_matches('/');
+                    let url = if base.ends_with("/embed") {
+                        base.to_string()
+                    } else {
+                        format!("{}/embed", base)
+                    };
+
+                    let mut request_builder = c.post(&url).json(&body);
+
+                    if let Some(api_key) = &req.api_key {
+                        request_builder = request_builder.bearer_auth(api_key);
+                    }
+
+                    match request_builder.send().await {
+                        Ok(response) => {
+                            if !response.status().is_success() {
+                                let status = response.status();
+                                match response.text().await {
+                                    Ok(text) => Err(format!("HTTP {}: {}", status, text)),
+                                    Err(_) => {
+                                        Err(format!("HTTP {}: check API key and base URL", status))
+                                    }
+                                }
+                            } else {
+                                match response.json::<serde_json::Value>().await {
+                                    Ok(json) => {
+                                        if let Some(dims) = json["embeddings"][0].as_array() {
+                                            Ok(dims.len())
+                                        } else {
+                                            Err("unexpected response format".to_string())
+                                        }
+                                    }
+                                    Err(e) => Err(format!("failed to parse response: {}", e)),
+                                }
+                            }
+                        }
+                        Err(e) => Err(format!("{}", e)),
+                    }
+                }
+                Err(e) => Err(format!("failed to create HTTP client: {}", e)),
+            }
+        }
+        "local" => {
+            let model = req
+                .config
+                .get("model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("BAAI/bge-small-en-v1.5");
+
+            let body = serde_json::json!({
+                "text": test_text,
+                "model": model,
+            });
+
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(
+                    inference_config.timeout_secs,
+                ))
+                .build();
+
+            match client {
+                Ok(c) => {
+                    let url = format!("{}/api/embed", inference_config.url.trim_end_matches('/'));
+                    let request_builder = c.post(&url).json(&body);
+
+                    match request_builder.send().await {
+                        Ok(response) => {
+                            if !response.status().is_success() {
+                                let status = response.status();
+                                match response.text().await {
+                                    Ok(text) => Err(format!("HTTP {}: {}", status, text)),
+                                    Err(_) => {
+                                        Err(format!("HTTP {}: check inference-api URL", status))
+                                    }
+                                }
+                            } else {
+                                match response.json::<serde_json::Value>().await {
+                                    Ok(json) => {
+                                        if let Some(dims) = json["dimensions"].as_u64() {
+                                            Ok(dims as usize)
+                                        } else if let Some(embeddings) =
+                                            json["embeddings"].as_array()
+                                        {
+                                            if let Some(first) = embeddings.first() {
+                                                if let Some(arr) = first.as_array() {
+                                                    Ok(arr.len())
+                                                } else {
+                                                    Err("unexpected embedding format".to_string())
+                                                }
+                                            } else {
+                                                Err("empty embeddings array".to_string())
+                                            }
+                                        } else {
+                                            Err("unexpected response format".to_string())
+                                        }
+                                    }
+                                    Err(e) => Err(format!("failed to parse response: {}", e)),
+                                }
+                            }
+                        }
+                        Err(e) => Err(format!("{}", e)),
+                    }
+                }
+                Err(e) => Err(format!("failed to create HTTP client: {}", e)),
+            }
+        }
+        _ => Err(format!("unsupported provider: {}", req.provider)),
+    };
+
+    match result {
+        Ok(dimensions) => HttpResponse::Ok().json(DetectDimensionsResponse {
+            dimensions: Some(dimensions),
+            detected: true,
+            source: "detected".to_string(),
+            message: format!("Successfully detected {} dimensions from API", dimensions),
+        }),
+        Err(error) => HttpResponse::Ok().json(DetectDimensionsResponse {
+            dimensions: None,
+            detected: false,
+            source: "error".to_string(),
+            message: format!("Failed to detect dimensions: {}", error),
+        }),
+    }
+}
+
+#[utoipa::path(
+    post,
     path = "/api/embedders/{embedder_id}/test",
     tag = "Embedders",
     params(
@@ -265,11 +515,12 @@ pub(crate) async fn delete_embedder(
     ),
 )]
 #[post("/api/embedders/{embedder_id}/test")]
-#[tracing::instrument(name = "test_embedder", skip(user, postgres_pool, encryption), fields(embedder_id = %path.as_ref()))]
+#[tracing::instrument(name = "test_embedder", skip(user, postgres_pool, encryption, inference_config), fields(embedder_id = %path.as_ref()))]
 pub(crate) async fn test_embedder(
     user: AuthenticatedUser,
     postgres_pool: Data<Pool<Postgres>>,
     encryption: Data<EncryptionService>,
+    inference_config: Data<InferenceConfig>,
     path: Path<i32>,
 ) -> impl Responder {
     let embedder_id = path.into_inner();
@@ -414,6 +665,80 @@ pub(crate) async fn test_embedder(
                                 "request timeout (check network/firewall)".to_string()
                             } else if e.is_connect() {
                                 "failed to connect (check base URL)".to_string()
+                            } else {
+                                format!("{}", e)
+                            };
+                            Err(error_msg)
+                        }
+                    }
+                }
+                Err(e) => Err(format!("failed to create HTTP client: {}", e)),
+            }
+        }
+        "local" => {
+            // Test local inference-api service using configured URL
+            let model = embedder
+                .config
+                .get("model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("BAAI/bge-small-en-v1.5");
+
+            let body = serde_json::json!({
+                "text": test_text,
+                "model": model,
+            });
+
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(
+                    inference_config.timeout_secs,
+                ))
+                .build();
+
+            match client {
+                Ok(c) => {
+                    let url = format!("{}/api/embed", inference_config.url.trim_end_matches('/'));
+                    let req = c.post(&url).json(&body);
+
+                    match req.send().await {
+                        Ok(response) => {
+                            if !response.status().is_success() {
+                                let status = response.status();
+                                match response.text().await {
+                                    Ok(text) => Err(format!("HTTP {}: {}", status, text)),
+                                    Err(_) => {
+                                        Err(format!("HTTP {}: check inference-api URL", status))
+                                    }
+                                }
+                            } else {
+                                match response.json::<serde_json::Value>().await {
+                                    Ok(json) => {
+                                        if let Some(dims) = json["dimensions"].as_u64() {
+                                            Ok(dims as usize)
+                                        } else if let Some(embeddings) =
+                                            json["embeddings"].as_array()
+                                        {
+                                            if let Some(first) = embeddings.first() {
+                                                if let Some(arr) = first.as_array() {
+                                                    Ok(arr.len())
+                                                } else {
+                                                    Err("unexpected embedding format".to_string())
+                                                }
+                                            } else {
+                                                Err("empty embeddings array".to_string())
+                                            }
+                                        } else {
+                                            Err("unexpected response format".to_string())
+                                        }
+                                    }
+                                    Err(e) => Err(format!("failed to parse response: {}", e)),
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            let error_msg = if e.is_timeout() {
+                                "request timeout (inference-api may be loading models)".to_string()
+                            } else if e.is_connect() {
+                                "failed to connect (check inference-api URL)".to_string()
                             } else {
                                 format!("{}", e)
                             };
