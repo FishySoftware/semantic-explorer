@@ -185,7 +185,7 @@ services:
   # inference-api:
   #   build:
   #     context: ../../
-  #     dockerfile: crates/inference-api/Dockerfile.cuda
+  #     dockerfile: crates/inference-api/Dockerfile
   #   restart: unless-stopped
   #   deploy:
   #     resources:

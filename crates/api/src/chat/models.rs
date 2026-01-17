@@ -1,18 +1,37 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
-use sqlx::types::chrono::{self, DateTime, Utc};
+use sqlx::types::chrono::{DateTime, Utc};
 use utoipa::ToSchema;
 
-#[derive(Deserialize, Serialize, ToSchema)]
-pub struct ChatSessionResponse {
+#[derive(Serialize, Deserialize, ToSchema, Clone, Debug, FromRow)]
+pub(crate) struct ChatSession {
     pub session_id: String,
+    pub owner_id: String,
+    pub owner_display_name: String,
     pub embedded_dataset_id: i32,
     pub llm_id: i32,
     pub title: String,
     #[schema(value_type = String, format = DateTime)]
-    pub created_at: chrono::DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
     #[schema(value_type = String, format = DateTime)]
-    pub updated_at: chrono::DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Deserialize, Serialize, ToSchema)]
+pub struct ChatSessions {
+    pub sessions: Vec<ChatSession>,
+}
+
+#[derive(Serialize, Deserialize, ToSchema, Clone, Debug, FromRow)]
+pub(crate) struct ChatMessage {
+    pub message_id: i32,
+    pub session_id: String,
+    pub role: String, // "user" or "assistant"
+    pub content: String,
+    pub documents_retrieved: Option<i32>,
+    pub status: String, // "complete", "incomplete", "error"
+    #[schema(value_type = String, format = DateTime)]
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Deserialize, Serialize, ToSchema)]
@@ -29,39 +48,8 @@ pub struct ChatMessageResponse {
 }
 
 #[derive(Deserialize, Serialize, ToSchema)]
-pub struct ChatSessionsResponse {
-    pub sessions: Vec<ChatSessionResponse>,
-}
-
-#[derive(Deserialize, Serialize, ToSchema)]
 pub struct ChatMessagesResponse {
     pub messages: Vec<ChatMessageResponse>,
-}
-
-#[derive(Serialize, Deserialize, ToSchema, Clone, Debug, FromRow)]
-pub(crate) struct ChatSession {
-    pub session_id: String,
-    pub owner_id: String,
-    pub owner_display_name: String,
-    pub embedded_dataset_id: i32,
-    pub llm_id: i32,
-    pub title: String,
-    #[schema(value_type = String, format = DateTime)]
-    pub created_at: DateTime<Utc>,
-    #[schema(value_type = String, format = DateTime)]
-    pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Serialize, Deserialize, ToSchema, Clone, Debug, FromRow)]
-pub(crate) struct ChatMessage {
-    pub message_id: i32,
-    pub session_id: String,
-    pub role: String, // "user" or "assistant"
-    pub content: String,
-    pub documents_retrieved: Option<i32>,
-    pub status: String, // "complete", "incomplete", "error"
-    #[schema(value_type = String, format = DateTime)]
-    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Serialize, Deserialize, ToSchema, Debug)]

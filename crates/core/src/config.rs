@@ -36,7 +36,7 @@ pub struct DatabaseConfig {
 #[derive(Debug, Clone)]
 pub struct NatsConfig {
     pub url: String,
-    pub replicas: u32, // Number of replicas for JetStream streams
+    pub replicas: u32,
 }
 
 /// Qdrant vector database configuration
@@ -60,13 +60,12 @@ pub struct S3Config {
     pub region: String,
     /// Optional access key ID for static credentials
     /// If None, the AWS SDK will use the default credential provider chain
-    /// (IAM roles, instance profiles, environment variables, etc.)
     pub access_key_id: Option<String>,
     /// Optional secret access key for static credentials
     /// If None, the AWS SDK will use the default credential provider chain
     pub secret_access_key: Option<String>,
     pub endpoint_url: String,
-    /// Single S3 bucket for all collections (replaces per-collection buckets)
+    /// Single S3 bucket for all collections
     pub bucket_name: String,
     /// Maximum file size for downloads via API (in bytes)
     /// Prevents memory exhaustion and DoS attacks

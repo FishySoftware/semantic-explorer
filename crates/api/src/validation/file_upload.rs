@@ -81,9 +81,9 @@ const ALLOWED_MIME_TYPES: &[&str] = &[
 
 #[derive(Debug, Clone)]
 pub(crate) struct FileValidationResult {
-    pub(crate) detected_mime: String,
     pub(crate) is_valid: bool,
     pub(crate) validation_errors: Vec<String>,
+    pub(crate) mime_type: Option<String>,
 }
 
 /// Validate an uploaded file using multiple criteria (async version)
@@ -101,34 +101,25 @@ pub(crate) struct FileValidationResult {
 pub(crate) async fn validate_upload_file(
     file_bytes: &[u8],
     filename: &str,
-    mime_type: &str,
 ) -> FileValidationResult {
-    // Clone data for blocking task
     let file_bytes_owned = file_bytes.to_vec();
     let filename_owned = filename.to_string();
-    let mime_type_owned = mime_type.to_string();
-
-    // Run validation on blocking thread pool to avoid starving async runtime
     tokio::task::spawn_blocking(move || {
-        validate_upload_file_sync(&file_bytes_owned, &filename_owned, &mime_type_owned)
+        validate_upload_file_sync(&file_bytes_owned, &filename_owned)
     })
     .await
     .unwrap_or_else(|e| {
         tracing::error!(error = %e, "Blocking validation task failed");
         FileValidationResult {
-            detected_mime: "unknown".to_string(),
             is_valid: false,
             validation_errors: vec!["File validation task failed".to_string()],
+            mime_type: None,
         }
     })
 }
 
 /// Synchronous file validation implementation
-fn validate_upload_file_sync(
-    file_bytes: &[u8],
-    filename: &str,
-    mime_type: &str,
-) -> FileValidationResult {
+fn validate_upload_file_sync(file_bytes: &[u8], filename: &str) -> FileValidationResult {
     let mut errors = Vec::new();
 
     // Check file size
@@ -149,36 +140,13 @@ fn validate_upload_file_sync(
 
     tracing::debug!(
         filename = %filename,
-        claimed_mime = %mime_type,
         detected_mime = %detected_mime,
         file_size = file_bytes.len(),
         "File validation started"
     );
 
-    // Validate MIME type
-    if !ALLOWED_MIME_TYPES.contains(&detected_mime.as_str())
-        && !ALLOWED_MIME_TYPES.contains(&mime_type)
-    {
-        errors.push(format!(
-            "File type not allowed. Detected: {}, Claimed: {}. Allowed types: {:?}",
-            detected_mime, mime_type, ALLOWED_MIME_TYPES
-        ));
-    }
-
-    // Check for MIME type mismatch (potential attack)
-    if should_validate_mime_match(&detected_mime, mime_type) && detected_mime != mime_type {
-        tracing::warn!(
-            filename = %filename,
-            claimed = %mime_type,
-            detected = %detected_mime,
-            "MIME type mismatch detected"
-        );
-        // Note: We warn but don't fail here as some legitimate use cases exist
-        // The detected type is what matters for actual validation
-    }
-
     // Check for ZIP bombs if it's a ZIP file
-    if (detected_mime == "application/zip" || mime_type == "application/zip")
+    if detected_mime == "application/zip"
         && let Err(e) = validate_zip_bomb(file_bytes)
     {
         errors.push(e.to_string());
@@ -195,17 +163,10 @@ fn validate_upload_file_sync(
     }
 
     FileValidationResult {
-        detected_mime,
         is_valid,
         validation_errors: errors,
+        mime_type: Some(detected_mime),
     }
-}
-
-/// Check if MIME type mismatch should be validated (excluding text/binary types)
-fn should_validate_mime_match(detected: &str, claimed: &str) -> bool {
-    // Don't fail on text/* or application/octet-stream mismatches
-    // as these are often correctly reported as generic
-    !(detected.starts_with("text/") || claimed == "application/octet-stream")
 }
 
 /// Detect and prevent ZIP bomb attacks
@@ -284,14 +245,14 @@ mod tests {
     #[test]
     fn test_validate_plain_text() {
         let content = b"Hello, world!";
-        let result = validate_upload_file_sync(content, "test.txt", "text/plain");
+        let result = validate_upload_file_sync(content, "test.txt");
         assert!(result.is_valid);
     }
 
     #[test]
     fn test_validate_disallowed_type() {
         let content = b"Not a real executable";
-        let result = validate_upload_file_sync(content, "test.exe", "application/x-msdownload");
+        let result = validate_upload_file_sync(content, "test.exe");
         assert!(!result.is_valid);
         assert!(!result.validation_errors.is_empty());
     }
@@ -299,7 +260,7 @@ mod tests {
     #[test]
     fn test_validate_file_too_large() {
         let large_content = vec![0u8; MAX_FILE_SIZE_BYTES + 1];
-        let result = validate_upload_file_sync(&large_content, "large.txt", "text/plain");
+        let result = validate_upload_file_sync(&large_content, "large.txt");
         assert!(!result.is_valid);
         assert!(
             result
@@ -313,17 +274,15 @@ mod tests {
     fn test_validate_mime_type_detection() {
         // PDF magic bytes: %PDF
         let pdf_content = b"%PDF-1.4\n%\xE2\xE3\xCF\xD3\n";
-        let result = validate_upload_file_sync(pdf_content, "test.pdf", "application/pdf");
+        let result = validate_upload_file_sync(pdf_content, "test.pdf");
         assert!(result.is_valid);
-        assert_eq!(result.detected_mime, "application/pdf");
     }
 
     #[test]
     fn test_validate_powerpoint() {
         // PowerPoint MIME type should be allowed
         let content = b"fake ppt content";
-        let result =
-            validate_upload_file_sync(content, "test.ppt", "application/vnd.ms-powerpoint");
+        let result = validate_upload_file_sync(content, "test.ppt");
         // Will be valid if detected as octet-stream or the claimed type matches allowed list
         assert!(
             result.is_valid
@@ -337,21 +296,21 @@ mod tests {
     #[test]
     fn test_validate_html() {
         let html_content = b"<!DOCTYPE html><html><body>Test</body></html>";
-        let result = validate_upload_file_sync(html_content, "test.html", "text/html");
+        let result = validate_upload_file_sync(html_content, "test.html");
         assert!(result.is_valid);
     }
 
     #[test]
     fn test_validate_json() {
         let json_content = br#"{"key": "value"}"#;
-        let result = validate_upload_file_sync(json_content, "test.json", "application/json");
+        let result = validate_upload_file_sync(json_content, "test.json");
         assert!(result.is_valid);
     }
 
     #[test]
     fn test_validate_rtf() {
         let rtf_content = b"{\\rtf1\\ansi Test RTF}";
-        let result = validate_upload_file_sync(rtf_content, "test.rtf", "text/rtf");
+        let result = validate_upload_file_sync(rtf_content, "test.rtf");
         assert!(result.is_valid);
     }
 
@@ -359,11 +318,7 @@ mod tests {
     fn test_validate_opendocument() {
         // OpenDocument formats should be allowed
         let content = b"fake odt content";
-        let result = validate_upload_file_sync(
-            content,
-            "test.odt",
-            "application/vnd.oasis.opendocument.text",
-        );
+        let result = validate_upload_file_sync(content, "test.odt");
         assert!(
             result.is_valid
                 || result
@@ -384,7 +339,6 @@ mod tests {
         assert!(types.contains(&"application/json".to_string()));
         assert!(types.contains(&"message/rfc822".to_string()));
         assert!(types.contains(&"application/epub+zip".to_string()));
-
         // Ensure we have a good number of types (should be 45+)
         assert!(
             types.len() >= 45,

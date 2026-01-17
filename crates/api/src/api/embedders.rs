@@ -11,7 +11,9 @@ use actix_web::{
     web::{Data, Json, Path},
 };
 use semantic_explorer_core::validation;
-use semantic_explorer_core::{config::InferenceConfig, encryption::EncryptionService};
+use semantic_explorer_core::{
+    config::InferenceConfig, encryption::EncryptionService, http_client::HTTP_CLIENT,
+};
 use sqlx::{Pool, Postgres};
 
 #[derive(serde::Deserialize, utoipa::ToSchema, Debug)]
@@ -316,45 +318,35 @@ pub(crate) async fn detect_dimensions(
                 "model": model,
             });
 
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .build();
+            let mut request_builder = HTTP_CLIENT
+                .post(format!("{}/embeddings", req.base_url.trim_end_matches('/')))
+                .json(&body);
 
-            match client {
-                Ok(c) => {
-                    let mut request_builder = c
-                        .post(format!("{}/embeddings", req.base_url.trim_end_matches('/')))
-                        .json(&body);
+            if let Some(api_key) = &req.api_key {
+                request_builder = request_builder.bearer_auth(api_key);
+            }
 
-                    if let Some(api_key) = &req.api_key {
-                        request_builder = request_builder.bearer_auth(api_key);
-                    }
-
-                    match request_builder.send().await {
-                        Ok(response) => {
-                            if !response.status().is_success() {
-                                Err(format!(
-                                    "HTTP {}: check API key and base URL",
-                                    response.status()
-                                ))
-                            } else {
-                                match response.json::<serde_json::Value>().await {
-                                    Ok(json) => {
-                                        if let Some(dims) = json["data"][0]["embedding"].as_array()
-                                        {
-                                            Ok(dims.len())
-                                        } else {
-                                            Err("unexpected response format".to_string())
-                                        }
-                                    }
-                                    Err(e) => Err(format!("failed to parse response: {}", e)),
+            match request_builder.send().await {
+                Ok(response) => {
+                    if !response.status().is_success() {
+                        Err(format!(
+                            "HTTP {}: check API key and base URL",
+                            response.status()
+                        ))
+                    } else {
+                        match response.json::<serde_json::Value>().await {
+                            Ok(json) => {
+                                if let Some(dims) = json["data"][0]["embedding"].as_array() {
+                                    Ok(dims.len())
+                                } else {
+                                    Err("unexpected response format".to_string())
                                 }
                             }
+                            Err(e) => Err(format!("failed to parse response: {}", e)),
                         }
-                        Err(e) => Err(format!("{}", e)),
                     }
                 }
-                Err(e) => Err(format!("failed to create HTTP client: {}", e)),
+                Err(e) => Err(format!("{}", e)),
             }
         }
         "cohere" => {
@@ -370,52 +362,41 @@ pub(crate) async fn detect_dimensions(
                 "input_type": "search_document",
             });
 
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .build();
+            let base = req.base_url.trim_end_matches('/');
+            let url = if base.ends_with("/embed") {
+                base.to_string()
+            } else {
+                format!("{}/embed", base)
+            };
 
-            match client {
-                Ok(c) => {
-                    let base = req.base_url.trim_end_matches('/');
-                    let url = if base.ends_with("/embed") {
-                        base.to_string()
+            let mut request_builder = HTTP_CLIENT.post(&url).json(&body);
+
+            if let Some(api_key) = &req.api_key {
+                request_builder = request_builder.bearer_auth(api_key);
+            }
+
+            match request_builder.send().await {
+                Ok(response) => {
+                    if !response.status().is_success() {
+                        let status = response.status();
+                        match response.text().await {
+                            Ok(text) => Err(format!("HTTP {}: {}", status, text)),
+                            Err(_) => Err(format!("HTTP {}: check API key and base URL", status)),
+                        }
                     } else {
-                        format!("{}/embed", base)
-                    };
-
-                    let mut request_builder = c.post(&url).json(&body);
-
-                    if let Some(api_key) = &req.api_key {
-                        request_builder = request_builder.bearer_auth(api_key);
-                    }
-
-                    match request_builder.send().await {
-                        Ok(response) => {
-                            if !response.status().is_success() {
-                                let status = response.status();
-                                match response.text().await {
-                                    Ok(text) => Err(format!("HTTP {}: {}", status, text)),
-                                    Err(_) => {
-                                        Err(format!("HTTP {}: check API key and base URL", status))
-                                    }
-                                }
-                            } else {
-                                match response.json::<serde_json::Value>().await {
-                                    Ok(json) => {
-                                        if let Some(dims) = json["embeddings"][0].as_array() {
-                                            Ok(dims.len())
-                                        } else {
-                                            Err("unexpected response format".to_string())
-                                        }
-                                    }
-                                    Err(e) => Err(format!("failed to parse response: {}", e)),
+                        match response.json::<serde_json::Value>().await {
+                            Ok(json) => {
+                                if let Some(dims) = json["embeddings"][0].as_array() {
+                                    Ok(dims.len())
+                                } else {
+                                    Err("unexpected response format".to_string())
                                 }
                             }
+                            Err(e) => Err(format!("failed to parse response: {}", e)),
                         }
-                        Err(e) => Err(format!("{}", e)),
                     }
                 }
-                Err(e) => Err(format!("failed to create HTTP client: {}", e)),
+                Err(e) => Err(format!("{}", e)),
             }
         }
         "local" => {
@@ -430,56 +411,41 @@ pub(crate) async fn detect_dimensions(
                 "model": model,
             });
 
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(
-                    inference_config.timeout_secs,
-                ))
-                .build();
+            let url = format!("{}/api/embed", inference_config.url.trim_end_matches('/'));
+            let request_builder = HTTP_CLIENT.post(&url).json(&body);
 
-            match client {
-                Ok(c) => {
-                    let url = format!("{}/api/embed", inference_config.url.trim_end_matches('/'));
-                    let request_builder = c.post(&url).json(&body);
-
-                    match request_builder.send().await {
-                        Ok(response) => {
-                            if !response.status().is_success() {
-                                let status = response.status();
-                                match response.text().await {
-                                    Ok(text) => Err(format!("HTTP {}: {}", status, text)),
-                                    Err(_) => {
-                                        Err(format!("HTTP {}: check inference-api URL", status))
-                                    }
-                                }
-                            } else {
-                                match response.json::<serde_json::Value>().await {
-                                    Ok(json) => {
-                                        if let Some(dims) = json["dimensions"].as_u64() {
-                                            Ok(dims as usize)
-                                        } else if let Some(embeddings) =
-                                            json["embeddings"].as_array()
-                                        {
-                                            if let Some(first) = embeddings.first() {
-                                                if let Some(arr) = first.as_array() {
-                                                    Ok(arr.len())
-                                                } else {
-                                                    Err("unexpected embedding format".to_string())
-                                                }
-                                            } else {
-                                                Err("empty embeddings array".to_string())
-                                            }
+            match request_builder.send().await {
+                Ok(response) => {
+                    if !response.status().is_success() {
+                        let status = response.status();
+                        match response.text().await {
+                            Ok(text) => Err(format!("HTTP {}: {}", status, text)),
+                            Err(_) => Err(format!("HTTP {}: check inference-api URL", status)),
+                        }
+                    } else {
+                        match response.json::<serde_json::Value>().await {
+                            Ok(json) => {
+                                if let Some(dims) = json["dimensions"].as_u64() {
+                                    Ok(dims as usize)
+                                } else if let Some(embeddings) = json["embeddings"].as_array() {
+                                    if let Some(first) = embeddings.first() {
+                                        if let Some(arr) = first.as_array() {
+                                            Ok(arr.len())
                                         } else {
-                                            Err("unexpected response format".to_string())
+                                            Err("unexpected embedding format".to_string())
                                         }
+                                    } else {
+                                        Err("empty embeddings array".to_string())
                                     }
-                                    Err(e) => Err(format!("failed to parse response: {}", e)),
+                                } else {
+                                    Err("unexpected response format".to_string())
                                 }
                             }
+                            Err(e) => Err(format!("failed to parse response: {}", e)),
                         }
-                        Err(e) => Err(format!("{}", e)),
                     }
                 }
-                Err(e) => Err(format!("failed to create HTTP client: {}", e)),
+                Err(e) => Err(format!("{}", e)),
             }
         }
         _ => Err(format!("unsupported provider: {}", req.provider)),
@@ -551,57 +517,47 @@ pub(crate) async fn test_embedder(
                 "model": model,
             });
 
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .build();
+            let mut req = HTTP_CLIENT
+                .post(format!(
+                    "{}/embeddings",
+                    embedder.base_url.trim_end_matches('/')
+                ))
+                .json(&body);
 
-            match client {
-                Ok(c) => {
-                    let mut req = c
-                        .post(format!(
-                            "{}/embeddings",
-                            embedder.base_url.trim_end_matches('/')
+            if let Some(api_key) = &embedder.api_key {
+                req = req.bearer_auth(api_key);
+            }
+
+            match req.send().await {
+                Ok(response) => {
+                    if !response.status().is_success() {
+                        Err(format!(
+                            "HTTP {}: check API key and base URL",
+                            response.status()
                         ))
-                        .json(&body);
-
-                    if let Some(api_key) = &embedder.api_key {
-                        req = req.bearer_auth(api_key);
-                    }
-
-                    match req.send().await {
-                        Ok(response) => {
-                            if !response.status().is_success() {
-                                Err(format!(
-                                    "HTTP {}: check API key and base URL",
-                                    response.status()
-                                ))
-                            } else {
-                                match response.json::<serde_json::Value>().await {
-                                    Ok(json) => {
-                                        if let Some(dims) = json["data"][0]["embedding"].as_array()
-                                        {
-                                            Ok(dims.len())
-                                        } else {
-                                            Err("unexpected response format".to_string())
-                                        }
-                                    }
-                                    Err(e) => Err(format!("failed to parse response: {}", e)),
+                    } else {
+                        match response.json::<serde_json::Value>().await {
+                            Ok(json) => {
+                                if let Some(dims) = json["data"][0]["embedding"].as_array() {
+                                    Ok(dims.len())
+                                } else {
+                                    Err("unexpected response format".to_string())
                                 }
                             }
-                        }
-                        Err(e) => {
-                            let error_msg = if e.is_timeout() {
-                                "request timeout (check network/firewall)".to_string()
-                            } else if e.is_connect() {
-                                "failed to connect (check base URL)".to_string()
-                            } else {
-                                format!("{}", e)
-                            };
-                            Err(error_msg)
+                            Err(e) => Err(format!("failed to parse response: {}", e)),
                         }
                     }
                 }
-                Err(e) => Err(format!("failed to create HTTP client: {}", e)),
+                Err(e) => {
+                    let error_msg = if e.is_timeout() {
+                        "request timeout (check network/firewall)".to_string()
+                    } else if e.is_connect() {
+                        "failed to connect (check base URL)".to_string()
+                    } else {
+                        format!("{}", e)
+                    };
+                    Err(error_msg)
+                }
             }
         }
         "cohere" => {
@@ -617,62 +573,50 @@ pub(crate) async fn test_embedder(
                 "input_type": "search_document",
             });
 
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .build();
+            let base = embedder.base_url.trim_end_matches('/');
+            let url = if base.ends_with("/embed") {
+                base.to_string()
+            } else {
+                format!("{}/embed", base)
+            };
 
-            match client {
-                Ok(c) => {
-                    let base = embedder.base_url.trim_end_matches('/');
-                    let url = if base.ends_with("/embed") {
-                        base.to_string()
+            let mut req = HTTP_CLIENT.post(&url).json(&body);
+
+            if let Some(api_key) = &embedder.api_key {
+                req = req.bearer_auth(api_key);
+            }
+
+            match req.send().await {
+                Ok(response) => {
+                    if !response.status().is_success() {
+                        let status = response.status();
+                        match response.text().await {
+                            Ok(text) => Err(format!("HTTP {}: {}", status, text)),
+                            Err(_) => Err(format!("HTTP {}: check API key and base URL", status)),
+                        }
                     } else {
-                        format!("{}/embed", base)
-                    };
-
-                    let mut req = c.post(&url).json(&body);
-
-                    if let Some(api_key) = &embedder.api_key {
-                        req = req.bearer_auth(api_key);
-                    }
-
-                    match req.send().await {
-                        Ok(response) => {
-                            if !response.status().is_success() {
-                                let status = response.status();
-                                match response.text().await {
-                                    Ok(text) => Err(format!("HTTP {}: {}", status, text)),
-                                    Err(_) => {
-                                        Err(format!("HTTP {}: check API key and base URL", status))
-                                    }
-                                }
-                            } else {
-                                match response.json::<serde_json::Value>().await {
-                                    Ok(json) => {
-                                        if let Some(dims) = json["embeddings"][0].as_array() {
-                                            Ok(dims.len())
-                                        } else {
-                                            Err("unexpected response format (check model)"
-                                                .to_string())
-                                        }
-                                    }
-                                    Err(e) => Err(format!("failed to parse response: {}", e)),
+                        match response.json::<serde_json::Value>().await {
+                            Ok(json) => {
+                                if let Some(dims) = json["embeddings"][0].as_array() {
+                                    Ok(dims.len())
+                                } else {
+                                    Err("unexpected response format (check model)".to_string())
                                 }
                             }
-                        }
-                        Err(e) => {
-                            let error_msg = if e.is_timeout() {
-                                "request timeout (check network/firewall)".to_string()
-                            } else if e.is_connect() {
-                                "failed to connect (check base URL)".to_string()
-                            } else {
-                                format!("{}", e)
-                            };
-                            Err(error_msg)
+                            Err(e) => Err(format!("failed to parse response: {}", e)),
                         }
                     }
                 }
-                Err(e) => Err(format!("failed to create HTTP client: {}", e)),
+                Err(e) => {
+                    let error_msg = if e.is_timeout() {
+                        "request timeout (check network/firewall)".to_string()
+                    } else if e.is_connect() {
+                        "failed to connect (check base URL)".to_string()
+                    } else {
+                        format!("{}", e)
+                    };
+                    Err(error_msg)
+                }
             }
         }
         "local" => {
@@ -688,65 +632,50 @@ pub(crate) async fn test_embedder(
                 "model": model,
             });
 
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(
-                    inference_config.timeout_secs,
-                ))
-                .build();
+            let url = format!("{}/api/embed", inference_config.url.trim_end_matches('/'));
+            let req = HTTP_CLIENT.post(&url).json(&body);
 
-            match client {
-                Ok(c) => {
-                    let url = format!("{}/api/embed", inference_config.url.trim_end_matches('/'));
-                    let req = c.post(&url).json(&body);
-
-                    match req.send().await {
-                        Ok(response) => {
-                            if !response.status().is_success() {
-                                let status = response.status();
-                                match response.text().await {
-                                    Ok(text) => Err(format!("HTTP {}: {}", status, text)),
-                                    Err(_) => {
-                                        Err(format!("HTTP {}: check inference-api URL", status))
-                                    }
-                                }
-                            } else {
-                                match response.json::<serde_json::Value>().await {
-                                    Ok(json) => {
-                                        if let Some(dims) = json["dimensions"].as_u64() {
-                                            Ok(dims as usize)
-                                        } else if let Some(embeddings) =
-                                            json["embeddings"].as_array()
-                                        {
-                                            if let Some(first) = embeddings.first() {
-                                                if let Some(arr) = first.as_array() {
-                                                    Ok(arr.len())
-                                                } else {
-                                                    Err("unexpected embedding format".to_string())
-                                                }
-                                            } else {
-                                                Err("empty embeddings array".to_string())
-                                            }
+            match req.send().await {
+                Ok(response) => {
+                    if !response.status().is_success() {
+                        let status = response.status();
+                        match response.text().await {
+                            Ok(text) => Err(format!("HTTP {}: {}", status, text)),
+                            Err(_) => Err(format!("HTTP {}: check inference-api URL", status)),
+                        }
+                    } else {
+                        match response.json::<serde_json::Value>().await {
+                            Ok(json) => {
+                                if let Some(dims) = json["dimensions"].as_u64() {
+                                    Ok(dims as usize)
+                                } else if let Some(embeddings) = json["embeddings"].as_array() {
+                                    if let Some(first) = embeddings.first() {
+                                        if let Some(arr) = first.as_array() {
+                                            Ok(arr.len())
                                         } else {
-                                            Err("unexpected response format".to_string())
+                                            Err("unexpected embedding format".to_string())
                                         }
+                                    } else {
+                                        Err("empty embeddings array".to_string())
                                     }
-                                    Err(e) => Err(format!("failed to parse response: {}", e)),
+                                } else {
+                                    Err("unexpected response format".to_string())
                                 }
                             }
-                        }
-                        Err(e) => {
-                            let error_msg = if e.is_timeout() {
-                                "request timeout (inference-api may be loading models)".to_string()
-                            } else if e.is_connect() {
-                                "failed to connect (check inference-api URL)".to_string()
-                            } else {
-                                format!("{}", e)
-                            };
-                            Err(error_msg)
+                            Err(e) => Err(format!("failed to parse response: {}", e)),
                         }
                     }
                 }
-                Err(e) => Err(format!("failed to create HTTP client: {}", e)),
+                Err(e) => {
+                    let error_msg = if e.is_timeout() {
+                        "request timeout (inference-api may be loading models)".to_string()
+                    } else if e.is_connect() {
+                        "failed to connect (check inference-api URL)".to_string()
+                    } else {
+                        format!("{}", e)
+                    };
+                    Err(error_msg)
+                }
             }
         }
         _ => Err(format!("unsupported provider: {}", embedder.provider)),

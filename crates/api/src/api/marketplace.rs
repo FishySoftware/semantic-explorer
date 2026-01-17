@@ -247,10 +247,14 @@ pub(crate) async fn get_public_llms(
     tag = "Marketplace",
 )]
 #[post("/api/marketplace/collections/{collection_id}/grab")]
-#[tracing::instrument(name = "grab_collection", skip(user, s3_client, postgres_pool, req))]
+#[tracing::instrument(
+    name = "grab_collection",
+    skip(user, s3_client, s3_config, postgres_pool, req)
+)]
 pub(crate) async fn grab_collection(
     user: AuthenticatedUser,
     s3_client: Data<Client>,
+    s3_config: Data<semantic_explorer_core::config::S3Config>,
     postgres_pool: Data<Pool<Postgres>>,
     collection_id: Path<i32>,
     req: actix_web::HttpRequest,
@@ -258,6 +262,7 @@ pub(crate) async fn grab_collection(
     match collections::grab_public_collection(
         &postgres_pool.into_inner(),
         &s3_client.into_inner(),
+        &s3_config.bucket_name,
         &user.as_owner(),
         &user,
         *collection_id,

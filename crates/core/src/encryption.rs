@@ -4,7 +4,6 @@ use anyhow::{Result, anyhow};
 use base64::{Engine, engine::general_purpose::STANDARD as base64_engine};
 use rand::Rng;
 use std::env;
-use tracing::debug;
 
 /// Encryption service for API keys and secrets
 /// Uses AES-256-GCM for authenticated encryption
@@ -32,8 +31,6 @@ impl EncryptionService {
 
         let mut key = [0u8; 32];
         key.copy_from_slice(&master_key_bytes);
-
-        debug!("Encryption service initialized with master key");
 
         Ok(EncryptionService { master_key: key })
     }

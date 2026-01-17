@@ -859,7 +859,6 @@ pub fn record_histogram(_name: &str, value: f64, labels: &[(&str, &str)]) {
     // consider pre-registering histograms in the Metrics struct
     metrics.http_request_duration.record(value, &attributes);
 }
-
 /// Record embedding request metrics
 pub fn record_embed_request(model: &str, item_count: u64, duration_secs: f64, success: bool) {
     let metrics = get_metrics();

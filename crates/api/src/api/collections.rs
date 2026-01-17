@@ -3,10 +3,10 @@ use actix_web::{
     HttpRequest, HttpResponse, Responder, ResponseError, delete, get, patch, post,
     web::{self, Data, Json, Path},
 };
-use aws_sdk_s3::Client;
+use aws_sdk_s3::{Client, primitives::ByteStream};
 use sqlx::{Pool, Postgres};
 use std::collections::HashMap;
-use tracing::error;
+use tracing::{error, warn};
 
 use crate::{
     audit::{ResourceType, events},
@@ -25,8 +25,9 @@ use crate::{
             upload_document,
         },
     },
+    validation::validate_upload_file,
 };
-use semantic_explorer_core::validation;
+use semantic_explorer_core::{config::S3Config, validation};
 
 #[utoipa::path(
     params(
@@ -49,7 +50,6 @@ pub(crate) async fn get_collections(
 ) -> impl Responder {
     let pool = &postgres_pool.into_inner();
 
-    // Parse pagination parameters
     let limit: i64 = query
         .get("limit")
         .and_then(|l: &String| l.parse::<i64>().ok())
@@ -62,26 +62,8 @@ pub(crate) async fn get_collections(
         .unwrap_or(0)
         .max(0);
 
-    // Get collections with pagination
     match collections::get_collections_paginated(pool, &user.as_owner(), limit, offset).await {
-        Ok((mut collection_list, total_count)) => {
-            // Batch fetch file counts from database
-            let collection_ids: Vec<i32> =
-                collection_list.iter().map(|c| c.collection_id).collect();
-            let file_counts =
-                match collections::get_collections_file_counts_batch(pool, collection_ids).await {
-                    Ok(counts) => counts,
-                    Err(e) => {
-                        tracing::warn!("Failed to fetch file counts: {:?}", e);
-                        std::collections::HashMap::new()
-                    }
-                };
-
-            // Merge file counts into collections
-            for collection in &mut collection_list {
-                collection.file_count = file_counts.get(&collection.collection_id).copied();
-            }
-
+        Ok((collection_list, total_count)) => {
             let response = PaginatedCollections {
                 collections: collection_list,
                 total_count,
@@ -120,15 +102,7 @@ pub(crate) async fn get_collection(
     let pool = &postgres_pool.into_inner();
 
     match collections::get_collection(pool, &user.as_owner(), collection_id).await {
-        Ok(mut collection) => {
-            // Fetch file count from database
-            collection.file_count = collections::get_collection_file_count(pool, collection_id)
-                .await
-                .ok()
-                .flatten();
-
-            HttpResponse::Ok().json(collection)
-        }
+        Ok(collection) => HttpResponse::Ok().json(collection),
         Err(e) => {
             if e.to_string().contains("no rows") {
                 ApiError::NotFound(format!("Collection {} not found", collection_id))
@@ -207,15 +181,19 @@ pub(crate) async fn search_collections(
     tag = "Collections",
 )]
 #[post("/api/collections")]
-#[tracing::instrument(name = "create_collection", skip(user, _s3_client, postgres_pool, create_collection, req), fields(collection_title = %create_collection.title))]
+#[tracing::instrument(name = "create_collection", skip(user, postgres_pool, s3_client, s3_config, create_collection, req), fields(collection_title = %create_collection.title))]
 pub(crate) async fn create_collections(
     user: AuthenticatedUser,
     req: HttpRequest,
-    _s3_client: Data<Client>,
     postgres_pool: Data<Pool<Postgres>>,
+    s3_client: Data<Client>,
+    s3_config: Data<S3Config>,
     Json(create_collection): Json<CreateCollection>,
 ) -> impl Responder {
-    // Input validation
+    let postgres_pool = postgres_pool.into_inner();
+    let s3_client = s3_client.into_inner();
+    let s3_config = s3_config.into_inner();
+
     if let Err(e) = validation::validate_title(&create_collection.title) {
         events::validation_failed(&user.as_owner(), &user, "title", &e.to_string());
         return ApiError::Validation(e).error_response();
@@ -231,19 +209,12 @@ pub(crate) async fn create_collections(
         return ApiError::Validation(e).error_response();
     }
 
-    // Use a placeholder bucket value - we'll update it after we get the collection_id
-    // This enables the single-bucket architecture where files are stored under
-    // collections/{collection_id}/ prefix in S3_BUCKET_NAME
-    let placeholder_bucket = "pending";
-    let postgres_pool = postgres_pool.into_inner();
-
     let collection = match collections::create_collection(
         &postgres_pool,
         &create_collection.title,
         create_collection.details.as_deref(),
         &user.as_owner(),
         &user,
-        placeholder_bucket,
         &create_collection.tags,
         create_collection.is_public,
     )
@@ -256,41 +227,20 @@ pub(crate) async fn create_collections(
         }
     };
 
-    // Update the bucket field to use the collection_id for single-bucket architecture
-    // Files will be stored under S3_BUCKET_NAME/collections/{collection_id}/
-    let bucket = collection.collection_id.to_string();
-    if let Err(e) = collections::update_collection_bucket(
-        &postgres_pool,
-        collection.collection_id,
-        &user.as_owner(),
-        &bucket,
-    )
-    .await
+    let folder_key = collection.s3_folder_key();
+    if let Err(e) = s3_client
+        .put_object()
+        .bucket(&s3_config.bucket_name)
+        .key(&folder_key)
+        .body(ByteStream::from_static(b""))
+        .send()
+        .await
     {
         error!(
-            "error updating collection bucket for collection '{}' due to: {:?}",
-            collection.collection_id, e
-        );
-        // Don't fail the request - the collection was created, just with placeholder bucket
-    }
-
-    // Initialize file count to 0 for new collection
-    if let Err(e) =
-        collections::upsert_collection_file_count(&postgres_pool, collection.collection_id, 0).await
-    {
-        tracing::warn!(
-            "Failed to initialize file count for collection {}: {:?}",
-            collection.collection_id,
-            e
+            "Failed to create collection folder marker in S3 ({}): {}",
+            folder_key, e
         );
     }
-
-    // Return the collection with the correct bucket value
-    let collection = Collection {
-        bucket,
-        file_count: Some(0),
-        ..collection
-    };
 
     events::resource_created_with_request(
         &req,
@@ -316,7 +266,7 @@ pub(crate) async fn delete_collections(
     user: AuthenticatedUser,
     req: HttpRequest,
     s3_client: Data<Client>,
-    s3_config: Data<semantic_explorer_core::config::S3Config>,
+    s3_config: Data<S3Config>,
     postgres_pool: Data<Pool<Postgres>>,
     collection_id: Path<i32>,
 ) -> impl Responder {
@@ -336,11 +286,11 @@ pub(crate) async fn delete_collections(
         storage::s3::empty_collection(s3_client.as_ref(), &s3_config.bucket_name, collection_id)
             .await
     {
-        error!(
-            "error emptying collection '{}' due to: {:?}",
+        warn!(
+            "Error emptying collection '{}' due to: {:?}",
             collection_id, e
         );
-        return ApiError::Internal(format!("error emptying collection due to: {:?}", e))
+        return ApiError::Internal(format!("Error emptying collection due to: {:?}", e))
             .error_response();
     }
 
@@ -356,8 +306,8 @@ pub(crate) async fn delete_collections(
             HttpResponse::Ok().finish()
         }
         Err(e) => {
-            tracing::error!(error = %e, "failed to delete collection");
-            ApiError::Internal(format!("error deleting collection due to: {:?}", e))
+            tracing::error!(error = %e, "Failed to delete collection");
+            ApiError::Internal(format!("Error deleting collection due to: {:?}", e))
                 .error_response()
         }
     }
@@ -380,7 +330,6 @@ pub(crate) async fn update_collections(
     collection_id: Path<i32>,
     Json(update_collection): Json<UpdateCollection>,
 ) -> impl Responder {
-    // Validate input
     if let Err(e) = validation::validate_title(&update_collection.title) {
         return ApiError::Validation(e).error_response();
     }
@@ -439,7 +388,7 @@ pub(crate) async fn update_collections(
 pub(crate) async fn upload_to_collection(
     user: AuthenticatedUser,
     s3_client: Data<Client>,
-    s3_config: Data<semantic_explorer_core::config::S3Config>,
+    s3_config: Data<S3Config>,
     postgres_pool: Data<Pool<Postgres>>,
     collection_id: Path<i32>,
     MultipartForm(payload): MultipartForm<CollectionUpload>,
@@ -470,20 +419,29 @@ pub(crate) async fn upload_to_collection(
     let mut completed = Vec::with_capacity(payload.files.len());
     let mut failed = Vec::new();
 
-    for (idx, file_bytes) in payload.files.iter().enumerate() {
-        let file_name = file_bytes
+    for (idx, temp_file) in payload.files.iter().enumerate() {
+        let file_name = temp_file
             .file_name
             .as_ref()
             .map(|s| s.to_string())
             .unwrap_or_else(|| format!("file_{}", idx));
-        let claimed_mime = mime_guess::from_path(&file_name)
-            .first_or_octet_stream()
-            .to_string();
 
-        // Validate file before attempting upload (runs on blocking thread pool)
-        let validation_result =
-            crate::validation::validate_upload_file(&file_bytes.data, &file_name, &claimed_mime)
-                .await;
+        let file_path = temp_file.file.path().to_owned();
+        let file_size = temp_file.size;
+
+        let file_bytes = match tokio::fs::read(&file_path).await {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                tracing::error!(file_name = %file_name, error = %e, "Failed to read temp file");
+                failed.push(file_name);
+                continue;
+            }
+        };
+
+        let validation_result = validate_upload_file(&file_bytes, &file_name).await;
+
+        // Free memory immediately after validation
+        drop(file_bytes);
 
         if !validation_result.is_valid {
             tracing::warn!(
@@ -493,7 +451,6 @@ pub(crate) async fn upload_to_collection(
             );
             failed.push(file_name.clone());
 
-            // Audit log the rejected upload
             crate::audit::events::file_validation_failed(
                 &user.as_owner(),
                 &user,
@@ -504,12 +461,26 @@ pub(crate) async fn upload_to_collection(
             continue;
         }
 
+        // Create stream from file path
+        let content_stream = match ByteStream::from_path(&file_path).await {
+            Ok(stream) => stream,
+            Err(e) => {
+                tracing::error!(file_name = %file_name, error = %e, "Failed to create stream from file");
+                failed.push(file_name);
+                continue;
+            }
+        };
+
         let document = DocumentUpload {
             collection_id: collection.collection_id.to_string(),
             name: file_name.clone(),
-            content: file_bytes.data.to_vec(),
-            mime_type: validation_result.detected_mime.clone(),
+            content: content_stream,
+            mime_type: validation_result
+                .mime_type
+                .unwrap_or_else(|| "application/octet-stream".to_string()),
+            size: file_size as u64,
         };
+
         if let Err(e) = upload_document(&s3_client, &s3_config.bucket_name, document).await {
             failed.push(file_name.clone());
             tracing::error!(
@@ -522,19 +493,17 @@ pub(crate) async fn upload_to_collection(
 
         tracing::info!(
             file_name = %file_name,
-            detected_mime = %validation_result.detected_mime,
             "File uploaded successfully"
         );
+
         completed.push(file_name);
     }
 
-    // Atomically increment file count for successfully uploaded files
-    if !completed.is_empty() {
-        let uploaded_count = completed.len() as i64;
-        if let Err(e) = collections::increment_collection_file_count(
+    if !completed.is_empty()
+        && let Err(e) = collections::increment_collection_file_count(
             &postgres_pool,
             collection_id,
-            uploaded_count,
+            completed.len() as i64,
         )
         .await
         {
@@ -544,7 +513,6 @@ pub(crate) async fn upload_to_collection(
                 e
             );
         }
-    }
 
     HttpResponse::Ok().json(CollectionUploadResponse { completed, failed })
 }
@@ -567,12 +535,15 @@ pub(crate) async fn upload_to_collection(
 pub(crate) async fn list_collection_files(
     user: AuthenticatedUser,
     s3_client: Data<Client>,
-    s3_config: Data<semantic_explorer_core::config::S3Config>,
+    s3_config: Data<S3Config>,
     postgres_pool: Data<Pool<Postgres>>,
     collection_id: Path<i32>,
     web::Query(query): web::Query<FileListQuery>,
 ) -> impl Responder {
+    let s3_client = s3_client.into_inner();
+    let s3_config = s3_config.into_inner();
     let collection_id = collection_id.into_inner();
+
     let collection = match collections::get_collection(
         &postgres_pool.into_inner(),
         &user.as_owner(),
@@ -582,13 +553,10 @@ pub(crate) async fn list_collection_files(
     {
         Ok(collection) => collection,
         Err(_) => {
-            return ApiError::NotFound(format!("collection '{}' not found", collection_id))
+            return ApiError::NotFound(format!("Collection '{}' not found", collection_id))
                 .error_response();
         }
     };
-
-    let s3_client = s3_client.into_inner();
-    let s3_config = s3_config.into_inner();
 
     match storage::s3::list_files(
         &s3_client,
@@ -599,9 +567,10 @@ pub(crate) async fn list_collection_files(
     )
     .await
     {
-        Ok(mut paginated_files) => {
+        Ok(s3_files) => {
+            let mut total_count = None;
             if query.continuation_token.is_none() {
-                paginated_files.total_count = storage::s3::count_collection_files(
+                total_count = storage::s3::count_collection_files(
                     &s3_client,
                     &s3_config.bucket_name,
                     collection.collection_id,
@@ -609,6 +578,16 @@ pub(crate) async fn list_collection_files(
                 .await
                 .ok();
             }
+
+            let paginated_files = PaginatedFiles {
+                files: s3_files.files,
+                page: 0,
+                page_size: query.page_size,
+                has_more: s3_files.continuation_token.is_some(),
+                continuation_token: s3_files.continuation_token,
+                total_count,
+            };
+
             HttpResponse::Ok().json(paginated_files)
         }
         Err(e) => ApiError::Internal(format!("error listing files: {:?}", e)).error_response(),
@@ -632,11 +611,13 @@ pub(crate) async fn list_collection_files(
 pub(crate) async fn download_collection_file(
     user: AuthenticatedUser,
     s3_client: Data<Client>,
-    s3_config: Data<semantic_explorer_core::config::S3Config>,
+    s3_config: Data<S3Config>,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<(i32, String)>,
     req: actix_web::HttpRequest,
 ) -> impl Responder {
+    let s3_client = s3_client.into_inner();
+    let s3_config = s3_config.into_inner();
     let (collection_id, file_key) = path.into_inner();
 
     let collection = match collections::get_collection(
@@ -648,18 +629,17 @@ pub(crate) async fn download_collection_file(
     {
         Ok(collection) => collection,
         Err(_) => {
-            return ApiError::NotFound(format!("collection '{}' not found", collection_id))
+            return ApiError::NotFound(format!("Collection '{}' not found", collection_id))
                 .error_response();
         }
     };
 
-    let s3_config_inner = s3_config.into_inner();
     match storage::s3::get_file_with_size_check(
-        &s3_client.into_inner(),
-        &s3_config_inner.bucket_name,
+        &s3_client,
+        &s3_config.bucket_name,
         &collection.collection_id.to_string(),
         &file_key,
-        s3_config_inner.max_download_size_bytes,
+        s3_config.max_download_size_bytes,
     )
     .await
     {
@@ -713,7 +693,7 @@ pub(crate) async fn download_collection_file(
 pub(crate) async fn delete_collection_file(
     user: AuthenticatedUser,
     s3_client: Data<Client>,
-    s3_config: Data<semantic_explorer_core::config::S3Config>,
+    s3_config: Data<S3Config>,
     postgres_pool: Data<Pool<Postgres>>,
     path: Path<(i32, String)>,
 ) -> impl Responder {

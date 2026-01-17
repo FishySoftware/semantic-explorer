@@ -239,7 +239,7 @@ async fn process_collection_transform_scan(
                 let job = CollectionTransformJob {
                     job_id: Uuid::new_v4(),
                     source_file_key: file.key.clone(),
-                    bucket: collection.bucket.clone(),
+                    bucket: s3_bucket_name.to_string(),
                     collection_id: transform.collection_id,
                     collection_transform_id: transform.collection_transform_id,
                     owner_id: transform.owner_id.clone(),
@@ -267,10 +267,10 @@ async fn process_collection_transform_scan(
             }
         }
 
-        if !files.has_more {
+        continuation_token = files.continuation_token;
+        if continuation_token.is_none() {
             break;
         }
-        continuation_token = files.continuation_token;
     }
 
     info!(

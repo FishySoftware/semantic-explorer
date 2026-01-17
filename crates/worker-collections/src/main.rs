@@ -1,7 +1,8 @@
 use anyhow::Result;
-use semantic_explorer_core::{storage::initialize_client, worker};
-
-use crate::job::WorkerContext;
+use semantic_explorer_core::{
+    storage::initialize_client,
+    worker::{self, WorkerContext},
+};
 
 mod chunk;
 mod extract;
@@ -41,7 +42,6 @@ async fn main() -> Result<()> {
         stream_name: "COLLECTION_TRANSFORMS".to_string(),
         consumer_config: semantic_explorer_core::nats::create_transform_file_consumer_config(),
         max_concurrent_jobs,
-        nats_client: Some(nats_client),
     };
 
     worker::run_worker(config, context, job::process_file_job).await

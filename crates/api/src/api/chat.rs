@@ -15,8 +15,8 @@ use crate::{
     chat::{
         llm,
         models::{
-            ChatMessageResponse, ChatMessagesResponse, ChatResponse, ChatSessionResponse,
-            ChatSessionsResponse, CreateChatMessageRequest, CreateChatSessionRequest, RAGConfig,
+            ChatMessageResponse, ChatMessagesResponse, ChatResponse, ChatSession, ChatSessions,
+            CreateChatMessageRequest, CreateChatSessionRequest, RAGConfig,
         },
         rag::{self},
     },
@@ -57,14 +57,7 @@ pub(crate) async fn create_chat_session(
                 ResourceType::Session,
                 &session.session_id,
             );
-            HttpResponse::Created().json(ChatSessionResponse {
-                session_id: session.session_id,
-                embedded_dataset_id: session.embedded_dataset_id,
-                llm_id: session.llm_id,
-                title: session.title,
-                created_at: session.created_at,
-                updated_at: session.updated_at,
-            })
+            HttpResponse::Created().json(session)
         }
         Err(e) => {
             tracing::error!(error = %e, "failed to create chat session");
@@ -75,7 +68,7 @@ pub(crate) async fn create_chat_session(
 
 #[utoipa::path(
     responses(
-        (status = 200, description = "OK", body = ChatSessionsResponse),
+        (status = 200, description = "OK", body = ChatSessions),
         (status = 500, description = "Internal Server Error"),
     ),
     tag = "Chat",
@@ -87,22 +80,7 @@ pub(crate) async fn get_chat_sessions(
     postgres_pool: Data<Pool<Postgres>>,
 ) -> impl Responder {
     match chat::get_chat_sessions(&postgres_pool.into_inner(), &user.as_owner()).await {
-        Ok(sessions) => {
-            let sessions_response: Vec<ChatSessionResponse> = sessions
-                .into_iter()
-                .map(|s| ChatSessionResponse {
-                    session_id: s.session_id,
-                    embedded_dataset_id: s.embedded_dataset_id,
-                    llm_id: s.llm_id,
-                    title: s.title,
-                    created_at: s.created_at,
-                    updated_at: s.updated_at,
-                })
-                .collect();
-            HttpResponse::Ok().json(ChatSessionsResponse {
-                sessions: sessions_response,
-            })
-        }
+        Ok(sessions) => HttpResponse::Ok().json(sessions),
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch chat sessions");
             ApiError::Internal(format!("error fetching sessions: {:?}", e)).error_response()
@@ -112,7 +90,7 @@ pub(crate) async fn get_chat_sessions(
 
 #[utoipa::path(
     responses(
-        (status = 200, description = "OK", body = ChatSessionResponse),
+        (status = 200, description = "OK", body = ChatSession),
         (status = 404, description = "Not Found"),
         (status = 500, description = "Internal Server Error"),
     ),
@@ -131,14 +109,7 @@ pub(crate) async fn get_chat_session(
     match chat::get_chat_session(&postgres_pool.into_inner(), &session_id, &user.as_owner()).await {
         Ok(session) => {
             events::resource_read(&user.as_owner(), &user, ResourceType::Session, &session_id);
-            HttpResponse::Ok().json(ChatSessionResponse {
-                session_id: session.session_id,
-                embedded_dataset_id: session.embedded_dataset_id,
-                llm_id: session.llm_id,
-                title: session.title,
-                created_at: session.created_at,
-                updated_at: session.updated_at,
-            })
+            HttpResponse::Ok().json(session)
         }
         Err(e) => {
             tracing::error!(error = %e, session_id = %session_id, "failed to fetch chat session");
@@ -228,7 +199,6 @@ pub(crate) async fn get_chat_messages(
                     } else {
                         None
                     };
-
                     messages_response.push(ChatMessageResponse {
                         message_id: message.message_id,
                         role: message.role,

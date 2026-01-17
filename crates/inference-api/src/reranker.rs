@@ -16,9 +16,84 @@ type RerankerCache = Arc<Mutex<HashMap<String, Arc<TokioMutex<TextRerank>>>>>;
 /// The outer Mutex protects the HashMap structure, while each model has its own Tokio Mutex
 static RERANKER_MODELS: OnceCell<RerankerCache> = OnceCell::new();
 
-/// Initialize the reranker model cache
-pub fn init_cache() {
-    RERANKER_MODELS.get_or_init(|| Arc::new(Mutex::new(HashMap::new())));
+/// Initialize the reranker model cache and pre-load allowed models
+///
+/// This function:
+/// 1. Takes the ModelConfig to determine which models to load
+/// 2. Gets a list of models to load (all supported or filtered by allowed_models)
+/// 3. Loads each model from the filesystem cache, fetching if needed
+/// 4. Pre-populates the cache at startup to validate model availability
+pub fn init_cache(config: &ModelConfig) {
+    let cache = RERANKER_MODELS.get_or_init(|| Arc::new(Mutex::new(HashMap::new())));
+
+    // Get list of models to load
+    let models_to_load = get_models_to_load(config);
+
+    if models_to_load.is_empty() {
+        tracing::info!("No reranker models to pre-load");
+        return;
+    }
+
+    tracing::info!(
+        models = ?models_to_load,
+        count = models_to_load.len(),
+        "Pre-loading reranker models at startup"
+    );
+
+    let mut cache_guard = match cache.lock() {
+        Ok(guard) => guard,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to acquire reranker cache lock during initialization");
+            return;
+        }
+    };
+
+    for model_id in models_to_load {
+        match resolve_reranker_model(&model_id) {
+            Ok(reranker_model) => match create_text_rerank(reranker_model, config) {
+                Ok(text_rerank) => {
+                    cache_guard.insert(model_id.clone(), Arc::new(TokioMutex::new(text_rerank)));
+                    tracing::info!(model_id = %model_id, "Pre-loaded reranker model");
+                }
+                Err(e) => {
+                    tracing::error!(
+                        model_id = %model_id,
+                        error = %e,
+                        "Failed to load reranker model during initialization"
+                    );
+                }
+            },
+            Err(e) => {
+                tracing::error!(
+                    model_id = %model_id,
+                    error = %e,
+                    "Failed to resolve reranker model during initialization"
+                );
+            }
+        }
+    }
+}
+
+/// Get the list of reranker models to load based on configuration
+fn get_models_to_load(config: &ModelConfig) -> Vec<String> {
+    if !config.allowed_models.is_empty() {
+        // Use allowed models list if configured
+        config.allowed_models.clone()
+    } else {
+        // Use all supported reranker models if no restrictions
+        get_all_supported_reranker_models()
+    }
+}
+
+/// Get all supported reranker model IDs
+fn get_all_supported_reranker_models() -> Vec<String> {
+    vec![
+        "BAAI/bge-reranker-base".to_string(),
+        "rozgo/bge-reranker-v2-m3".to_string(),
+        "BAAI/bge-reranker-v2-m3".to_string(),
+        "jinaai/jina-reranker-v1-turbo-en".to_string(),
+        "jinaai/jina-reranker-v2-base-multilingual".to_string(),
+    ]
 }
 
 /// Resolve a model ID string to a fastembed RerankerModel enum

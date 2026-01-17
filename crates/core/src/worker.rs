@@ -29,8 +29,12 @@ pub struct WorkerConfig {
     pub stream_name: String,
     pub consumer_config: Config,
     pub max_concurrent_jobs: usize,
-    /// Optional prebuilt NATS client to reuse instead of creating a new connection
-    pub nats_client: Option<async_nats::Client>,
+}
+
+#[derive(Clone)]
+pub struct WorkerContext {
+    pub s3_client: aws_sdk_s3::Client,
+    pub nats_client: async_nats::Client,
 }
 
 /// Initialize OpenTelemetry for the worker
@@ -151,27 +155,18 @@ pub fn initialize_opentelemetry(service_name: &str) -> Result<()> {
 }
 
 /// Run the worker message processing loop
-pub async fn run_worker<J, C, F, Fut>(
+pub async fn run_worker<J, F, Fut>(
     config: WorkerConfig,
-    context: C,
+    context: WorkerContext,
     process_job: F,
 ) -> Result<()>
 where
     J: DeserializeOwned + Send + 'static,
-    C: Clone + Send + 'static,
-    F: Fn(J, C) -> Fut + Send + Sync + 'static,
+    F: Fn(J, WorkerContext) -> Fut + Send + Sync + 'static,
     Fut: std::future::Future<Output = Result<()>> + Send,
 {
     // Use provided NATS client or create a new connection
-    let nats_client = if let Some(client) = config.nats_client {
-        info!("Reusing provided NATS client connection");
-        client
-    } else {
-        let nats_url =
-            std::env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string());
-        info!("Creating new NATS connection to {}", nats_url);
-        async_nats::connect(&nats_url).await?
-    };
+    let nats_client = context.nats_client.clone();
 
     let semaphore = Arc::new(Semaphore::new(config.max_concurrent_jobs));
 
@@ -198,16 +193,15 @@ where
 }
 
 /// Process messages from the consumer
-async fn process_messages<J, C, F, Fut>(
+async fn process_messages<J, F, Fut>(
     consumer: Consumer<Config>,
-    context: C,
+    context: WorkerContext,
     semaphore: Arc<Semaphore>,
     process_job: F,
 ) -> Result<()>
 where
     J: DeserializeOwned + Send + 'static,
-    C: Clone + Send + 'static,
-    F: Fn(J, C) -> Fut + Send + Sync + 'static,
+    F: Fn(J, WorkerContext) -> Fut + Send + Sync + 'static,
     Fut: std::future::Future<Output = Result<()>> + Send,
 {
     let process_job = Arc::new(process_job);

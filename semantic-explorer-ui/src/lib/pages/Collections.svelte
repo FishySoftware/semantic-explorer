@@ -17,7 +17,7 @@
 		tags: string[];
 		created_at?: string;
 		updated_at?: string;
-		file_count?: number;
+		file_count: number;
 	}
 
 	interface PaginatedCollectionList {

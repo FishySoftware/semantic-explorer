@@ -69,9 +69,9 @@ async fn main() -> Result<()> {
         );
     }
 
-    // Initialize model caches
-    embedding::init_cache();
-    reranker::init_cache();
+    // Initialize model caches and pre-load models based on configuration
+    embedding::init_cache(&config.models);
+    reranker::init_cache(&config.models);
 
     let model_config = web::Data::new(config.models.clone());
     let hostname = config.server.hostname.clone();

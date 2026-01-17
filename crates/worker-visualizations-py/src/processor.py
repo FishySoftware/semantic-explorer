@@ -13,10 +13,15 @@ import os
 from typing import Any, Dict, Optional
 
 import numpy as np
-from qdrant_client import QdrantClient
+import random
+from qdrant_client import AsyncQdrantClient
+from qdrant_client.http import models as RestModels
 from umap import UMAP
 from fast_hdbscan import HDBSCAN
 import datamapplot
+
+# Maximum points to visualize to prevent OOM
+MAX_POINTS = int(os.environ.get("MAX_VISUALIZATION_POINTS", 100_000_000))
 
 try:
     # Try relative imports (for package execution)
@@ -41,9 +46,9 @@ class VisualizationProcessor:
         # Convert HTTP URL to gRPC URL
         grpc_url = qdrant_url
         logger.debug(f"Converting Qdrant URL: {qdrant_url} -> {grpc_url}")
-        self.qdrant = QdrantClient(url=grpc_url, prefer_grpc=True)
+        self.qdrant = AsyncQdrantClient(url=grpc_url, prefer_grpc=True)
         init_elapsed = time.time() - init_start
-        logger.info(f"Initialized Qdrant client in {init_elapsed:.3f}s: {grpc_url}")
+        logger.info(f"Initialized Async Qdrant client in {init_elapsed:.3f}s: {grpc_url}")
 
 
     async def process_job(
@@ -88,6 +93,9 @@ class VisualizationProcessor:
 
         logger.info(f"Fetched {len(vectors)} vectors")
 
+        # Get current event loop for running CPU-bound tasks
+        loop = asyncio.get_running_loop()
+
         # Apply UMAP dimensionality reduction (20-50%)
         if progress_callback:
             await progress_callback("applying_umap", 25)
@@ -96,7 +104,8 @@ class VisualizationProcessor:
             f"min_dist={job.visualization_config.min_dist}, "
             f"metric={job.visualization_config.metric}"
         )
-        umap_vectors = await self._apply_umap(vectors, job)
+        # Run UMAP in executor to avoid blocking the event loop
+        umap_vectors = await loop.run_in_executor(None, self._run_umap, vectors, job)
         if progress_callback:
             await progress_callback("applying_umap", 50)
 
@@ -107,7 +116,8 @@ class VisualizationProcessor:
             f"Applying HDBSCAN: min_cluster_size={job.visualization_config.min_cluster_size}, "
             f"min_samples={job.visualization_config.min_samples}"
         )
-        labels = await self._apply_hdbscan(umap_vectors, job)
+        # Run HDBSCAN in executor
+        labels = await loop.run_in_executor(None, self._run_hdbscan, umap_vectors, job)
         if progress_callback:
             await progress_callback("clustering", 70)
 
@@ -124,7 +134,10 @@ class VisualizationProcessor:
         if progress_callback:
             await progress_callback("generating_html", 88)
         logger.info("Generating interactive visualization with datamapplot")
-        html_content = await self._generate_visualization(
+        # datamapplot can be CPU intensive too, run in executor
+        html_content = await loop.run_in_executor(
+            None, 
+            self._run_generate_visualization,
             umap_vectors, labels, cluster_labels, texts, job.visualization_config
         )
         if progress_callback:
@@ -148,14 +161,25 @@ class VisualizationProcessor:
             f"Visualization processing complete: {result['point_count']} points, "
             f"{result['cluster_count']} clusters"
         )
-
         return result
+
+    def _run_umap(self, vectors, job):
+        """Synchronous wrapper for UMAP."""
+        return asyncio.run(self._apply_umap(vectors, job)) if asyncio.iscoroutinefunction(self._apply_umap) else self._apply_umap_sync(vectors, job)
+    
+    def _run_hdbscan(self, vectors, job):
+        """Synchronous wrapper for HDBSCAN."""
+        return self._apply_hdbscan_sync(vectors, job)
+
+    def _run_generate_visualization(self, vectors, labels, cluster_labels, texts, config):
+        """Synchronous wrapper for visualization generation."""
+        return self._generate_visualization_sync(vectors, labels, cluster_labels, texts, config)
 
     async def _fetch_vectors_from_qdrant(
         self, collection_name: str, owner: str
     ) -> tuple[np.ndarray, list[str], list[str]]:
         """
-        Fetch all vectors from a Qdrant collection.
+        Fetch vectors from a Qdrant collection, with sampling if too large.
 
         Args:
             collection_name: Qdrant collection name
@@ -163,96 +187,110 @@ class VisualizationProcessor:
 
         Returns:
             Tuple of (vectors array, point IDs, hover_texts)
-            hover_texts format: "<title>\n\n<text>" if title exists, otherwise just text
-
-        Raises:
-            Exception: If collection not found or fetch fails
         """
         fetch_start = time.time()
         try:
             # Get collection info
             logger.debug(f"Getting collection info for {collection_name}")
-            collection_info = self.qdrant.get_collection(collection_name)
+            collection_info = await self.qdrant.get_collection(collection_name)
             point_count = collection_info.points_count
             logger.debug(f"Collection {collection_name} has {point_count} points")
 
-            # Scroll all points
             vectors = []
             ids = []
             texts = []
 
-            offset = None
-            limit = 1000  # Batch size for scrolling
-            batches = 0
-            prev_offset = None
+            # If collection is small enough, fetch all
+            if point_count <= MAX_POINTS:
+                logger.info(f"Collection size {point_count} <= {MAX_POINTS}. Fetching all points.")
+                offset = None
+                limit = 1000  # Batch size for scrolling
+                batches = 0
+                prev_offset = None
 
-            while True:
-                points, offset = self.qdrant.scroll(
-                    collection_name=collection_name,
-                    limit=limit,
-                    offset=offset,
-                    with_vectors=True,
-                    with_payload=True,
-                )
-
-                # Check if we've reached the end (no points returned)
-                if not points:
-                    logger.debug("Scroll complete: no points returned")
-                    break
-
-                batches += 1
-                logger.debug(
-                    f"Fetched batch {batches}: {len(points)} points, next offset: {offset}"
-                )
-
-                for point in points:
-                    vectors.append(point.vector)
-                    ids.append(str(point.id))
-                    # Extract both title and text from payload for hover text
-                    hover_text = ""
-                    if point.payload:
-                        title = point.payload.get("item_title", "")
-                        text = point.payload.get("text", "")
-                        # Format as "<title>\n\n<text>"
-                        if title and text:
-                            hover_text = f"{title}\n\n{text}"
-                        elif title:
-                            hover_text = title
-                        else:
-                            hover_text = text
-                    texts.append(hover_text)
-
-                # Check if there are more pages (offset is None means this was the last page)
-                if offset is None:
-                    logger.debug(
-                        "Scroll complete: offset is None (last page processed)"
+                while True:
+                    points, offset = await self.qdrant.scroll(
+                        collection_name=collection_name,
+                        limit=limit,
+                        offset=offset,
+                        with_vectors=True,
+                        with_payload=True,
                     )
-                    break
 
-                # Prevent infinite loops if offset isn't changing
-                if offset == prev_offset:
-                    logger.warning(
-                        f"Offset not advancing: {offset}. Breaking to prevent infinite loop."
+                    if not points:
+                        break
+
+                    batches += 1
+                    for point in points:
+                        vectors.append(point.vector)
+                        ids.append(str(point.id))
+                        texts.append(self._extract_hover_text(point.payload))
+
+                    if offset is None or offset == prev_offset:
+                        break
+                    prev_offset = offset
+
+            else:
+                # Collection too large: Fetch all IDs first, then sample, then fetch details
+                logger.info(f"Collection size {point_count} > {MAX_POINTS}. Sampling {MAX_POINTS} random points.")
+                
+                # Fetch all IDs (lightweight)
+                all_ids = []
+                offset = None
+                limit = 5000 # Larger batch for IDs
+                prev_offset = None
+                
+                while True:
+                    points, offset = await self.qdrant.scroll(
+                        collection_name=collection_name,
+                        limit=limit,
+                        offset=offset,
+                        with_vectors=False,
+                        with_payload=False,
                     )
-                    break
-
-                prev_offset = offset
+                    
+                    if not points:
+                        break
+                        
+                    for point in points:
+                        all_ids.append(point.id)
+                        
+                    if offset is None or offset == prev_offset:
+                        break
+                    prev_offset = offset
+                    
+                # Sample IDs
+                if len(all_ids) > MAX_POINTS:
+                    sampled_ids = random.sample(all_ids, MAX_POINTS)
+                else:
+                    sampled_ids = all_ids
+                    
+                logger.info(f"Sampled {len(sampled_ids)} IDs. Fetching vectors...")
+                
+                # Retrieve sampled points in batches
+                batch_size = 500
+                for i in range(0, len(sampled_ids), batch_size):
+                    batch_ids = sampled_ids[i:i+batch_size]
+                    points = await self.qdrant.retrieve(
+                        collection_name=collection_name,
+                        ids=batch_ids,
+                        with_vectors=True,
+                        with_payload=True
+                    )
+                    
+                    for point in points:
+                        vectors.append(point.vector)
+                        ids.append(str(point.id))
+                        texts.append(self._extract_hover_text(point.payload))
 
             # Convert to numpy array
             vectors_array = np.array(vectors, dtype=np.float32)
 
             fetch_elapsed = time.time() - fetch_start
 
-            # Validate we fetched the expected number of points
-            if len(vectors) != point_count:
-                logger.warning(
-                    f"Point count mismatch: expected {point_count}, fetched {len(vectors)}. "
-                    f"This may indicate incomplete data retrieval."
-                )
-
             logger.info(
                 f"Fetched {len(vectors)} vectors from {collection_name} for owner {owner} "
-                f"in {fetch_elapsed:.3f}s ({batches} batches, expected {point_count})"
+                f"in {fetch_elapsed:.3f}s"
             )
             return vectors_array, ids, texts
 
@@ -264,19 +302,25 @@ class VisualizationProcessor:
             )
             raise
 
-    async def _apply_umap(
+    def _extract_hover_text(self, payload):
+        """Helper to extract hover text from payload."""
+        hover_text = ""
+        if payload:
+            title = payload.get("item_title", "")
+            text = payload.get("text", "")
+            if title and text:
+                hover_text = f"{title}\n\n{text}"
+            elif title:
+                hover_text = title
+            else:
+                hover_text = text
+        return hover_text
+
+    def _apply_umap_sync(
         self, vectors: np.ndarray, job: VisualizationTransformJob
     ) -> np.ndarray:
-        """
-        Apply UMAP dimensionality reduction.
+        """Sync version of apply_umap for executor."""
 
-        Args:
-            vectors: Input vectors
-            job: Visualization job with UMAP config
-
-        Returns:
-            UMAP-reduced vectors
-        """
         umap_start = time.time()
         try:
             logger.debug(f"Initializing UMAP with {vectors.shape[0]} vectors")
@@ -306,11 +350,11 @@ class VisualizationProcessor:
             )
             raise
 
-    async def _apply_hdbscan(
+    def _apply_hdbscan_sync(
         self, vectors: np.ndarray, job: VisualizationTransformJob
     ) -> np.ndarray:
         """
-        Apply HDBSCAN clustering.
+        Apply HDBSCAN clustering (Synchronous).
 
         Args:
             vectors: Input vectors (typically UMAP output)
@@ -508,7 +552,7 @@ class VisualizationProcessor:
             )
             raise
 
-    async def _generate_visualization(
+    def _generate_visualization_sync(
         self,
         vectors: np.ndarray,
         labels: np.ndarray,
@@ -517,7 +561,7 @@ class VisualizationProcessor:
         config: VisualizationConfig,
     ) -> str:
         """
-        Generate interactive visualization with datamapplot.
+        Generate interactive visualization with datamapplot (Synchronous).
 
         Args:
             vectors: reduced vectors

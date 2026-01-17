@@ -15,6 +15,7 @@ pub async fn initialize_jetstream(client: &Client, nats_config: &NatsConfig) -> 
     let jetstream = jetstream::new(client.clone());
     let num_replicas = nats_config.replicas as usize;
 
+    //TODO: Extract hardcoded values into environment variables or configuration files
     ensure_stream(
         &jetstream,
         "COLLECTION_TRANSFORMS",

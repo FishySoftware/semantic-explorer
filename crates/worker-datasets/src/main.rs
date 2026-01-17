@@ -1,11 +1,7 @@
-use crate::job::WorkerContext;
 use anyhow::Result;
+use semantic_explorer_core::worker::WorkerContext;
 use semantic_explorer_core::{storage::initialize_client, worker};
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
-mod embedder;
 mod job;
 
 #[tokio::main]
@@ -29,7 +25,6 @@ async fn main() -> Result<()> {
     let context = WorkerContext {
         s3_client,
         nats_client: nats_client.clone(),
-        qdrant_cache: Arc::new(Mutex::new(HashMap::new())),
     };
 
     // Configure and run worker
@@ -43,7 +38,6 @@ async fn main() -> Result<()> {
         stream_name: "DATASET_TRANSFORMS".to_string(),
         consumer_config: semantic_explorer_core::nats::create_vector_embed_consumer_config(),
         max_concurrent_jobs,
-        nats_client: Some(nats_client),
     };
 
     worker::run_worker(config, context, job::process_vector_job).await

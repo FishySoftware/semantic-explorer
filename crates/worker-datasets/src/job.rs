@@ -2,28 +2,14 @@ use anyhow::Result;
 use qdrant_client::Qdrant;
 use qdrant_client::qdrant::{CreateCollectionBuilder, Distance, VectorParams};
 use qdrant_client::qdrant::{PointStruct, UpsertPointsBuilder};
+use semantic_explorer_core::embedder;
 use semantic_explorer_core::models::{DatasetTransformJob, DatasetTransformResult};
 use semantic_explorer_core::observability::record_worker_job;
 use semantic_explorer_core::storage::get_file;
 use semantic_explorer_core::validation::{validate_bucket_name, validate_s3_key};
-use std::collections::HashMap;
-use std::sync::Arc;
+use semantic_explorer_core::worker::WorkerContext;
 use std::time::Instant;
-use tokio::sync::Mutex;
 use tracing::{error, info, instrument};
-
-use crate::embedder;
-
-type QdrantClientCache = Arc<Mutex<HashMap<String, Qdrant>>>;
-
-#[derive(Clone)]
-pub(crate) struct WorkerContext {
-    pub(crate) s3_client: aws_sdk_s3::Client,
-    pub(crate) nats_client: async_nats::Client,
-    /// Shared cache of Qdrant clients keyed by connection URL
-    /// Enables connection reuse across jobs
-    pub(crate) qdrant_cache: QdrantClientCache,
-}
 
 #[derive(serde::Deserialize)]
 pub(crate) struct BatchItem {
@@ -193,28 +179,11 @@ pub(crate) async fn process_vector_job(job: DatasetTransformJob, ctx: WorkerCont
         return Ok(());
     }
 
-    // Get or create Qdrant client from cache for connection reuse
-    let cache_key = format!(
-        "{}:{}",
-        job.vector_database_config.connection_url,
-        job.vector_database_config.api_key.as_deref().unwrap_or("")
-    );
-
-    let qdrant_client = {
-        let mut cache = ctx.qdrant_cache.lock().await;
-        if let Some(client) = cache.get(&cache_key) {
-            info!(qdrant_url = %job.vector_database_config.connection_url, "Reusing cached Qdrant client");
-            client.clone()
-        } else {
-            info!(qdrant_url = %job.vector_database_config.connection_url, "Creating new Qdrant client");
-            let client = Qdrant::from_url(&job.vector_database_config.connection_url)
-                .api_key(job.vector_database_config.api_key.clone())
-                .build()
-                .map_err(|e| anyhow::anyhow!("Failed to build Qdrant client: {e}"))?;
-            cache.insert(cache_key, client.clone());
-            client
-        }
-    };
+    // Create and reuse client instead of recreating for each job
+    let qdrant_client = Qdrant::from_url(&job.vector_database_config.connection_url)
+        .api_key(job.vector_database_config.api_key.clone())
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to build Qdrant client: {e}"))?;
 
     let embedding_size = embeddings
         .first()

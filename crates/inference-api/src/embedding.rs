@@ -3,22 +3,136 @@ use once_cell::sync::OnceCell;
 use ort::ep::CUDA;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tokio::sync::Mutex as TokioMutex;
 use tracing::{error, info};
 
 use crate::config::ModelConfig;
 use crate::errors::InferenceError;
 
 /// Type alias for the embedding model cache to reduce complexity
-type EmbeddingCache = Arc<Mutex<HashMap<String, Arc<TokioMutex<TextEmbedding>>>>>;
+/// Using std::sync::Mutex for the inner lock to allow blocking operations in spawn_blocking
+type EmbeddingCache = Arc<Mutex<HashMap<String, Arc<Mutex<TextEmbedding>>>>>;
 
 /// Global embedding model cache - using per-model mutexes for concurrent access
-/// The outer Mutex protects the HashMap structure, while each model has its own Tokio Mutex
 static EMBEDDING_MODELS: OnceCell<EmbeddingCache> = OnceCell::new();
 
-/// Initialize the embedding model cache
-pub fn init_cache() {
-    EMBEDDING_MODELS.get_or_init(|| Arc::new(Mutex::new(HashMap::new())));
+/// Initialize the embedding model cache and pre-load allowed models
+///
+/// This function:
+/// 1. Takes the ModelConfig to determine which models to load
+/// 2. Gets a list of models to load (all supported or filtered by allowed_models)
+/// 3. Loads each model from the filesystem cache, fetching if needed
+/// 4. Pre-populates the cache at startup to validate model availability
+pub fn init_cache(config: &ModelConfig) {
+    let cache = EMBEDDING_MODELS.get_or_init(|| Arc::new(Mutex::new(HashMap::new())));
+
+    // Get list of models to load
+    let models_to_load = get_models_to_load(config);
+
+    if models_to_load.is_empty() {
+        tracing::info!("No embedding models to pre-load");
+        return;
+    }
+
+    tracing::info!(
+        models = ?models_to_load,
+        count = models_to_load.len(),
+        "Pre-loading embedding models at startup"
+    );
+
+    let mut cache_guard = match cache.lock() {
+        Ok(guard) => guard,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to acquire embedding cache lock during initialization");
+            return;
+        }
+    };
+
+    for model_id in models_to_load {
+        match resolve_embedding_model(&model_id) {
+            Ok(embedding_model) => match create_text_embedding(embedding_model, config) {
+                Ok(text_embedding) => {
+                    cache_guard.insert(model_id.clone(), Arc::new(Mutex::new(text_embedding)));
+                    tracing::info!(model_id = %model_id, "Pre-loaded embedding model");
+                }
+                Err(e) => {
+                    tracing::error!(
+                        model_id = %model_id,
+                        error = %e,
+                        "Failed to load embedding model during initialization"
+                    );
+                }
+            },
+            Err(e) => {
+                tracing::error!(
+                    model_id = %model_id,
+                    error = %e,
+                    "Failed to resolve embedding model during initialization"
+                );
+            }
+        }
+    }
+}
+
+/// Get the list of embedding models to load based on configuration
+fn get_models_to_load(config: &ModelConfig) -> Vec<String> {
+    if !config.allowed_models.is_empty() {
+        // Use allowed models list if configured
+        config.allowed_models.clone()
+    } else {
+        // Use all supported embedding models if no restrictions
+        get_all_supported_embedding_models()
+    }
+}
+
+/// Get all supported embedding model IDs
+fn get_all_supported_embedding_models() -> Vec<String> {
+    vec![
+        "Alibaba-NLP/gte-base-en-v1.5".to_string(),
+        "Alibaba-NLP/gte-base-en-v1.5-Q".to_string(),
+        "Alibaba-NLP/gte-large-en-v1.5".to_string(),
+        "Alibaba-NLP/gte-large-en-v1.5-Q".to_string(),
+        "BAAI/bge-base-en-v1.5".to_string(),
+        "BAAI/bge-base-en-v1.5-Q".to_string(),
+        "BAAI/bge-large-en-v1.5".to_string(),
+        "BAAI/bge-large-en-v1.5-Q".to_string(),
+        "BAAI/bge-large-zh-v1.5".to_string(),
+        "BAAI/bge-m3".to_string(),
+        "BAAI/bge-small-en-v1.5".to_string(),
+        "BAAI/bge-small-en-v1.5-Q".to_string(),
+        "BAAI/bge-small-zh-v1.5".to_string(),
+        "intfloat/multilingual-e5-base".to_string(),
+        "intfloat/multilingual-e5-large".to_string(),
+        "intfloat/multilingual-e5-small".to_string(),
+        "jinaai/jina-embeddings-v2-base-code".to_string(),
+        "jinaai/jina-embeddings-v2-base-en".to_string(),
+        "lightonai/modernbert-embed-large".to_string(),
+        "mixedbread-ai/mxbai-embed-large-v1".to_string(),
+        "mixedbread-ai/mxbai-embed-large-v1-Q".to_string(),
+        "nomic-ai/nomic-embed-text-v1".to_string(),
+        "nomic-ai/nomic-embed-text-v1.5".to_string(),
+        "nomic-ai/nomic-embed-text-v1.5-Q".to_string(),
+        "onnx-community/embeddinggemma-300m-ONNX".to_string(),
+        "Qdrant/clip-ViT-B-32-text".to_string(),
+        "sentence-transformers/all-MiniLM-L12-v2".to_string(),
+        "sentence-transformers/all-MiniLM-L12-v2-Q".to_string(),
+        "sentence-transformers/all-MiniLM-L6-v2".to_string(),
+        "sentence-transformers/all-MiniLM-L6-v2-Q".to_string(),
+        "sentence-transformers/all-mpnet-base-v2".to_string(),
+        "sentence-transformers/paraphrase-MiniLM-L6-v2".to_string(),
+        "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2".to_string(),
+        "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2-Q".to_string(),
+        "sentence-transformers/paraphrase-multilingual-mpnet-base-v2".to_string(),
+        "snowflake/snowflake-arctic-embed-l".to_string(),
+        "snowflake/snowflake-arctic-embed-l-Q".to_string(),
+        "snowflake/snowflake-arctic-embed-m".to_string(),
+        "snowflake/snowflake-arctic-embed-m-long".to_string(),
+        "snowflake/snowflake-arctic-embed-m-long-Q".to_string(),
+        "snowflake/snowflake-arctic-embed-m-Q".to_string(),
+        "snowflake/snowflake-arctic-embed-s".to_string(),
+        "snowflake/snowflake-arctic-embed-s-Q".to_string(),
+        "snowflake/snowflake-arctic-embed-xs".to_string(),
+        "snowflake/snowflake-arctic-embed-xs-Q".to_string(),
+    ]
 }
 
 /// Resolve a model ID string to a fastembed EmbeddingModel enum
@@ -141,10 +255,7 @@ pub async fn generate_embeddings(
             info!(model_id = %model_id, "Loading embedding model on demand");
             let embedding_model = resolve_embedding_model(model_id)?;
             let text_embedding = create_text_embedding(embedding_model, config)?;
-            cache.insert(
-                model_id.to_string(),
-                Arc::new(TokioMutex::new(text_embedding)),
-            );
+            cache.insert(model_id.to_string(), Arc::new(Mutex::new(text_embedding)));
         }
 
         Arc::clone(
@@ -154,22 +265,37 @@ pub async fn generate_embeddings(
         )
     }; // HashMap lock released here
 
-    // Lock only this specific model for inference - allows concurrent requests to different models
-    let mut text_embedding = model_mutex.lock().await;
-
-    // Use config batch size for faster processing
+    // Generate embeddings in a blocking task to avoid blocking the async runtime
+    let texts_clone = texts.clone();
     let batch_size = Some(config.max_batch_size);
-    text_embedding.embed(texts, batch_size).map_err(|e| {
-        error!(error = %e, "Embedding generation failed");
-        InferenceError::Embedding(e.to_string())
+    let model_clone = model_mutex.clone();
+
+    tokio::task::spawn_blocking(move || {
+        let mut text_embedding = model_clone.lock().map_err(|e| {
+            InferenceError::Internal(format!("Failed to acquire model lock: {}", e))
+        })?;
+
+        text_embedding.embed(texts_clone, batch_size).map_err(|e| {
+            error!(error = %e, "Embedding generation failed");
+            InferenceError::Embedding(e.to_string())
+        })
     })
+    .await
+    .map_err(|e| InferenceError::Internal(format!("Blocking task join error: {}", e)))?
 }
 
 /// Check if models are loaded and ready
 pub fn is_ready() -> bool {
     EMBEDDING_MODELS
         .get()
-        .and_then(|m| m.lock().ok())
+        .and_then(|m| {
+            m.lock()
+                .map_err(|e| {
+                    error!("Failed to lock embedding models cache: {}", e);
+                    e
+                })
+                .ok()
+        })
         .map(|cache| !cache.is_empty())
         .unwrap_or(false)
 }

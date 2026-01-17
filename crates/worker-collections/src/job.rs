@@ -3,17 +3,12 @@ use semantic_explorer_core::models::{CollectionTransformJob, CollectionTransform
 use semantic_explorer_core::observability::record_worker_job;
 use semantic_explorer_core::storage::{DocumentUpload, get_file_with_size_check, upload_document};
 use semantic_explorer_core::validation::{validate_bucket_name, validate_s3_key};
+use semantic_explorer_core::worker::WorkerContext;
 use std::time::Instant;
 use tracing::{error, info, instrument};
 
 use crate::chunk::{ChunkingService, config::ChunkingConfig};
 use crate::extract::{ExtractionService, config::ExtractionConfig};
-
-#[derive(Clone)]
-pub(crate) struct WorkerContext {
-    pub(crate) s3_client: aws_sdk_s3::Client,
-    pub(crate) nats_client: async_nats::Client,
-}
 
 #[instrument(skip(ctx), fields(job_id = %job.job_id, collection_transform_id = %job.collection_transform_id, file = %job.source_file_key))]
 pub(crate) async fn process_file_job(

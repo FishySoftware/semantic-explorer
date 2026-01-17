@@ -1,12 +1,14 @@
+use aws_sdk_s3::primitives::ByteStream;
 use serde::Serialize;
 use utoipa::ToSchema;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct DocumentUpload {
     pub(crate) collection_id: String,
     pub(crate) name: String,
-    pub(crate) content: Vec<u8>,
+    pub(crate) content: ByteStream,
     pub(crate) mime_type: String,
+    pub(crate) size: u64,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -25,4 +27,10 @@ pub(crate) struct PaginatedFiles {
     pub(crate) has_more: bool,
     pub(crate) continuation_token: Option<String>,
     pub(crate) total_count: Option<i64>,
+}
+
+#[derive(Debug)]
+pub(crate) struct S3FileList {
+    pub(crate) files: Vec<CollectionFile>,
+    pub(crate) continuation_token: Option<String>,
 }

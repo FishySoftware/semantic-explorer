@@ -21,9 +21,9 @@ CREATE TABLE IF NOT EXISTS collections (
     details             TEXT                     NULL,
     owner_id            TEXT                     NOT NULL,
     owner_display_name  TEXT                     NOT NULL,
-    bucket              TEXT                     NOT NULL,
     tags                TEXT[]                   NOT NULL DEFAULT '{}',
     is_public           BOOLEAN                  NOT NULL DEFAULT FALSE,
+    file_count          BIGINT                   NOT NULL DEFAULT 0,
     created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
@@ -81,18 +81,6 @@ CREATE INDEX IF NOT EXISTS idx_dataset_items_name
 -- Index for efficient ORDER BY item_id DESC pagination within a dataset
 CREATE INDEX IF NOT EXISTS idx_dataset_items_dataset_item_desc 
   ON dataset_items(dataset_id, item_id DESC);
-
--- ============================================================================
--- Collection File Count Cache
--- ============================================================================
-
-CREATE TABLE IF NOT EXISTS collection_file_counts (
-    collection_id   INTEGER                  NOT NULL PRIMARY KEY REFERENCES collections(collection_id) ON DELETE CASCADE,
-    file_count      BIGINT                   NOT NULL DEFAULT 0,
-    cached_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_collection_file_counts_cached_at ON collection_file_counts(cached_at);
 
 -- ============================================================================
 -- Dataset Stats Triggers

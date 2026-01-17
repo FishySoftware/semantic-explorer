@@ -37,7 +37,7 @@ pub struct DatasetTransformJob {
     pub bucket: String,
     pub dataset_id: i32,
     pub dataset_transform_id: i32,
-    pub embedded_dataset_id: i32, // NEW: Identifies which embedded dataset this job is for
+    pub embedded_dataset_id: i32,
     pub owner_id: String,
     pub embedder_config: EmbedderConfig,
     pub vector_database_config: VectorDatabaseConfig,
@@ -79,7 +79,6 @@ pub struct EmbedderConfig {
 }
 
 impl EmbedderConfig {
-    /// Create a new EmbedderConfig
     pub fn new(
         provider: String,
         base_url: String,

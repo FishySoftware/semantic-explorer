@@ -1,4 +1,4 @@
-use actix_multipart::form::{MultipartForm, bytes::Bytes};
+use actix_multipart::form::{MultipartForm, tempfile::TempFile};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use utoipa::ToSchema;
@@ -33,7 +33,6 @@ pub(crate) struct Collection {
     pub(crate) details: Option<String>,
     pub(crate) owner_id: String,
     pub(crate) owner_display_name: String,
-    pub(crate) bucket: String,
     pub(crate) tags: Vec<String>,
     pub(crate) is_public: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -43,15 +42,20 @@ pub(crate) struct Collection {
     #[schema(value_type = Option<String>, format = DateTime)]
     pub(crate) updated_at: Option<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>>,
     #[sqlx(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) file_count: Option<i64>,
+    pub(crate) file_count: i64,
+}
+
+impl Collection {
+    pub(crate) fn s3_folder_key(&self) -> String {
+        format!("collections/{}/", self.collection_id)
+    }
 }
 
 #[derive(MultipartForm, ToSchema)]
 pub(crate) struct CollectionUpload {
     #[multipart(rename = "files", limit = "1024MB")]
     #[schema(value_type = Vec<String>, format = Binary)]
-    pub(crate) files: Vec<Bytes>,
+    pub(crate) files: Vec<TempFile>,
 }
 
 #[derive(Deserialize, ToSchema)]

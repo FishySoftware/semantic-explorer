@@ -7,7 +7,7 @@ use semantic_explorer_core::observability::record_storage_operation;
 use std::time::Instant;
 use tracing::warn;
 
-use crate::storage::s3::models::{CollectionFile, DocumentUpload, PaginatedFiles};
+use crate::storage::s3::models::{CollectionFile, DocumentUpload, S3FileList};
 
 /// Initialize S3 client using shared configuration from core
 /// Supports both static credentials and IAM roles
@@ -17,14 +17,14 @@ pub(crate) async fn initialize_client() -> Result<aws_sdk_s3::Client> {
 
 /// Upload document to collection using single-bucket architecture
 /// Uses: S3_BUCKET_NAME/collections/{collection_id}/{filename}
-#[tracing::instrument(name = "s3.upload_document", skip(client, bucket_name, document), fields(storage.system = "s3", collection_id = %document.collection_id, key = %document.name, size = document.content.len()))]
+#[tracing::instrument(name = "s3.upload_document", skip(client, bucket_name, document), fields(storage.system = "s3", collection_id = %document.collection_id, key = %document.name, size = document.size))]
 pub(crate) async fn upload_document(
     client: &Client,
     bucket_name: &str,
     document: DocumentUpload,
 ) -> Result<()> {
     let start = Instant::now();
-    let file_size = document.content.len() as u64;
+    let file_size = document.size;
     let key = format!("collections/{}/{}", document.collection_id, document.name);
 
     tracing::debug!(
@@ -40,7 +40,7 @@ pub(crate) async fn upload_document(
         .put_object()
         .bucket(bucket_name)
         .key(&key)
-        .body(document.content.into())
+        .body(document.content)
         .content_type(&document.mime_type)
         .send()
         .await;
@@ -82,7 +82,7 @@ pub(crate) async fn list_files(
     collection_id: &str,
     page_size: i32,
     continuation_token: Option<&str>,
-) -> Result<PaginatedFiles> {
+) -> Result<S3FileList> {
     let start = Instant::now();
     let prefix = format!("collections/{}/", collection_id);
 
@@ -182,13 +182,9 @@ pub(crate) async fn list_files(
         "Successfully listed files for collection"
     );
 
-    Ok(PaginatedFiles {
+    Ok(S3FileList {
         files,
-        page: 0,
-        page_size,
-        has_more,
         continuation_token: next_cursor,
-        total_count: None,
     })
 }
 
@@ -413,41 +409,32 @@ pub(crate) async fn count_collection_files(
     Ok(count)
 }
 
-pub(crate) async fn copy_bucket_files(
+/// Copy files from one collection prefix to another within the same bucket
+/// Uses single-bucket architecture: S3_BUCKET_NAME/collections/{source_collection_id}/* -> S3_BUCKET_NAME/collections/{dest_collection_id}/*
+pub(crate) async fn copy_collection_files(
     s3_client: &Client,
-    source_bucket: &str,
-    destination_bucket: &str,
+    bucket_name: &str,
+    source_collection_id: i32,
+    destination_collection_id: i32,
 ) -> Result<usize> {
     let start = Instant::now();
     let mut copied_count = 0;
 
-    // First, create the destination bucket
-    match s3_client
-        .create_bucket()
-        .bucket(destination_bucket)
-        .send()
-        .await
-    {
-        Ok(_) => {
-            tracing::debug!(
-                bucket = %destination_bucket,
-                "Successfully created destination bucket"
-            );
-        }
-        Err(e) => {
-            tracing::error!(
-                bucket = %destination_bucket,
-                error = %e,
-                "Failed to create destination bucket - cannot proceed"
-            );
-            return Err(e.into());
-        }
-    }
+    let source_prefix = format!("collections/{}/", source_collection_id);
+    let dest_prefix = format!("collections/{}/", destination_collection_id);
 
-    // List all objects in source bucket
+    tracing::debug!(
+        bucket = %bucket_name,
+        source_prefix = %source_prefix,
+        dest_prefix = %dest_prefix,
+        "Copying collection files within bucket"
+    );
+
+    // List all objects in source collection prefix
     let mut paginator = s3_client
         .list_objects_v2()
-        .bucket(source_bucket)
+        .bucket(bucket_name)
+        .prefix(&source_prefix)
         .into_paginator()
         .send();
 
@@ -456,41 +443,46 @@ pub(crate) async fn copy_bucket_files(
             Ok(output) => output,
             Err(e) => {
                 tracing::error!(
-                    bucket = %source_bucket,
+                    bucket = %bucket_name,
+                    source_prefix = %source_prefix,
                     error = %e,
-                    "Failed to list objects in source bucket"
+                    "Failed to list objects in source collection prefix"
                 );
                 return Err(e.into());
             }
         };
 
         for obj in output.contents() {
-            let key = obj.key().unwrap_or_default();
-            let copy_source = format!("{}/{}", source_bucket, key);
+            let source_key = obj.key().unwrap_or_default();
 
-            // Copy the object
+            // Extract the filename from the source key (after the prefix)
+            let filename = source_key
+                .strip_prefix(&source_prefix)
+                .unwrap_or(source_key);
+            let dest_key = format!("{}{}", dest_prefix, filename);
+            let copy_source = format!("{}/{}", bucket_name, source_key);
+
+            // Copy the object within the same bucket
             match s3_client
                 .copy_object()
                 .copy_source(&copy_source)
-                .bucket(destination_bucket)
-                .key(key)
+                .bucket(bucket_name)
+                .key(&dest_key)
                 .send()
                 .await
             {
                 Ok(_) => {
                     copied_count += 1;
                     tracing::debug!(
-                        key = %key,
-                        source = %source_bucket,
-                        destination = %destination_bucket,
+                        source_key = %source_key,
+                        dest_key = %dest_key,
                         "Successfully copied file"
                     );
                 }
                 Err(e) => {
                     tracing::error!(
-                        key = %key,
-                        source = %source_bucket,
-                        destination = %destination_bucket,
+                        source_key = %source_key,
+                        dest_key = %dest_key,
                         error = %e,
                         "Failed to copy file"
                     );
@@ -501,18 +493,20 @@ pub(crate) async fn copy_bucket_files(
     }
 
     let duration = start.elapsed().as_secs_f64();
-    record_storage_operation("copy_bucket", duration, None, true);
+    record_storage_operation("copy_collection", duration, None, true);
 
     tracing::info!(
-        source_bucket = %source_bucket,
-        destination_bucket = %destination_bucket,
+        bucket = %bucket_name,
+        source_collection_id = %source_collection_id,
+        dest_collection_id = %destination_collection_id,
         copied_count = copied_count,
         duration_ms = duration * 1000.0,
-        "Successfully copied all files from source to destination bucket"
+        "Successfully copied all files from source to destination collection prefix"
     );
 
     Ok(copied_count)
 }
+
 /// Empty all files in a collection using single-bucket architecture
 /// Uses: S3_BUCKET_NAME/collections/{collection_id}/
 #[tracing::instrument(name = "s3.empty_collection", skip(client, bucket_name), fields(storage.system = "s3", collection_id = %collection_id))]

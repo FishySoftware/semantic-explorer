@@ -82,7 +82,10 @@ pub fn initialize(tls_config: &crate::config::TlsConfig) -> Result<()> {
 /// Optionally loads CA certificate (truststore) if configured or default exists
 /// Optionally loads client certificates for mTLS if CLIENT_MTLS_ENABLED=true
 fn build_http_client_from_env() -> Result<reqwest::Client> {
-    let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(60));
+    let mut builder = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .pool_max_idle_per_host(10)
+        .pool_idle_timeout(Duration::from_secs(90));
 
     // Load CA certificate if explicitly configured or default exists
     let ca_cert_path = match env::var("TLS_CA_CERT_PATH") {

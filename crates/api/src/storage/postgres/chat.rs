@@ -4,7 +4,9 @@ use sqlx::{Pool, Postgres};
 use std::time::Instant;
 use uuid::Uuid;
 
-use crate::chat::models::{ChatMessage, ChatSession, CreateChatSessionRequest, RetrievedDocument};
+use crate::chat::models::{
+    ChatMessage, ChatSession, ChatSessions, CreateChatSessionRequest, RetrievedDocument,
+};
 use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::observability::record_database_query;
 
@@ -159,7 +161,7 @@ pub(crate) async fn get_chat_session(
 pub(crate) async fn get_chat_sessions(
     pool: &Pool<Postgres>,
     owner_id: &str,
-) -> Result<Vec<ChatSession>> {
+) -> Result<ChatSessions> {
     let start = Instant::now();
 
     let mut tx = pool.begin().await?;
@@ -175,7 +177,7 @@ pub(crate) async fn get_chat_sessions(
 
     let sessions = result?;
     tx.commit().await?;
-    Ok(sessions)
+    Ok(ChatSessions { sessions })
 }
 
 #[tracing::instrument(name = "database.delete_chat_session", skip(pool), fields(database.system = "postgresql", database.operation = "DELETE", owner_id = %owner_id))]
@@ -240,12 +242,18 @@ pub(crate) async fn get_chat_messages(
         .bind(session_id)
         .fetch_all(pool)
         .await;
-
     let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "chat_messages", duration, success);
-
-    Ok(result?)
+    match result {
+        Ok(messages) => {
+            record_database_query("SELECT", "chat_messages", duration, true);
+            Ok(messages)
+        }
+        Err(e) => {
+            record_database_query("SELECT", "chat_messages", duration, false);
+            tracing::error!(error = %e, session_id = %session_id, "failed to fetch chat messages");
+            Err(e.into())
+        }
+    }
 }
 
 #[tracing::instrument(name = "database.get_llm_details", skip(pool, encryption), fields(database.system = "postgresql", database.operation = "SELECT"))]

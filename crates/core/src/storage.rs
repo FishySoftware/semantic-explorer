@@ -51,7 +51,6 @@ pub async fn initialize_client() -> Result<aws_sdk_s3::Client> {
         .region(Region::new(region))
         .endpoint_url(endpoint_url);
 
-    // Only set static credentials if both are provided
     if let (Ok(access_key), Ok(secret_key)) = (
         env::var("AWS_ACCESS_KEY_ID"),
         env::var("AWS_SECRET_ACCESS_KEY"),

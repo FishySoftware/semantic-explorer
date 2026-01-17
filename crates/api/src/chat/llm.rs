@@ -63,18 +63,6 @@ pub(crate) async fn generate_response(
             )
             .await?
         }
-        "anthropic" => {
-            call_anthropic_api(
-                &base_url,
-                api_key.as_deref(),
-                &model,
-                SYSTEM_PROMPT,
-                &user_prompt,
-                temperature,
-                max_tokens,
-            )
-            .await?
-        }
         "cohere" => {
             call_cohere_api(
                 &base_url,
@@ -153,61 +141,6 @@ async fn call_openai_api(
         .and_then(|m| m.get("content"))
         .and_then(|c| c.as_str())
         .ok_or_else(|| "unexpected OpenAI response format".to_string())?
-        .to_string();
-
-    Ok(response_text)
-}
-
-/// Call Anthropic API for chat completion
-async fn call_anthropic_api(
-    api_base: &str,
-    api_key: Option<&str>,
-    model: &str,
-    system_prompt: &str,
-    user_prompt: &str,
-    temperature: f32,
-    max_tokens: i32,
-) -> Result<String, String> {
-    let api_key = api_key.ok_or_else(|| "API key not configured for Anthropic".to_string())?;
-
-    let client = &*HTTP_CLIENT;
-
-    let request_body = serde_json::json!({
-        "model": model,
-        "messages": [
-            {"role": "user", "content": user_prompt}
-        ],
-        "system": system_prompt,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    });
-
-    let response = client
-        .post(format!("{}/messages", api_base))
-        .header("x-api-key", api_key)
-        .header("anthropic-version", "2023-06-01")
-        .header("Content-Type", "application/json")
-        .json(&request_body)
-        .send()
-        .await
-        .map_err(|e| format!("Anthropic API request failed: {e}"))?;
-
-    if !response.status().is_success() {
-        let error_text = response.text().await.unwrap_or_default();
-        return Err(format!("Anthropic API error: {}", error_text));
-    }
-
-    let response_json: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| format!("failed to parse Anthropic response: {e}"))?;
-
-    let response_text = response_json
-        .get("content")
-        .and_then(|c| c.get(0))
-        .and_then(|c| c.get("text"))
-        .and_then(|t| t.as_str())
-        .ok_or_else(|| "unexpected Anthropic response format".to_string())?
         .to_string();
 
     Ok(response_text)

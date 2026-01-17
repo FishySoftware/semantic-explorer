@@ -1,22 +1,14 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use once_cell::sync::Lazy;
+use tokio::time::sleep;
 
+use crate::http_client::HTTP_CLIENT;
 use crate::models::EmbedderConfig;
 
 const DEFAULT_OPENAI_BATCH_SIZE: usize = 2048;
 const DEFAULT_COHERE_BATCH_SIZE: usize = 96;
 const DEFAULT_LOCAL_BATCH_SIZE: usize = 256;
-
-static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(60))
-        .pool_max_idle_per_host(10)
-        .pool_idle_timeout(Duration::from_secs(90))
-        .build()
-        .expect("Failed to build HTTP client for embedder")
-});
 
 fn get_inference_api_url() -> String {
     std::env::var("INFERENCE_API_URL").unwrap_or_else(|_| "http://localhost:8090".to_string())
@@ -134,6 +126,7 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
         }
     }
 
+    //TODO: make configurable with environment variable
     let max_retries = 3;
     let mut last_error = None;
 
@@ -145,7 +138,7 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
                 delay_secs = delay.as_secs(),
                 "Retrying embedder request after transient error"
             );
-            tokio::time::sleep(delay).await;
+            sleep(delay).await;
         }
 
         let request = req
