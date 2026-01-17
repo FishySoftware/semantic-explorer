@@ -58,8 +58,13 @@ pub struct QdrantConfig {
 #[derive(Debug, Clone)]
 pub struct S3Config {
     pub region: String,
-    pub access_key_id: String,
-    pub secret_access_key: String,
+    /// Optional access key ID for static credentials
+    /// If None, the AWS SDK will use the default credential provider chain
+    /// (IAM roles, instance profiles, environment variables, etc.)
+    pub access_key_id: Option<String>,
+    /// Optional secret access key for static credentials
+    /// If None, the AWS SDK will use the default credential provider chain
+    pub secret_access_key: Option<String>,
     pub endpoint_url: String,
     /// Single S3 bucket for all collections (replaces per-collection buckets)
     pub bucket_name: String,
@@ -115,7 +120,8 @@ pub struct TlsConfig {
     /// Path to client private key file (PEM format)
     pub client_key_path: Option<String>,
     /// Path to CA certificate bundle for verifying server certificates
-    pub ca_cert_path: String,
+    /// If None, the system's native certificate store will be used
+    pub ca_cert_path: Option<String>,
 }
 
 /// OIDC session management configuration
@@ -258,12 +264,14 @@ impl S3Config {
         let default_max_download = (100 * 1024 * 1024).to_string(); // 100MB
         let default_max_upload = (1024 * 1024 * 1024).to_string(); // 1GB
 
+        // Make credentials optional to support IAM roles, instance profiles, etc.
+        let access_key_id = env::var("AWS_ACCESS_KEY_ID").ok();
+        let secret_access_key = env::var("AWS_SECRET_ACCESS_KEY").ok();
+
         Ok(Self {
             region: env::var("AWS_REGION").context("AWS_REGION is required")?,
-            access_key_id: env::var("AWS_ACCESS_KEY_ID")
-                .context("AWS_ACCESS_KEY_ID is required")?,
-            secret_access_key: env::var("AWS_SECRET_ACCESS_KEY")
-                .context("AWS_SECRET_ACCESS_KEY is required")?,
+            access_key_id,
+            secret_access_key,
             endpoint_url: env::var("AWS_ENDPOINT_URL").context("AWS_ENDPOINT_URL is required")?,
             bucket_name: env::var("S3_BUCKET_NAME").context("S3_BUCKET_NAME is required")?,
             max_download_size_bytes: env::var("S3_MAX_DOWNLOAD_SIZE_BYTES")
@@ -366,8 +374,20 @@ impl TlsConfig {
             .to_lowercase()
             == "true";
 
-        let ca_cert_path =
-            env::var("TLS_CA_CERT_PATH").unwrap_or_else(|_| "/app/certs/ca-bundle.crt".to_string());
+        // Load CA certificate path if explicitly configured or if the default path exists
+        let ca_cert_path = match env::var("TLS_CA_CERT_PATH") {
+            Ok(path) => Some(path),
+            Err(_) => {
+                // Check if default path exists
+                let default_path = "/app/certs/ca-bundle.crt";
+                if std::path::Path::new(default_path).exists() {
+                    Some(default_path.to_string())
+                } else {
+                    // Fall back to native system roots
+                    None
+                }
+            }
+        };
 
         // Validate server SSL configuration
         let (server_cert_path, server_key_path) = if server_ssl_enabled {

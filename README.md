@@ -32,7 +32,7 @@ Production-grade semantic exploration platform with advanced caching, real-time 
 
 ### Observability & Monitoring
 - 📊 **Prometheus Metrics** - Real-time metrics collection (error rates, latency, throughput)
-- 📈 **Grafana Dashboards** - Pre-configured dashboards for API, workers, and infrastructure
+- 📈 **Grafana Dashboards** - Pre-provisioned Service Operations, Infrastructure, Audit Events, and Quickwit Logs & Traces views (Prometheus + postgres-audit + Quickwit datasources)
 - 🔍 **OpenTelemetry Tracing** - Distributed tracing across all services
 
 ### Performance Optimizations
@@ -269,7 +269,7 @@ python src/main.py
 - **API**: http://localhost:8000 (API docs at `/api/openapi.json`)
 - **UI**: http://localhost:5173
 - **Prometheus**: http://localhost:9090
-- **Grafana**: http://localhost:3000 (default: admin/admin)
+- **Grafana**: http://localhost:3000 (default: admin/admin). Dashboards: Service Operations, Infrastructure, Audit Events, Quickwit Logs & Traces
 - **Qdrant**: http://localhost:6334
 
 ### Component Documentation

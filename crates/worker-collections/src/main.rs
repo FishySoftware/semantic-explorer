@@ -18,13 +18,16 @@ async fn main() -> Result<()> {
     // Initialize S3 client
     let s3_client = initialize_client().await?;
 
+    // Initialize NATS client
+    let nats_client = async_nats::connect(
+        &std::env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string()),
+    )
+    .await?;
+
     // Create worker context
     let context = WorkerContext {
         s3_client,
-        nats_client: async_nats::connect(
-            &std::env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string()),
-        )
-        .await?,
+        nats_client: nats_client.clone(),
     };
 
     // Configure and run worker
@@ -38,6 +41,7 @@ async fn main() -> Result<()> {
         stream_name: "COLLECTION_TRANSFORMS".to_string(),
         consumer_config: semantic_explorer_core::nats::create_transform_file_consumer_config(),
         max_concurrent_jobs,
+        nats_client: Some(nats_client),
     };
 
     worker::run_worker(config, context, job::process_file_job).await

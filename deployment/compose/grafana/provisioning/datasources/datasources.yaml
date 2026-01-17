@@ -33,3 +33,18 @@ datasources:
       timeout: 60
     editable: true
     uid: quickwit-logs
+
+  - name: Postgres-Audit
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    user: user
+    database: explorer
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: false
+    secureJsonData:
+      password: password
+    editable: true
+    uid: postgres-audit

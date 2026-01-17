@@ -3,13 +3,18 @@ use once_cell::sync::OnceCell;
 use ort::ep::CUDA;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use tokio::sync::Mutex as TokioMutex;
 use tracing::{error, info};
 
 use crate::config::ModelConfig;
 use crate::errors::InferenceError;
 
-/// Global reranker model cache - using Mutex since rerank() requires &mut self
-static RERANKER_MODELS: OnceCell<Arc<Mutex<HashMap<String, TextRerank>>>> = OnceCell::new();
+/// Type alias for the reranker model cache to reduce complexity
+type RerankerCache = Arc<Mutex<HashMap<String, Arc<TokioMutex<TextRerank>>>>>;
+
+/// Global reranker model cache - using per-model mutexes for concurrent access
+/// The outer Mutex protects the HashMap structure, while each model has its own Tokio Mutex
+static RERANKER_MODELS: OnceCell<RerankerCache> = OnceCell::new();
 
 /// Initialize the reranker model cache
 pub fn init_cache() {
@@ -43,10 +48,15 @@ fn create_text_rerank(
     model: RerankerModel,
     config: &ModelConfig,
 ) -> Result<TextRerank, InferenceError> {
-    // Configure CUDA execution provider
-    let cuda_provider = CUDA::default().build();
-
-    let mut options = RerankInitOptions::new(model).with_execution_providers(vec![cuda_provider]);
+    // Try CUDA execution provider, fall back to CPU if unavailable
+    let mut options = if std::env::var("CUDA_VISIBLE_DEVICES").is_ok() {
+        info!("CUDA available, using CUDA execution provider for reranking");
+        let cuda_provider = CUDA::default().build();
+        RerankInitOptions::new(model).with_execution_providers(vec![cuda_provider])
+    } else {
+        info!("CUDA not available, using CPU execution provider");
+        RerankInitOptions::new(model)
+    };
 
     // Set cache directory if HF_HOME is configured
     if let Some(ref hf_home) = config.hf_home {
@@ -60,7 +70,7 @@ fn create_text_rerank(
 }
 
 /// Rerank documents using the model cache
-pub fn rerank_documents(
+pub async fn rerank_documents(
     model_id: &str,
     config: &ModelConfig,
     query: &str,
@@ -79,22 +89,29 @@ pub fn rerank_documents(
         .get()
         .ok_or_else(|| InferenceError::Internal("Reranker cache not initialized".to_string()))?;
 
-    let models_clone = Arc::clone(models);
-    let mut cache = models_clone
-        .lock()
-        .map_err(|e| InferenceError::Internal(format!("Failed to acquire lock: {}", e)))?;
+    // Get or create the model with minimal lock time on the HashMap
+    let model_mutex = {
+        let mut cache = models
+            .lock()
+            .map_err(|e| InferenceError::Internal(format!("Failed to acquire lock: {}", e)))?;
 
-    // Load model if not in cache
-    if !cache.contains_key(model_id) {
-        info!(model_id = %model_id, "Loading reranker model on demand");
-        let reranker_model = resolve_reranker_model(model_id)?;
-        let text_rerank = create_text_rerank(reranker_model, config)?;
-        cache.insert(model_id.to_string(), text_rerank);
-    }
+        // Load model if not in cache
+        if !cache.contains_key(model_id) {
+            info!(model_id = %model_id, "Loading reranker model on demand");
+            let reranker_model = resolve_reranker_model(model_id)?;
+            let text_rerank = create_text_rerank(reranker_model, config)?;
+            cache.insert(model_id.to_string(), Arc::new(TokioMutex::new(text_rerank)));
+        }
 
-    let text_rerank = cache.get_mut(model_id).ok_or_else(|| {
-        InferenceError::Internal(format!("Model {} not found in cache", model_id))
-    })?;
+        Arc::clone(
+            cache
+                .get(model_id)
+                .ok_or_else(|| InferenceError::Internal(format!("Model {} not found", model_id)))?,
+        )
+    }; // HashMap lock released here
+
+    // Lock only this specific model for reranking - allows concurrent requests to different models
+    let mut text_rerank = model_mutex.lock().await;
 
     // Perform reranking
     text_rerank.rerank(query, texts, true, top_k).map_err(|e| {

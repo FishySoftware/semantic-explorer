@@ -176,11 +176,23 @@
 	}
 
 	// Refetch when search query changes
+	// Debounce search to avoid spamming API on every keystroke
+	let searchDebounceTimeout: ReturnType<typeof setTimeout> | null = null;
 	$effect(() => {
 		if (searchQuery !== undefined) {
 			currentOffset = 0; // Reset to first page when searching
-			fetchCollections();
+			if (searchDebounceTimeout) {
+				clearTimeout(searchDebounceTimeout);
+			}
+			searchDebounceTimeout = setTimeout(() => {
+				fetchCollections();
+			}, 300); // 300ms debounce
 		}
+		return () => {
+			if (searchDebounceTimeout) {
+				clearTimeout(searchDebounceTimeout);
+			}
+		};
 	});
 
 	onMount(() => {

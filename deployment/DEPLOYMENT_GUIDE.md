@@ -755,20 +755,37 @@ worker_ready
 
 ### Grafana Dashboards
 
-Two fresh dashboards are pre-provisioned:
+Four dashboards are pre-provisioned:
 
-**1. API & Workers Dashboard** (`01-api-workers.json`)
-- Request rate, latency (p95/p99), error rate
-- Per-worker job processing: rate, duration, item throughput
-- Queue backlog (NATS consumer pending)
-- Search performance: total time, embedder time, Qdrant query time
-- In-flight requests and active jobs
+**1. Service Operations Dashboard** (`01-service-operations.json`)
+- Consolidated view for API, inference API, SSE, and worker throughput
+- HTTP latency percentiles, error rates, and request mix by route
+- Worker job velocity, retry spikes, and queue backlog insights
+- Embedding and reranker timing breakdowns plus SSE connection health
 
 **2. Infrastructure Dashboard** (`02-infrastructure.json`)
-- PostgreSQL: connection pool usage, query latency, query rate
-- NATS: stream message counts, consumer backlog, message latencies
-- Qdrant: API latency, request throughput
-- Storage: S3 operation latency and throughput
+- PostgreSQL connection pool saturation, slow query budget, and vacuum cadence
+- NATS JetStream backlog indicators and consumer lag burn-down
+- Storage latency (S3/MinIO) across operations with success vs error buckets
+- Dataset and collection pipeline saturation signals plus cache health
+
+**3. Audit Events Dashboard** (`03-audit-events.json`)
+- SQL-driven charts sourced from the `postgres-audit` datasource
+- Event volume trends grouped by action, resource, and outcome
+- High-signal tables for recent failures, privileged actors, and IP activity
+- Filters for tenant, subject, and time window to support investigations
+
+**4. Quickwit Logs & Traces Dashboard** (`04-quickwit-observability.json`)
+- Federated Loki queries highlight error and warning rates across services
+- Live log streams with deduplicated error signatures and warning context
+- Jaeger-backed panels surface dependency graphs, slow traces, and error traces
+- Adjustable lookback presets to inspect hot paths and trace bottlenecks quickly
+
+**Datasource UIDs**
+- `prometheus` — primary metrics store for services and infrastructure panels
+- `postgres-audit` — Postgres datasource backing the audit events dashboard
+- `quickwit-logs` — Loki-compatible endpoint powering log rate stats and streams
+- `quickwit-traces` — Jaeger-compatible endpoint used for dependency and trace panels
 
 **Access Dashboards:**
 

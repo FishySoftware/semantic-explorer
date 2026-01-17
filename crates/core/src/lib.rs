@@ -1,4 +1,5 @@
 pub mod config;
+pub mod embedder;
 pub mod encryption;
 pub mod http_client;
 pub mod models;

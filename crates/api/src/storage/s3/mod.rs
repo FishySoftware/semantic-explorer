@@ -1,45 +1,18 @@
 pub(crate) mod models;
 
 use anyhow::{Context, Result, bail};
-use aws_config::{BehaviorVersion, Region};
-use aws_sdk_s3::{Client, config::Credentials};
+use aws_sdk_s3::Client;
 use semantic_explorer_core::observability::record_storage_operation;
 
-use std::{env, time::Instant};
+use std::time::Instant;
 use tracing::warn;
 
 use crate::storage::s3::models::{CollectionFile, DocumentUpload, PaginatedFiles};
 
+/// Initialize S3 client using shared configuration from core
+/// Supports both static credentials and IAM roles
 pub(crate) async fn initialize_client() -> Result<aws_sdk_s3::Client> {
-    let aws_region = env::var("AWS_REGION")?;
-    let aws_access_key = env::var("AWS_ACCESS_KEY_ID")?;
-    let aws_endpoint_url = env::var("AWS_ENDPOINT_URL")?;
-    let shard_config = aws_config::defaults(BehaviorVersion::latest())
-        .region(Region::new(aws_region))
-        .credentials_provider(Credentials::new(
-            aws_access_key,
-            env::var("AWS_SECRET_ACCESS_KEY")?,
-            None,
-            None,
-            "s3",
-        ))
-        .endpoint_url(&aws_endpoint_url)
-        .load()
-        .await;
-
-    // Use path-style addressing for MinIO/S3-compatible storage when enabled
-    // Virtual-host style (default) tries to resolve bucket.endpoint as DNS
-    // Path-style uses endpoint/bucket instead
-    // Enable with S3_FORCE_PATH_STYLE=true for MinIO, disable for AWS S3
-    let force_path_style = env::var("S3_FORCE_PATH_STYLE")
-        .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
-        .unwrap_or(false);
-
-    let s3_config = aws_sdk_s3::config::Builder::from(&shard_config)
-        .force_path_style(force_path_style)
-        .build();
-    let client = Client::from_conf(s3_config);
-    Ok(client)
+    semantic_explorer_core::storage::initialize_client().await
 }
 
 /// Upload document to collection using single-bucket architecture

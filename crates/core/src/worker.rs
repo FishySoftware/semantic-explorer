@@ -29,6 +29,8 @@ pub struct WorkerConfig {
     pub stream_name: String,
     pub consumer_config: Config,
     pub max_concurrent_jobs: usize,
+    /// Optional prebuilt NATS client to reuse instead of creating a new connection
+    pub nats_client: Option<async_nats::Client>,
 }
 
 /// Initialize OpenTelemetry for the worker
@@ -160,10 +162,16 @@ where
     F: Fn(J, C) -> Fut + Send + Sync + 'static,
     Fut: std::future::Future<Output = Result<()>> + Send,
 {
-    // Initialize NATS connection
-    let nats_url =
-        std::env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string());
-    let nats_client = async_nats::connect(&nats_url).await?;
+    // Use provided NATS client or create a new connection
+    let nats_client = if let Some(client) = config.nats_client {
+        info!("Reusing provided NATS client connection");
+        client
+    } else {
+        let nats_url =
+            std::env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string());
+        info!("Creating new NATS connection to {}", nats_url);
+        async_nats::connect(&nats_url).await?
+    };
 
     let semaphore = Arc::new(Semaphore::new(config.max_concurrent_jobs));
 
@@ -231,9 +239,17 @@ where
             Ok(p) => p,
             Err(_) => {
                 warn!(
-                    "Semaphore limit reached, workers are at capacity. Message will be redelivered."
+                    "Semaphore limit reached, workers are at capacity. Message will be redelivered after short delay."
                 );
-                // Don't acknowledge - let message be redelivered after ack_wait timeout
+                // Negative acknowledgment with short delay for quick recovery
+                if let Err(e) = msg
+                    .ack_with(async_nats::jetstream::AckKind::Nak(Some(
+                        Duration::from_secs(10),
+                    )))
+                    .await
+                {
+                    error!("Failed to Nak message during backpressure: {}", e);
+                }
                 continue;
             }
         };

@@ -112,7 +112,11 @@ async fn main() -> Result<()> {
     .await?;
 
     let cors_origins = config.server.cors_allowed_origins.clone();
-    let address_for_cors = address.clone();
+    let default_cors_origin = config
+        .server
+        .public_url
+        .clone()
+        .unwrap_or_else(|| address.clone());
     let inference_config = config.inference.clone();
     let max_upload_size = config.s3.max_upload_size_bytes as usize;
 
@@ -138,8 +142,9 @@ async fn main() -> Result<()> {
     let server = HttpServer::new(move || {
         // Build CORS configuration based on allowed origins
         let cors = if cors_origins.is_empty() {
+            // Use PUBLIC_URL if configured, otherwise fall back to server address
             Cors::default()
-                .allowed_origin(&address_for_cors)
+                .allowed_origin(&default_cors_origin)
                 .allowed_methods(vec!["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
                 .allowed_headers(vec![
                     header::AUTHORIZATION,

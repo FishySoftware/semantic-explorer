@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow};
+use semantic_explorer_core::embedder::generate_batch_embeddings;
 use semantic_explorer_core::models::EmbedderConfig;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -32,7 +33,12 @@ pub async fn chunk_async(
         return Ok(vec![sentences[0].to_string()]);
     }
 
-    let embeddings = generate_batch_embeddings(embedder_config, &sentences).await?;
+    let embeddings = generate_batch_embeddings(
+        embedder_config,
+        sentences.clone(),
+        Some(embedder_config.batch_size as usize),
+    )
+    .await?;
 
     merge_by_similarity(sentences, embeddings, semantic_opts, config.chunk_size)
 }
@@ -122,178 +128,6 @@ fn weighted_average_embedding(current: &[f32], new: &[f32], count: usize) -> Vec
         .collect()
 }
 
-async fn generate_batch_embeddings(
-    config: &EmbedderConfig,
-    sentences: &[&str],
-) -> Result<Vec<Vec<f32>>> {
-    if sentences.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut all_embeddings = Vec::new();
-
-    for batch in sentences.chunks(config.batch_size as usize) {
-        let embeddings = call_embedder_api(config, batch).await?;
-        all_embeddings.extend(embeddings);
-    }
-
-    Ok(all_embeddings)
-}
-
-async fn call_embedder_api(config: &EmbedderConfig, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()?;
-
-    let (url, body) = match config.provider.as_str() {
-        "openai" => {
-            let model = &config.model;
-            let body = serde_json::json!({
-                "input": texts,
-                "model": model,
-            });
-            let url = format!("{}/embeddings", config.base_url.trim_end_matches('/'));
-            (url, body)
-        }
-        "cohere" => {
-            let model = &config.model;
-            let input_type = config
-                .config
-                .get("input_type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("clustering");
-
-            let body = serde_json::json!({
-                "texts": texts,
-                "model": model,
-                "input_type": input_type,
-                "embedding_types": ["float"],
-                "truncate": "NONE"
-            });
-            let base = config.base_url.trim_end_matches('/');
-            let url = if base.ends_with("/embed") {
-                base.to_string()
-            } else {
-                format!("{}/embed", base)
-            };
-            (url, body)
-        }
-        "local" => {
-            // Local inference via inference-api service
-            let model = config.model.clone();
-            let base_url = get_inference_api_url();
-            let endpoint = format!("{}/api/embed/batch", base_url);
-            let body = serde_json::json!({
-                "texts": texts,
-                "model": model,
-            });
-            (endpoint, body)
-        }
-        _ => {
-            return Err(anyhow!(
-                "Unsupported embedder provider: {}",
-                config.provider
-            ));
-        }
-    };
-
-    let mut req = client.post(&url).json(&body);
-
-    if let Some(key) = &config.api_key {
-        req = req.bearer_auth(key);
-    }
-
-    let resp = req.send().await?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let error_text = resp.text().await.unwrap_or_default();
-        return Err(anyhow!("Embedder API error ({}): {}", status, error_text));
-    }
-
-    let resp_json: serde_json::Value = resp.json().await?;
-
-    let embeddings = match config.provider.as_str() {
-        "openai" => {
-            let data = resp_json["data"]
-                .as_array()
-                .ok_or_else(|| anyhow!("Invalid OpenAI response format"))?;
-
-            data.iter()
-                .map(|item| {
-                    item["embedding"]
-                        .as_array()
-                        .ok_or_else(|| anyhow!("Missing embedding in response"))
-                        .and_then(|arr| {
-                            arr.iter()
-                                .map(|v| {
-                                    v.as_f64()
-                                        .map(|f| f as f32)
-                                        .ok_or_else(|| anyhow!("Invalid embedding value"))
-                                })
-                                .collect()
-                        })
-                })
-                .collect::<Result<Vec<Vec<f32>>>>()?
-        }
-        "cohere" => {
-            let embeddings_obj = resp_json["embeddings"]
-                .as_object()
-                .ok_or_else(|| anyhow!("Invalid Cohere response format"))?;
-
-            let float_embeddings = embeddings_obj["float"]
-                .as_array()
-                .ok_or_else(|| anyhow!("Missing float embeddings in Cohere response"))?;
-
-            float_embeddings
-                .iter()
-                .map(|arr| {
-                    arr.as_array()
-                        .ok_or_else(|| anyhow!("Invalid embedding format"))
-                        .and_then(|a| {
-                            a.iter()
-                                .map(|v| {
-                                    v.as_f64()
-                                        .map(|f| f as f32)
-                                        .ok_or_else(|| anyhow!("Invalid embedding value"))
-                                })
-                                .collect()
-                        })
-                })
-                .collect::<Result<Vec<Vec<f32>>>>()?
-        }
-        "local" => {
-            let embeddings_array = resp_json["embeddings"]
-                .as_array()
-                .ok_or_else(|| anyhow!("Invalid local inference response format"))?;
-
-            embeddings_array
-                .iter()
-                .map(|arr| {
-                    arr.as_array()
-                        .ok_or_else(|| anyhow!("Invalid embedding format"))
-                        .and_then(|a| {
-                            a.iter()
-                                .map(|v| {
-                                    v.as_f64()
-                                        .map(|f| f as f32)
-                                        .ok_or_else(|| anyhow!("Invalid embedding value"))
-                                })
-                                .collect()
-                        })
-                })
-                .collect::<Result<Vec<Vec<f32>>>>()?
-        }
-        _ => return Err(anyhow!("Unsupported provider")),
-    };
-
-    Ok(embeddings)
-}
-
-fn get_inference_api_url() -> String {
-    std::env::var("INFERENCE_API_URL").unwrap_or_else(|_| "http://localhost:8090".to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -323,7 +157,6 @@ mod tests {
     #[test]
     fn test_merge_by_similarity() {
         let sentences = vec!["Sentence 1", "Sentence 2", "Sentence 3"];
-        // Very similar embeddings for 1 and 2, different for 3
         let embeddings = vec![vec![1.0, 0.0], vec![0.99, 0.01], vec![0.0, 1.0]];
 
         let opts = SemanticOptions {
@@ -336,7 +169,6 @@ mod tests {
         assert!(result.is_ok());
 
         let chunks = result.unwrap();
-        // 1 and 2 should merge, 3 should be separate
         assert_eq!(chunks.len(), 2);
         assert!(chunks[0].contains("Sentence 1") && chunks[0].contains("Sentence 2"));
         assert_eq!(chunks[1], "Sentence 3");
@@ -348,8 +180,8 @@ mod tests {
         let embeddings = vec![vec![1.0, 0.0], vec![0.99, 0.01]];
 
         let opts = SemanticOptions {
-            similarity_threshold: 0.0, // Force merge by similarity
-            max_chunk_size: 10,        // But limit by size
+            similarity_threshold: 0.0,
+            max_chunk_size: 10,
             ..Default::default()
         };
 
@@ -357,7 +189,6 @@ mod tests {
         assert!(result.is_ok());
 
         let chunks = result.unwrap();
-        // Should not merge because of size limit
         assert_eq!(chunks.len(), 2);
     }
 }

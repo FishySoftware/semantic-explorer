@@ -44,18 +44,23 @@ pub struct PaginatedFiles {
 }
 
 pub async fn initialize_client() -> Result<aws_sdk_s3::Client> {
-    let shard_config = aws_config::defaults(BehaviorVersion::latest())
-        .region(Region::new(env::var("AWS_REGION")?))
-        .credentials_provider(Credentials::new(
-            env::var("AWS_ACCESS_KEY_ID")?,
-            env::var("AWS_SECRET_ACCESS_KEY")?,
-            None,
-            None,
-            "s3",
-        ))
-        .endpoint_url(env::var("AWS_ENDPOINT_URL")?)
-        .load()
-        .await;
+    let region = env::var("AWS_REGION")?;
+    let endpoint_url = env::var("AWS_ENDPOINT_URL")?;
+
+    let mut config_loader = aws_config::defaults(BehaviorVersion::latest())
+        .region(Region::new(region))
+        .endpoint_url(endpoint_url);
+
+    // Only set static credentials if both are provided
+    if let (Ok(access_key), Ok(secret_key)) = (
+        env::var("AWS_ACCESS_KEY_ID"),
+        env::var("AWS_SECRET_ACCESS_KEY"),
+    ) {
+        config_loader = config_loader
+            .credentials_provider(Credentials::new(access_key, secret_key, None, None, "s3"));
+    }
+
+    let shard_config = config_loader.load().await;
 
     // Use path-style addressing for MinIO/S3-compatible storage when enabled
     // Virtual-host style (default) tries to resolve bucket.endpoint as DNS

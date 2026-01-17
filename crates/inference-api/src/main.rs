@@ -90,6 +90,7 @@ async fn main() -> Result<()> {
                     actix_web::http::header::CONTENT_TYPE,
                     actix_web::http::header::AUTHORIZATION,
                 ])
+                .supports_credentials()
                 .max_age(3600);
             for origin in &cors_origins {
                 cors = cors.allowed_origin(origin);

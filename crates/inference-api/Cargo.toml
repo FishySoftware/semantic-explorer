@@ -25,6 +25,7 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 dotenvy = { workspace = true }
 tracing = { workspace = true }
+tokio = { workspace = true }
 once_cell = { workspace = true }
 fastembed = { version = "5.8.1", features = ["hf-hub-rustls-tls", "cudnn", "cuda"], default-features = false }
 ort = { version = "2.0.0-rc.11", features = ["cuda"], default-features = false }

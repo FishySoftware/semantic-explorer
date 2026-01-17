@@ -3,13 +3,18 @@ use once_cell::sync::OnceCell;
 use ort::ep::CUDA;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use tokio::sync::Mutex as TokioMutex;
 use tracing::{error, info};
 
 use crate::config::ModelConfig;
 use crate::errors::InferenceError;
 
-/// Global embedding model cache - using Mutex since embed() requires &mut self
-static EMBEDDING_MODELS: OnceCell<Arc<Mutex<HashMap<String, TextEmbedding>>>> = OnceCell::new();
+/// Type alias for the embedding model cache to reduce complexity
+type EmbeddingCache = Arc<Mutex<HashMap<String, Arc<TokioMutex<TextEmbedding>>>>>;
+
+/// Global embedding model cache - using per-model mutexes for concurrent access
+/// The outer Mutex protects the HashMap structure, while each model has its own Tokio Mutex
+static EMBEDDING_MODELS: OnceCell<EmbeddingCache> = OnceCell::new();
 
 /// Initialize the embedding model cache
 pub fn init_cache() {
@@ -86,10 +91,15 @@ fn create_text_embedding(
     model: EmbeddingModel,
     config: &ModelConfig,
 ) -> Result<TextEmbedding, InferenceError> {
-    // Configure CUDA execution provider
-    let cuda_provider = CUDA::default().build();
-
-    let mut options = TextInitOptions::new(model).with_execution_providers(vec![cuda_provider]);
+    // Try CUDA execution provider, fall back to CPU if unavailable
+    let mut options = if std::env::var("CUDA_VISIBLE_DEVICES").is_ok() {
+        info!("CUDA available, using CUDA execution provider for embeddings");
+        let cuda_provider = CUDA::default().build();
+        TextInitOptions::new(model).with_execution_providers(vec![cuda_provider])
+    } else {
+        info!("CUDA not available, using CPU execution provider");
+        TextInitOptions::new(model)
+    };
 
     // Set cache directory if HF_HOME is configured
     if let Some(ref hf_home) = config.hf_home {
@@ -103,7 +113,7 @@ fn create_text_embedding(
 }
 
 /// Generate embeddings using the model cache
-pub fn generate_embeddings(
+pub async fn generate_embeddings(
     model_id: &str,
     config: &ModelConfig,
     texts: Vec<String>,
@@ -120,22 +130,32 @@ pub fn generate_embeddings(
         .get()
         .ok_or_else(|| InferenceError::Internal("Embedding cache not initialized".to_string()))?;
 
-    let models_clone = Arc::clone(models);
-    let mut cache = models_clone
-        .lock()
-        .map_err(|e| InferenceError::Internal(format!("Failed to acquire lock: {}", e)))?;
+    // Get or create the model with minimal lock time on the HashMap
+    let model_mutex = {
+        let mut cache = models
+            .lock()
+            .map_err(|e| InferenceError::Internal(format!("Failed to acquire lock: {}", e)))?;
 
-    // Check if model is in cache, if not load it
-    if !cache.contains_key(model_id) {
-        info!(model_id = %model_id, "Loading embedding model on demand");
-        let embedding_model = resolve_embedding_model(model_id)?;
-        let text_embedding = create_text_embedding(embedding_model, config)?;
-        cache.insert(model_id.to_string(), text_embedding);
-    }
+        // Check if model is in cache, if not load it
+        if !cache.contains_key(model_id) {
+            info!(model_id = %model_id, "Loading embedding model on demand");
+            let embedding_model = resolve_embedding_model(model_id)?;
+            let text_embedding = create_text_embedding(embedding_model, config)?;
+            cache.insert(
+                model_id.to_string(),
+                Arc::new(TokioMutex::new(text_embedding)),
+            );
+        }
 
-    let text_embedding = cache.get_mut(model_id).ok_or_else(|| {
-        InferenceError::Internal(format!("Model {} not found in cache", model_id))
-    })?;
+        Arc::clone(
+            cache
+                .get(model_id)
+                .ok_or_else(|| InferenceError::Internal(format!("Model {} not found", model_id)))?,
+        )
+    }; // HashMap lock released here
+
+    // Lock only this specific model for inference - allows concurrent requests to different models
+    let mut text_embedding = model_mutex.lock().await;
 
     // Use config batch size for faster processing
     let batch_size = Some(config.max_batch_size);

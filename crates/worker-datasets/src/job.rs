@@ -6,15 +6,23 @@ use semantic_explorer_core::models::{DatasetTransformJob, DatasetTransformResult
 use semantic_explorer_core::observability::record_worker_job;
 use semantic_explorer_core::storage::get_file;
 use semantic_explorer_core::validation::{validate_bucket_name, validate_s3_key};
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
+use tokio::sync::Mutex;
 use tracing::{error, info, instrument};
 
 use crate::embedder;
+
+type QdrantClientCache = Arc<Mutex<HashMap<String, Qdrant>>>;
 
 #[derive(Clone)]
 pub(crate) struct WorkerContext {
     pub(crate) s3_client: aws_sdk_s3::Client,
     pub(crate) nats_client: async_nats::Client,
+    /// Shared cache of Qdrant clients keyed by connection URL
+    /// Enables connection reuse across jobs
+    pub(crate) qdrant_cache: QdrantClientCache,
 }
 
 #[derive(serde::Deserialize)]
@@ -185,11 +193,28 @@ pub(crate) async fn process_vector_job(job: DatasetTransformJob, ctx: WorkerCont
         return Ok(());
     }
 
-    info!(qdrant_url = %job.vector_database_config.connection_url, "Connecting to Qdrant");
-    let qdrant_client = Qdrant::from_url(&job.vector_database_config.connection_url)
-        .api_key(job.vector_database_config.api_key.clone())
-        .build()
-        .map_err(|e| anyhow::anyhow!("Failed to build Qdrant client: {e}"))?;
+    // Get or create Qdrant client from cache for connection reuse
+    let cache_key = format!(
+        "{}:{}",
+        job.vector_database_config.connection_url,
+        job.vector_database_config.api_key.as_deref().unwrap_or("")
+    );
+
+    let qdrant_client = {
+        let mut cache = ctx.qdrant_cache.lock().await;
+        if let Some(client) = cache.get(&cache_key) {
+            info!(qdrant_url = %job.vector_database_config.connection_url, "Reusing cached Qdrant client");
+            client.clone()
+        } else {
+            info!(qdrant_url = %job.vector_database_config.connection_url, "Creating new Qdrant client");
+            let client = Qdrant::from_url(&job.vector_database_config.connection_url)
+                .api_key(job.vector_database_config.api_key.clone())
+                .build()
+                .map_err(|e| anyhow::anyhow!("Failed to build Qdrant client: {e}"))?;
+            cache.insert(cache_key, client.clone());
+            client
+        }
+    };
 
     let embedding_size = embeddings
         .first()
@@ -212,8 +237,10 @@ pub(crate) async fn process_vector_job(job: DatasetTransformJob, ctx: WorkerCont
             .vectors_config(VectorParams {
                 size: embedding_size,
                 distance: Distance::Cosine.into(),
+                on_disk: Some(true), // Store vectors on disk for large collections
                 ..Default::default()
             })
+            .on_disk_payload(true) // Store payloads on disk to reduce memory usage
             .build();
 
         qdrant_client
@@ -238,16 +265,33 @@ pub(crate) async fn process_vector_job(job: DatasetTransformJob, ctx: WorkerCont
         })
         .collect();
 
-    info!(point_count = points.len(), "Upserting points to Qdrant");
+    // Chunk large batches to avoid overwhelming Qdrant
+    const QDRANT_CHUNK_SIZE: usize = 100;
+    let point_chunks: Vec<_> = points.chunks(QDRANT_CHUNK_SIZE).collect();
+    info!(
+        point_count = points.len(),
+        chunk_count = point_chunks.len(),
+        chunk_size = QDRANT_CHUNK_SIZE,
+        "Upserting points to Qdrant in chunks"
+    );
+
     let upsert_start = Instant::now();
-    if let Err(e) = qdrant_client
-        .upsert_points(UpsertPointsBuilder::new(&job.collection_name, points))
-        .await
-    {
-        let duration = start_time.elapsed().as_secs_f64();
-        record_worker_job("vector-embed", duration, "failed_upsert");
-        error!(error = %e, "Qdrant upsert failed");
-        return Err(anyhow::anyhow!("Qdrant upsert failed: {}", e));
+    for (idx, chunk) in point_chunks.into_iter().enumerate() {
+        if let Err(e) = qdrant_client
+            .upsert_points(
+                UpsertPointsBuilder::new(&job.collection_name, chunk.to_vec()).wait(true),
+            )
+            .await
+        {
+            let duration = start_time.elapsed().as_secs_f64();
+            record_worker_job("vector-embed", duration, "failed_upsert");
+            error!(error = %e, chunk_index = idx, "Qdrant upsert chunk failed");
+            return Err(anyhow::anyhow!(
+                "Qdrant upsert failed at chunk {}: {}",
+                idx,
+                e
+            ));
+        }
     }
     let upsert_duration = upsert_start.elapsed().as_secs_f64();
 

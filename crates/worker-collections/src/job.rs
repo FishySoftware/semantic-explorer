@@ -3,7 +3,7 @@ use semantic_explorer_core::models::{CollectionTransformJob, CollectionTransform
 use semantic_explorer_core::observability::record_worker_job;
 use semantic_explorer_core::storage::{DocumentUpload, get_file_with_size_check, upload_document};
 use semantic_explorer_core::validation::{validate_bucket_name, validate_s3_key};
-use std::{env, time::Instant};
+use std::time::Instant;
 use tracing::{error, info, instrument};
 
 use crate::chunk::{ChunkingService, config::ChunkingConfig};
@@ -22,26 +22,11 @@ pub(crate) async fn process_file_job(
 ) -> Result<()> {
     let start_time = Instant::now();
 
-    // Get the actual S3 bucket name from environment
-    let s3_bucket_name = match env::var("S3_BUCKET_NAME") {
-        Ok(bucket) => bucket,
-        Err(_) => {
-            let duration = start_time.elapsed().as_secs_f64();
-            record_worker_job("transform-file", duration, "failed_config");
-            error!("S3_BUCKET_NAME environment variable not set");
-            send_result(
-                &ctx.nats_client,
-                &job,
-                Err("S3_BUCKET_NAME environment variable not set".to_string()),
-                Some((duration * 1000.0) as i64),
-            )
-            .await?;
-            return Ok(());
-        }
-    };
+    // Use bucket from job payload for multi-bucket support
+    let s3_bucket_name = &job.bucket;
 
     // Validate S3 inputs to prevent path traversal attacks
-    if let Err(e) = validate_bucket_name(&s3_bucket_name) {
+    if let Err(e) = validate_bucket_name(s3_bucket_name) {
         let duration = start_time.elapsed().as_secs_f64();
         record_worker_job("transform-file", duration, "failed_validation");
         error!(error = %e, bucket = %s3_bucket_name, "Invalid bucket name");
@@ -52,7 +37,7 @@ pub(crate) async fn process_file_job(
             Some((duration * 1000.0) as i64),
         )
         .await?;
-        return Ok(());
+        return Err(anyhow::anyhow!("Invalid bucket name: {}", e));
     }
 
     // Construct the full S3 key: collections/{collection_id}/{filename}
@@ -69,12 +54,12 @@ pub(crate) async fn process_file_job(
             Some((duration * 1000.0) as i64),
         )
         .await?;
-        return Ok(());
+        return Err(anyhow::anyhow!("Invalid S3 key: {}", e));
     }
 
     info!(bucket = %s3_bucket_name, key = %full_source_key, "Downloading file");
     let file_content =
-        match get_file_with_size_check(&ctx.s3_client, &s3_bucket_name, &full_source_key).await {
+        match get_file_with_size_check(&ctx.s3_client, s3_bucket_name, &full_source_key).await {
             Ok(content) => content,
             Err(e) => {
                 let duration = start_time.elapsed().as_secs_f64();

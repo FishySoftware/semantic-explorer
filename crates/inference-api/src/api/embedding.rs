@@ -78,25 +78,14 @@ pub async fn embed(
     body: web::Json<EmbedRequest>,
 ) -> impl Responder {
     let model_id = body.model.clone();
-    let model_id_for_closure = model_id.clone();
     let text = body.text.clone();
-    let config_clone = config.get_ref().clone();
 
     tracing::Span::current().record("model", &model_id);
 
     let start = std::time::Instant::now();
 
-    // Run embedding generation in a blocking task
-    let result = match web::block(move || {
-        embedding::generate_embeddings(&model_id_for_closure, &config_clone, vec![text])
-    })
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            return InferenceError::Internal(format!("Blocking error: {}", e)).error_response();
-        }
-    };
+    // Generate embeddings asynchronously
+    let result = embedding::generate_embeddings(&model_id, &config, vec![text]).await;
 
     let duration = start.elapsed().as_secs_f64();
 
@@ -163,26 +152,15 @@ pub async fn embed_batch(
     }
 
     let model_id = body.model.clone();
-    let model_id_for_closure = model_id.clone();
     let texts = body.texts.clone();
-    let config_clone = config.get_ref().clone();
 
     tracing::Span::current().record("model", &model_id);
 
     let item_count = texts.len() as u64;
     let start = std::time::Instant::now();
 
-    // Run embedding generation in a blocking task to avoid blocking the async runtime
-    let result = match web::block(move || {
-        embedding::generate_embeddings(&model_id_for_closure, &config_clone, texts)
-    })
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            return InferenceError::Internal(format!("Blocking error: {}", e)).error_response();
-        }
-    };
+    // Generate embeddings asynchronously
+    let result = embedding::generate_embeddings(&model_id, &config, texts).await;
 
     let duration = start.elapsed().as_secs_f64();
 

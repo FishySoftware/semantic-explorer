@@ -1,7 +1,7 @@
 //! Unified HTTP client with TLS support
 //!
 //! Provides a shared `reqwest::Client` configured with:
-//! - CA certificate verification (always loaded)
+//! - Optional CA certificate verification (falls back to system roots if not provided)
 //! - Optional client certificate for mutual TLS
 //! - Proper timeout configuration
 
@@ -12,7 +12,6 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 use tracing::info;
-use tracing::warn;
 
 /// Global HTTP client instance shared across the application
 /// Automatically configured with TLS settings from environment variables
@@ -22,12 +21,13 @@ pub static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
 
 /// Initialize the global HTTP client with TLS configuration
 pub fn initialize(tls_config: &crate::config::TlsConfig) -> Result<()> {
-    // Verify CA cert path exists
-    if !Path::new(&tls_config.ca_cert_path).exists() {
-        warn!(
-            "CA certificate not found at {}, TLS verification may fail",
-            tls_config.ca_cert_path
-        );
+    // Verify CA cert path exists if provided
+    if let Some(ca_path) = &tls_config.ca_cert_path {
+        if !Path::new(ca_path).exists() {
+            return Err(anyhow::anyhow!("CA certificate not found at: {}", ca_path));
+        }
+    } else {
+        info!("No custom CA certificate configured, using system native roots");
     }
 
     // Validate server certificates if enabled
@@ -79,25 +79,31 @@ pub fn initialize(tls_config: &crate::config::TlsConfig) -> Result<()> {
 }
 
 /// Build HTTP client from environment variables
-/// Always loads the CA certificate (truststore)
+/// Optionally loads CA certificate (truststore) if configured or default exists
 /// Optionally loads client certificates for mTLS if CLIENT_MTLS_ENABLED=true
 fn build_http_client_from_env() -> Result<reqwest::Client> {
     let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(60));
 
-    // Always load CA certificate
-    let ca_cert_path =
-        env::var("TLS_CA_CERT_PATH").unwrap_or_else(|_| "/app/certs/ca-bundle.crt".to_string());
+    // Load CA certificate if explicitly configured or default exists
+    let ca_cert_path = match env::var("TLS_CA_CERT_PATH") {
+        Ok(path) => Some(path),
+        Err(_) => {
+            let default_path = "/app/certs/ca-bundle.crt";
+            if Path::new(default_path).exists() {
+                Some(default_path.to_string())
+            } else {
+                None
+            }
+        }
+    };
 
-    if Path::new(&ca_cert_path).exists() {
-        let ca_cert = load_ca_cert(&ca_cert_path)
-            .context("Failed to load CA certificate from environment")?;
+    if let Some(path) = ca_cert_path {
+        let ca_cert =
+            load_ca_cert(&path).context("Failed to load CA certificate from environment")?;
         builder = builder.add_root_certificate(ca_cert);
-        info!("CA certificate loaded from: {}", ca_cert_path);
+        info!("CA certificate loaded from: {}", path);
     } else {
-        warn!(
-            "CA certificate not found at {}, skipping truststore configuration",
-            ca_cert_path
-        );
+        info!("No custom CA certificate found, using system native roots");
     }
 
     // Optionally load client certificates for mTLS
@@ -127,10 +133,14 @@ fn build_http_client_from_env() -> Result<reqwest::Client> {
 pub fn build_client(tls_config: &crate::config::TlsConfig) -> Result<reqwest::Client> {
     let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(30));
 
-    // Load CA certificate for server verification
-    let ca_cert =
-        load_ca_cert(&tls_config.ca_cert_path).context("Failed to load CA certificate")?;
-    builder = builder.add_root_certificate(ca_cert);
+    // Load CA certificate for server verification if provided
+    if let Some(ca_path) = &tls_config.ca_cert_path {
+        let ca_cert = load_ca_cert(ca_path).context("Failed to load CA certificate")?;
+        builder = builder.add_root_certificate(ca_cert);
+        info!("CA certificate loaded from: {}", ca_path);
+    } else {
+        info!("Using system native roots for TLS verification");
+    }
 
     // Load client certificate for mutual TLS if enabled
     if tls_config.client_mtls_enabled

@@ -153,6 +153,9 @@ fn stream_config_differs(current: &StreamConfig, desired: &StreamConfig) -> bool
         || current.subjects != desired.subjects
         || current.retention != desired.retention
         || current.num_replicas != desired.num_replicas
+        || current.max_age != desired.max_age
+        || current.max_messages != desired.max_messages
+        || current.duplicate_window != desired.duplicate_window
 }
 
 pub fn create_transform_file_consumer_config() -> ConsumerConfig {

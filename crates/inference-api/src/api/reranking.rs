@@ -115,7 +115,8 @@ pub async fn rerank(
     let document_count = body.documents.len() as u64;
 
     let start = std::time::Instant::now();
-    let result = reranker::rerank_documents(model_id, &config, &body.query, &texts, body.top_k);
+    let result =
+        reranker::rerank_documents(model_id, &config, &body.query, &texts, body.top_k).await;
     let duration = start.elapsed().as_secs_f64();
 
     match result {
