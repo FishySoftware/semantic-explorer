@@ -8,8 +8,16 @@ metadata:
     {{- include "semantic-explorer.labels" . | nindent 4 }}
     grafana_dashboard: "1"
 data:
-  api-workers.json: |
-{{ .Files.Get "dashboards/01-api-workers.json" | indent 4 }}
+  service-operations.json: |
+{{ .Files.Get "dashboards/01-service-operations.json" | indent 4 }}
   infrastructure.json: |
 {{ .Files.Get "dashboards/02-infrastructure.json" | indent 4 }}
+  audit-events.json: |
+{{ .Files.Get "dashboards/03-audit-events.json" | indent 4 }}
+  quickwit-observability.json: |
+{{ .Files.Get "dashboards/04-quickwit-observability.json" | indent 4 }}
+  inference-services.json: |
+{{ .Files.Get "dashboards/05-inference-services.json" | indent 4 }}
+  workers.json: |
+{{ .Files.Get "dashboards/06-workers.json" | indent 4 }}
 {{- end }}

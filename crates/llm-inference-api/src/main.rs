@@ -106,7 +106,9 @@ async fn main() -> Result<()> {
             // Generation endpoints
             .service(api::generation::generate)
             .service(api::streaming::generate_stream)
+            // Chat endpoints
             .service(api::chat::chat_completion)
+            .service(api::chat::chat_completion_stream)
             // Swagger UI
             .openapi_service(|api| {
                 SwaggerUi::new("/swagger-ui/{_:.*}").url("/api/openapi.json", api)

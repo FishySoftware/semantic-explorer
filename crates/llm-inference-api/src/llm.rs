@@ -432,6 +432,95 @@ pub async fn chat_completion(
     })
 }
 
+/// Chat completion with streaming
+///
+/// Returns a stream of text chunks as they are generated based on conversation history.
+pub async fn chat_completion_stream(
+    model_id: &str,
+    messages: Vec<ChatMessage>,
+    params: GenerationParams,
+    model_config: &ModelConfig,
+    gen_config: &GenerationConfig,
+) -> Result<Pin<Box<dyn Stream<Item = Result<String, InferenceError>> + Send>>, InferenceError> {
+    // Check if model is allowed
+    if !model_config.is_model_allowed(model_id) {
+        return Err(InferenceError::UnsupportedModel(format!(
+            "Model {} is not in the allowed models list",
+            model_id
+        )));
+    }
+
+    // Validate parameters
+    let temperature = gen_config.validate_temperature(params.temperature);
+    let top_p = gen_config.validate_top_p(params.top_p);
+    let max_tokens = gen_config.validate_max_tokens(params.max_tokens);
+
+    // Get model from cache
+    let model_arc = get_or_load_model(model_id, model_config).await?;
+
+    // Build chat messages for mistral.rs
+    let mut text_messages = TextMessages::new();
+    for msg in messages {
+        let role = match msg.role.to_lowercase().as_str() {
+            "system" => TextMessageRole::System,
+            "user" => TextMessageRole::User,
+            "assistant" => TextMessageRole::Assistant,
+            _ => TextMessageRole::User, // Default to user for unknown roles
+        };
+        text_messages = text_messages.add_message(role, &msg.content);
+    }
+
+    // Build request with parameters
+    let request = RequestBuilder::from(text_messages)
+        .set_sampler_max_len(max_tokens)
+        .set_sampler_temperature(temperature as f64)
+        .set_sampler_topp(top_p as f64);
+
+    // Clone the Arc to move into the stream
+    let model_for_stream = model_arc.clone();
+
+    // Create async stream that generates text chunks
+    let text_stream = async_stream::try_stream! {
+        // Stream the response inside the async block
+        let mut stream = model_for_stream
+            .stream_chat_request(request)
+            .await
+            .map_err(|e| InferenceError::Generation(format!("Stream creation failed: {}", e)))?;
+
+        while let Some(response) = stream.next().await {
+            match response {
+                mistralrs::Response::Chunk(chunk_response) => {
+                    // Extract text from the chunk delta
+                    if let Some(choice) = chunk_response.choices.first()
+                        && let Some(content) = &choice.delta.content
+                    {
+                        yield content.clone();
+                    }
+                }
+                mistralrs::Response::Done(_) => {
+                    // Stream completed successfully
+                    break;
+                }
+                mistralrs::Response::ModelError(msg, _) => {
+                    Err(InferenceError::Generation(msg))?;
+                }
+                mistralrs::Response::ValidationError(e) => {
+                    Err(InferenceError::Generation(e.to_string()))?;
+                }
+                mistralrs::Response::InternalError(e) => {
+                    Err(InferenceError::Generation(e.to_string()))?;
+                }
+                _ => {
+                    // Unexpected response type, skip
+                    continue;
+                }
+            }
+        }
+    };
+
+    Ok(Box::pin(text_stream))
+}
+
 /// Check if the LLM service is ready (models loaded)
 ///
 /// Returns true if the cache is initialized.

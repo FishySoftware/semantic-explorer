@@ -3,8 +3,10 @@
 //! Provides functions to interact with the local llm-inference-api service.
 
 use anyhow::{Context, Result};
+use futures_util::Stream;
 use semantic_explorer_core::http_client::HTTP_CLIENT;
 use serde::{Deserialize, Serialize};
+use std::pin::Pin;
 
 /// Chat message
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -150,4 +152,99 @@ pub async fn simple_chat(
     .await?;
 
     Ok(response.message.content)
+}
+
+/// Generate a streaming chat response
+///
+/// Returns a stream of text chunks as they are generated.
+///
+/// # Arguments
+/// * `model` - Model to use (e.g., "mistralai/Mistral-7B-Instruct-v0.2")
+/// * `messages` - Conversation history
+/// * `temperature` - Optional temperature for sampling (0.0-2.0)
+/// * `max_tokens` - Optional maximum number of tokens to generate
+#[tracing::instrument(name = "llm_client_chat_stream", skip(messages))]
+pub async fn chat_completion_stream(
+    model: &str,
+    messages: Vec<ChatMessage>,
+    temperature: Option<f32>,
+    max_tokens: Option<usize>,
+) -> Result<Pin<Box<dyn Stream<Item = Result<String>> + Send>>> {
+    let url = format!("{}/api/chat/stream", get_llm_inference_api_url());
+
+    let request = ChatRequest {
+        model: model.to_string(),
+        messages,
+        temperature,
+        top_p: None,
+        max_tokens,
+        stop: None,
+    };
+
+    let response = HTTP_CLIENT
+        .post(&url)
+        .json(&request)
+        .send()
+        .await
+        .context("Failed to send streaming request to LLM inference API")?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unknown error".to_string());
+        anyhow::bail!("LLM inference API returned {}: {}", status, error_text);
+    }
+
+    // Create a stream from the response body using the same pattern as other streaming code
+    let stream = async_stream::stream! {
+        let mut response = response;
+        let mut buffer = String::new();
+
+        while let Some(chunk_result) = response.chunk().await.transpose() {
+            let chunk = match chunk_result {
+                Ok(c) => c,
+                Err(e) => {
+                    yield Err(anyhow::anyhow!("stream error: {}", e));
+                    return;
+                }
+            };
+
+            let text = String::from_utf8_lossy(&chunk);
+            buffer.push_str(&text);
+
+            // Process complete lines (SSE format)
+            while let Some(newline_pos) = buffer.find('\n') {
+                let line = buffer[..newline_pos].trim().to_string();
+                buffer.drain(..=newline_pos);
+
+                // Skip empty lines
+                if line.is_empty() {
+                    continue;
+                }
+
+                // Parse SSE data lines
+                if let Some(data) = line.strip_prefix("data: ") {
+                    // Parse JSON data
+                    match serde_json::from_str::<serde_json::Value>(data) {
+                        Ok(json) => {
+                            // Extract content from {"content": "..."}
+                            if let Some(content) = json.get("content").and_then(|c| c.as_str()) {
+                                yield Ok(content.to_string());
+                            } else if let Some(error) = json.get("error").and_then(|e| e.as_str()) {
+                                yield Err(anyhow::anyhow!("Stream error: {}", error));
+                                return;
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to parse SSE JSON: {} - data: {}", e, data);
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    Ok(Box::pin(stream))
 }

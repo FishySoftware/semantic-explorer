@@ -1,6 +1,7 @@
 //! Chat completion API endpoints.
 
 use actix_web::{HttpResponse, Responder, ResponseError, post, web};
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use tracing::{info, instrument};
 use utoipa::ToSchema;
@@ -147,6 +148,94 @@ pub async fn chat_completion(
         tokens_generated: result.tokens_generated,
         finish_reason: result.finish_reason.to_string(),
     })
+}
+
+/// Chat completion with streaming response
+///
+/// Generates a response based on conversation history and streams it as Server-Sent Events
+#[utoipa::path(
+    post,
+    path = "/api/chat/stream",
+    request_body = ChatRequest,
+    responses(
+        (status = 200, description = "Streaming chat completion", content_type = "text/event-stream"),
+        (status = 400, description = "Invalid request or unsupported model"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "chat"
+)]
+#[post("/api/chat/stream")]
+#[instrument(skip(model_config, gen_config), fields(model, messages))]
+pub async fn chat_completion_stream(
+    model_config: web::Data<ModelConfig>,
+    gen_config: web::Data<GenerationConfig>,
+    body: web::Json<ChatRequest>,
+) -> impl Responder {
+    let model_id = body.model.clone();
+    let messages = body.messages.clone();
+
+    tracing::Span::current().record("model", &model_id);
+    tracing::Span::current().record("messages", messages.len());
+
+    // Validate messages
+    if messages.is_empty() {
+        return InferenceError::BadRequest("Messages array cannot be empty".to_string())
+            .error_response();
+    }
+
+    // Build generation parameters
+    let params = llm::GenerationParams {
+        temperature: body.temperature.unwrap_or(gen_config.default_temperature),
+        top_p: body.top_p.unwrap_or(gen_config.default_top_p),
+        max_tokens: body.max_tokens.unwrap_or(gen_config.default_max_tokens),
+        stop_sequences: body.stop.clone().unwrap_or_default(),
+    };
+
+    info!(
+        model = %model_id,
+        "Starting streaming chat completion"
+    );
+
+    // Convert messages
+    let llm_messages: Vec<llm::ChatMessage> = messages.into_iter().map(Into::into).collect();
+
+    // Generate chat completion stream
+    let stream = match llm::chat_completion_stream(
+        &model_id,
+        llm_messages,
+        params,
+        &model_config,
+        &gen_config,
+    )
+    .await
+    {
+        Ok(s) => s,
+        Err(e) => return e.error_response(),
+    };
+
+    // Convert to SSE format
+    let sse_stream = stream.map(|result| match result {
+        Ok(chunk) => {
+            // Format as Server-Sent Events with JSON data
+            Ok::<_, actix_web::Error>(web::Bytes::from(format!(
+                "data: {}\n\n",
+                serde_json::json!({"content": chunk})
+            )))
+        }
+        Err(e) => {
+            // Send error as SSE event
+            Ok(web::Bytes::from(format!(
+                "data: {{\"error\": \"{}\"}}\n\n",
+                e
+            )))
+        }
+    });
+
+    HttpResponse::Ok()
+        .content_type("text/event-stream")
+        .insert_header(("Cache-Control", "no-cache"))
+        .insert_header(("X-Accel-Buffering", "no")) // Disable nginx buffering
+        .streaming(sse_stream)
 }
 
 #[cfg(test)]

@@ -2,6 +2,7 @@ use futures_util::Stream;
 use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::http_client::HTTP_CLIENT;
 use sqlx::{Pool, Postgres};
+use std::pin::Pin;
 
 use crate::storage::postgres::chat as chat_storage;
 
@@ -178,6 +179,51 @@ async fn call_local_llm_api(
     Ok(response)
 }
 
+/// Call local LLM inference API for streaming chat completion
+async fn call_local_llm_api_stream(
+    model: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+    temperature: f32,
+    max_tokens: i32,
+) -> Result<Pin<Box<dyn Stream<Item = Result<String, String>> + Send>>, String> {
+    // Build messages for chat completion
+    let messages = vec![
+        crate::llms::client::ChatMessage {
+            role: "system".to_string(),
+            content: system_prompt.to_string(),
+        },
+        crate::llms::client::ChatMessage {
+            role: "user".to_string(),
+            content: user_prompt.to_string(),
+        },
+    ];
+
+    // Use the llm_client to call the local inference API streaming endpoint
+    let stream = crate::llms::client::chat_completion_stream(
+        model,
+        messages,
+        Some(temperature),
+        Some(max_tokens as usize),
+    )
+    .await
+    .map_err(|e| format!("Local LLM API streaming error: {}", e))?;
+
+    // Convert anyhow::Result to Result<String, String>
+    let converted_stream = async_stream::stream! {
+        use futures_util::StreamExt;
+        let mut stream = stream;
+        while let Some(result) = stream.next().await {
+            match result {
+                Ok(chunk) => yield Ok(chunk),
+                Err(e) => yield Err(e.to_string()),
+            }
+        }
+    };
+
+    Ok(Box::pin(converted_stream))
+}
+
 /// Call Cohere API for text generation
 async fn call_cohere_api(
     api_base: &str,
@@ -251,7 +297,7 @@ pub(crate) async fn generate_response_stream(
     context: &str,
     temperature: Option<f32>,
     max_tokens: Option<i32>,
-) -> Result<impl Stream<Item = Result<String, String>>, String> {
+) -> Result<Pin<Box<dyn Stream<Item = Result<String, String>> + Send>>, String> {
     // Fetch LLM details from database
     let (name, provider, base_url, model, api_key) =
         chat_storage::get_llm_details(pool, encryption, llm_id)
@@ -269,7 +315,21 @@ pub(crate) async fn generate_response_stream(
 
     tracing::debug!(llm_name = %name, provider = %provider, "starting streaming LLM response");
 
-    // Build config for the LLM request
+    // Handle local provider separately (before consuming model in config)
+    if provider.to_lowercase() == "local" {
+        // Use local LLM inference API streaming
+        let stream = call_local_llm_api_stream(
+            &model,
+            SYSTEM_PROMPT,
+            &user_prompt,
+            temperature,
+            max_tokens,
+        )
+        .await?;
+        return Ok(stream);
+    }
+
+    // Build config for the LLM request (for other providers)
     let config = LLMRequestConfig {
         api_base: base_url,
         model,
@@ -278,7 +338,6 @@ pub(crate) async fn generate_response_stream(
         max_tokens,
     };
 
-    // Create streaming request based on provider
     let response = match provider.to_lowercase().as_str() {
         "openai" => make_streaming_request(&config, SYSTEM_PROMPT, &user_prompt, "openai").await?,
         "anthropic" => {
@@ -331,7 +390,7 @@ pub(crate) async fn generate_response_stream(
         }
     };
 
-    Ok(stream)
+    Ok(Box::pin(stream))
 }
 
 /// Make a streaming request to an LLM provider

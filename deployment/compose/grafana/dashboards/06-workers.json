@@ -30,15 +30,15 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(nats_stream_messages, stream)",
+        "definition": "label_values(worker_job_total, job_type)",
         "hide": 0,
         "includeAll": true,
-        "label": "NATS Stream",
+        "label": "Job Type",
         "multi": true,
-        "name": "stream",
+        "name": "job_type",
         "options": [],
         "query": {
-          "query": "label_values(nats_stream_messages, stream)",
+          "query": "label_values(worker_job_total, job_type)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 2,
@@ -58,15 +58,43 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(storage_operations_total, operation)",
+        "definition": "label_values(worker_job_total, status)",
         "hide": 0,
         "includeAll": true,
-        "label": "Storage Op",
+        "label": "Status",
         "multi": true,
-        "name": "storage_op",
+        "name": "status",
         "options": [],
         "query": {
-          "query": "label_values(storage_operations_total, operation)",
+          "query": "label_values(worker_job_total, status)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(collection_transform_jobs_total, transform_type)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Transform Type",
+        "multi": true,
+        "name": "transform_type",
+        "options": [],
+        "query": {
+          "query": "label_values(collection_transform_jobs_total, transform_type)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 2,
@@ -92,383 +120,8 @@
       },
       "id": 1,
       "panels": [],
-      "title": "Infrastructure Overview",
+      "title": "Worker Job Processing",
       "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "description": "Percentage of database connection pool in use",
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [],
-          "max": 100,
-          "min": 0,
-          "thresholds": {
-            "mode": "percentage",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 60
-              },
-              {
-                "color": "orange",
-                "value": 75
-              },
-              {
-                "color": "red",
-                "value": 90
-              }
-            ]
-          },
-          "unit": "percent"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 6,
-        "w": 6,
-        "x": 0,
-        "y": 1
-      },
-      "id": 2,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "area",
-        "justifyMode": "center",
-        "orientation": "horizontal",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "100 * sum(database_connection_pool_active) / clamp_min(sum(database_connection_pool_size), 1)",
-          "legendFormat": "",
-          "refId": "A"
-        }
-      ],
-      "title": "DB Pool Utilization",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "description": "Total pending messages across all NATS consumers",
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 50
-              },
-              {
-                "color": "orange",
-                "value": 100
-              },
-              {
-                "color": "red",
-                "value": 500
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 6,
-        "w": 6,
-        "x": 6,
-        "y": 1
-      },
-      "id": 3,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "area",
-        "justifyMode": "center",
-        "orientation": "horizontal",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum(nats_consumer_pending{stream=~\"$stream\"}) or vector(0)",
-          "legendFormat": "",
-          "refId": "A"
-        }
-      ],
-      "title": "NATS Pending Messages",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "description": "Percentage of storage operations that failed",
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [],
-          "max": 100,
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 1
-              },
-              {
-                "color": "red",
-                "value": 5
-              }
-            ]
-          },
-          "unit": "percent"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 6,
-        "w": 6,
-        "x": 12,
-        "y": 1
-      },
-      "id": 4,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "orientation": "horizontal",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "100 * sum(rate(storage_operations_total{status=\"error\", operation=~\"$storage_op\"}[$__rate_interval])) / clamp_min(sum(rate(storage_operations_total{operation=~\"$storage_op\"}[$__rate_interval])), 1e-6)",
-          "legendFormat": "",
-          "refId": "A"
-        }
-      ],
-      "title": "Storage Error Rate",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "description": "Number of currently active embedded datasets",
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 6,
-        "w": 6,
-        "x": 18,
-        "y": 1
-      },
-      "id": 100,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "center",
-        "orientation": "horizontal",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum(embedded_datasets_active) or vector(0)",
-          "legendFormat": "",
-          "refId": "A"
-        }
-      ],
-      "title": "Active Embedded Datasets",
-      "type": "stat"
-    },
-    {
-      "collapsed": false,
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 7
-      },
-      "id": 5,
-      "panels": [],
-      "title": "PostgreSQL",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 8,
-        "x": 0,
-        "y": 8
-      },
-      "id": 6,
-      "options": {
-        "legend": {
-          "calcs": ["mean", "max"],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "database_connection_pool_size",
-          "legendFormat": "Pool Size",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "database_connection_pool_active",
-          "legendFormat": "Active",
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "database_connection_pool_idle",
-          "legendFormat": "Idle",
-          "refId": "C"
-        }
-      ],
-      "title": "Connection Pool Health",
-      "type": "timeseries"
     },
     {
       "datasource": {
@@ -525,12 +178,12 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 7,
-        "w": 8,
-        "x": 8,
-        "y": 8
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
       },
-      "id": 7,
+      "id": 2,
       "options": {
         "legend": {
           "calcs": ["mean", "sum"],
@@ -549,12 +202,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (operation, status) (rate(database_query_total[$__rate_interval]))",
-          "legendFormat": "{{operation}} - {{status}}",
+          "expr": "sum by (job_type, status) (rate(worker_job_total{job_type=~\"$job_type\", status=~\"$status\"}[$__rate_interval]))",
+          "legendFormat": "{{job_type}} - {{status}}",
           "refId": "A"
         }
       ],
-      "title": "Query Throughput",
+      "title": "Job Processing Rate",
       "type": "timeseries"
     },
     {
@@ -612,17 +265,17 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 7,
-        "w": 8,
-        "x": 16,
-        "y": 8
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
       },
-      "id": 8,
+      "id": 3,
       "options": {
         "legend": {
           "calcs": ["mean", "max"],
           "displayMode": "table",
-          "placement": "right",
+          "placement": "bottom",
           "showLegend": true
         },
         "tooltip": {
@@ -636,8 +289,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.50, sum by (le) (rate(database_query_duration_seconds_bucket[$__rate_interval])))",
-          "legendFormat": "p50",
+          "expr": "histogram_quantile(0.50, sum by (le, job_type) (rate(worker_job_duration_seconds_bucket{job_type=~\"$job_type\"}[$__rate_interval])))",
+          "legendFormat": "p50 - {{job_type}}",
           "refId": "A"
         },
         {
@@ -645,8 +298,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(database_query_duration_seconds_bucket[$__rate_interval])))",
-          "legendFormat": "p95",
+          "expr": "histogram_quantile(0.95, sum by (le, job_type) (rate(worker_job_duration_seconds_bucket{job_type=~\"$job_type\"}[$__rate_interval])))",
+          "legendFormat": "p95 - {{job_type}}",
           "refId": "B"
         },
         {
@@ -654,97 +307,13 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(database_query_duration_seconds_bucket[$__rate_interval])))",
-          "legendFormat": "p99",
+          "expr": "histogram_quantile(0.99, sum by (le, job_type) (rate(worker_job_duration_seconds_bucket{job_type=~\"$job_type\"}[$__rate_interval])))",
+          "legendFormat": "p99 - {{job_type}}",
           "refId": "C"
         }
       ],
-      "title": "Query Latency Quantiles",
+      "title": "Job Duration (p50/p95/p99)",
       "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "inspect": false
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 24,
-        "x": 0,
-        "y": 15
-      },
-      "id": 9,
-      "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "countRows": false,
-          "fields": "",
-          "reducer": ["sum"],
-          "show": false
-        },
-        "showHeader": true,
-        "sortBy": [
-          {
-            "desc": true,
-            "displayName": "Value"
-          }
-        ]
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "topk(10, sum(rate(database_query_total{status=\"error\"}[$__rate_interval])) by (table, operation))",
-          "format": "table",
-          "refId": "A"
-        }
-      ],
-      "title": "Top Error Tables",
-      "type": "table"
-    },
-    {
-      "collapsed": false,
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 22
-      },
-      "id": 10,
-      "panels": [],
-      "title": "NATS JetStream",
-      "type": "row"
     },
     {
       "datasource": {
@@ -795,17 +364,18 @@
                 "value": null
               }
             ]
-          }
+          },
+          "unit": "short"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 7,
+        "h": 8,
         "w": 8,
         "x": 0,
-        "y": 23
+        "y": 9
       },
-      "id": 11,
+      "id": 4,
       "options": {
         "legend": {
           "calcs": ["mean", "max"],
@@ -824,12 +394,21 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (stream) (nats_stream_messages{stream=~\"$stream\"})",
-          "legendFormat": "{{stream}}",
+          "expr": "histogram_quantile(0.50, sum by (le, job_type) (rate(worker_job_chunks_bucket{job_type=~\"$job_type\"}[$__rate_interval])))",
+          "legendFormat": "p50 - {{job_type}}",
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, job_type) (rate(worker_job_chunks_bucket{job_type=~\"$job_type\"}[$__rate_interval])))",
+          "legendFormat": "p95 - {{job_type}}",
+          "refId": "B"
         }
       ],
-      "title": "Stream Message Depth",
+      "title": "Chunks per Job",
       "type": "timeseries"
     },
     {
@@ -887,12 +466,12 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 7,
+        "h": 8,
         "w": 8,
         "x": 8,
-        "y": 23
+        "y": 9
       },
-      "id": 101,
+      "id": 5,
       "options": {
         "legend": {
           "calcs": ["mean", "max"],
@@ -911,12 +490,299 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (stream) (nats_stream_bytes{stream=~\"$stream\"})",
-          "legendFormat": "{{stream}}",
+          "expr": "histogram_quantile(0.50, sum by (le, job_type) (rate(worker_job_file_size_bytes_bucket{job_type=~\"$job_type\"}[$__rate_interval])))",
+          "legendFormat": "p50 - {{job_type}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, job_type) (rate(worker_job_file_size_bytes_bucket{job_type=~\"$job_type\"}[$__rate_interval])))",
+          "legendFormat": "p95 - {{job_type}}",
+          "refId": "B"
+        }
+      ],
+      "title": "File Size per Job",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 100,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 9
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "calcs": ["sum"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (failure_type, job_type) (increase(worker_job_failures_total{job_type=~\"$job_type\"}[$__rate_interval]))",
+          "legendFormat": "{{job_type}} - {{failure_type}}",
           "refId": "A"
         }
       ],
-      "title": "Stream Size (Bytes)",
+      "title": "Job Failures by Type",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 100,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "yellow",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 17
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "calcs": ["sum"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (job_type) (increase(worker_job_retries_total{job_type=~\"$job_type\"}[$__rate_interval]))",
+          "legendFormat": "{{job_type}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Job Retries",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 25
+      },
+      "id": 10,
+      "panels": [],
+      "title": "Collection Transforms",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 26
+      },
+      "id": 11,
+      "options": {
+        "legend": {
+          "calcs": ["mean", "sum"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (transform_type, status) (rate(collection_transform_jobs_total{transform_type=~\"$transform_type\"}[$__rate_interval]))",
+          "legendFormat": "{{transform_type}} - {{status}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Collection Transform Rate",
       "type": "timeseries"
     },
     {
@@ -968,15 +834,16 @@
                 "value": null
               }
             ]
-          }
+          },
+          "unit": "s"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 7,
+        "h": 8,
         "w": 8,
-        "x": 16,
-        "y": 23
+        "x": 8,
+        "y": 26
       },
       "id": 12,
       "options": {
@@ -997,8 +864,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (stream, consumer) (nats_consumer_pending{stream=~\"$stream\"})",
-          "legendFormat": "{{stream}}/{{consumer}}",
+          "expr": "histogram_quantile(0.50, sum by (le, transform_type) (rate(collection_transform_duration_seconds_bucket{transform_type=~\"$transform_type\"}[$__rate_interval])))",
+          "legendFormat": "p50 - {{transform_type}}",
           "refId": "A"
         },
         {
@@ -1006,12 +873,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (stream, consumer) (nats_consumer_ack_pending{stream=~\"$stream\"})",
-          "legendFormat": "Ack {{stream}}/{{consumer}}",
+          "expr": "histogram_quantile(0.95, sum by (le, transform_type) (rate(collection_transform_duration_seconds_bucket{transform_type=~\"$transform_type\"}[$__rate_interval])))",
+          "legendFormat": "p95 - {{transform_type}}",
           "refId": "B"
         }
       ],
-      "title": "Consumer Backlog",
+      "title": "Collection Transform Duration",
       "type": "timeseries"
     },
     {
@@ -1064,22 +931,22 @@
               }
             ]
           },
-          "unit": "s"
+          "unit": "short"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 7,
-        "w": 12,
-        "x": 0,
-        "y": 30
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 26
       },
       "id": 13,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": ["sum"],
           "displayMode": "table",
-          "placement": "right",
+          "placement": "bottom",
           "showLegend": true
         },
         "tooltip": {
@@ -1093,8 +960,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.50, sum by (le) (rate(nats_publish_duration_seconds_bucket[$__rate_interval])))",
-          "legendFormat": "Publish p50",
+          "expr": "sum by (transform_type) (rate(collection_transform_files_processed_total{transform_type=~\"$transform_type\"}[$__rate_interval]))",
+          "legendFormat": "files - {{transform_type}}",
           "refId": "A"
         },
         {
@@ -1102,108 +969,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(nats_publish_duration_seconds_bucket[$__rate_interval])))",
-          "legendFormat": "Publish p95",
+          "expr": "sum by (transform_type) (rate(collection_transform_items_created_total{transform_type=~\"$transform_type\"}[$__rate_interval]))",
+          "legendFormat": "items - {{transform_type}}",
           "refId": "B"
         }
       ],
-      "title": "Publish Duration Quantiles",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 12,
-        "x": 12,
-        "y": 30
-      },
-      "id": 14,
-      "options": {
-        "legend": {
-          "calcs": ["mean", "max"],
-          "displayMode": "table",
-          "placement": "right",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "histogram_quantile(0.50, sum by (le) (rate(nats_subscribe_latency_seconds_bucket[$__rate_interval])))",
-          "legendFormat": "Subscribe p50",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(nats_subscribe_latency_seconds_bucket[$__rate_interval])))",
-          "legendFormat": "Subscribe p95",
-          "refId": "B"
-        }
-      ],
-      "title": "Subscribe Latency Quantiles",
+      "title": "Files Processed & Items Created",
       "type": "timeseries"
     },
     {
@@ -1216,11 +987,11 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 37
+        "y": 34
       },
-      "id": 16,
+      "id": 20,
       "panels": [],
-      "title": "Object Storage (MinIO/S3)",
+      "title": "Dataset Transforms",
       "type": "row"
     },
     {
@@ -1278,12 +1049,12 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 7,
-        "w": 12,
+        "h": 8,
+        "w": 8,
         "x": 0,
-        "y": 38
+        "y": 35
       },
-      "id": 17,
+      "id": 21,
       "options": {
         "legend": {
           "calcs": ["mean", "sum"],
@@ -1302,12 +1073,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (operation, status) (rate(storage_operations_total{operation=~\"$storage_op\"}[$__rate_interval]))",
-          "legendFormat": "{{operation}} - {{status}}",
+          "expr": "sum by (transform_type, status) (rate(dataset_transform_jobs_total[$__rate_interval]))",
+          "legendFormat": "{{transform_type}} - {{status}}",
           "refId": "A"
         }
       ],
-      "title": "Operation Rate",
+      "title": "Dataset Transform Rate",
       "type": "timeseries"
     },
     {
@@ -1365,17 +1136,17 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 7,
-        "w": 12,
-        "x": 12,
-        "y": 38
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 35
       },
-      "id": 18,
+      "id": 22,
       "options": {
         "legend": {
           "calcs": ["mean", "max"],
           "displayMode": "table",
-          "placement": "right",
+          "placement": "bottom",
           "showLegend": true
         },
         "tooltip": {
@@ -1389,8 +1160,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.50, sum by (le, operation) (rate(storage_operation_duration_seconds_bucket{operation=~\"$storage_op\"}[$__rate_interval])))",
-          "legendFormat": "{{operation}} p50",
+          "expr": "histogram_quantile(0.50, sum by (le, transform_type) (rate(dataset_transform_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p50 - {{transform_type}}",
           "refId": "A"
         },
         {
@@ -1398,12 +1169,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(storage_operation_duration_seconds_bucket{operation=~\"$storage_op\"}[$__rate_interval])))",
-          "legendFormat": "{{operation}} p95",
+          "expr": "histogram_quantile(0.95, sum by (le, transform_type) (rate(dataset_transform_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p95 - {{transform_type}}",
           "refId": "B"
         }
       ],
-      "title": "Operation Latency",
+      "title": "Dataset Transform Duration",
       "type": "timeseries"
     },
     {
@@ -1456,22 +1227,22 @@
               }
             ]
           },
-          "unit": "bytes"
+          "unit": "short"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 7,
-        "w": 24,
-        "x": 0,
-        "y": 45
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 35
       },
-      "id": 19,
+      "id": 23,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": ["sum"],
           "displayMode": "table",
-          "placement": "right",
+          "placement": "bottom",
           "showLegend": true
         },
         "tooltip": {
@@ -1485,8 +1256,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.50, sum by (le, operation) (rate(storage_file_size_bytes_bucket{operation=~\"$storage_op\"}[$__rate_interval])))",
-          "legendFormat": "{{operation}} p50",
+          "expr": "sum by (transform_type) (rate(dataset_transform_files_total[$__rate_interval]))",
+          "legendFormat": "files - {{transform_type}}",
           "refId": "A"
         },
         {
@@ -1494,8 +1265,444 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(storage_file_size_bytes_bucket{operation=~\"$storage_op\"}[$__rate_interval])))",
-          "legendFormat": "{{operation}} p95",
+          "expr": "sum by (transform_type) (rate(dataset_transform_items_total[$__rate_interval]))",
+          "legendFormat": "items - {{transform_type}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Files & Items Processed",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      },
+      "id": 30,
+      "panels": [],
+      "title": "Visualization Transforms (Python Worker)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "red",
+                  "index": 1,
+                  "text": "Not Ready"
+                },
+                "1": {
+                  "color": "green",
+                  "index": 0,
+                  "text": "Ready"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 44
+      },
+      "id": 31,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "visualization_worker_ready",
+          "legendFormat": "Worker Ready",
+          "refId": "A"
+        }
+      ],
+      "title": "Worker Status",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 2
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 44
+      },
+      "id": 32,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "visualization_active_jobs",
+          "legendFormat": "Active Jobs",
+          "refId": "A"
+        }
+      ],
+      "title": "Active Jobs",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 44
+      },
+      "id": 33,
+      "options": {
+        "legend": {
+          "calcs": ["mean", "sum"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (transform_type, status) (rate(visualization_transform_jobs_total[$__rate_interval]))",
+          "legendFormat": "{{transform_type}} - {{status}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Visualization Transform Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 44
+      },
+      "id": 34,
+      "options": {
+        "legend": {
+          "calcs": ["mean", "max"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.50, sum by (le, transform_type) (rate(visualization_transform_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p50 - {{transform_type}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, transform_type) (rate(visualization_transform_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p95 - {{transform_type}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Visualization Transform Duration",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 52
+      },
+      "id": 35,
+      "options": {
+        "legend": {
+          "calcs": ["mean", "max"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(visualization_processing_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p50 Processing",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(visualization_s3_upload_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p50 S3 Upload",
           "refId": "B"
         },
         {
@@ -1503,26 +1710,122 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.99, sum by (le, operation) (rate(storage_file_size_bytes_bucket{operation=~\"$storage_op\"}[$__rate_interval])))",
-          "legendFormat": "{{operation}} p99",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(visualization_processing_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p95 Processing",
           "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(visualization_s3_upload_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p95 S3 Upload",
+          "refId": "D"
         }
       ],
-      "title": "Transferred File Size Distribution",
+      "title": "Processing & Upload Duration",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 100,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 52
+      },
+      "id": 36,
+      "options": {
+        "legend": {
+          "calcs": ["sum"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (error_type) (increase(visualization_errors_total[$__rate_interval]))",
+          "legendFormat": "{{error_type}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Visualization Errors by Type",
       "type": "timeseries"
     }
   ],
   "refresh": "10s",
   "schemaVersion": 38,
   "style": "dark",
-  "tags": ["semantic-explorer", "infrastructure", "database", "nats", "storage"],
+  "tags": ["workers", "transforms", "collections", "datasets", "visualizations"],
   "time": {
     "from": "now-1h",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Infrastructure",
-  "uid": "infrastructure",
-  "version": 2
+  "title": "Workers & Transforms",
+  "uid": "workers-transforms",
+  "version": 1
 }

@@ -94,10 +94,13 @@ exporters:
     tls:
       insecure: true
 
+  # Debug exporter - logs all telemetry data to stdout for troubleshooting.
+  # View with: docker compose logs -f otel-collector
+  # Increase sampling_initial for more visibility during debugging.
   debug:
     verbosity: detailed
-    sampling_initial: 5
-    sampling_thereafter: 200
+    sampling_initial: 100
+    sampling_thereafter: 500
 
   prometheus:
     endpoint: 0.0.0.0:8889
