@@ -30,7 +30,7 @@ pub(crate) async fn list_inference_embedders(
             if !response.status().is_success() {
                 let status = response.status();
                 return ApiError::Internal(format!(
-                    "HTTP {}: check inference-api is running",
+                    "HTTP {}: check embedding-inference-api is running",
                     status
                 ))
                 .error_response();
@@ -49,10 +49,10 @@ pub(crate) async fn list_inference_embedders(
         }
         Err(e) => {
             let error_msg = if e.is_timeout() {
-                "Request timeout (inference-api may be loading models)".to_string()
+                "Request timeout (embedding-inference-api may be loading models)".to_string()
             } else if e.is_connect() {
                 format!(
-                    "Failed to connect to inference-api at {} - is it running?",
+                    "Failed to connect to embedding-inference-api at {} - is it running?",
                     embedding_inference_config.url
                 )
             } else {

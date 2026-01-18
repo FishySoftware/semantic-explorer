@@ -2,7 +2,7 @@
 
 use actix_web::{HttpResponse, Responder, ResponseError, get, post, web};
 use serde::{Deserialize, Serialize};
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 use utoipa::ToSchema;
 
 use crate::config::ModelConfig;
@@ -77,6 +77,24 @@ pub async fn embed(
     config: web::Data<ModelConfig>,
     body: web::Json<EmbedRequest>,
 ) -> impl Responder {
+    // Backpressure: try to acquire a permit, return 503 if at capacity
+    let _permit = match embedding::try_acquire_permit() {
+        Some(permit) => permit,
+        None => {
+            warn!(
+                available_permits = embedding::available_permits(),
+                "Embedding service at capacity, returning 503"
+            );
+            return HttpResponse::ServiceUnavailable()
+                .insert_header(("Retry-After", "5"))
+                .json(serde_json::json!({
+                    "error": "Service temporarily at capacity",
+                    "message": "Too many concurrent embedding requests. Please retry after a short delay.",
+                    "retry_after_seconds": 5
+                }));
+        }
+    };
+
     let model_id = body.model.clone();
     let text = body.text.clone();
 
@@ -150,6 +168,24 @@ pub async fn embed_batch(
         ))
         .error_response();
     }
+
+    // Backpressure: try to acquire a permit, return 503 if at capacity
+    let _permit = match embedding::try_acquire_permit() {
+        Some(permit) => permit,
+        None => {
+            warn!(
+                available_permits = embedding::available_permits(),
+                "Embedding service at capacity, returning 503"
+            );
+            return HttpResponse::ServiceUnavailable()
+                .insert_header(("Retry-After", "5"))
+                .json(serde_json::json!({
+                    "error": "Service temporarily at capacity",
+                    "message": "Too many concurrent embedding requests. Please retry after a short delay.",
+                    "retry_after_seconds": 5
+                }));
+        }
+    };
 
     let model_id = body.model.clone();
     let texts = body.texts.clone();

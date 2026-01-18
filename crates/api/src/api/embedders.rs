@@ -168,8 +168,8 @@ pub(crate) async fn create_embedder(
         return ApiError::Validation(e).error_response();
     }
 
-    // Validate base_url is not empty for non-local providers
-    if payload.provider != "local" && payload.base_url.trim().is_empty() {
+    // Validate base_url is not empty for non-internal providers
+    if payload.provider != "internal" && payload.base_url.trim().is_empty() {
         return ApiError::BadRequest("base_url cannot be empty for this provider".to_string())
             .error_response();
     }
@@ -457,8 +457,8 @@ pub(crate) async fn test_embedder(
                 }
             }
         }
-        "local" => {
-            // Test local inference-api service using configured URL
+        "internal" => {
+            // Test internal embedding-inference-api service using configured URL
             let model = embedder
                 .config
                 .get("model")
@@ -479,7 +479,10 @@ pub(crate) async fn test_embedder(
                         let status = response.status();
                         match response.text().await {
                             Ok(text) => Err(format!("HTTP {}: {}", status, text)),
-                            Err(_) => Err(format!("HTTP {}: check inference-api URL", status)),
+                            Err(_) => Err(format!(
+                                "HTTP {}: check embedding-inference-api URL",
+                                status
+                            )),
                         }
                     } else {
                         match response.json::<serde_json::Value>().await {
@@ -506,9 +509,10 @@ pub(crate) async fn test_embedder(
                 }
                 Err(e) => {
                     let error_msg = if e.is_timeout() {
-                        "request timeout (inference-api may be loading models)".to_string()
+                        "request timeout (embedding-inference-api may be loading models)"
+                            .to_string()
                     } else if e.is_connect() {
-                        "failed to connect (check inference-api URL)".to_string()
+                        "failed to connect (check embedding-inference-api URL)".to_string()
                     } else {
                         format!("{}", e)
                     };

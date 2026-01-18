@@ -95,7 +95,7 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: {{ include "semantic-explorer.fullname" . }}-llm-embedding-inference-api
+  name: {{ include "semantic-explorer.fullname" . }}-llm-inference-api
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "semantic-explorer.llmInferenceApi.labels" . | nindent 4 }}

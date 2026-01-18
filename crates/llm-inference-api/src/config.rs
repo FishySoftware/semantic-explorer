@@ -37,8 +37,9 @@ pub struct ModelConfig {
     pub hf_endpoint: Option<String>,
     /// Custom model directory for user-provided models
     pub model_path: Option<PathBuf>,
-    /// Required list of allowed LLM models (comma-separated)
-    /// Must contain at least one model for the service to start
+    /// If true, all models are allowed (LLM_ALLOWED_MODELS="*")
+    pub all_models: bool,
+    /// List of allowed LLM models (if all_models is false)
     pub allowed_models: Vec<String>,
     /// Maximum number of concurrent inference requests
     pub max_concurrent_requests: usize,
@@ -140,23 +141,30 @@ impl ServerConfig {
 
 impl ModelConfig {
     pub fn from_env() -> Result<Self> {
-        let allowed_models = env::var("LLM_ALLOWED_MODELS")
-            .context("LLM_ALLOWED_MODELS must be set (comma-separated list of model IDs)")?;
+        // LLM_ALLOWED_MODELS is required
+        let allowed_models_raw = env::var("LLM_ALLOWED_MODELS").context(
+            "LLM_ALLOWED_MODELS is required. Set to '*' for all models or a comma-separated list.",
+        )?;
 
-        let allowed_models: Vec<String> = allowed_models
-            .split(',')
-            .map(|m| m.trim().to_string())
-            .filter(|m| !m.is_empty())
-            .collect();
-
-        if allowed_models.is_empty() {
-            anyhow::bail!("LLM_ALLOWED_MODELS must contain at least one model");
-        }
+        let (all_models, allowed_models) = if allowed_models_raw.trim() == "*" {
+            (true, Vec::new())
+        } else {
+            let models: Vec<String> = allowed_models_raw
+                .split(',')
+                .map(|m| m.trim().to_string())
+                .filter(|m| !m.is_empty())
+                .collect();
+            if models.is_empty() {
+                anyhow::bail!("LLM_ALLOWED_MODELS must contain at least one model or '*' for all");
+            }
+            (false, models)
+        };
 
         Ok(Self {
             hf_home: env::var("HF_HOME").ok().map(PathBuf::from),
             hf_endpoint: env::var("HF_ENDPOINT").ok(),
             model_path: env::var("LLM_MODEL_PATH").ok().map(PathBuf::from),
+            all_models,
             allowed_models,
             max_concurrent_requests: env::var("LLM_MAX_CONCURRENT_REQUESTS")
                 .unwrap_or_else(|_| "10".to_string())
@@ -166,9 +174,8 @@ impl ModelConfig {
     }
 
     /// Check if a model is allowed based on configuration
-    /// Returns true if allowed_models is empty (all allowed) or if model is in the list
     pub fn is_model_allowed(&self, model_id: &str) -> bool {
-        self.allowed_models.is_empty() || self.allowed_models.contains(&model_id.to_string())
+        self.all_models || self.allowed_models.contains(&model_id.to_string())
     }
 }
 
@@ -249,6 +256,7 @@ mod tests {
             hf_home: Some(PathBuf::from("/tmp/hf_cache")),
             hf_endpoint: Some("https://hf-mirror.example.com".to_string()),
             model_path: Some(PathBuf::from("/models/custom")),
+            all_models: false,
             allowed_models: vec![
                 "mistralai/Mistral-7B-Instruct-v0.2".to_string(),
                 "meta-llama/Llama-2-7b-chat-hf".to_string(),
@@ -262,11 +270,24 @@ mod tests {
 
     #[test]
     fn test_model_filtering() {
+        // All models allowed ('*')
+        let config_all = ModelConfig {
+            hf_home: None,
+            hf_endpoint: None,
+            model_path: None,
+            all_models: true,
+            allowed_models: vec![],
+            max_concurrent_requests: 10,
+        };
+        assert!(config_all.is_model_allowed("any-model"));
+        assert!(config_all.is_model_allowed("mistralai/Mistral-7B-Instruct-v0.2"));
+
         // Specific allowed list
         let config_restricted = ModelConfig {
             hf_home: None,
             hf_endpoint: None,
             model_path: None,
+            all_models: false,
             allowed_models: vec!["mistralai/Mistral-7B-Instruct-v0.2".to_string()],
             max_concurrent_requests: 10,
         };

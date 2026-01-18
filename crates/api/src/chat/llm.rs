@@ -6,6 +6,9 @@ use std::pin::Pin;
 
 use crate::storage::postgres::chat as chat_storage;
 
+/// Type alias for streaming LLM response results
+type LLMStreamResult = Result<Pin<Box<dyn Stream<Item = Result<String, String>> + Send>>, String>;
+
 const SYSTEM_PROMPT: &str = "You are a helpful assistant that answers questions based on the provided context. When answering, always cite the specific chunk number (e.g., 'According to Chunk 1' or 'As mentioned in Chunk 2 and Chunk 3') to reference where your information comes from. If the context doesn't contain relevant information to answer the question, say so explicitly.";
 
 /// Configuration for LLM API requests
@@ -59,8 +62,9 @@ pub(crate) async fn generate_response(
 
     // Call the appropriate LLM API
     let response_text = match provider.to_lowercase().as_str() {
-        "local" => {
-            call_local_llm_api(&model, SYSTEM_PROMPT, &user_prompt, temperature, max_tokens).await?
+        "internal" => {
+            call_internal_llm_api(&model, SYSTEM_PROMPT, &user_prompt, temperature, max_tokens)
+                .await?
         }
         "openai" => {
             call_openai_api(
@@ -157,15 +161,15 @@ async fn call_openai_api(
     Ok(response_text)
 }
 
-/// Call local LLM inference API for chat completion
-async fn call_local_llm_api(
+/// Call internal LLM inference API for chat completion
+async fn call_internal_llm_api(
     model: &str,
     system_prompt: &str,
     user_prompt: &str,
     temperature: f32,
     max_tokens: i32,
 ) -> Result<String, String> {
-    // Use the llm_client to call the local inference API
+    // Use the llm_client to call the internal inference API
     let response = crate::llms::client::simple_chat(
         model,
         system_prompt,
@@ -174,19 +178,19 @@ async fn call_local_llm_api(
         Some(max_tokens as usize),
     )
     .await
-    .map_err(|e| format!("Local LLM API error: {}", e))?;
+    .map_err(|e| format!("Internal LLM API error: {}", e))?;
 
     Ok(response)
 }
 
-/// Call local LLM inference API for streaming chat completion
-async fn call_local_llm_api_stream(
+/// Call internal LLM inference API for streaming chat completion
+async fn call_internal_llm_api_stream(
     model: &str,
     system_prompt: &str,
     user_prompt: &str,
     temperature: f32,
     max_tokens: i32,
-) -> Result<Pin<Box<dyn Stream<Item = Result<String, String>> + Send>>, String> {
+) -> LLMStreamResult {
     // Build messages for chat completion
     let messages = vec![
         crate::llms::client::ChatMessage {
@@ -297,7 +301,7 @@ pub(crate) async fn generate_response_stream(
     context: &str,
     temperature: Option<f32>,
     max_tokens: Option<i32>,
-) -> Result<Pin<Box<dyn Stream<Item = Result<String, String>> + Send>>, String> {
+) -> LLMStreamResult {
     // Fetch LLM details from database
     let (name, provider, base_url, model, api_key) =
         chat_storage::get_llm_details(pool, encryption, llm_id)
@@ -315,10 +319,10 @@ pub(crate) async fn generate_response_stream(
 
     tracing::debug!(llm_name = %name, provider = %provider, "starting streaming LLM response");
 
-    // Handle local provider separately (before consuming model in config)
-    if provider.to_lowercase() == "local" {
-        // Use local LLM inference API streaming
-        let stream = call_local_llm_api_stream(
+    // Handle internal provider separately (before consuming model in config)
+    if provider.to_lowercase() == "internal" {
+        // Use internal LLM inference API streaming
+        let stream = call_internal_llm_api_stream(
             &model,
             SYSTEM_PROMPT,
             &user_prompt,
@@ -340,9 +344,6 @@ pub(crate) async fn generate_response_stream(
 
     let response = match provider.to_lowercase().as_str() {
         "openai" => make_streaming_request(&config, SYSTEM_PROMPT, &user_prompt, "openai").await?,
-        "anthropic" => {
-            make_streaming_request(&config, SYSTEM_PROMPT, &user_prompt, "anthropic").await?
-        }
         "cohere" => make_streaming_request(&config, SYSTEM_PROMPT, &user_prompt, "cohere").await?,
         _ => return Err(format!("unsupported LLM provider: {}", provider)),
     };
@@ -468,13 +469,6 @@ fn extract_content_from_provider(json: &serde_json::Value, provider: &str) -> Op
             .get("content")?
             .as_str()
             .map(String::from),
-        "anthropic" => {
-            if json.get("type")?.as_str()? == "content_block_delta" {
-                json.get("delta")?.get("text")?.as_str().map(String::from)
-            } else {
-                None
-            }
-        }
         "cohere" => {
             // Cohere V2 Chat API streaming format
             if json.get("type")?.as_str()? == "content-delta" {

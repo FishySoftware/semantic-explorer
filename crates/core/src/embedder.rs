@@ -30,7 +30,7 @@ pub async fn generate_batch_embeddings(
         match config.provider.as_str() {
             "openai" => DEFAULT_OPENAI_BATCH_SIZE,
             "cohere" => DEFAULT_COHERE_BATCH_SIZE,
-            "local" => DEFAULT_LOCAL_BATCH_SIZE,
+            "internal" => DEFAULT_LOCAL_BATCH_SIZE,
             _ => return Err(anyhow::anyhow!("Unsupported provider: {}", config.provider)),
         }
     };
@@ -101,7 +101,7 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
             };
             (url, body, true)
         }
-        "local" => {
+        "internal" => {
             let model = &config.model;
             let body = serde_json::json!({
                 "texts": texts,
@@ -128,12 +128,12 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
     }
 
     //TODO: make configurable with environment variable
-    let max_retries = 3;
+    let max_retries = 5;
     let mut last_error = None;
 
     for attempt in 0..=max_retries {
         if attempt > 0 {
-            let delay = Duration::from_secs(1 << (attempt - 1));
+            let delay = Duration::from_secs(1 << (attempt - 1).min(4)); // Cap at 16 seconds
             tracing::warn!(
                 attempt = attempt,
                 delay_secs = delay.as_secs(),
@@ -154,6 +154,35 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
                 }
 
                 let status = resp.status();
+
+                // Handle 503 Service Unavailable with Retry-After header
+                if status == reqwest::StatusCode::SERVICE_UNAVAILABLE {
+                    let retry_after = resp
+                        .headers()
+                        .get("Retry-After")
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|s| s.parse::<u64>().ok())
+                        .unwrap_or(5);
+
+                    let text = resp.text().await.unwrap_or_default();
+                    tracing::warn!(
+                        attempt = attempt,
+                        retry_after_secs = retry_after,
+                        "Embedding service at capacity (503), backing off"
+                    );
+
+                    // Use the server-suggested retry delay
+                    if attempt < max_retries {
+                        sleep(Duration::from_secs(retry_after)).await;
+                    }
+
+                    last_error = Some(anyhow::anyhow!(
+                        "Embedding service at capacity (503): {}",
+                        text
+                    ));
+                    continue;
+                }
+
                 let text = resp.text().await.unwrap_or_default();
 
                 if status.is_client_error() {
@@ -204,10 +233,10 @@ fn parse_embeddings_response(
                 Err(anyhow::anyhow!("Missing embeddings in Cohere response"))
             }
         }
-        "local" => response_body
+        "internal" => response_body
             .get("embeddings")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .ok_or_else(|| anyhow::anyhow!("Invalid local inference response")),
+            .ok_or_else(|| anyhow::anyhow!("Invalid internal inference response")),
         _ => Err(anyhow::anyhow!("Unsupported provider parsing")),
     }
 }

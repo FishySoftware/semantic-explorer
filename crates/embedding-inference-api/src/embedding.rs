@@ -4,6 +4,7 @@ use once_cell::sync::OnceCell;
 use ort::ep::CUDA;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use tokio::sync::Semaphore;
 use tracing::{debug, error, info};
 
 use crate::config::ModelConfig;
@@ -15,6 +16,36 @@ type EmbeddingCache = Arc<Mutex<HashMap<String, Arc<Mutex<TextEmbedding>>>>>;
 
 /// Global embedding model cache - using per-model mutexes for concurrent access
 static EMBEDDING_MODELS: OnceCell<EmbeddingCache> = OnceCell::new();
+
+/// Global semaphore for limiting concurrent embedding requests (backpressure)
+static EMBEDDING_SEMAPHORE: OnceCell<Arc<Semaphore>> = OnceCell::new();
+
+/// Initialize the embedding semaphore for backpressure control
+pub fn init_semaphore(max_concurrent: usize) {
+    let permits = max_concurrent.max(1);
+    EMBEDDING_SEMAPHORE.get_or_init(|| {
+        info!(
+            max_concurrent = permits,
+            "Initialized embedding request semaphore for backpressure control"
+        );
+        Arc::new(Semaphore::new(permits))
+    });
+}
+
+/// Try to acquire a permit for embedding. Returns None if at capacity.
+pub fn try_acquire_permit() -> Option<tokio::sync::OwnedSemaphorePermit> {
+    EMBEDDING_SEMAPHORE
+        .get()
+        .and_then(|sem| sem.clone().try_acquire_owned().ok())
+}
+
+/// Get current available permits (for monitoring)
+pub fn available_permits() -> usize {
+    EMBEDDING_SEMAPHORE
+        .get()
+        .map(|sem| sem.available_permits())
+        .unwrap_or(0)
+}
 
 /// Initialize the embedding model cache and pre-load allowed models
 ///
@@ -105,12 +136,12 @@ pub async fn init_cache(config: &ModelConfig) {
 
 /// Get the list of embedding models to load based on configuration
 fn get_models_to_load(config: &ModelConfig) -> Vec<String> {
-    if !config.allowed_embedding_models.is_empty() {
-        // Use allowed models list if configured
-        config.allowed_embedding_models.clone()
-    } else {
-        // Use all supported embedding models if no restrictions
+    if config.all_embedding_models {
+        // Load all supported embedding models
         get_all_supported_embedding_models()
+    } else {
+        // Use specific allowed models list
+        config.allowed_embedding_models.clone()
     }
 }
 

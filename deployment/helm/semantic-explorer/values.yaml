@@ -499,7 +499,7 @@ embeddingInferenceApi:
                 - key: app.kubernetes.io/name
                   operator: In
                   values:
-                    - inference-api
+                    - embedding-inference-api
             topologyKey: kubernetes.io/hostname
   podDisruptionBudget:
     enabled: true

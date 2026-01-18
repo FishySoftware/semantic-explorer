@@ -335,11 +335,18 @@ async fn create_batches_from_dataset_items(
 
     // Convert dataset items to batch items (one per chunk)
     let mut all_batch_items: Vec<serde_json::Value> = Vec::new();
+    // Use a namespace UUID for generating deterministic chunk IDs
+    // This ensures the same item+chunk always gets the same UUID, enabling idempotent upserts
+    let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap(); // URL namespace UUID
     for item in &items {
         for (chunk_idx, chunk) in item.chunks.iter().enumerate() {
-            // Generate a unique UUID for each chunk
-            // Note: This is not deterministic, but Qdrant requires valid UUIDs as point IDs
-            let chunk_uuid = Uuid::new_v4();
+            // Generate a deterministic UUID based on embedded_dataset_id, item_id, and chunk_index
+            // This allows re-processing to update existing vectors rather than create duplicates
+            let chunk_id_string = format!(
+                "ed-{}-item-{}-chunk-{}",
+                embedded_dataset.embedded_dataset_id, item.item_id, chunk_idx
+            );
+            let chunk_uuid = Uuid::new_v5(&namespace, chunk_id_string.as_bytes());
             let batch_item = serde_json::json!({
                 "id": chunk_uuid.to_string(),
                 "text": chunk.content,

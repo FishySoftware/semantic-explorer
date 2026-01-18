@@ -101,14 +101,6 @@ pub fn get_model_catalog() -> Vec<ModelInfo> {
             capabilities: vec!["text-generation".to_string(), "chat".to_string()],
         },
         ModelInfo {
-            id: "google/gemma-7b-it".to_string(),
-            name: "Gemma 7B Instruct".to_string(),
-            description: "Google's Gemma 7B instruction-tuned model (requires HF token)"
-                .to_string(),
-            size: Some("7B".to_string()),
-            capabilities: vec!["text-generation".to_string(), "chat".to_string()],
-        },
-        ModelInfo {
             id: "TinyLlama/TinyLlama-1.1B-Chat-v1.0".to_string(),
             name: "TinyLlama 1.1B Chat".to_string(),
             description: "Compact 1.1B model for resource-constrained environments".to_string(),

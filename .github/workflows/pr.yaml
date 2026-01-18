@@ -135,10 +135,13 @@ jobs:
           - name: worker-visualizations-py
             dockerfile: ./crates/worker-visualizations-py/Dockerfile
             context: ./crates/worker-visualizations-py
-          - name: inference-api
-            dockerfile: ./crates/inference-api/Dockerfile
+          - name: embedding-inference-api
+            dockerfile: ./crates/embedding-inference-api/Dockerfile
             context: .
-          # Note: inference-api-cuda build is skipped in PR checks as it requires
+          - name: llm-inference-api
+            dockerfile: ./crates/llm-inference-api/Dockerfile
+            context: .
+          # Note: embedding-inference-api-cuda build is skipped in PR checks as it requires
           # CUDA base images which are large and slow to download
     steps:
       - name: Checkout

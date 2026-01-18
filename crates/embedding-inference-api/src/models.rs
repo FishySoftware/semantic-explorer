@@ -30,7 +30,7 @@ pub fn get_embedding_models(config: &ModelConfig) -> Vec<ModelInfo> {
 
     let mut models: Vec<ModelInfo> = supported_models
         .iter()
-        .filter(|model| model.model_file == "onnx/model.onnx") // Filter out quantized models.
+        // .filter(|model| model.model_file == "onnx/model.onnx") // Filter out quantized models.
         .filter_map(|m| {
             let model_id = model_enum_to_id(&m.model);
 

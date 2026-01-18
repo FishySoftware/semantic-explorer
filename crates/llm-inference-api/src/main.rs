@@ -62,7 +62,13 @@ async fn main() -> Result<()> {
     // Initialize model cache
     llm::init_cache(&config.models).await;
 
-    info!("Model cache initialized.");
+    // Initialize backpressure semaphore for LLM requests
+    llm::init_semaphore(config.models.max_concurrent_requests);
+
+    info!(
+        max_concurrent_requests = config.models.max_concurrent_requests,
+        "Model cache and backpressure semaphore initialized."
+    );
 
     let model_config = web::Data::new(config.models.clone());
     let gen_config = web::Data::new(config.generation.clone());

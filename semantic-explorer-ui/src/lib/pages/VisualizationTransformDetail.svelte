@@ -65,6 +65,11 @@
 		cluster_count: number;
 		created_at: string;
 		updated_at: string;
+		status: string;
+		started_at: string | null;
+		completed_at: string | null;
+		error_message: string | null;
+		stats_json: Record<string, unknown> | null;
 	}
 
 	let transform = $state<VisualizationTransform | null>(null);
@@ -158,12 +163,10 @@
 
 			// Transform from database format to UI format
 			visualizations = dbVisualizations.map((v) => ({
-				visualization_id: v.visualization_id,
-				visualization_transform_id: v.visualization_transform_id,
+				...v, // Preserve all fields from database
 				title: `${transform?.title || 'Visualization'} - ${new Date(v.created_at).toISOString().split('T')[0]}`,
 				embedding_count: v.point_count ?? 0,
 				cluster_count: v.cluster_count ?? 0,
-				created_at: v.created_at,
 				updated_at: v.completed_at ?? v.started_at ?? v.created_at,
 			}));
 
@@ -452,10 +455,13 @@
 						>
 							<tr>
 								<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Title</th>
+								<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Status</th>
 								<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Embeddings</th>
 								<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Clusters</th>
+								<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Duration</th>
+								<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Started At</th>
+								<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Completed At</th>
 								<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Created</th>
-								<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Updated</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -471,11 +477,52 @@
 											{visualization.title}
 										</a>
 									</td>
+									<td class="px-4 py-3">
+										<span
+											class={visualization.status === 'completed'
+												? 'px-2 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400'
+												: visualization.status === 'failed'
+													? 'px-2 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400'
+													: visualization.status === 'processing'
+														? 'px-2 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400'
+														: 'px-2 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-400'}
+										>
+											{visualization.status}
+										</span>
+									</td>
 									<td class="px-4 py-3">{visualization.embedding_count}</td>
 									<td class="px-4 py-3">{visualization.cluster_count}</td>
+									<td class="px-4 py-3">
+										{#if visualization.started_at && visualization.completed_at}
+											{Math.round(
+												new Date(visualization.completed_at).getTime() -
+													new Date(visualization.started_at).getTime()
+											)}ms
+										{:else}
+											-
+										{/if}
+									</td>
+									<td class="px-4 py-3">
+										{visualization.started_at
+											? new Date(visualization.started_at).toLocaleString()
+											: '-'}
+									</td>
+									<td class="px-4 py-3">
+										{visualization.completed_at
+											? new Date(visualization.completed_at).toLocaleString()
+											: '-'}
+									</td>
 									<td class="px-4 py-3">{new Date(visualization.created_at).toLocaleString()}</td>
-									<td class="px-4 py-3">{new Date(visualization.updated_at).toLocaleString()}</td>
 								</tr>
+								{#if visualization.error_message}
+									<tr
+										class="bg-red-50 dark:bg-red-900/10 border-b border-gray-200 dark:border-gray-700"
+									>
+										<td colspan="8" class="px-4 py-2 text-xs text-red-600 dark:text-red-400">
+											Error: {visualization.error_message}
+										</td>
+									</tr>
+								{/if}
 							{/each}
 						</tbody>
 					</table>

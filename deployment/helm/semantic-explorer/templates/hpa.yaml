@@ -199,7 +199,7 @@ spec:
 apiVersion: {{ include "semantic-explorer.hpa.apiVersion" . }}
 kind: HorizontalPodAutoscaler
 metadata:
-  name: {{ include "semantic-explorer.fullname" . }}-llm-embedding-inference-api
+  name: {{ include "semantic-explorer.fullname" . }}-llm-inference-api
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "semantic-explorer.llmInferenceApi.labels" . | nindent 4 }}
@@ -207,7 +207,7 @@ spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: StatefulSet
-    name: {{ include "semantic-explorer.fullname" . }}-llm-embedding-inference-api
+    name: {{ include "semantic-explorer.fullname" . }}-llm-inference-api
   minReplicas: {{ .Values.llmInferenceApi.autoscaling.minReplicas }}
   maxReplicas: {{ .Values.llmInferenceApi.autoscaling.maxReplicas }}
   metrics:

@@ -41,14 +41,14 @@
 
 	let inferenceModels = $state<ModelInfo[]>([]);
 	let localModelsForDisplay = $derived(
-		[...inferenceModels].sort((a, b) => a.name.localeCompare(b.name)),
+		[...inferenceModels].sort((a, b) => a.name.localeCompare(b.name))
 	);
 
 	function getProviderDefaults(): Record<string, ProviderDefaultConfig> {
 		const localDefaultModel = localModelsForDisplay[0]?.id || '';
 
 		return {
-			local: {
+			internal: {
 				url: '', // URL is configured on the backend
 				models: localModelsForDisplay.map((m) => m.id),
 				config: { model: localDefaultModel },
@@ -110,8 +110,8 @@
 						max_tokens: 10,
 					}),
 				});
-			} else if (formProvider === 'local') {
-				return; // Testing local LLMs is not needed
+			} else if (formProvider === 'internal') {
+				return; // Testing internal LLMs is not needed
 			} else if (formProvider === 'cohere') {
 				response = await fetch(`${formBaseUrl}/chat`, {
 					method: 'POST',
@@ -217,7 +217,7 @@
 	function openCreateForm() {
 		editingLLM = null;
 		formName = '';
-		formProvider = 'local';
+		formProvider = 'internal';
 		formApiKey = '';
 		formIsPublic = false;
 		updateProviderDefaults();
@@ -469,14 +469,14 @@
 								disabled={!!editingLLM}
 								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white disabled:opacity-50"
 							>
-								<option value="local">LLM Inference API</option>
+								<option value="internal">LLM Inference API</option>
 								<option value="openai">OpenAI</option>
 								<option value="cohere">Cohere</option>
 								<option value="custom">Custom</option>
 							</select>
 						</div>
 
-						{#if formProvider === 'local'}
+						{#if formProvider === 'internal'}
 							<div
 								class="pt-3 pb-3 mt-2 mb-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg"
 							>
@@ -528,7 +528,7 @@
 									}
 								}}
 							>
-								{#if formProvider === 'local' && localModelsForDisplay.length > 0}
+								{#if formProvider === 'internal' && localModelsForDisplay.length > 0}
 									{#each localModelsForDisplay as model (model.id)}
 										<option value={model.id}>{model.name}</option>
 									{/each}
@@ -564,7 +564,7 @@
 							{/if}
 						</div>
 
-						{#if formProvider !== 'local'}
+						{#if formProvider !== 'internal'}
 							<div class="mt-4">
 								<label
 									for="llm-api-key"
@@ -749,7 +749,7 @@
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3">
 								<span class="text-gray-700 dark:text-gray-300 text-sm">
-								{llm.config.model ?? 'N/A'}
+									{llm.config.model ?? 'N/A'}
 								</span>
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3">
@@ -764,7 +764,7 @@
 								{/if}
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3">
-							<span class="text-gray-700 dark:text-gray-300">{llm.owner_display_name}</span>
+								<span class="text-gray-700 dark:text-gray-300">{llm.owner_display_name}</span>
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3 text-center">
 								<ActionMenu

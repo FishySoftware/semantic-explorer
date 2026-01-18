@@ -51,7 +51,7 @@ async fn main() -> Result<()> {
     info!(
         hostname = %config.server.hostname,
         port = config.server.port,
-        "Starting inference-api server with CUDA GPU acceleration (controlled by CUDA_VISIBLE_DEVICES)"
+        "Starting embedding-inference-api server with CUDA GPU acceleration (controlled by CUDA_VISIBLE_DEVICES)"
     );
 
     // Log allowed models configuration
@@ -82,7 +82,13 @@ async fn main() -> Result<()> {
         reranker::init_cache(&config.models)
     );
 
-    info!("Model caches initialized.");
+    // Initialize backpressure semaphore for embedding requests
+    embedding::init_semaphore(config.models.max_concurrent_requests);
+
+    info!(
+        max_concurrent_requests = config.models.max_concurrent_requests,
+        "Model caches and backpressure semaphore initialized."
+    );
 
     let model_config = web::Data::new(config.models.clone());
     let hostname = config.server.hostname.clone();

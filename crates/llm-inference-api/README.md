@@ -344,8 +344,3 @@ See LICENSE file in repository root.
 ## Contributing
 
 See CONTRIBUTING.md in repository root.
-
-## Support
-
-- Issues: https://github.com/anthropics/semantic-explorer/issues
-- Documentation: https://docs.semantic-explorer.ai

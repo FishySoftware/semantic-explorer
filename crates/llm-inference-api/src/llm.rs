@@ -6,6 +6,7 @@
 //! - Text generation with configurable parameters
 //! - Streaming text generation support
 //! - Chat completion with message history
+//! - Backpressure control via semaphore
 
 use futures::stream::Stream;
 use mistralrs::{
@@ -16,7 +17,7 @@ use once_cell::sync::OnceCell;
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
 use tracing::{debug, info};
 
 use crate::config::{GenerationConfig, ModelConfig};
@@ -28,6 +29,36 @@ type LlmCache = Arc<tokio::sync::Mutex<HashMap<String, Arc<MistralRsModel>>>>;
 
 /// Global LLM model cache - using per-model mutexes for concurrent access
 static LLM_MODELS: OnceCell<LlmCache> = OnceCell::new();
+
+/// Global semaphore for limiting concurrent LLM requests (backpressure)
+static LLM_SEMAPHORE: OnceCell<Arc<Semaphore>> = OnceCell::new();
+
+/// Initialize the LLM semaphore for backpressure control
+pub fn init_semaphore(max_concurrent: usize) {
+    let permits = max_concurrent.max(1);
+    LLM_SEMAPHORE.get_or_init(|| {
+        info!(
+            max_concurrent = permits,
+            "Initialized LLM request semaphore for backpressure control"
+        );
+        Arc::new(Semaphore::new(permits))
+    });
+}
+
+/// Try to acquire a permit for LLM generation. Returns None if at capacity.
+pub fn try_acquire_permit() -> Option<tokio::sync::OwnedSemaphorePermit> {
+    LLM_SEMAPHORE
+        .get()
+        .and_then(|sem| sem.clone().try_acquire_owned().ok())
+}
+
+/// Get current available permits (for monitoring)
+pub fn available_permits() -> usize {
+    LLM_SEMAPHORE
+        .get()
+        .map(|sem| sem.available_permits())
+        .unwrap_or(0)
+}
 
 /// Initialize the LLM model cache and pre-load allowed models
 ///
@@ -82,8 +113,15 @@ pub async fn init_cache(config: &ModelConfig) {
 
 /// Get the list of LLM models to load based on configuration
 fn get_models_to_load(config: &ModelConfig) -> Vec<String> {
-    // Always use allowed_models (required to be non-empty)
-    config.allowed_models.clone()
+    if config.all_models {
+        // When all_models is true ('*'), don't pre-load any models
+        // They will be loaded on-demand when first requested
+        tracing::info!("LLM_ALLOWED_MODELS='*' - models will be loaded on-demand");
+        Vec::new()
+    } else {
+        // Use specific allowed models list
+        config.allowed_models.clone()
+    }
 }
 
 /// Load a model from disk or download it

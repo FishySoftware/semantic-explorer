@@ -766,7 +766,7 @@ helm.sh/chart: {{ include "semantic-explorer.chart" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
-app.kubernetes.io/component: llm-embedding-inference-api
+app.kubernetes.io/component: llm-inference-api
 {{- with .Values.commonLabels }}
 {{ toYaml . }}
 {{- end }}
@@ -776,9 +776,9 @@ app.kubernetes.io/component: llm-embedding-inference-api
 LLM Inference API selector labels
 */}}
 {{- define "semantic-explorer.llmInferenceApi.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "semantic-explorer.name" . }}-llm-embedding-inference-api
+app.kubernetes.io/name: {{ include "semantic-explorer.name" . }}-llm-inference-api
 app.kubernetes.io/instance: {{ .Release.Name }}
-app.kubernetes.io/component: llm-embedding-inference-api
+app.kubernetes.io/component: llm-inference-api
 {{- end }}
 
 {{/*
@@ -786,7 +786,7 @@ LLM Inference API service account name
 */}}
 {{- define "semantic-explorer.llmInferenceApi.serviceAccountName" -}}
 {{- if .Values.llmInferenceApi.serviceAccount.create }}
-{{- default (printf "%s-llm-embedding-inference-api" (include "semantic-explorer.fullname" .)) .Values.llmInferenceApi.serviceAccount.name }}
+{{- default (printf "%s-llm-inference-api" (include "semantic-explorer.fullname" .)) .Values.llmInferenceApi.serviceAccount.name }}
 {{- else }}
 {{- default "default" .Values.llmInferenceApi.serviceAccount.name }}
 {{- end }}

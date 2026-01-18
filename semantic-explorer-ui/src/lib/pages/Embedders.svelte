@@ -88,7 +88,7 @@
 					dimensions: 1024,
 				},
 			},
-			local: {
+			internal: {
 				url: '', // URL is configured on the backend
 				models: localModelsForDisplay,
 				config: { model: localDefaultModel, dimensions: localDefaultDimensions },
@@ -158,8 +158,8 @@
 						...(config.truncate && { truncate: config.truncate }),
 					}),
 				});
-			} else if (formProvider === 'local') {
-				return; // Testing local embedders is not needed
+			} else if (formProvider === 'internal') {
+				return; // Testing internal embedders is not needed
 			} else {
 				testStatus = 'error';
 				testMessage = 'Testing custom providers is not supported. Please save and test manually.';
@@ -191,8 +191,8 @@
 				}
 			} else if (formProvider === 'openai') {
 				embeddingCount = result.data?.length || 0;
-			} else if (formProvider === 'local') {
-				return; // Testing local embedders is not needed
+			} else if (formProvider === 'internal') {
+				return; // Testing internal embedders is not needed
 			}
 
 			testMessage = `Connection successful! Generated ${embeddingCount} embedding(s).`;
@@ -267,7 +267,7 @@
 	function openCreateForm() {
 		editingEmbedder = null;
 		formName = '';
-		formProvider = 'local';
+		formProvider = 'internal';
 		formApiKey = '';
 		formIsPublic = false;
 		updateProviderDefaults();
@@ -357,8 +357,8 @@
 			formConfig = JSON.stringify(defaults.config, null, 2);
 
 			// Reset model selection when switching providers to avoid accumulation
-			if (formProvider === 'local') {
-				// For local provider, use the first available inference model
+			if (formProvider === 'internal') {
+				// For internal provider, use the first available inference model
 				localModel = defaults.models?.[0] || '';
 				customModel = '';
 			} else {
@@ -388,7 +388,7 @@
 				formBatchSize = 2048;
 			} else if (formProvider === 'cohere') {
 				formBatchSize = 96;
-			} else if (formProvider === 'local') {
+			} else if (formProvider === 'internal') {
 				formBatchSize = 256;
 			} else {
 				formBatchSize = 100;
@@ -578,19 +578,19 @@
 								disabled={!!editingEmbedder}
 								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white disabled:opacity-50"
 							>
-								<option value="local">Inference API</option>
+								<option value="internal">Embedding Inference API</option>
 								<option value="openai">OpenAI</option>
 								<option value="cohere">Cohere</option>
 							</select>
 						</div>
 
-						{#if formProvider === 'local'}
+						{#if formProvider === 'internal'}
 							<div
 								class="pt-3 pb-3 mt-2 mb-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg"
 							>
 								<p class=" p-2 text-sm text-blue-700 dark:text-blue-300">
-									<strong>Local Inference:</strong>
-									The inference API URL is configured on the server. No API key is required.
+									<strong>Internal Embedding Inference API:</strong>
+									The embedding inference API URL is configured on the server. No API key is required.
 								</p>
 							</div>
 						{:else}
@@ -903,16 +903,18 @@
 								for="embedder-api-key"
 								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
 							>
-								API Key {formProvider === 'local' ? '(not required for local)' : '(optional)'}
+								API Key {formProvider === 'internal'
+									? '(not required for internal embedding inference API)'
+									: '(optional)'}
 							</label>
 							<input
 								id="embedder-api-key"
 								type="password"
 								autocomplete="off"
 								bind:value={formApiKey}
-								disabled={formProvider === 'local'}
+								disabled={formProvider === 'internal'}
 								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed"
-								placeholder={formProvider === 'local' ? 'Not required' : 'Optional'}
+								placeholder={formProvider === 'internal' ? 'Not required' : 'Optional'}
 							/>
 						</div>
 

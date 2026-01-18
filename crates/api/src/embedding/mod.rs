@@ -46,8 +46,8 @@ pub async fn generate_embedding(
             });
             (endpoint, body, true)
         }
-        "local" => {
-            // Local inference via embedding-inference-api service uses EMBEDDING_INFERENCE_API_URL environment variable
+        "internal" => {
+            // Internal inference via embedding-inference-api service uses EMBEDDING_INFERENCE_API_URL environment variable
             let model = config
                 .get("model")
                 .and_then(|v| v.as_str())
@@ -115,8 +115,8 @@ pub async fn generate_embedding(
                 Err(anyhow::anyhow!("Invalid Cohere response format"))
             }
         }
-        "local" => {
-            // Local inference-api returns embeddings array
+        "internal" => {
+            // Internal embedding-inference-api returns embeddings array
             let embeddings = response
                 .get("embeddings")
                 .and_then(|e| e.as_array())

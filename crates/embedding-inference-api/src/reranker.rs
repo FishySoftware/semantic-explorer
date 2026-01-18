@@ -103,12 +103,12 @@ pub async fn init_cache(config: &ModelConfig) {
 
 /// Get the list of reranker models to load based on configuration
 fn get_models_to_load(config: &ModelConfig) -> Vec<String> {
-    if !config.allowed_rerank_models.is_empty() {
-        // Use allowed models list if configured
-        config.allowed_rerank_models.clone()
-    } else {
-        // Use all supported reranker models if no restrictions
+    if config.all_rerank_models {
+        // Load all supported reranker models
         get_all_supported_reranker_models()
+    } else {
+        // Use specific allowed models list (may be empty = no rerankers)
+        config.allowed_rerank_models.clone()
     }
 }
 

@@ -1,4 +1,4 @@
-# CUDA-enabled Dockerfile for inference-api
+# CUDA-enabled Dockerfile for embedding-inference-api
 # Designed for NVIDIA GPUs with CUDA 12.x and cuDNN 9.x
 #
 # Requirements:
@@ -7,9 +7,9 @@
 #   - cuDNN 9.x (from base image)
 #
 # Build examples:
-#   docker build -t inference-api:cuda12-sm89 .
-#   docker build --build-arg CUDA_COMPUTE_CAP=80 -t inference-api:cuda12-sm80 .
-# Run: docker run --gpus all inference-api:cuda12-sm89
+#   docker build -t embedding-inference-api:cuda12-sm89 .
+#   docker build --build-arg CUDA_COMPUTE_CAP=80 -t embedding-inference-api:cuda12-sm80 .
+# Run: docker run --gpus all embedding-inference-api:cuda12-sm89
 
 # Use NVIDIA's official CUDA development image for building
 # nvidia/cuda:12.9.1-cudnn-devel-ubuntu24.04 includes cuDNN 9.x
@@ -66,8 +66,8 @@ WORKDIR /usr/src/app
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 
-# Build inference-api
-RUN cargo build --release -p inference-api
+# Build embedding-inference-api
+RUN cargo build --release -p embedding-inference-api
 
 # Define a non-root user
 RUN useradd -u 10001 -m appuser
@@ -91,7 +91,7 @@ ENV LD_LIBRARY_PATH=/opt/onnxruntime:${LD_LIBRARY_PATH}
 ENV ORT_DYLIB_PATH=/opt/onnxruntime/libonnxruntime.so
 
 # Copy binary
-COPY --from=builder /usr/src/app/target/release/inference-api /usr/local/bin/inference-api
+COPY --from=builder /usr/src/app/target/release/embedding-inference-api /usr/local/bin/embedding-inference-api
 COPY --from=builder /etc/passwd /etc/passwd
 
 # Create directories for models and TensorRT cache
@@ -105,4 +105,4 @@ EXPOSE 8090
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8090/health/live || exit 1
 
-ENTRYPOINT ["inference-api"]
+ENTRYPOINT ["embedding-inference-api"]

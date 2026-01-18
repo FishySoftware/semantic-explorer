@@ -3,7 +3,7 @@
 use actix_web::{HttpResponse, Responder, ResponseError, post, web};
 use futures::StreamExt;
 use serde::Deserialize;
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 use utoipa::ToSchema;
 
 use crate::config::{GenerationConfig, ModelConfig};
@@ -52,6 +52,24 @@ pub async fn generate_stream(
     gen_config: web::Data<GenerationConfig>,
     body: web::Json<GenerateStreamRequest>,
 ) -> impl Responder {
+    // Backpressure: try to acquire a permit, return 503 if at capacity
+    let _permit = match llm::try_acquire_permit() {
+        Some(permit) => permit,
+        None => {
+            warn!(
+                available_permits = llm::available_permits(),
+                "LLM service at capacity, returning 503"
+            );
+            return HttpResponse::ServiceUnavailable()
+                .insert_header(("Retry-After", "10"))
+                .json(serde_json::json!({
+                    "error": "Service temporarily at capacity",
+                    "message": "Too many concurrent LLM requests. Please retry after a short delay.",
+                    "retry_after_seconds": 10
+                }));
+        }
+    };
+
     let model_id = body.model.clone();
     let prompt = body.prompt.clone();
 

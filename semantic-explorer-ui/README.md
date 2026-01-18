@@ -9,7 +9,7 @@ The `semantic-explorer-ui` is built with Svelte 5 and provides:
 - **Document Management** - Collection management with file uploads and organization
 - **Dataset Operations** - Dataset creation and item management with chunking
 - **Embedder Configuration** - Manage multiple embedding models and providers
-- **LLM Management** - Configure and test LLM providers (OpenAI, Anthropic, Cohere, etc.)
+- **LLM Management** - Configure and test LLM providers (OpenAI, Cohere and Internal LLM inference API)
 - **Transform Pipelines** - Orchestrate document extraction, embedding, and visualization workflows
 - **Real-time Progress** - Live updates via Server-Sent Events (SSE)
 - **Interactive Visualizations** - 3D/2D visualizations using Deck.gl and datamapplot

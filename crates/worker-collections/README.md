@@ -1,100 +1,342 @@
-# Worker Collections - Document Text Extraction
+# Collections Worker
 
-Background worker service for document text extraction and chunking in the Semantic Explorer platform. Handles multi-format document processing with configurable text chunking strategies.
+Document extraction and intelligent chunking worker for Semantic Explorer. Processes files from collections, extracts text from 10+ file formats, and chunks content using configurable strategies including code-aware chunking with tree-sitter.
 
-## 📋 Overview
+## Overview
 
-The `worker-collections` service processes uploaded documents via NATS JetStream, extracting text and splitting it into optimized chunks for embedding generation.
+The collections worker consumes jobs from the `COLLECTION_TRANSFORMS` NATS stream, downloads files from S3, extracts text using format-specific parsers, chunks the content into semantically meaningful segments, and stores the results in PostgreSQL datasets.
 
-### Responsibilities
-- 📥 Subscribe to collection transform jobs from NATS JetStream
-- 📥 Download documents from S3 storage
-- 🔤 Extract text content using format-specific extractors
-- 📏 Split text into chunks using configurable strategies
-- 📤 Upload chunked results back to S3
-- 📊 Publish extraction results to API and downstream workers
-- ❌ Report failures back to NATS with detailed error messages
-- 📝 Log transformation progress and metrics
+## Architecture
 
-### Supported Formats
+```mermaid
+graph TB
+    subgraph "Job Processing"
+        NATS[NATS JetStream<br/>COLLECTION_TRANSFORMS]
+        WORKER[Collections Worker<br/>Pull Consumer]
+    end
 
-| Category | Formats | Extension | Notes |
-|----------|---------|-----------|-------|
-| **PDF** | Adobe PDF | `.pdf` | Text layer extraction via pdf-extract |
-| **Microsoft Office** | Word | `.docx`, `.docm`, `.dotx`, `.dotm` | Full text with paragraph structure |
-| | Legacy Word | `.doc` | OLE/CFB format extraction |
-| | Excel | `.xlsx`, `.xlsm`, `.xltx`, `.xltm` | Cell values with sheet organization |
-| | Legacy Excel | `.xls` | BIFF/OLE format extraction (Excel 97-2003) |
-| | PowerPoint | `.pptx`, `.pptm` | Slide text and speaker notes |
-| | Legacy PowerPoint | `.ppt` | OLE/CFB format extraction (PowerPoint 97-2003) |
-| **OpenDocument** | Writer | `.odt` | Full text extraction with metadata |
-| | Calc | `.ods` | Cell value extraction |
-| | Impress | `.odp` | Slide text extraction |
-| **eBooks** | EPUB | `.epub` | Full chapter extraction with metadata |
-| **Rich Text** | RTF | `.rtf` | Text with formatting stripped |
-| **Web** | HTML | `.html`, `.htm` | Content extraction with structure preservation |
-| | XML | `.xml` | Configurable element extraction |
-| **Data** | JSON | `.json` | Key-value text extraction |
-| | NDJSON | `.ndjson`, `.jsonl` | Line-by-line JSON extraction |
-| | CSV | `.csv` | Direct text processing |
-| **Email** | Email | `.eml` | Headers, body, and attachments |
-| **Logs** | Log files | `.log` | Auto-detected structured log parsing |
-| **Markdown** | Markdown | `.md`, `.markdown` | Content with optional structure preservation |
-| **Archives** | ZIP | `.zip` | Recursive extraction of contents |
-| | TAR.GZ | `.tar.gz`, `.tgz` | Recursive extraction of contents |
-| | GZIP | `.gz` | Single file decompression |
+    subgraph "Extraction Pipeline"
+        DOWNLOAD[Download from S3]
+        DETECT[MIME Type Detection]
+        EXTRACT[Format-Specific<br/>Extraction]
+    end
 
-## 🏗️ Module Structure
+    subgraph "Extractors"
+        PDF[PDF<br/>pdf-extract]
+        OFFICE[Office<br/>DOCX/XLSX/PPTX]
+        LEGACY[Legacy Office<br/>DOC/XLS/PPT]
+        MD[Markdown]
+        HTML[HTML<br/>scraper]
+        CODE[Code Files<br/>Tree-sitter]
+        ARCHIVE[Archives<br/>ZIP/TAR/GZ]
+        EMAIL[Email<br/>EML/MSG]
+        OTHER[JSON/XML/RTF/EPUB<br/>Plain Text/Logs]
+    end
 
+    subgraph "Chunking Pipeline"
+        STRATEGY[Chunking Strategy<br/>Selection]
+        CHUNK[Chunk Generation]
+        META[Metadata Extraction]
+    end
+
+    subgraph "Chunking Strategies"
+        FIXED[Fixed Size]
+        SENTENCE[Sentence-based]
+        TOKEN[Token-based<br/>tiktoken]
+        MARKDOWN[Markdown-aware<br/>Heading hierarchy]
+        CODE_AWARE[Code-aware<br/>tree-sitter AST]
+        TABLE[Table-aware]
+        SEMANTIC[Semantic<br/>Similarity-based]
+        RECURSIVE[Recursive Character]
+        OVERLAP[Overlap]
+    end
+
+    subgraph "Storage"
+        DB[(PostgreSQL<br/>Dataset Items)]
+        S3[(S3<br/>Source Files)]
+    end
+
+    NATS --> WORKER
+    WORKER --> DOWNLOAD
+    DOWNLOAD --> S3
+    DOWNLOAD --> DETECT
+    DETECT --> EXTRACT
+
+    EXTRACT --> PDF
+    EXTRACT --> OFFICE
+    EXTRACT --> LEGACY
+    EXTRACT --> MD
+    EXTRACT --> HTML
+    EXTRACT --> CODE
+    EXTRACT --> ARCHIVE
+    EXTRACT --> EMAIL
+    EXTRACT --> OTHER
+
+    PDF --> STRATEGY
+    OFFICE --> STRATEGY
+    LEGACY --> STRATEGY
+    MD --> STRATEGY
+    HTML --> STRATEGY
+    CODE --> STRATEGY
+    ARCHIVE --> STRATEGY
+    EMAIL --> STRATEGY
+    OTHER --> STRATEGY
+
+    STRATEGY --> FIXED
+    STRATEGY --> SENTENCE
+    STRATEGY --> TOKEN
+    STRATEGY --> MARKDOWN
+    STRATEGY --> CODE_AWARE
+    STRATEGY --> TABLE
+    STRATEGY --> SEMANTIC
+    STRATEGY --> RECURSIVE
+    STRATEGY --> OVERLAP
+
+    FIXED --> CHUNK
+    SENTENCE --> CHUNK
+    TOKEN --> CHUNK
+    MARKDOWN --> CHUNK
+    CODE_AWARE --> CHUNK
+    TABLE --> CHUNK
+    SEMANTIC --> CHUNK
+    RECURSIVE --> CHUNK
+    OVERLAP --> CHUNK
+
+    CHUNK --> META
+    META --> DB
 ```
-src/
-├── main.rs              # Worker initialization and NATS subscription
-├── job.rs               # Job processing logic and result publishing
-├── extract/             # Text extraction from various formats
-│   ├── mod.rs           # Module exports
-│   ├── config.rs        # Extraction configuration types
-│   ├── error.rs         # Extraction error types
-│   ├── service.rs       # Extraction orchestration
-│   ├── plain_text/      # Main extraction router (MIME-based)
-│   ├── pdf/             # PDF text extraction
-│   ├── office/          # Microsoft Office (DOCX/XLSX/PPTX)
-│   ├── open_office/     # OpenDocument (ODT/ODS/ODP)
-│   ├── legacy_doc/      # Legacy .doc (OLE/CFB format)
-│   ├── legacy_ppt/      # Legacy .ppt (OLE/CFB format)
-│   ├── legacy_xls/      # Legacy .xls (BIFF/OLE format)
-│   ├── epub/            # EPUB ebook extraction
-│   ├── rtf/             # RTF document extraction
-│   ├── html/            # HTML web document extraction
-│   ├── xml/             # XML structured data extraction
-│   ├── json/            # JSON/NDJSON extraction
-│   ├── email/           # Email (.eml) extraction
-│   ├── log/             # Log file extraction
-│   ├── markdown/        # Markdown extraction
-│   └── archive/         # ZIP/TAR.GZ archive handling
-└── chunk/               # Text chunking logic
-    ├── mod.rs           # Module exports
-    ├── config.rs        # Chunking configuration types
-    ├── service.rs       # Chunking orchestration
-    ├── metadata.rs      # Chunk metadata handling
-    └── strategies/      # Chunking strategy implementations
-        ├── fixed_size.rs          # Fixed-size character chunks
-        ├── sentence.rs            # Sentence boundary-based chunks
-        ├── recursive_character.rs # Recursive text splitting
-        ├── markdown_aware.rs      # Markdown structure-aware chunks
-        ├── table_aware.rs         # Table-aware chunks (CSV/TSV/Markdown)
-        ├── code_aware.rs          # Programming language-aware chunks
-        ├── token_based.rs         # Token-based chunks (for LLM limits)
-        ├── semantic.rs            # Semantic similarity-based chunks
-        └── overlap.rs             # Overlap application utilities
-```
 
-## 🔧 Extraction Configuration
+## Features
 
-### Extraction Strategies
+### Supported File Formats
+
+#### Document Formats
+
+- **PDF** (`.pdf`) - Text extraction with page metadata
+- **Microsoft Word** (`.docx`) - XML-based Office format
+- **Legacy Word** (`.doc`) - Binary Office format (CFB)
+- **RTF** (`.rtf`) - Rich Text Format
+- **EPUB** (`.epub`) - Electronic publication format
+- **OpenDocument Text** (`.odt`) - OpenDocument text format
+
+#### Spreadsheet Formats
+
+- **Microsoft Excel** (`.xlsx`) - XML-based Office format
+- **Legacy Excel** (`.xls`) - Binary Office format (CFB)
+- **OpenDocument Spreadsheet** (`.ods`)
+
+#### Presentation Formats
+
+- **Microsoft PowerPoint** (`.pptx`) - XML-based Office format
+- **Legacy PowerPoint** (`.ppt`) - Binary Office format (CFB)
+- **OpenDocument Presentation** (`.odp`)
+
+#### Markup & Web Formats
+
+- **Markdown** (`.md`, `.markdown`) - With metadata preservation
+- **HTML** (`.html`, `.htm`) - Text extraction with scraper
+- **XML** (`.xml`) - Generic XML text extraction
+
+#### Code & Data Formats
+
+- **Source Code** - All major programming languages (see Code-Aware Chunking)
+- **JSON** (`.json`) - Structured data
+- **NDJSON** (`.ndjson`, `.jsonl`) - Line-delimited JSON
+- **YAML** (`.yaml`, `.yml`) - Configuration files
+- **TOML** (`.toml`) - Configuration files
+- **Log Files** (`.log`) - Line-based logs
+- **CSV** (`.csv`) - Comma-separated values
+
+#### Archive Formats
+
+- **ZIP** (`.zip`) - Recursive extraction
+- **TAR** (`.tar`) - Tape archive
+- **GZIP** (`.tar.gz`, `.tgz`) - Compressed tar
+- **BZIP2** (`.tar.bz2`) - Compressed tar
+
+#### Email Formats
+
+- **EML** (`.eml`) - Email message format
+- **MSG** (`.msg`) - Outlook message format (partial support)
+
+#### Plain Text
+
+- **Text Files** (`.txt`) - UTF-8 encoded text
+
+### Chunking Strategies
+
+#### Fixed Size
+
+Simple character-based chunking with configurable chunk size:
 
 ```json
 {
-  "strategy": "plain_text",
+  "type": "fixed_size",
+  "chunk_size": 1000,
+  "overlap": 200
+}
+```
+
+**Use Cases**: Simple documents, when consistency is important
+
+#### Sentence-Based
+
+Chunks text by sentence boundaries, respecting natural language structure:
+
+```json
+{
+  "type": "sentence",
+  "sentences_per_chunk": 5,
+  "overlap_sentences": 1
+}
+```
+
+**Use Cases**: Narrative text, articles, documentation
+
+#### Token-Based
+
+Chunks by token count using `tiktoken` (OpenAI tokenizer):
+
+```json
+{
+  "type": "token_based",
+  "max_tokens": 512,
+  "overlap_tokens": 50,
+  "encoding": "cl100k_base"
+}
+```
+
+**Supported Encodings**:
+- `cl100k_base` - GPT-4, GPT-3.5-turbo, text-embedding-ada-002
+- `p50k_base` - Codex models
+- `r50k_base` - GPT-3 models (davinci, curie, babbage, ada)
+
+**Use Cases**: Optimizing for embedding model token limits
+
+#### Markdown-Aware
+
+Preserves Markdown structure and heading hierarchy:
+
+```json
+{
+  "type": "markdown_aware",
+  "max_chunk_size": 1500,
+  "respect_headings": true,
+  "include_heading_hierarchy": true
+}
+```
+
+**Use Cases**: Markdown documentation, READMEs, technical docs
+
+**Features**:
+- Preserves heading context in metadata
+- Respects code blocks
+- Maintains list structure
+- Preserves links and images
+
+#### Code-Aware
+
+Tree-sitter AST-based chunking for source code:
+
+```json
+{
+  "type": "code_aware",
+  "max_chunk_size": 2000,
+  "chunk_by": "function",
+  "include_docstrings": true
+}
+```
+
+**Supported Languages** (via tree-sitter):
+- **Rust** (`.rs`)
+- **Python** (`.py`)
+- **JavaScript** (`.js`, `.mjs`)
+- **TypeScript** (`.ts`, `.tsx`)
+- **Go** (`.go`)
+- **Java** (`.java`)
+- **C** (`.c`, `.h`)
+- **C++** (`.cpp`, `.hpp`, `.cc`, `.cxx`)
+- **Bash** (`.sh`, `.bash`)
+- **HTML** (`.html`, `.htm`)
+- **CSS** (`.css`, `.scss`)
+- **JSON** (`.json`)
+- **YAML** (`.yaml`, `.yml`)
+- **TOML** (`.toml`)
+
+**Chunking Modes**:
+- `function` - Chunk by function/method definitions
+- `class` - Chunk by class definitions
+- `module` - Chunk by module/file
+- `statement` - Chunk by top-level statements
+
+**Use Cases**: Code repositories, API documentation, code search
+
+#### Table-Aware
+
+Detects and preserves table structures:
+
+```json
+{
+  "type": "table_aware",
+  "max_chunk_size": 1000,
+  "keep_tables_together": true
+}
+```
+
+**Use Cases**: Spreadsheets, structured documents, CSV files
+
+#### Semantic
+
+Similarity-based chunking using embeddings:
+
+```json
+{
+  "type": "semantic",
+  "similarity_threshold": 0.75,
+  "embedder_id": "embed-1"
+}
+```
+
+**Use Cases**: When semantic coherence is critical
+
+**Note**: Requires embedder configuration to be passed in job
+
+#### Recursive Character
+
+Hierarchical splitting with multiple separators:
+
+```json
+{
+  "type": "recursive_character",
+  "chunk_size": 1000,
+  "overlap": 200,
+  "separators": ["\n\n", "\n", ". ", " "]
+}
+```
+
+**Use Cases**: General-purpose chunking
+
+#### Overlap
+
+Adds configurable overlap between chunks:
+
+```json
+{
+  "type": "overlap",
+  "base_strategy": "sentence",
+  "overlap_size": 200
+}
+```
+
+**Use Cases**: Improving context continuity for search
+
+### Extraction Configuration
+
+All extractors support structure-preserving extraction:
+
+```json
+{
+  "strategy": "structure_preserving",
   "options": {
     "preserve_formatting": false,
     "extract_tables": true,
@@ -109,254 +351,517 @@ src/
 }
 ```
 
-| Strategy | Description |
-|----------|-------------|
-| `plain_text` | Default extraction, outputs clean text |
-| `structure_preserving` | Preserves document structure (headings, lists, tables, code) |
-| `markdown` | Converts content to Markdown format with proper syntax |
+**Extraction Strategies**:
+- `plain_text` - Simple text extraction
+- `structure_preserving` - Preserves document structure
+- `markdown` - Converts to Markdown format
 
-### Extraction Options
+**Options**:
+- `preserve_formatting` - Keep whitespace and formatting
+- `extract_tables` - Extract table content
+- `table_format` - Table output format: `plain_text`, `markdown`, `csv`
+- `preserve_headings` - Preserve heading structure
+- `heading_format` - Heading format: `plain_text`, `markdown`
+- `preserve_lists` - Preserve list formatting
+- `preserve_code_blocks` - Preserve code block formatting
+- `include_metadata` - Extract document metadata (author, title, dates)
+- `append_metadata_to_text` - Append metadata as text for chunking
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `preserve_formatting` | bool | false | Preserve whitespace and formatting |
-| `extract_tables` | bool | true | Extract table content |
-| `table_format` | string | `plain_text` | Table output format: `plain_text`, `markdown`, `csv` |
-| `preserve_headings` | bool | false | Preserve heading structure |
-| `heading_format` | string | `plain_text` | Heading format: `plain_text`, `markdown` |
-| `preserve_lists` | bool | false | Preserve list formatting |
-| `preserve_code_blocks` | bool | false | Preserve code block formatting |
-| `include_metadata` | bool | false | Extract document metadata |
-| `append_metadata_to_text` | bool | false | Append metadata as text for chunking |
+## Configuration
 
-### Metadata Appending
+All configuration via environment variables:
 
-When `append_metadata_to_text` is enabled, extracted metadata (author, title, dates, etc.) is appended as formatted text at the end of the content. This allows metadata to be chunked and embedded alongside the main content for better semantic search.
+### Worker Configuration
 
-Example output:
-```
-Main document content here...
+```bash
+# NATS connection (inherited from core)
+NATS_URL=nats://localhost:4222
 
----
-Document Metadata:
-- Author: John Doe
-- Title: Annual Report 2025
-- Created At: 2025-01-15
-- Page Count: 42
-```
+# Database connection (inherited from core)
+DATABASE_URL=postgresql://localhost/semantic_explorer
 
-## 📏 Chunking Configuration
+# S3 configuration (inherited from core)
+S3_ENDPOINT=http://localhost:9000
+S3_ACCESS_KEY=minioadmin
+S3_SECRET_KEY=minioadmin
+S3_BUCKET=semantic-explorer
 
-### Chunking Strategies
+# Worker concurrency
+WORKER_CONCURRENCY=4
 
-```json
-{
-  "strategy": "fixed",
-  "chunk_size": 1000,
-  "chunk_overlap": 100,
-  "min_chunk_size": 100,
-  "max_chunk_size": 2000
-}
+# Max retries for failed jobs
+MAX_RETRIES=3
+
+# Job processing timeout (seconds)
+JOB_TIMEOUT=300
 ```
 
-| Strategy | Description | Best For |
-|----------|-------------|----------|
-| `fixed` | Fixed character count with overlap | General text |
-| `sentence` | Sentence boundary-based splitting | Natural language text |
-| `recursive` | Hierarchical splitting (paragraphs → sentences → words) | Structured documents |
-| `markdown` | Splits on Markdown headings and sections | Markdown documents |
-| `table` | Preserves table structure, chunks by rows | Tabular data |
-| `code` | Language-aware splitting (functions, classes) | Source code |
-| `token` | Token-based for LLM context limits | LLM applications |
-| `semantic` | Uses embeddings to find semantic boundaries | High-quality RAG |
+### Extraction Configuration
 
-### Semantic Chunking
+```bash
+# Max file size to process (MB)
+MAX_FILE_SIZE_MB=100
 
-For semantic chunking, an embedder configuration is required:
+# PDF extraction timeout (seconds)
+PDF_TIMEOUT=60
 
-```json
-{
-  "strategy": "semantic",
-  "chunk_size": 1000,
-  "embedder_config": {
-    "provider": "openai",
-    "base_url": "https://api.openai.com/v1",
-    "model": "text-embedding-3-small",
-    "api_key": "sk-..."
-  }
-}
+# Archive extraction depth (prevent zip bombs)
+MAX_ARCHIVE_DEPTH=3
+
+# Max archive extracted size (MB)
+MAX_ARCHIVE_SIZE_MB=500
+
+# Enable/disable specific extractors
+ENABLE_PDF_EXTRACTION=true
+ENABLE_OFFICE_EXTRACTION=true
+ENABLE_CODE_EXTRACTION=true
+ENABLE_ARCHIVE_EXTRACTION=true
 ```
 
-## 📊 Job Message Format
+### Chunking Configuration
 
-### Input: CollectionTransformJob
+```bash
+# Default chunk size (characters)
+DEFAULT_CHUNK_SIZE=1000
 
-```json
-{
-  "job_id": "550e8400-e29b-41d4-a716-446655440000",
-  "collection_transform_id": 123,
-  "owner": "user@example.com",
-  "bucket": "collection-456",
-  "source_file_key": "documents/report.pdf",
-  "extraction_config": {
-    "strategy": "structure_preserving",
-    "options": {
-      "include_metadata": true,
-      "append_metadata_to_text": true,
-      "preserve_headings": true
-    }
-  },
-  "chunking_config": {
-    "strategy": "sentence",
-    "chunk_size": 1000,
-    "chunk_overlap": 100
-  },
-  "embedder_config": null
-}
+# Default overlap (characters)
+DEFAULT_OVERLAP=200
+
+# Minimum chunk size (characters)
+MIN_CHUNK_SIZE=100
+
+# Maximum chunk size (characters)
+MAX_CHUNK_SIZE=5000
+
+# Token encoding for token-based chunking
+TOKEN_ENCODING=cl100k_base
+
+# Enable code-aware chunking
+ENABLE_CODE_AWARE_CHUNKING=true
 ```
 
-### Output: CollectionTransformResult
+### Observability Configuration
 
-#### Success
-```json
-{
-  "job_id": "550e8400-e29b-41d4-a716-446655440000",
-  "collection_transform_id": 123,
-  "owner": "user@example.com",
-  "source_file_key": "documents/report.pdf",
-  "bucket": "collection-456",
-  "chunks_file_key": "chunks/550e8400-e29b-41d4-a716-446655440000.json",
-  "chunk_count": 42,
-  "status": "success",
-  "error": null,
-  "processing_duration_ms": 1523
-}
+```bash
+# OpenTelemetry
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+OTEL_SERVICE_NAME=worker-collections
+OTEL_SERVICE_VERSION=1.0.0
+
+# Logging
+RUST_LOG=info,worker_collections=debug
+LOG_FORMAT=json
 ```
 
-#### Failure
-```json
-{
-  "job_id": "550e8400-e29b-41d4-a716-446655440000",
-  "collection_transform_id": 123,
-  "owner": "user@example.com",
-  "source_file_key": "documents/report.pdf",
-  "bucket": "collection-456",
-  "chunks_file_key": "",
-  "chunk_count": 0,
-  "status": "failed",
-  "error": "Extraction failed: Unsupported MIME type video/mp4",
-  "processing_duration_ms": 45
-}
+## Building
+
+### Debug Build
+
+```bash
+cargo build -p worker-collections
 ```
 
-### Chunks File Format
+### Release Build
 
-```json
-[
-  {
-    "id": "chunk_0",
-    "text": "This is the first chunk of text...",
-    "metadata": {
-      "source_file": "report.pdf",
-      "chunk_index": 0,
-      "author": "John Doe",
-      "title": "Annual Report"
-    }
-  },
-  {
-    "id": "chunk_1",
-    "text": "This is the second chunk...",
-    "metadata": {
-      "source_file": "report.pdf",
-      "chunk_index": 1
-    }
-  }
-]
+```bash
+cargo build -p worker-collections --release
 ```
 
-## 🚀 Getting Started
+Binary location: `target/release/worker-collections`
 
-### Prerequisites
-- Rust 2024 Edition
-- NATS 2.10+ (job queue)
-- S3-compatible storage (MinIO, AWS S3, etc.)
+### Docker Build
 
-### Environment Variables
+```bash
+# Build from repository root
+docker build -f crates/worker-collections/Dockerfile -t worker-collections:latest .
+```
 
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `NATS_URL` | string | `nats://localhost:4222` | NATS server URL |
-| `AWS_REGION` | string | **required** | S3 region |
-| `AWS_ACCESS_KEY_ID` | string | **required** | S3 access key |
-| `AWS_SECRET_ACCESS_KEY` | string | **required** | S3 secret key |
-| `AWS_ENDPOINT_URL` | string | **required** | S3 endpoint URL |
-| `SERVICE_NAME` | string | `worker-collections` | Service name for tracing |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | string | `http://localhost:4317` | OTLP exporter endpoint |
-| `LOG_FORMAT` | string | `json` | Log format (`json` or `pretty`) |
-| `RUST_LOG` | string | `info` | Tracing filter directive |
-| `MAX_CONCURRENT_JOBS` | integer | `10` | Maximum concurrent job processing |
-| `MAX_FILE_SIZE_MB` | integer | `100` | Maximum file size in MB |
+## Running
 
 ### Local Development
 
 ```bash
-# Set environment variables
-export NATS_URL="nats://localhost:4222"
-export AWS_REGION="us-east-1"
-export AWS_ACCESS_KEY_ID="minioadmin"
-export AWS_SECRET_ACCESS_KEY="minioadmin"
-export AWS_ENDPOINT_URL="http://localhost:9000"
+# Set required environment variables
+export DATABASE_URL=postgresql://localhost/semantic_explorer
+export NATS_URL=nats://localhost:4222
+export S3_ENDPOINT=http://localhost:9000
+export S3_ACCESS_KEY=minioadmin
+export S3_SECRET_KEY=minioadmin
+export S3_BUCKET=semantic-explorer
 
-# Run the worker
-cargo run --bin worker-collections
+# Run with cargo
+cargo run -p worker-collections
+
+# Or run the compiled binary
+./target/release/worker-collections
 ```
 
 ### Docker
 
 ```bash
-docker run \
-  -e NATS_URL="nats://nats:4222" \
-  -e AWS_REGION="us-east-1" \
-  -e AWS_ACCESS_KEY_ID="..." \
-  -e AWS_SECRET_ACCESS_KEY="..." \
-  -e AWS_ENDPOINT_URL="http://minio:9000" \
-  ghcr.io/your-org/worker-collections:latest
+docker run -d \
+  --name worker-collections \
+  -e DATABASE_URL=postgresql://postgres:password@postgres:5432/semantic_explorer \
+  -e NATS_URL=nats://nats:4222 \
+  -e S3_ENDPOINT=http://minio:9000 \
+  -e S3_ACCESS_KEY=minioadmin \
+  -e S3_SECRET_KEY=minioadmin \
+  -e S3_BUCKET=semantic-explorer \
+  worker-collections:latest
 ```
 
-## 📈 Observability
+### Health Check
 
-### Metrics
+Worker health can be monitored via:
+- NATS consumer health (check pending messages)
+- Prometheus metrics
+- Structured logs
 
-| Metric | Type | Description |
-|--------|------|-------------|
-| `worker_jobs_total{worker, status}` | Counter | Job completion count by status |
-| `worker_job_duration_seconds{worker}` | Histogram | Job duration |
-| `collection_transform_jobs_total{transform_id, status}` | Counter | Transform-specific job count |
-| `collection_transform_files_processed{transform_id}` | Counter | Files processed per transform |
-| `collection_transform_items_created{transform_id}` | Counter | Chunks created per transform |
+```bash
+# Check NATS consumer status
+nats consumer info COLLECTION_TRANSFORMS worker-collections
 
-### Error Categories
+# Check metrics
+curl http://localhost:9090/metrics | grep worker_collections
+```
 
-| Status | Description |
-|--------|-------------|
-| `success` | Job completed successfully |
-| `failed_validation` | Invalid bucket name or S3 key |
-| `failed_download` | Could not download file from S3 |
-| `failed_file_too_large` | File exceeds size limit |
-| `failed_config_parse` | Invalid extraction/chunking config |
-| `failed_extraction` | Text extraction failed |
-| `failed_chunking` | Chunking operation failed |
-| `failed_empty_chunks` | No chunks produced (text too short) |
-| `failed_upload` | Could not upload results to S3 |
+## Deployment
 
-### Tracing
+### Docker Compose
 
-Jobs are traced with the following span attributes:
-- `job_id` - Unique job identifier
-- `collection_transform_id` - Transform pipeline ID
-- `file` - Source file key
+```yaml
+services:
+  worker-collections:
+    image: worker-collections:latest
+    environment:
+      DATABASE_URL: postgresql://postgres:password@postgres:5432/semantic_explorer
+      NATS_URL: nats://nats:4222
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_BUCKET: semantic-explorer
+      RUST_LOG: info
+      WORKER_CONCURRENCY: 4
+    depends_on:
+      - postgres
+      - nats
+      - minio
+    restart: unless-stopped
+```
 
-## 🧪 Testing
+### Kubernetes
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: worker-collections
+spec:
+  serviceName: worker-collections
+  replicas: 3
+  selector:
+    matchLabels:
+      app: worker-collections
+  template:
+    metadata:
+      labels:
+        app: worker-collections
+    spec:
+      containers:
+      - name: worker-collections
+        image: worker-collections:latest
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: semantic-explorer-secrets
+              key: database-url
+        - name: NATS_URL
+          value: nats://nats:4222
+        - name: S3_ENDPOINT
+          value: http://minio:9000
+        - name: S3_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: semantic-explorer-secrets
+              key: s3-access-key
+        - name: S3_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: semantic-explorer-secrets
+              key: s3-secret-key
+        - name: WORKER_CONCURRENCY
+          value: "4"
+        resources:
+          requests:
+            memory: 1Gi
+            cpu: 500m
+          limits:
+            memory: 2Gi
+            cpu: 2000m
+```
+
+## Job Processing Flow
+
+```mermaid
+sequenceDiagram
+    participant API
+    participant NATS
+    participant Worker
+    participant S3
+    participant DB
+
+    API->>NATS: Publish CollectionTransform job
+    Worker->>NATS: Pull job (with ack)
+    Worker->>DB: Fetch transform config
+    Worker->>S3: List files in collection
+
+    loop For each file
+        Worker->>S3: Download file
+        Worker->>Worker: Detect MIME type
+        Worker->>Worker: Extract text
+        Worker->>Worker: Chunk text
+        Worker->>DB: Store chunks as DatasetItems
+        Worker->>NATS: Publish progress update
+    end
+
+    Worker->>DB: Update transform status
+    Worker->>NATS: ACK job
+    Worker->>NATS: Publish completion status
+```
+
+## Metrics
+
+Prometheus metrics exposed on port 9090 (configurable):
+
+### Job Metrics
+
+```
+# Total jobs processed
+collection_transform_jobs_total{status="success|failure"}
+
+# Job processing duration
+collection_transform_duration_seconds
+
+# Active jobs currently processing
+collection_transform_active_jobs
+
+# Files processed per job
+collection_transform_files_processed
+
+# Chunks created per job
+collection_transform_items_created
+```
+
+### Extraction Metrics
+
+```
+# Extraction count by format
+file_extraction_total{format="pdf|docx|md|..."}
+
+# Extraction duration by format
+file_extraction_duration_seconds{format="pdf|docx|md|..."}
+
+# Extraction errors
+file_extraction_errors_total{format="pdf|docx|md|...",error_type="..."}
+
+# Bytes extracted
+file_extraction_bytes{format="pdf|docx|md|..."}
+```
+
+### Chunking Metrics
+
+```
+# Chunks created by strategy
+chunks_created_total{strategy="sentence|code_aware|..."}
+
+# Chunking duration
+chunking_duration_seconds{strategy="sentence|code_aware|..."}
+
+# Average chunk size
+chunk_size_bytes{strategy="sentence|code_aware|..."}
+
+# Chunk count distribution
+chunk_count_per_document{strategy="sentence|code_aware|..."}
+```
+
+### Worker Metrics
+
+```
+# Worker health
+worker_ready{worker="worker-collections"}
+
+# Active worker goroutines/tasks
+worker_active_jobs{worker="worker-collections"}
+
+# Job retries
+worker_job_retries_total{worker="worker-collections"}
+
+# Worker failures
+worker_job_failures_total{worker="worker-collections",error_type="..."}
+```
+
+## Error Handling
+
+### Retry Logic
+
+Failed jobs are automatically retried with exponential backoff:
+
+1. **First retry**: 30 seconds
+2. **Second retry**: 2 minutes
+3. **Third retry**: 5 minutes
+4. **Fourth retry**: 15 minutes
+5. **Fifth retry**: 1 hour
+6. **After max attempts**: Move to Dead Letter Queue (DLQ)
+
+### Dead Letter Queue
+
+Jobs that exceed max delivery attempts are routed to `DLQ_COLLECTION_TRANSFORMS` stream:
+
+```bash
+# Inspect DLQ
+nats stream info DLQ_COLLECTION_TRANSFORMS
+
+# Get DLQ messages
+nats consumer next DLQ_COLLECTION_TRANSFORMS worker-collections-dlq --count 10
+
+# Replay DLQ message
+nats pub COLLECTION_TRANSFORMS "$(nats consumer next DLQ_COLLECTION_TRANSFORMS worker-collections-dlq --count 1 --no-ack)"
+```
+
+### Common Errors
+
+#### File too large
+
+```
+Error: File size 150MB exceeds MAX_FILE_SIZE_MB limit of 100MB
+```
+
+**Solution**: Increase `MAX_FILE_SIZE_MB` or split the file
+
+#### Unsupported format
+
+```
+Error: No extractor available for MIME type: video/mp4
+```
+
+**Solution**: Convert to supported format or add custom extractor
+
+#### Extraction timeout
+
+```
+Error: PDF extraction timeout after 60s
+```
+
+**Solution**: Increase `PDF_TIMEOUT` or optimize PDF (remove images, compress)
+
+#### Archive too deep
+
+```
+Error: Archive nesting depth 5 exceeds MAX_ARCHIVE_DEPTH of 3
+```
+
+**Solution**: Extract archive manually or increase `MAX_ARCHIVE_DEPTH`
+
+#### Archive bomb detected
+
+```
+Error: Extracted archive size 600MB exceeds MAX_ARCHIVE_SIZE_MB of 500MB
+```
+
+**Solution**: Increase `MAX_ARCHIVE_SIZE_MB` or extract selectively
+
+## Development
+
+### Project Structure
+
+```
+src/
+├── main.rs                   # Worker initialization
+├── job.rs                    # Job processing logic
+├── extract/                  # Text extraction
+│   ├── mod.rs
+│   ├── config.rs             # Extraction configuration
+│   ├── error.rs              # Extraction errors
+│   ├── service.rs            # Extraction orchestration
+│   ├── plain_text/           # Plain text files
+│   ├── pdf/                  # PDF extraction
+│   ├── office/               # Modern Office (DOCX/XLSX/PPTX)
+│   │   ├── document.rs
+│   │   ├── spreadsheet.rs
+│   │   └── presentation.rs
+│   ├── open_office/          # OpenDocument formats
+│   │   ├── open_document.rs
+│   │   ├── open_spreadsheet.rs
+│   │   └── open_presentation.rs
+│   ├── legacy_doc/           # Legacy .doc files
+│   ├── legacy_xls/           # Legacy .xls files
+│   ├── legacy_ppt/           # Legacy .ppt files
+│   ├── epub/                 # EPUB ebooks
+│   ├── rtf/                  # RTF documents
+│   ├── html/                 # HTML documents
+│   ├── xml/                  # XML documents
+│   ├── json/                 # JSON/NDJSON
+│   ├── email/                # Email (.eml, .msg)
+│   ├── log/                  # Log files
+│   ├── markdown/             # Markdown files
+│   └── archive/              # ZIP/TAR/GZ archives
+└── chunk/                    # Text chunking
+    ├── mod.rs
+    ├── config.rs             # Chunking configuration
+    ├── service.rs            # Chunking orchestration
+    ├── metadata.rs           # Chunk metadata
+    └── strategies/           # Chunking strategies
+        ├── fixed_size.rs
+        ├── sentence.rs
+        ├── token_based.rs
+        ├── markdown_aware.rs
+        ├── code_aware.rs
+        ├── table_aware.rs
+        ├── semantic.rs
+        ├── recursive_character.rs
+        └── overlap.rs
+```
+
+### Adding New File Format
+
+1. Create extractor module in `src/extract/<format>/mod.rs`
+2. Implement extraction logic:
+   ```rust
+   pub fn extract(content: &[u8]) -> Result<String, ExtractError> {
+       // Implementation...
+   }
+   ```
+3. Register in `src/extract/service.rs`:
+   ```rust
+   match mime_type {
+       "application/myformat" => my_format::extract(content),
+       // ...
+   }
+   ```
+4. Add MIME type detection
+5. Add tests in `tests/<format>_test.rs`
+
+### Adding New Chunking Strategy
+
+1. Create strategy module in `src/chunk/strategies/<strategy>.rs`
+2. Implement `ChunkStrategy` trait:
+   ```rust
+   pub struct MyStrategy {
+       config: MyStrategyConfig,
+   }
+
+   impl ChunkStrategy for MyStrategy {
+       fn chunk(&self, text: &str, metadata: &ChunkMetadata) -> Result<Vec<Chunk>> {
+           // Implementation...
+       }
+   }
+   ```
+3. Register in `src/chunk/service.rs`
+4. Add configuration in `src/chunk/config.rs`
+5. Add tests
+
+### Testing
 
 ```bash
 # Run all tests
@@ -365,96 +870,155 @@ cargo test -p worker-collections
 # Run with logging
 RUST_LOG=debug cargo test -p worker-collections -- --nocapture
 
-# Run specific module tests
-cargo test -p worker-collections extract::pdf
-cargo test -p worker-collections chunk::strategies
+# Test specific extractor
+cargo test -p worker-collections pdf_extraction
+
+# Test chunking strategy
+cargo test -p worker-collections code_aware_chunking
+
+# Integration tests (requires dependencies)
+cargo test -p worker-collections --test '*' -- --ignored
 ```
 
-Current test coverage: **211 tests**
+**Test Coverage**: 211+ tests
 
-## 📚 Architecture
+## Troubleshooting
 
-### Processing Pipeline
+### Worker not consuming jobs
 
-```mermaid
-sequenceDiagram
-    participant NATS
-    participant Worker
-    participant S3
-    participant Extract as Extraction Service
-    participant Chunk as Chunking Service
+```bash
+# Check NATS consumer status
+nats consumer info COLLECTION_TRANSFORMS worker-collections
 
-    NATS->>Worker: CollectionTransformJob
-    Worker->>S3: Download file
-    S3-->>Worker: File content
+# Check consumer lag
+nats stream info COLLECTION_TRANSFORMS
 
-    Worker->>Extract: Extract text(mime_type, content, config)
-    Extract-->>Worker: ExtractionOutput{text, metadata}
-
-    Note over Worker: Optionally append metadata to text
-
-    Worker->>Chunk: Chunk text(text, config, metadata)
-    Chunk-->>Worker: Vec<ChunkWithMetadata>
-
-    Worker->>S3: Upload chunks JSON
-    Worker->>NATS: CollectionTransformResult (success/failure)
+# Check worker logs
+docker logs worker-collections -f --tail 100
 ```
 
-### Failure Handling
+### Extraction failures
 
-All failures are reported back to NATS with:
-- `status: "failed"`
-- `error`: Detailed error message
-- `processing_duration_ms`: Time spent before failure
+```bash
+# Enable debug logging
+export RUST_LOG=worker_collections=debug,worker_collections::extract=trace
 
-This enables:
-- API to update UI with failure status
-- Retry logic with exponential backoff
-- Audit logging of all failures
-- Metrics for error rate monitoring
+# Check specific file
+curl -o test.pdf http://example.com/sample.pdf
+# Manual extraction test (if implemented)
+```
 
-## 🤝 Integration
+### Memory issues
 
-### Upstream (API)
-- Receives jobs from API via NATS (`worker.job.file`)
-- Reads files from S3 buckets
+```bash
+# Reduce worker concurrency
+export WORKER_CONCURRENCY=2
 
-### Downstream (Worker-Datasets)
-- Publishes results to NATS (`worker.result.file`)
-- Worker-datasets picks up chunks for embedding
+# Limit file size
+export MAX_FILE_SIZE_MB=50
 
-### Storage
-- **Reads**: S3 (document files)
-- **Writes**: S3 (chunks JSON)
+# Monitor memory usage
+docker stats worker-collections
 
-## 📦 Dependencies
+# Check for memory leaks
+RUST_LOG=debug cargo run -p worker-collections
+```
 
-| Crate | Purpose |
-|-------|---------|
-| `tokio` | Async runtime |
-| `async-nats` | NATS JetStream client |
-| `aws-sdk-s3` | S3 storage client |
-| `pdf-extract` | PDF text extraction |
-| `quick-xml` | XML parsing |
-| `scraper` | HTML parsing |
-| `zip` | ZIP archive handling |
-| `tar`, `flate2` | TAR.GZ handling |
-| `epub` | EPUB ebook extraction |
-| `rtf-parser` | RTF document parsing |
-| `cfb` | OLE/CFB (legacy .doc) parsing |
-| `mail-parser` | Email parsing |
-| `docx-rs` | DOCX parsing |
-| `calamine` | Excel spreadsheet parsing |
-| `unicode-segmentation` | Text segmentation |
-| `unicode-normalization` | Text normalization |
-| `tiktoken-rs` | Token counting for LLM limits |
+### Code-aware chunking not working
 
-## 📄 License
+```bash
+# Verify tree-sitter grammars are compiled
+cargo tree -p worker-collections | grep tree-sitter
 
-See LICENSE file in repository root.
+# Enable debug logging for code chunking
+export RUST_LOG=worker_collections::chunk::strategies::code_aware=debug
 
----
+# Test specific language
+cargo test -p worker-collections code_aware_rust
+```
 
-**Version**: 2.0.0  
-**Status**: Production Ready ✅  
-**Last Updated**: January 2026
+### High error rates
+
+```bash
+# Check Prometheus metrics
+curl http://localhost:9090/metrics | grep file_extraction_errors
+
+# Review failed jobs
+nats consumer info COLLECTION_TRANSFORMS worker-collections | grep "Num Pending"
+
+# Check DLQ
+nats stream info DLQ_COLLECTION_TRANSFORMS
+```
+
+## Performance Tuning
+
+### Throughput Optimization
+
+```bash
+# Increase concurrency (requires more CPU/memory)
+export WORKER_CONCURRENCY=8
+
+# Enable parallel file processing within jobs
+export PARALLEL_FILE_PROCESSING=true
+
+# Increase batch size for database inserts
+export DB_BATCH_SIZE=500
+
+# Disable unnecessary extractors
+export ENABLE_LEGACY_OFFICE=false
+```
+
+### Memory Optimization
+
+```bash
+# Reduce max file size
+export MAX_FILE_SIZE_MB=50
+
+# Reduce chunk size
+export DEFAULT_CHUNK_SIZE=500
+
+# Limit archive depth (prevent zip bombs)
+export MAX_ARCHIVE_DEPTH=2
+
+# Disable archive extraction if not needed
+export ENABLE_ARCHIVE_EXTRACTION=false
+```
+
+### Latency Optimization
+
+```bash
+# Increase timeouts for large files
+export PDF_TIMEOUT=120
+export JOB_TIMEOUT=600
+
+# Reduce chunk overlap (faster chunking)
+export DEFAULT_OVERLAP=50
+```
+
+## Dependencies
+
+Key dependencies:
+
+- **pdf-extract** - PDF text extraction
+- **lopdf** - PDF structure parsing
+- **quick-xml** - XML parsing for Office formats
+- **zip** - ZIP archive extraction
+- **tar** - TAR archive extraction
+- **flate2** - GZIP compression
+- **scraper** - HTML text extraction
+- **tree-sitter** + language grammars - Code parsing for AST-based chunking
+- **tiktoken-rs** - OpenAI tokenizer for token-based chunking
+- **mail-parser** - Email parsing
+- **rtf-parser** - RTF text extraction
+- **epub** - EPUB ebook format
+- **cfb** - Compound File Binary (legacy Office)
+- **unicode-segmentation** - Text boundary detection
+- **unicode-normalization** - Text normalization
+- **regex** - Pattern matching
+- **mime_guess** - MIME type detection
+
+See [Cargo.toml](Cargo.toml) for complete list.
+
+## License
+
+Apache License 2.0

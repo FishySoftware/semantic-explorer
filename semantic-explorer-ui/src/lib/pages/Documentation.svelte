@@ -204,8 +204,8 @@
 					<h3 class="text-lg font-semibold text-gray-900 dark:text-white">LLMs</h3>
 				</div>
 				<p class="text-sm text-gray-600 dark:text-gray-400">
-					Configure your language model providers (OpenAI, Anthropic, Cohere, etc.) for RAG-based
-					chat.
+					Configure your language model providers (OpenAI, Cohere and Internal LLM inference API)
+					for RAG-based chat.
 				</p>
 			</div>
 
@@ -597,13 +597,12 @@
 			<p class="text-gray-700 dark:text-gray-300 mb-4">
 				Configure and manage Large Language Model (LLM) providers for RAG-based chat functionality.
 				Similar to embedders, LLMs are user-managed configurations that connect to chat completion
-				APIs from providers like OpenAI, Anthropic, Cohere, and other OpenAI-compatible services.
+				APIs from providers like OpenAI, Cohere and Internal LLM inference API.
 			</p>
 			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
 				<h4 class="font-semibold text-gray-900 dark:text-white mb-2">Key Features:</h4>
 				<ul class="list-inside list-disc space-y-1 text-sm text-gray-600 dark:text-gray-400">
-					<li>Configure OpenAI-compatible chat APIs (GPT-4, GPT-3.5, etc.)</li>
-					<li>Support for Anthropic Claude, Cohere, and other providers</li>
+					<li>Support for OpenAI, Cohere and Internal LLM inference API</li>
 					<li>Test connection and validate credentials</li>
 					<li>Store API keys securely with encryption</li>
 					<li>Configure model parameters (temperature, max tokens, etc.)</li>

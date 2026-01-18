@@ -67,10 +67,10 @@ class LLMProvider:
             logger.error("LLM config is missing")
             raise ValueError("LLM config is missing")
         
-        # Validate API key for non-local providers
-        if llm_config.provider.lower() != "local" and not llm_config.api_key:
-            logger.error("API key is missing for non-local provider")
-            raise ValueError("API key is missing for non-local provider")
+        # Validate API key for non-internal providers
+        if llm_config.provider.lower() != "internal" and not llm_config.api_key:
+            logger.error("API key is missing for non-internal provider")
+            raise ValueError("API key is missing for non-internal provider")
 
         try:
             if llm_config.provider.lower() == "cohere":
@@ -81,8 +81,8 @@ class LLMProvider:
                 result = await self._generate_openai(
                     texts, llm_config, max_tokens, temperature, samples_per_cluster
                 )
-            elif llm_config.provider.lower() == "local":
-                result = await self._generate_local(
+            elif llm_config.provider.lower() == "internal":
+                result = await self._generate_internal(
                     texts, llm_config, max_tokens, temperature, samples_per_cluster
                 )
             else:
@@ -242,7 +242,7 @@ class LLMProvider:
             )
             raise
 
-    async def _generate_local(
+    async def _generate_internal(
         self,
         texts: List[str],
         llm_config: LLMConfig,
@@ -251,15 +251,15 @@ class LLMProvider:
         samples_per_cluster: int,
     ) -> str:
         """
-        Generate topic name using local LLM inference API.
+        Generate topic name using internal LLM inference API.
 
-        Calls the local llm-inference-api service which doesn't require an API key.
+        Calls the internal llm-inference-api service which doesn't require an API key.
         """
-        local_start = time.time()
+        internal_start = time.time()
         try:
-            # Get the local LLM inference API URL from environment or default
+            # Get the internal LLM inference API URL from environment or default
             api_url = os.environ.get("LLM_INFERENCE_API_URL", "http://localhost:8091")
-            logger.debug(f"Initializing local LLM client for model {llm_config.model} at {api_url}")
+            logger.debug(f"Initializing internal LLM client for model {llm_config.model} at {api_url}")
 
             sample_texts = texts[:samples_per_cluster]
             samples_text = "\n".join(sample_texts)
@@ -293,25 +293,25 @@ class LLMProvider:
                 result = response.json()
 
             api_elapsed = time.time() - api_call_start
-            logger.info(f"Local LLM API call completed in {api_elapsed:.3f}s")
+            logger.info(f"Internal LLM API call completed in {api_elapsed:.3f}s")
 
             # Extract text from response
             if "message" not in result or "content" not in result["message"]:
-                logger.error("Local LLM returned invalid response format")
-                raise ValueError("Local LLM returned invalid response format")
+                logger.error("Internal LLM returned invalid response format")
+                raise ValueError("Internal LLM returned invalid response format")
 
             topic_name = result["message"]["content"].strip()
-            local_elapsed = time.time() - local_start
+            internal_elapsed = time.time() - internal_start
             logger.info(
-                f"Local LLM {llm_config.model} generated topic '{topic_name}' "
-                f"in {local_elapsed:.3f}s (API: {api_elapsed:.3f}s)"
+                f"Internal LLM {llm_config.model} generated topic '{topic_name}' "
+                f"in {internal_elapsed:.3f}s (API: {api_elapsed:.3f}s)"
             )
             return topic_name
 
         except Exception as e:
-            local_elapsed = time.time() - local_start
+            internal_elapsed = time.time() - internal_start
             logger.error(
-                f"Local LLM topic generation failed in {local_elapsed:.3f}s: "
+                f"Internal LLM topic generation failed in {internal_elapsed:.3f}s: "
                 f"{type(e).__name__}: {e}",
                 exc_info=True,
             )
