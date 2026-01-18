@@ -1,13 +1,16 @@
 """
 LLM Abstraction Layer
 
-Supports multiple LLM providers (Cohere, OpenAI) for topic naming.
-Requires API key to be passed via LLMConfig from the job message.
+Supports multiple LLM providers (Cohere, OpenAI, Local) for topic naming.
+Requires API key to be passed via LLMConfig from the job message (except for Local provider).
 """
 
 import logging
+import os
 import time
 from typing import List, cast
+
+import httpx
 
 import cohere
 from cohere.types import UserChatMessageV2, TextAssistantMessageResponseContentItem
@@ -60,9 +63,14 @@ class LLMProvider:
             f"(texts: {len(texts)}, max_tokens: {max_tokens}, temperature: {temperature})"
         )
 
-        if not llm_config or not llm_config.api_key:
-            logger.error("LLM config or API key is missing")
-            raise ValueError("LLM config or API key is missing")
+        if not llm_config:
+            logger.error("LLM config is missing")
+            raise ValueError("LLM config is missing")
+        
+        # Validate API key for non-local providers
+        if llm_config.provider.lower() != "local" and not llm_config.api_key:
+            logger.error("API key is missing for non-local provider")
+            raise ValueError("API key is missing for non-local provider")
 
         try:
             if llm_config.provider.lower() == "cohere":
@@ -71,6 +79,10 @@ class LLMProvider:
                 )
             elif llm_config.provider.lower() == "openai":
                 result = await self._generate_openai(
+                    texts, llm_config, max_tokens, temperature, samples_per_cluster
+                )
+            elif llm_config.provider.lower() == "local":
+                result = await self._generate_local(
                     texts, llm_config, max_tokens, temperature, samples_per_cluster
                 )
             else:
@@ -225,6 +237,81 @@ class LLMProvider:
             openai_elapsed = time.time() - openai_start
             logger.error(
                 f"OpenAI topic generation failed in {openai_elapsed:.3f}s: "
+                f"{type(e).__name__}: {e}",
+                exc_info=True,
+            )
+            raise
+
+    async def _generate_local(
+        self,
+        texts: List[str],
+        llm_config: LLMConfig,
+        max_tokens: int,
+        temperature: float,
+        samples_per_cluster: int,
+    ) -> str:
+        """
+        Generate topic name using local LLM inference API.
+
+        Calls the local llm-inference-api service which doesn't require an API key.
+        """
+        local_start = time.time()
+        try:
+            # Get the local LLM inference API URL from environment or default
+            api_url = os.environ.get("LLM_INFERENCE_API_URL", "http://localhost:8091")
+            logger.debug(f"Initializing local LLM client for model {llm_config.model} at {api_url}")
+
+            sample_texts = texts[:samples_per_cluster]
+            samples_text = "\n".join(sample_texts)
+
+            prompt = (
+                f"These are representative texts from a document cluster:\n\n"
+                f"{samples_text}\n\n"
+                f"Provide a short, concise topic name (2-4 words) that captures the main theme. "
+                f"Respond with ONLY the topic name, nothing else."
+            )
+
+            api_call_start = time.time()
+            logger.info(
+                f"Calling local LLM {llm_config.model} API (prompt length: {len(prompt)})"
+            )
+
+            # Call local LLM inference API
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{api_url}/api/chat",
+                    json={
+                        "model": llm_config.model or "mistralai/Mistral-7B-Instruct-v0.2",
+                        "messages": [
+                            {"role": "user", "content": prompt}
+                        ],
+                        "max_tokens": max_tokens,
+                        "temperature": temperature,
+                    },
+                )
+                response.raise_for_status()
+                result = response.json()
+
+            api_elapsed = time.time() - api_call_start
+            logger.info(f"Local LLM API call completed in {api_elapsed:.3f}s")
+
+            # Extract text from response
+            if "message" not in result or "content" not in result["message"]:
+                logger.error("Local LLM returned invalid response format")
+                raise ValueError("Local LLM returned invalid response format")
+
+            topic_name = result["message"]["content"].strip()
+            local_elapsed = time.time() - local_start
+            logger.info(
+                f"Local LLM {llm_config.model} generated topic '{topic_name}' "
+                f"in {local_elapsed:.3f}s (API: {api_elapsed:.3f}s)"
+            )
+            return topic_name
+
+        except Exception as e:
+            local_elapsed = time.time() - local_start
+            logger.error(
+                f"Local LLM topic generation failed in {local_elapsed:.3f}s: "
                 f"{type(e).__name__}: {e}",
                 exc_info=True,
             )

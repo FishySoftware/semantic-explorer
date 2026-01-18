@@ -58,6 +58,9 @@ pub(crate) async fn generate_response(
 
     // Call the appropriate LLM API
     let response_text = match provider.to_lowercase().as_str() {
+        "local" => {
+            call_local_llm_api(&model, SYSTEM_PROMPT, &user_prompt, temperature, max_tokens).await?
+        }
         "openai" => {
             call_openai_api(
                 &base_url,
@@ -151,6 +154,28 @@ async fn call_openai_api(
         .to_string();
 
     Ok(response_text)
+}
+
+/// Call local LLM inference API for chat completion
+async fn call_local_llm_api(
+    model: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+    temperature: f32,
+    max_tokens: i32,
+) -> Result<String, String> {
+    // Use the llm_client to call the local inference API
+    let response = crate::llms::client::simple_chat(
+        model,
+        system_prompt,
+        user_prompt,
+        Some(temperature),
+        Some(max_tokens as usize),
+    )
+    .await
+    .map_err(|e| format!("Local LLM API error: {}", e))?;
+
+    Ok(response)
 }
 
 /// Call Cohere API for text generation

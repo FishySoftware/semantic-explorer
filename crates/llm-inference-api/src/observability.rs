@@ -22,7 +22,7 @@ pub fn init_observability(config: &ObservabilityConfig) -> Result<PrometheusMetr
     ];
 
     semantic_explorer_core::observability::init_observability_api(
-        "llm-inference",
+        "llm_inference",
         &endpoints_to_exclude,
         &config.service_name,
         &config.otlp_endpoint,

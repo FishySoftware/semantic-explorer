@@ -37,11 +37,9 @@ pub struct ModelConfig {
     pub hf_endpoint: Option<String>,
     /// Custom model directory for user-provided models
     pub model_path: Option<PathBuf>,
-    /// Optional list of allowed LLM models (comma-separated)
-    /// If empty, all models are allowed
+    /// Required list of allowed LLM models (comma-separated)
+    /// Must contain at least one model for the service to start
     pub allowed_models: Vec<String>,
-    /// Default model to use when not specified in request
-    pub default_model: String,
     /// Maximum number of concurrent inference requests
     pub max_concurrent_requests: usize,
 }
@@ -114,15 +112,12 @@ impl LlmInferenceConfig {
             }
         }
 
-        // Log allowed models
-        if !self.models.allowed_models.is_empty() {
-            tracing::info!(
-                allowed_models = ?self.models.allowed_models,
-                "Model allowlist configured"
-            );
-        } else {
-            tracing::warn!("No model allowlist configured - all models allowed");
-        }
+        // Log allowed models (always required now)
+        tracing::info!(
+            allowed_models = ?self.models.allowed_models,
+            count = self.models.allowed_models.len(),
+            "Allowed models configured"
+        );
     }
 }
 
@@ -146,18 +141,23 @@ impl ServerConfig {
 impl ModelConfig {
     pub fn from_env() -> Result<Self> {
         let allowed_models = env::var("LLM_ALLOWED_MODELS")
-            .map(|s| s.split(',').map(|m| m.trim().to_string()).collect())
-            .unwrap_or_default();
+            .context("LLM_ALLOWED_MODELS must be set (comma-separated list of model IDs)")?;
 
-        let default_model = env::var("LLM_DEFAULT_MODEL")
-            .unwrap_or_else(|_| "mistralai/Mistral-7B-Instruct-v0.2".to_string());
+        let allowed_models: Vec<String> = allowed_models
+            .split(',')
+            .map(|m| m.trim().to_string())
+            .filter(|m| !m.is_empty())
+            .collect();
+
+        if allowed_models.is_empty() {
+            anyhow::bail!("LLM_ALLOWED_MODELS must contain at least one model");
+        }
 
         Ok(Self {
             hf_home: env::var("HF_HOME").ok().map(PathBuf::from),
             hf_endpoint: env::var("HF_ENDPOINT").ok(),
             model_path: env::var("LLM_MODEL_PATH").ok().map(PathBuf::from),
             allowed_models,
-            default_model,
             max_concurrent_requests: env::var("LLM_MAX_CONCURRENT_REQUESTS")
                 .unwrap_or_else(|_| "10".to_string())
                 .parse()
@@ -253,35 +253,21 @@ mod tests {
                 "mistralai/Mistral-7B-Instruct-v0.2".to_string(),
                 "meta-llama/Llama-2-7b-chat-hf".to_string(),
             ],
-            default_model: "mistralai/Mistral-7B-Instruct-v0.2".to_string(),
             max_concurrent_requests: 10,
         };
 
         assert_eq!(model.allowed_models.len(), 2);
-        assert_eq!(model.default_model, "mistralai/Mistral-7B-Instruct-v0.2");
         assert_eq!(model.hf_home, Some(PathBuf::from("/tmp/hf_cache")));
     }
 
     #[test]
     fn test_model_filtering() {
-        // Empty allowed list = all models allowed
-        let config_all_allowed = ModelConfig {
-            hf_home: None,
-            hf_endpoint: None,
-            model_path: None,
-            allowed_models: vec![],
-            default_model: "mistralai/Mistral-7B-Instruct-v0.2".to_string(),
-            max_concurrent_requests: 10,
-        };
-        assert!(config_all_allowed.is_model_allowed("any-model"));
-
         // Specific allowed list
         let config_restricted = ModelConfig {
             hf_home: None,
             hf_endpoint: None,
             model_path: None,
             allowed_models: vec!["mistralai/Mistral-7B-Instruct-v0.2".to_string()],
-            default_model: "mistralai/Mistral-7B-Instruct-v0.2".to_string(),
             max_concurrent_requests: 10,
         };
         assert!(config_restricted.is_model_allowed("mistralai/Mistral-7B-Instruct-v0.2"));

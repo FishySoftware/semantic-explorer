@@ -16,6 +16,7 @@ qdrant-client==1.16.2  # Latest: Full Python 3.12 support
 # LLM providers
 cohere==5.20.1  # Latest: Full Python 3.12 support
 openai==2.15.0  # Latest: Full Python 3.12 support
+httpx==0.28.1  # Latest: Full Python 3.12 support, for local LLM inference API
 
 # AWS S3 storage
 boto3==1.42.26  # Latest: Full Python 3.12 support

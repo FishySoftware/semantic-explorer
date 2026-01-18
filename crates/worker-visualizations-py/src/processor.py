@@ -427,12 +427,20 @@ class VisualizationProcessor:
             )
 
             # Check if we should use LLM naming
+            # For "local" provider, API key is not required (uses local inference API)
+            is_local_provider = (
+                job.llm_config is not None
+                and job.llm_config.provider.lower() == "local"
+            )
+            has_valid_api_key = (
+                job.llm_config is not None
+                and job.llm_config.api_key
+                and len(job.llm_config.api_key.strip()) > 0
+            )
             use_llm = (
                 llm_provider is not None
                 and job.llm_config is not None
-                and job.llm_config.api_key  # Will be falsy if empty string or None
-                and len(job.llm_config.api_key.strip())
-                > 0  # Check for non-empty after stripping
+                and (is_local_provider or has_valid_api_key)
             )
 
             # Debug logging for LLM config

@@ -19,6 +19,7 @@ pub struct AppConfig {
     pub tls: TlsConfig,
     pub oidc_session: OidcSessionConfig,
     pub inference: EmbeddingInferenceConfig,
+    pub llm_inference: LlmInferenceConfig,
 }
 
 /// Database configuration
@@ -147,6 +148,15 @@ pub struct EmbeddingInferenceConfig {
     pub timeout_secs: u64,
 }
 
+/// LLM inference API configuration
+#[derive(Debug, Clone)]
+pub struct LlmInferenceConfig {
+    /// URL of the local LLM inference API service
+    pub url: String,
+    /// Request timeout in seconds
+    pub timeout_secs: u64,
+}
+
 impl AppConfig {
     /// Load configuration from environment variables.
     ///
@@ -163,6 +173,7 @@ impl AppConfig {
             tls: TlsConfig::from_env()?,
             oidc_session: OidcSessionConfig::from_env()?,
             inference: EmbeddingInferenceConfig::from_env()?,
+            llm_inference: LlmInferenceConfig::from_env()?,
         })
     }
 }
@@ -458,6 +469,19 @@ impl EmbeddingInferenceConfig {
                 .unwrap_or_else(|_| "120".to_string())
                 .parse()
                 .context("EMBEDDING_INFERENCE_API_TIMEOUT_SECS must be a number")?,
+        })
+    }
+}
+
+impl LlmInferenceConfig {
+    pub fn from_env() -> Result<Self> {
+        Ok(Self {
+            url: env::var("LLM_INFERENCE_API_URL")
+                .unwrap_or_else(|_| "http://localhost:8091".to_string()),
+            timeout_secs: env::var("LLM_INFERENCE_API_TIMEOUT_SECS")
+                .unwrap_or_else(|_| "120".to_string())
+                .parse()
+                .context("LLM_INFERENCE_API_TIMEOUT_SECS must be a number")?,
         })
     }
 }

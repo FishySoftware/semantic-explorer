@@ -117,6 +117,7 @@ async fn main() -> Result<()> {
         .clone()
         .unwrap_or_else(|| address.clone());
     let inference_config = config.inference.clone();
+    let llm_inference_config = config.llm_inference.clone();
     let max_upload_size = config.s3.max_upload_size_bytes as usize;
 
     // Start scanners for each transform type
@@ -200,6 +201,7 @@ async fn main() -> Result<()> {
             )
             .app_data(web::Data::new(static_files_directory.clone()))
             .app_data(web::Data::new(inference_config.clone()))
+            .app_data(web::Data::new(llm_inference_config.clone()))
             .into_utoipa_app()
             .openapi(ApiDoc::openapi())
             .service(api::collections::get_collection)
@@ -245,6 +247,7 @@ async fn main() -> Result<()> {
             .service(api::llms::create_llm)
             .service(api::llms::update_llm)
             .service(api::llms::delete_llm)
+            .service(api::llm_inference::list_inference_llms)
             .service(api::marketplace::get_public_collections)
             .service(api::marketplace::get_recent_public_collections)
             .service(api::marketplace::get_public_datasets)

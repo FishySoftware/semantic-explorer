@@ -7,6 +7,7 @@ pub(crate) mod embedded_datasets;
 pub(crate) mod embedders;
 pub(crate) mod embedding_inference;
 pub(crate) mod health;
+pub(crate) mod llm_inference;
 pub(crate) mod llms;
 pub(crate) mod marketplace;
 pub(crate) mod search;

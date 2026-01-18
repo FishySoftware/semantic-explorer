@@ -11,7 +11,8 @@ const DEFAULT_COHERE_BATCH_SIZE: usize = 96;
 const DEFAULT_LOCAL_BATCH_SIZE: usize = 256;
 
 fn get_embedding_inference_api_url() -> String {
-    std::env::var("EMBEDDING_INFERENCE_API_URL").unwrap_or_else(|_| "http://localhost:8090".to_string())
+    std::env::var("EMBEDDING_INFERENCE_API_URL")
+        .unwrap_or_else(|_| "http://localhost:8090".to_string())
 }
 
 pub async fn generate_batch_embeddings(

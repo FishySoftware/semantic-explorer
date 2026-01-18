@@ -1,13 +1,12 @@
 //! Streaming text generation API endpoints.
 
-use actix_web::{HttpResponse, Responder, post, web};
+use actix_web::{HttpResponse, Responder, ResponseError, post, web};
 use futures::StreamExt;
 use serde::Deserialize;
 use tracing::{info, instrument};
 use utoipa::ToSchema;
 
 use crate::config::{GenerationConfig, ModelConfig};
-use crate::errors::InferenceError;
 use crate::llm;
 
 /// Request body for streaming text generation
@@ -72,8 +71,18 @@ pub async fn generate_stream(
     );
 
     // Generate text stream
-    let stream =
-        llm::generate_text_stream(&model_id, prompt, params, &model_config, &gen_config).await?;
+    let stream = match llm::generate_text_stream(
+        &model_id,
+        prompt,
+        params,
+        &model_config,
+        &gen_config,
+    )
+    .await
+    {
+        Ok(s) => s,
+        Err(e) => return e.error_response(),
+    };
 
     // Convert to SSE format
     let sse_stream = stream.map(|result| match result {
@@ -90,11 +99,11 @@ pub async fn generate_stream(
         }
     });
 
-    Ok(HttpResponse::Ok()
+    HttpResponse::Ok()
         .content_type("text/event-stream")
         .insert_header(("Cache-Control", "no-cache"))
         .insert_header(("X-Accel-Buffering", "no")) // Disable nginx buffering
-        .streaming(sse_stream))
+        .streaming(sse_stream)
 }
 
 #[cfg(test)]

@@ -8,28 +8,23 @@
 //! - Chat completion with message history
 
 use futures::stream::Stream;
+use mistralrs::{
+    Model as MistralRsModel, RequestBuilder, TextMessageRole, TextMessages, TextModelBuilder,
+    TokenSource,
+};
 use once_cell::sync::OnceCell;
 use std::collections::HashMap;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
-use tracing::{debug, error, info};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tracing::{debug, info};
 
 use crate::config::{GenerationConfig, ModelConfig};
 use crate::errors::InferenceError;
 
-// NOTE: mistral.rs integration will need to be implemented based on the actual API
-// This is a placeholder structure that follows the embedding.rs pattern
-// TODO: Replace with actual mistral.rs types once API is confirmed
-
-/// Placeholder for mistral.rs model type
-/// This will be replaced with the actual mistralrs::Model or equivalent
-pub struct MistralModel {
-    model_id: String,
-    // TODO: Add actual mistral.rs model fields
-}
-
 /// Type alias for the LLM model cache
-type LlmCache = Arc<Mutex<HashMap<String, Arc<Mutex<MistralModel>>>>>;
+/// Using tokio::sync::Mutex for async compatibility
+type LlmCache = Arc<tokio::sync::Mutex<HashMap<String, Arc<MistralRsModel>>>>;
 
 /// Global LLM model cache - using per-model mutexes for concurrent access
 static LLM_MODELS: OnceCell<LlmCache> = OnceCell::new();
@@ -66,19 +61,12 @@ pub async fn init_cache(config: &ModelConfig) {
 
     tracing::info!("Using concurrency limit: {}", concurrency_limit);
 
-    // Sequential loading for now - can be parallelized once mistral.rs API is confirmed
-    // TODO: Implement parallel loading similar to embedding.rs once mistral.rs integration is complete
+    // Load models sequentially
     for model_id in models_to_load {
-        match load_model(&model_id, config) {
+        match load_model(&model_id, config).await {
             Ok(model) => {
-                let mut cache_guard = match cache.lock() {
-                    Ok(guard) => guard,
-                    Err(e) => {
-                        tracing::error!(error = %e, "Failed to acquire LLM cache lock during initialization");
-                        continue;
-                    }
-                };
-                cache_guard.insert(model_id.clone(), Arc::new(Mutex::new(model)));
+                let mut cache_guard = cache.lock().await;
+                cache_guard.insert(model_id.clone(), Arc::new(model));
                 tracing::info!(model_id = %model_id, "Pre-loaded LLM model");
             }
             Err(e) => {
@@ -94,38 +82,44 @@ pub async fn init_cache(config: &ModelConfig) {
 
 /// Get the list of LLM models to load based on configuration
 fn get_models_to_load(config: &ModelConfig) -> Vec<String> {
-    if !config.allowed_models.is_empty() {
-        // Use allowed models list if configured
-        config.allowed_models.clone()
-    } else {
-        // Use default model if no restrictions
-        vec![config.default_model.clone()]
-    }
+    // Always use allowed_models (required to be non-empty)
+    config.allowed_models.clone()
 }
 
 /// Load a model from disk or download it
 ///
-/// TODO: Implement actual mistral.rs model loading
-/// This should:
-/// 1. Check if model exists in HF_HOME cache
-/// 2. Download from HuggingFace if not present
-/// 3. Initialize the model with CUDA if available
-/// 4. Return the loaded model
-fn load_model(model_id: &str, config: &ModelConfig) -> Result<MistralModel, InferenceError> {
-    tracing::info!(model_id = %model_id, "Loading LLM model");
+/// This uses mistral.rs TextModelBuilder to:
+/// 1. Download model from HuggingFace if not in cache
+/// 2. Load model with CUDA support
+/// 3. Apply quantization for efficiency
+/// 4. Return the loaded model ready for inference
+async fn load_model(
+    model_id: &str,
+    config: &ModelConfig,
+) -> Result<MistralRsModel, InferenceError> {
+    tracing::info!(model_id = %model_id, "Loading LLM model with mistral.rs");
 
-    // TODO: Implement actual mistral.rs model loading
-    // Example structure:
-    let model_loader = mistralrs::Loader::new()
-        .with_hf_cache(config.hf_home)
-        .with_hf_endpoint(config.hf_endpoint)
-        .with_cuda(true);
-    let model = model_loader.load(model_id)?;
+    if model_id.is_empty() {
+        return Err(InferenceError::ModelLoad("Empty model ID".to_string()));
+    }
 
-    // Placeholder implementation
-    Ok(MistralModel {
-        model_id: model_id.to_string(),
-    })
+    let mut builder = TextModelBuilder::new(model_id)
+        .with_token_source(TokenSource::CacheToken)
+        .with_logging();
+    // .with_paged_attn(|| PagedAttentionMetaBuilder::default().build())?;
+
+    // Configure HF cache path if specified
+    if let Some(ref hf_home) = config.hf_home {
+        builder = builder.from_hf_cache_pathf(hf_home.clone());
+    }
+
+    // Build the model
+    let model = builder.build().await.map_err(|e| {
+        InferenceError::ModelLoad(format!("Failed to load model {}: {}", model_id, e))
+    })?;
+
+    tracing::info!(model_id = %model_id, "Successfully loaded LLM model");
+    Ok(model)
 }
 
 /// Get or load a model from the cache
@@ -135,17 +129,14 @@ fn load_model(model_id: &str, config: &ModelConfig) -> Result<MistralModel, Infe
 async fn get_or_load_model(
     model_id: &str,
     config: &ModelConfig,
-) -> Result<Arc<Mutex<MistralModel>>, InferenceError> {
+) -> Result<Arc<MistralRsModel>, InferenceError> {
     let cache = LLM_MODELS
         .get()
         .ok_or_else(|| InferenceError::Internal("LLM cache not initialized".to_string()))?;
 
     // Try to get from cache first
     {
-        let cache_guard = cache.lock().map_err(|e| {
-            InferenceError::Internal(format!("Failed to acquire cache lock: {}", e))
-        })?;
-
+        let cache_guard = cache.lock().await;
         if let Some(model) = cache_guard.get(model_id) {
             debug!(model_id = %model_id, "LLM model found in cache");
             return Ok(Arc::clone(model));
@@ -155,22 +146,12 @@ async fn get_or_load_model(
     // Not in cache - load it
     info!(model_id = %model_id, "LLM model not in cache, loading");
 
-    let model = tokio::task::spawn_blocking({
-        let model_id = model_id.to_string();
-        let config = config.clone();
-        move || load_model(&model_id, &config)
-    })
-    .await
-    .map_err(|e| InferenceError::ModelLoad(format!("Failed to spawn model loading task: {}", e)))?
-    .map_err(|e| InferenceError::ModelLoad(e.to_string()))?;
+    let model = load_model(model_id, config).await?;
 
     // Insert into cache
-    let model_arc = Arc::new(Mutex::new(model));
+    let model_arc = Arc::new(model);
     {
-        let mut cache_guard = cache.lock().map_err(|e| {
-            InferenceError::Internal(format!("Failed to acquire cache lock: {}", e))
-        })?;
-
+        let mut cache_guard = cache.lock().await;
         cache_guard.insert(model_id.to_string(), Arc::clone(&model_arc));
     }
 
@@ -183,6 +164,7 @@ pub struct GenerationParams {
     pub temperature: f32,
     pub top_p: f32,
     pub max_tokens: usize,
+    #[allow(dead_code)]
     pub stop_sequences: Vec<String>,
 }
 
@@ -197,6 +179,7 @@ pub struct GenerationResponse {
 
 /// Reason why generation stopped
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum FinishReason {
     /// Reached max tokens limit
     Length,
@@ -245,41 +228,44 @@ pub async fn generate_text(
     // Get model from cache
     let model_arc = get_or_load_model(model_id, model_config).await?;
 
-    // Generate text
-    // TODO: Implement actual mistral.rs generation
-    // This should run in spawn_blocking since it's CPU-intensive
-    let result = tokio::task::spawn_blocking({
-        let model_id = model_id.to_string();
-        move || {
-            // Placeholder implementation
-            // TODO: Replace with actual mistral.rs generation:
-            // let model_guard = model_arc.lock()?;
-            // let output = model_guard.generate(&prompt, temperature, top_p, max_tokens)?;
-            // Ok(GenerationResponse {
-            //     text: output.text,
-            //     model: model_id,
-            //     tokens_generated: output.tokens.len(),
-            //     finish_reason: map_finish_reason(output.finish_reason),
-            // })
+    // Generate text using mistral.rs
+    let request = RequestBuilder::new()
+        .set_sampler_max_len(max_tokens)
+        .set_sampler_temperature(temperature as f64)
+        .set_sampler_topp(top_p as f64)
+        .add_message(TextMessageRole::User, &prompt);
 
-            Ok(GenerationResponse {
-                text: format!("Generated response for prompt: {}", prompt),
-                model: model_id,
-                tokens_generated: 10,
-                finish_reason: FinishReason::Length,
-            })
-        }
+    let response = model_arc
+        .send_chat_request(request)
+        .await
+        .map_err(|e| InferenceError::Generation(format!("Generation failed: {}", e)))?;
+
+    // Extract response text
+    let text = response.choices[0]
+        .message
+        .content
+        .as_ref()
+        .ok_or_else(|| InferenceError::Generation("Empty response from model".to_string()))?
+        .clone();
+
+    // Determine finish reason
+    let finish_reason = match response.choices[0].finish_reason.as_str() {
+        "stop" => FinishReason::Eos,
+        "length" => FinishReason::Length,
+        _ => FinishReason::Eos,
+    };
+
+    Ok(GenerationResponse {
+        text,
+        model: model_id.to_string(),
+        tokens_generated: response.usage.completion_tokens,
+        finish_reason,
     })
-    .await
-    .map_err(|e| InferenceError::Generation(format!("Generation task failed: {}", e)))??;
-
-    Ok(result)
 }
 
 /// Generate text with streaming
 ///
 /// Returns a stream of text chunks as they are generated.
-/// TODO: Implement actual streaming once mistral.rs API is confirmed
 pub async fn generate_text_stream(
     model_id: &str,
     prompt: String,
@@ -296,23 +282,63 @@ pub async fn generate_text_stream(
     }
 
     // Validate parameters
-    let _temperature = gen_config.validate_temperature(params.temperature);
-    let _top_p = gen_config.validate_top_p(params.top_p);
-    let _max_tokens = gen_config.validate_max_tokens(params.max_tokens);
+    let temperature = gen_config.validate_temperature(params.temperature);
+    let top_p = gen_config.validate_top_p(params.top_p);
+    let max_tokens = gen_config.validate_max_tokens(params.max_tokens);
 
     // Get model from cache
-    let _model_arc = get_or_load_model(model_id, model_config).await?;
+    let model_arc = get_or_load_model(model_id, model_config).await?;
 
-    // TODO: Implement actual streaming
-    // This should create a stream that yields tokens as they're generated
-    // For now, return a placeholder stream
-    use futures::stream;
-    let chunks = vec![
-        Ok("Generated ".to_string()),
-        Ok("streaming ".to_string()),
-        Ok("response".to_string()),
-    ];
-    Ok(Box::pin(stream::iter(chunks)))
+    // Create streaming request using mistral.rs
+    let request = RequestBuilder::new()
+        .set_sampler_max_len(max_tokens)
+        .set_sampler_temperature(temperature as f64)
+        .set_sampler_topp(top_p as f64)
+        .add_message(TextMessageRole::User, &prompt);
+
+    // Clone the Arc to move into the stream
+    let model_for_stream = model_arc.clone();
+
+    // Create async stream that generates text chunks
+    let text_stream = async_stream::try_stream! {
+        // Stream the response inside the async block
+        let mut stream = model_for_stream
+            .stream_chat_request(request)
+            .await
+            .map_err(|e| InferenceError::Generation(format!("Stream creation failed: {}", e)))?;
+
+        while let Some(response) = stream.next().await {
+            match response {
+                mistralrs::Response::Chunk(chunk_response) => {
+                    // Extract text from the chunk delta
+                    if let Some(choice) = chunk_response.choices.first()
+                        && let Some(content) = &choice.delta.content
+                    {
+                        yield content.clone();
+                    }
+                }
+                mistralrs::Response::Done(_) => {
+                    // Stream completed successfully
+                    break;
+                }
+                mistralrs::Response::ModelError(msg, _) => {
+                    Err(InferenceError::Generation(msg))?;
+                }
+                mistralrs::Response::ValidationError(e) => {
+                    Err(InferenceError::Generation(e.to_string()))?;
+                }
+                mistralrs::Response::InternalError(e) => {
+                    Err(InferenceError::Generation(e.to_string()))?;
+                }
+                _ => {
+                    // Unexpected response type, skip
+                    continue;
+                }
+            }
+        }
+    };
+
+    Ok(Box::pin(text_stream))
 }
 
 /// Message for chat completion
@@ -350,56 +376,67 @@ pub async fn chat_completion(
     }
 
     // Validate parameters
-    let _temperature = gen_config.validate_temperature(params.temperature);
-    let _top_p = gen_config.validate_top_p(params.top_p);
-    let _max_tokens = gen_config.validate_max_tokens(params.max_tokens);
+    let temperature = gen_config.validate_temperature(params.temperature);
+    let top_p = gen_config.validate_top_p(params.top_p);
+    let max_tokens = gen_config.validate_max_tokens(params.max_tokens);
 
     // Get model from cache
-    let _model_arc = get_or_load_model(model_id, model_config).await?;
+    let model_arc = get_or_load_model(model_id, model_config).await?;
 
-    // Generate chat response
-    // TODO: Implement actual mistral.rs chat completion
-    let result = tokio::task::spawn_blocking({
-        let model_id = model_id.to_string();
-        move || {
-            // Placeholder implementation
-            // TODO: Replace with actual mistral.rs chat completion:
-            // let model_guard = model_arc.lock()?;
-            // let output = model_guard.chat(&messages, temperature, top_p, max_tokens)?;
+    // Build chat messages for mistral.rs
+    let mut text_messages = TextMessages::new();
+    for msg in messages {
+        let role = match msg.role.to_lowercase().as_str() {
+            "system" => TextMessageRole::System,
+            "user" => TextMessageRole::User,
+            "assistant" => TextMessageRole::Assistant,
+            _ => TextMessageRole::User, // Default to user for unknown roles
+        };
+        text_messages = text_messages.add_message(role, &msg.content);
+    }
 
-            Ok(ChatResponse {
-                message: ChatMessage {
-                    role: "assistant".to_string(),
-                    content: format!("Chat response based on {} messages", messages.len()),
-                },
-                model: model_id,
-                tokens_generated: 15,
-                finish_reason: FinishReason::Eos,
-            })
-        }
+    // Build request with parameters
+    let request = RequestBuilder::from(text_messages)
+        .set_sampler_max_len(max_tokens)
+        .set_sampler_temperature(temperature as f64)
+        .set_sampler_topp(top_p as f64);
+
+    // Generate chat response using mistral.rs
+    let response = model_arc
+        .send_chat_request(request)
+        .await
+        .map_err(|e| InferenceError::Generation(format!("Chat completion failed: {}", e)))?;
+
+    // Extract response
+    let content = response.choices[0]
+        .message
+        .content
+        .as_ref()
+        .ok_or_else(|| InferenceError::Generation("Empty response from model".to_string()))?
+        .clone();
+
+    let finish_reason = match response.choices[0].finish_reason.as_str() {
+        "stop" => FinishReason::Eos,
+        "length" => FinishReason::Length,
+        _ => FinishReason::Eos,
+    };
+
+    Ok(ChatResponse {
+        message: ChatMessage {
+            role: "assistant".to_string(),
+            content,
+        },
+        model: model_id.to_string(),
+        tokens_generated: response.usage.completion_tokens,
+        finish_reason,
     })
-    .await
-    .map_err(|e| InferenceError::Generation(format!("Chat completion task failed: {}", e)))??;
-
-    Ok(result)
 }
 
 /// Check if the LLM service is ready (models loaded)
 ///
-/// Returns true if the cache is initialized and contains at least one model.
+/// Returns true if the cache is initialized.
 pub fn is_ready() -> bool {
-    LLM_MODELS
-        .get()
-        .and_then(|m| {
-            m.lock()
-                .map_err(|e| {
-                    error!("Failed to lock LLM models cache: {}", e);
-                    e
-                })
-                .ok()
-        })
-        .map(|cache| !cache.is_empty())
-        .unwrap_or(false)
+    LLM_MODELS.get().is_some()
 }
 
 #[cfg(test)]

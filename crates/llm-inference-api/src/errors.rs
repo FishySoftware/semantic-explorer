@@ -16,8 +16,6 @@ pub enum InferenceError {
     UnsupportedModel(String),
     /// Bad request
     BadRequest(String),
-    /// Token limit exceeded
-    TokenLimitExceeded(String),
     /// Internal error
     Internal(String),
 }
@@ -29,9 +27,6 @@ impl fmt::Display for InferenceError {
             InferenceError::Generation(msg) => write!(f, "Text generation failed: {}", msg),
             InferenceError::UnsupportedModel(msg) => write!(f, "Unsupported model: {}", msg),
             InferenceError::BadRequest(msg) => write!(f, "Bad request: {}", msg),
-            InferenceError::TokenLimitExceeded(msg) => {
-                write!(f, "Token limit exceeded: {}", msg)
-            }
             InferenceError::Internal(msg) => write!(f, "Internal error: {}", msg),
         }
     }
@@ -50,7 +45,6 @@ impl ResponseError for InferenceError {
         match self {
             InferenceError::BadRequest(_) => StatusCode::BAD_REQUEST,
             InferenceError::UnsupportedModel(_) => StatusCode::BAD_REQUEST,
-            InferenceError::TokenLimitExceeded(_) => StatusCode::BAD_REQUEST,
             InferenceError::ModelLoad(_) => StatusCode::SERVICE_UNAVAILABLE,
             InferenceError::Generation(_) => StatusCode::INTERNAL_SERVER_ERROR,
             InferenceError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -63,7 +57,6 @@ impl ResponseError for InferenceError {
             InferenceError::Generation(_) => "GENERATION_ERROR",
             InferenceError::UnsupportedModel(_) => "UNSUPPORTED_MODEL",
             InferenceError::BadRequest(_) => "BAD_REQUEST",
-            InferenceError::TokenLimitExceeded(_) => "TOKEN_LIMIT_EXCEEDED",
             InferenceError::Internal(_) => "INTERNAL_ERROR",
         };
 

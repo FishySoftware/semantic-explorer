@@ -1,14 +1,13 @@
 //! Text generation API endpoints.
 
-use actix_web::{HttpResponse, Responder, get, post, web};
+use actix_web::{HttpResponse, Responder, ResponseError, get, post, web};
 use serde::{Deserialize, Serialize};
 use tracing::{info, instrument};
 use utoipa::ToSchema;
 
 use crate::config::{GenerationConfig, ModelConfig};
-use crate::errors::InferenceError;
 use crate::llm;
-use crate::models::{ListModelsResponse, filter_models, get_supported_models};
+use crate::models::get_llm_models;
 
 /// Request body for text generation
 #[derive(Debug, Deserialize, ToSchema)]
@@ -47,22 +46,18 @@ pub struct GenerateResponse {
 /// List available LLM models
 #[utoipa::path(
     get,
-    path = "/api/models",
+    path = "/api/llms",
     responses(
-        (status = 200, description = "List of available LLM models", body = ListModelsResponse),
+        (status = 200, description = "List of available LLM models", body = Vec<crate::models::ModelInfo>),
         (status = 500, description = "Internal server error")
     ),
     tag = "models"
 )]
-#[get("/api/models")]
+#[get("/api/llms")]
 #[instrument(skip(model_config))]
-pub async fn list_models(model_config: web::Data<ModelConfig>) -> impl Responder {
-    let all_models = get_supported_models();
-    let filtered_models = filter_models(all_models, &model_config.allowed_models);
-
-    HttpResponse::Ok().json(ListModelsResponse {
-        models: filtered_models,
-    })
+pub async fn list_llms(model_config: web::Data<ModelConfig>) -> impl Responder {
+    let llms = get_llm_models(&model_config);
+    HttpResponse::Ok().json(llms)
 }
 
 /// Generate text from a prompt
@@ -111,8 +106,12 @@ pub async fn generate(
                 "Generated text successfully"
             );
 
-            // TODO: Record metrics via semantic_explorer_core::observability
-            // record_generation_request(&model_id, result.tokens_generated, duration, true);
+            semantic_explorer_core::observability::record_llm_request(
+                &model_id,
+                result.tokens_generated as u64,
+                duration,
+                true,
+            );
 
             HttpResponse::Ok().json(GenerateResponse {
                 text: result.text,

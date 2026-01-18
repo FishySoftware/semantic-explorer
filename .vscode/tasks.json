@@ -62,6 +62,21 @@
             "problemMatcher": []
         },
         {
+            "label": "Run LLM Inference API",
+            "type": "shell",
+            "command": "set -a && source .env && set +a && cargo run",
+            "options": {
+                "cwd": "${workspaceFolder}/crates/llm-inference-api"
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "echo": true,
+                "focus": false
+            },
+            "problemMatcher": []
+        },
+        {
             "label": "Run Worker Visualizations",
             "type": "shell",
             "command": "set -a && source .env && set +a && source venv/bin/activate && python src/main.py",

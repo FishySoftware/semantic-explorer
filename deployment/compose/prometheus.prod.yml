@@ -1,0 +1,128 @@
+# Prometheus configuration for PRODUCTION (Docker Compose)
+# All services run inside containers on the same Docker network.
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: production
+    environment: docker-compose
+
+scrape_configs:
+  # ============================================================================
+  # APPLICATION SERVICES (running in Docker)
+  # ============================================================================
+
+  - job_name: 'semantic-explorer-api'
+    static_configs:
+      - targets: ['semantic-explorer:8080']
+        labels:
+          service: 'api'
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    relabel_configs:
+      - target_label: service
+        replacement: 'api'
+
+  - job_name: 'embedding-inference-api'
+    static_configs:
+      - targets: ['embedding-inference-api:8090']
+        labels:
+          service: 'embedding-inference'
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    relabel_configs:
+      - target_label: service
+        replacement: 'embedding-inference'
+
+  - job_name: 'llm-inference-api'
+    static_configs:
+      - targets: ['llm-inference-api:8091']
+        labels:
+          service: 'llm-inference'
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    relabel_configs:
+      - target_label: service
+        replacement: 'llm-inference'
+
+  - job_name: 'worker-visualizations-py'
+    static_configs:
+      - targets: ['worker-visualizations-py:9093']
+        labels:
+          service: 'worker-visualizations'
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    relabel_configs:
+      - target_label: service
+        replacement: 'worker-visualizations'
+
+  # ============================================================================
+  # INFRASTRUCTURE SERVICES
+  # ============================================================================
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          service: 'prometheus'
+    scrape_interval: 15s
+
+  - job_name: 'otel-collector'
+    static_configs:
+      - targets: ['otel-collector:8888', 'otel-collector:8889']
+        labels:
+          service: 'otel-collector'
+    scrape_interval: 10s
+
+  - job_name: 'quickwit'
+    static_configs:
+      - targets: ['quickwit:7280']
+        labels:
+          service: 'quickwit'
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
+  - job_name: 'grafana'
+    static_configs:
+      - targets: ['grafana:3000']
+        labels:
+          service: 'grafana'
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+  - job_name: 'postgres-exporter'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+        labels:
+          service: 'postgres'
+    scrape_interval: 15s
+
+  - job_name: 'qdrant'
+    static_configs:
+      - targets: ['qdrant:6333']
+        labels:
+          service: 'qdrant'
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
+  - job_name: 'nats'
+    static_configs:
+      - targets: ['nats-1:8222', 'nats-2:8223', 'nats-3:8224']
+        labels:
+          service: 'nats'
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
+  # ============================================================================
+  # MINIO CLUSTER
+  # ============================================================================
+
+  - job_name: 'minio'
+    static_configs:
+      - targets: ['minio-1:9000']
+        labels:
+          service: 'minio'
+    metrics_path: '/minio/v2/metrics/cluster'
+    scrape_interval: 30s

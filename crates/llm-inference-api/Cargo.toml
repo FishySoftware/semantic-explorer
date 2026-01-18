@@ -28,7 +28,8 @@ tracing = { workspace = true }
 tokio = { workspace = true }
 once_cell = { workspace = true }
 futures = "0.3.31"
-mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs", features = ["cuda"] }
+async-stream = "0.3.6"
+mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs", features = ["cuda"] } # "flash-attn", "cudnn"
 
 [lints.clippy]
 enum_glob_use = "deny"

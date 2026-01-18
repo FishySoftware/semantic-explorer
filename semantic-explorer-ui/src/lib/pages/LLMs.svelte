@@ -2,35 +2,16 @@
 	import ActionMenu from '$lib/components/ActionMenu.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
+	import type {
+		LLM,
+		ModelInfo,
+		ModelsResponse,
+		PaginatedLLMList,
+		ProviderDefaultConfig,
+	} from '$lib/types/models';
 	import { Table, TableBody, TableBodyCell, TableHead, TableHeadCell } from 'flowbite-svelte';
 	import { onMount } from 'svelte';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
-
-	interface LLM {
-		llm_id: number;
-		name: string;
-		owner: string;
-		provider: string;
-		base_url: string;
-		api_key: string | null;
-		config: Record<string, any>;
-		is_public: boolean;
-		created_at: string;
-		updated_at: string;
-	}
-
-	interface PaginatedLLMList {
-		items: LLM[];
-		total_count: number;
-		limit: number;
-		offset: number;
-	}
-
-	type ProviderDefaultConfig = {
-		url: string;
-		models: string[];
-		config: Record<string, any>;
-	};
 
 	let llms = $state<LLM[]>([]);
 	let loading = $state(true);
@@ -58,23 +39,54 @@
 
 	let llmPendingDelete = $state<LLM | null>(null);
 
-	const providerDefaults: Record<string, ProviderDefaultConfig> = {
-		openai: {
-			url: 'https://api.openai.com/v1',
-			models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-4', 'gpt-3.5-turbo'],
-			config: { model: 'gpt-4o' },
-		},
-		cohere: {
-			url: 'https://api.cohere.com/v2',
-			models: [
-				'command-a-03-2025',
-				'command-r-plus-08-2024',
-				'command-r-08-2024',
-				'command-r7b-12-2024',
-			],
-			config: { model: 'command-a-03-2025' },
-		},
-	};
+	let inferenceModels = $state<ModelInfo[]>([]);
+	let localModelsForDisplay = $derived(
+		[...inferenceModels].sort((a, b) => a.name.localeCompare(b.name)),
+	);
+
+	function getProviderDefaults(): Record<string, ProviderDefaultConfig> {
+		const localDefaultModel = localModelsForDisplay[0]?.id || '';
+
+		return {
+			local: {
+				url: '', // URL is configured on the backend
+				models: localModelsForDisplay.map((m) => m.id),
+				config: { model: localDefaultModel },
+			},
+			openai: {
+				url: 'https://api.openai.com/v1',
+				models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-4', 'gpt-3.5-turbo'],
+				config: { model: 'gpt-4o' },
+			},
+			cohere: {
+				url: 'https://api.cohere.com/v2',
+				models: [
+					'command-a-03-2025',
+					'command-r-plus-08-2024',
+					'command-r-08-2024',
+					'command-r7b-12-2024',
+				],
+				config: { model: 'command-a-03-2025' },
+			},
+		};
+	}
+
+	let providerDefaults = $derived(getProviderDefaults());
+
+	async function fetchInferenceModels() {
+		try {
+			const response = await fetch('/api/llm-inference/models');
+			if (!response.ok) {
+				console.error('Failed to fetch inference models:', response.statusText);
+				return;
+			}
+			const data = (await response.json()) as ModelsResponse;
+			inferenceModels = data.models;
+		} catch (e) {
+			console.error('Error fetching inference models:', e);
+			inferenceModels = [];
+		}
+	}
 
 	async function testLLMConnection() {
 		testStatus = 'testing';
@@ -98,6 +110,8 @@
 						max_tokens: 10,
 					}),
 				});
+			} else if (formProvider === 'local') {
+				return; // Testing local LLMs is not needed
 			} else if (formProvider === 'cohere') {
 				response = await fetch(`${formBaseUrl}/chat`, {
 					method: 'POST',
@@ -161,6 +175,7 @@
 	}
 
 	onMount(() => {
+		fetchInferenceModels();
 		fetchLLMs();
 		extractSearchParamFromHash();
 	});
@@ -202,7 +217,7 @@
 	function openCreateForm() {
 		editingLLM = null;
 		formName = '';
-		formProvider = 'openai';
+		formProvider = 'local';
 		formApiKey = '';
 		formIsPublic = false;
 		updateProviderDefaults();
@@ -215,7 +230,7 @@
 	$effect(() => {
 		if (showCreateForm && !editingLLM && !formName) {
 			const model = localModel === '__custom__' ? customModel : localModel;
-			if (model) {
+			if (model && typeof model === 'string') {
 				const cleanModel = model.split('/').pop()?.toLowerCase() || model.toLowerCase();
 				formName = `llm-${formProvider}-${cleanModel}`;
 			}
@@ -225,7 +240,7 @@
 	$effect(() => {
 		if (showCreateForm && !editingLLM && formName.startsWith('llm-')) {
 			const model = localModel === '__custom__' ? customModel : localModel;
-			if (model) {
+			if (model && typeof model === 'string') {
 				const cleanModel = model.split('/').pop()?.toLowerCase() || model.toLowerCase();
 				formName = `llm-${formProvider}-${cleanModel}`;
 			}
@@ -454,28 +469,39 @@
 								disabled={!!editingLLM}
 								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white disabled:opacity-50"
 							>
+								<option value="local">LLM Inference API</option>
 								<option value="openai">OpenAI</option>
 								<option value="cohere">Cohere</option>
 								<option value="custom">Custom</option>
 							</select>
 						</div>
 
-						<div class="mt-4">
-							<label
-								for="llm-base-url"
-								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+						{#if formProvider === 'local'}
+							<div
+								class="pt-3 pb-3 mt-2 mb-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg"
 							>
-								Base URL
-							</label>
-							<input
-								id="llm-base-url"
-								type="text"
-								bind:value={formBaseUrl}
-								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-								placeholder={providerDefaults[formProvider]?.url || ''}
-							/>
-						</div>
-
+								<p class="p-2 text-sm text-blue-700 dark:text-blue-300">
+									<strong>LLM Inference API:</strong>
+									The LLM Inference API URL is configured on the server. No API key is required.
+								</p>
+							</div>
+						{:else}
+							<div class="mt-4">
+								<label
+									for="llm-base-url"
+									class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+								>
+									Base URL
+								</label>
+								<input
+									id="llm-base-url"
+									type="text"
+									bind:value={formBaseUrl}
+									class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									placeholder={providerDefaults[formProvider]?.url || ''}
+								/>
+							</div>
+						{/if}
 						<div class="mt-4">
 							<label
 								for="llm-model"
@@ -502,7 +528,12 @@
 									}
 								}}
 							>
-								{#if providerDefaults[formProvider]?.models}
+								{#if formProvider === 'local' && localModelsForDisplay.length > 0}
+									{#each localModelsForDisplay as model (model.id)}
+										<option value={model.id}>{model.name}</option>
+									{/each}
+									<option value="__custom__">Custom...</option>
+								{:else if providerDefaults[formProvider]?.models}
 									{#each providerDefaults[formProvider].models as model (model)}
 										<option value={model}>{model}</option>
 									{/each}
@@ -533,22 +564,24 @@
 							{/if}
 						</div>
 
-						<div class="mt-4">
-							<label
-								for="llm-api-key"
-								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-							>
-								API Key
-							</label>
-							<input
-								id="llm-api-key"
-								type="password"
-								autocomplete="off"
-								bind:value={formApiKey}
-								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-								placeholder="Enter your API key"
-							/>
-						</div>
+						{#if formProvider !== 'local'}
+							<div class="mt-4">
+								<label
+									for="llm-api-key"
+									class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+								>
+									API Key
+								</label>
+								<input
+									id="llm-api-key"
+									type="password"
+									autocomplete="off"
+									bind:value={formApiKey}
+									class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									placeholder="Enter your API key"
+								/>
+							</div>
+						{/if}
 
 						<div class="mt-4">
 							<label
@@ -716,7 +749,7 @@
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3">
 								<span class="text-gray-700 dark:text-gray-300 text-sm">
-									{llm.config?.model ?? 'N/A'}
+								{llm.config.model ?? 'N/A'}
 								</span>
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3">
@@ -731,7 +764,7 @@
 								{/if}
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3">
-								<span class="text-gray-700 dark:text-gray-300">{llm.owner}</span>
+							<span class="text-gray-700 dark:text-gray-300">{llm.owner_display_name}</span>
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3 text-center">
 								<ActionMenu

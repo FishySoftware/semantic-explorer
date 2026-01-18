@@ -5,6 +5,8 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::config::ModelConfig;
+
 /// Information about an available LLM model
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ModelInfo {
@@ -21,18 +23,29 @@ pub struct ModelInfo {
     pub capabilities: Vec<String>,
 }
 
-/// Response for listing available models
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct ListModelsResponse {
-    /// List of available models
-    pub models: Vec<ModelInfo>,
+/// Get list of LLM models based on configuration
+///
+/// Returns all catalog models, filtered by allowed_models configuration if set.
+/// This matches the embedders pattern where the library provides a catalog
+/// and configuration filters what's actually available.
+pub fn get_llm_models(config: &ModelConfig) -> Vec<ModelInfo> {
+    let catalog = get_model_catalog();
+
+    let models: Vec<ModelInfo> = catalog
+        .into_iter()
+        .filter(|model| config.is_model_allowed(&model.id))
+        .collect();
+
+    models
 }
 
-/// Get all supported LLM models
+/// Get the complete catalog of known/tested LLM models
 ///
-/// This function returns metadata about all models that the API can serve.
-/// The actual availability depends on the allowed_models configuration.
-pub fn get_supported_models() -> Vec<ModelInfo> {
+/// This is a curated list of models that are known to work well with mistral.rs.
+/// These models must have tokenizer.json available in their HuggingFace repo.
+/// Users can add any HuggingFace model ID to LLM_ALLOWED_MODELS, but this catalog
+/// provides a starting point of tested models.
+pub fn get_model_catalog() -> Vec<ModelInfo> {
     vec![
         ModelInfo {
             id: "mistralai/Mistral-7B-Instruct-v0.2".to_string(),
@@ -60,48 +73,49 @@ pub fn get_supported_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "meta-llama/Llama-2-7b-chat-hf".to_string(),
             name: "Llama 2 7B Chat".to_string(),
-            description: "Meta's Llama 2 7 billion parameter chat model".to_string(),
+            description: "Meta's Llama 2 7 billion parameter chat model (requires HF token)"
+                .to_string(),
             size: Some("7B".to_string()),
             capabilities: vec!["text-generation".to_string(), "chat".to_string()],
         },
         ModelInfo {
             id: "meta-llama/Llama-2-13b-chat-hf".to_string(),
             name: "Llama 2 13B Chat".to_string(),
-            description: "Meta's Llama 2 13 billion parameter chat model".to_string(),
+            description: "Meta's Llama 2 13 billion parameter chat model (requires HF token)"
+                .to_string(),
             size: Some("13B".to_string()),
             capabilities: vec!["text-generation".to_string(), "chat".to_string()],
         },
         ModelInfo {
-            id: "TheBloke/zephyr-7B-beta-GGUF".to_string(),
+            id: "HuggingFaceH4/zephyr-7b-beta".to_string(),
             name: "Zephyr 7B Beta".to_string(),
-            description: "HuggingFaceH4's Zephyr 7B beta model in GGUF format".to_string(),
+            description: "HuggingFaceH4's Zephyr 7B beta model - fine-tuned Mistral".to_string(),
             size: Some("7B".to_string()),
             capabilities: vec!["text-generation".to_string(), "chat".to_string()],
         },
         ModelInfo {
-            id: "TheBloke/Llama-2-7B-Chat-GGUF".to_string(),
-            name: "Llama 2 7B Chat (GGUF)".to_string(),
-            description: "Meta's Llama 2 7B chat model in GGUF format for efficient inference"
+            id: "microsoft/Phi-3-mini-4k-instruct".to_string(),
+            name: "Phi-3 Mini 4K Instruct".to_string(),
+            description: "Microsoft's compact 3.8B parameter model with 4K context".to_string(),
+            size: Some("3.8B".to_string()),
+            capabilities: vec!["text-generation".to_string(), "chat".to_string()],
+        },
+        ModelInfo {
+            id: "google/gemma-7b-it".to_string(),
+            name: "Gemma 7B Instruct".to_string(),
+            description: "Google's Gemma 7B instruction-tuned model (requires HF token)"
                 .to_string(),
             size: Some("7B".to_string()),
             capabilities: vec!["text-generation".to_string(), "chat".to_string()],
         },
+        ModelInfo {
+            id: "TinyLlama/TinyLlama-1.1B-Chat-v1.0".to_string(),
+            name: "TinyLlama 1.1B Chat".to_string(),
+            description: "Compact 1.1B model for resource-constrained environments".to_string(),
+            size: Some("1.1B".to_string()),
+            capabilities: vec!["text-generation".to_string(), "chat".to_string()],
+        },
     ]
-}
-
-/// Filter models based on allowed_models configuration
-///
-/// If allowed_models is empty, all models are returned.
-/// Otherwise, only models in the allowed list are returned.
-pub fn filter_models(all_models: Vec<ModelInfo>, allowed_models: &[String]) -> Vec<ModelInfo> {
-    if allowed_models.is_empty() {
-        return all_models;
-    }
-
-    all_models
-        .into_iter()
-        .filter(|model| allowed_models.contains(&model.id))
-        .collect()
 }
 
 #[cfg(test)]
@@ -109,27 +123,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_get_supported_models() {
-        let models = get_supported_models();
+    fn test_get_model_catalog() {
+        let models = get_model_catalog();
         assert!(!models.is_empty());
         assert!(models.iter().any(|m| m.id.contains("Mistral")));
-    }
-
-    #[test]
-    fn test_filter_models_empty_allowed() {
-        let models = get_supported_models();
-        let count = models.len();
-        let filtered = filter_models(models, &[]);
-        assert_eq!(filtered.len(), count);
-    }
-
-    #[test]
-    fn test_filter_models_with_allowed_list() {
-        let models = get_supported_models();
-        let allowed = vec!["mistralai/Mistral-7B-Instruct-v0.2".to_string()];
-        let filtered = filter_models(models, &allowed);
-        assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].id, "mistralai/Mistral-7B-Instruct-v0.2");
     }
 
     #[test]

@@ -53,30 +53,10 @@ async fn main() -> Result<()> {
         "Starting llm-inference-api server with CUDA GPU acceleration (controlled by CUDA_VISIBLE_DEVICES)"
     );
 
-    // Log allowed models configuration
-    if config.models.allowed_models.is_empty() {
-        info!("All LLM models are allowed (no LLM_ALLOWED_MODELS configured)");
-    } else {
-        info!(
-            allowed_models = ?config.models.allowed_models,
-            count = config.models.allowed_models.len(),
-            "LLM model access restricted to allowed list"
-        );
-    }
-
-    // Log default model
     info!(
-        default_model = %config.models.default_model,
-        "Default model configured"
-    );
-
-    // Log generation defaults
-    info!(
-        temperature = config.generation.default_temperature,
-        top_p = config.generation.default_top_p,
-        max_tokens = config.generation.default_max_tokens,
-        max_tokens_limit = config.generation.max_tokens_limit,
-        "Generation defaults configured"
+        allowed_models = ?config.models.allowed_models,
+        count = config.models.allowed_models.len(),
+        "Allowed LLM models configured"
     );
 
     // Initialize model cache
@@ -122,7 +102,7 @@ async fn main() -> Result<()> {
             .service(api::health::health_live)
             .service(api::health::health_ready)
             // Model listing
-            .service(api::generation::list_models)
+            .service(api::generation::list_llms)
             // Generation endpoints
             .service(api::generation::generate)
             .service(api::streaming::generate_stream)

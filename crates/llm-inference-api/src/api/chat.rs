@@ -1,6 +1,6 @@
 //! Chat completion API endpoints.
 
-use actix_web::{HttpResponse, Responder, post, web};
+use actix_web::{HttpResponse, Responder, ResponseError, post, web};
 use serde::{Deserialize, Serialize};
 use tracing::{info, instrument};
 use utoipa::ToSchema;
@@ -90,7 +90,7 @@ pub async fn chat_completion(
     model_config: web::Data<ModelConfig>,
     gen_config: web::Data<GenerationConfig>,
     body: web::Json<ChatRequest>,
-) -> Result<impl Responder, InferenceError> {
+) -> impl Responder {
     let model_id = body.model.clone();
     let messages = body.messages.clone();
 
@@ -99,9 +99,8 @@ pub async fn chat_completion(
 
     // Validate messages
     if messages.is_empty() {
-        return Err(InferenceError::BadRequest(
-            "Messages array cannot be empty".to_string(),
-        ));
+        return InferenceError::BadRequest("Messages array cannot be empty".to_string())
+            .error_response();
     }
 
     // Build generation parameters
@@ -119,7 +118,12 @@ pub async fn chat_completion(
 
     // Generate chat completion
     let result =
-        llm::chat_completion(&model_id, llm_messages, params, &model_config, &gen_config).await?;
+        match llm::chat_completion(&model_id, llm_messages, params, &model_config, &gen_config)
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => return e.error_response(),
+        };
 
     let duration = start.elapsed().as_secs_f64();
 
@@ -130,11 +134,15 @@ pub async fn chat_completion(
         "Chat completion generated successfully"
     );
 
-    // TODO: Record metrics via semantic_explorer_core::observability
-    // record_chat_request(&model_id, result.tokens_generated, duration, true);
+    semantic_explorer_core::observability::record_llm_request(
+        &model_id,
+        result.tokens_generated as u64,
+        duration,
+        true,
+    );
 
     HttpResponse::Ok().json(ChatResponse {
-        message: result.message,
+        message: result.message.into(),
         model: result.model,
         tokens_generated: result.tokens_generated,
         finish_reason: result.finish_reason.to_string(),

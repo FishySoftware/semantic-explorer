@@ -370,14 +370,37 @@ export interface SearchResponse {
 
 // --- Chat & LLMs ---
 
+export interface ModelInfo {
+	id: string;
+	name: string;
+	description: string;
+	size: string;
+	capabilities: string[];
+}
+
+export interface ModelsResponse {
+	models: ModelInfo[];
+}
+
 export interface LLM {
 	llm_id: number;
 	name: string;
+	owner_id: string;
+	owner_display_name: string;
 	provider: string;
-	model: string;
-	is_public?: boolean;
-	created_at?: string;
-	updated_at?: string;
+	base_url: string;
+	api_key: string | null;
+	config: Record<string, any> | any; // eslint-disable-line @typescript-eslint/no-explicit-any
+	is_public: boolean;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface PaginatedLLMList {
+	items: LLM[];
+	total_count: number;
+	limit: number;
+	offset: number;
 }
 
 export interface ChatSession {
