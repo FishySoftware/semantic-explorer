@@ -5,47 +5,28 @@
 	import { onDestroy, onMount } from 'svelte';
 	import TabPanel from '../components/TabPanel.svelte';
 	import TransformsList from '../components/TransformsList.svelte';
-	import type { VisualizationTransform } from '../types/visualizations';
+	import type {
+		VisualizationTransform,
+		EmbeddedDataset,
+		EmbeddedDatasetStats,
+		Embedder,
+	} from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { createSSEConnection, type SSEConnection } from '../utils/sse';
 	import { formatDate } from '../utils/ui-helpers';
 
-	interface EmbeddedDataset {
-		embedded_dataset_id: number;
-		title: string;
-		dataset_transform_id: number;
-		source_dataset_id: number;
-		embedder_id: number;
-		owner: string;
-		collection_name: string;
-		created_at: string;
-		updated_at: string;
-		source_dataset_title?: string;
-		embedder_name?: string;
+	interface PaginatedEmbedderList {
+		items: Embedder[];
+		total_count: number;
+		limit: number;
+		offset: number;
 	}
 
-	interface EmbeddedDatasetStats {
-		embedded_dataset_id: number;
-		total_batches_processed: number;
-		successful_batches: number;
-		failed_batches: number;
-		processing_batches: number;
-		total_chunks_embedded: number;
-		total_chunks_failed: number;
-		total_chunks_processing: number;
-		last_run_at?: string;
-		first_processing_at?: string;
-		avg_processing_duration_ms?: number;
-	}
-
-	interface Embedder {
-		embedder_id: number;
-		name: string;
-		dimensions: number;
-		config: {
-			model?: string;
-			[key: string]: any;
-		};
+	interface PaginatedResponse<T> {
+		items: T[];
+		total_count: number;
+		limit: number;
+		offset: number;
 	}
 
 	interface QdrantPoint {
@@ -119,7 +100,8 @@
 			if (embeddedDataset && embeddedDataset.embedder_id) {
 				const embedderResponse = await fetch('/api/embedders');
 				if (embedderResponse.ok) {
-					const embedders: Embedder[] = await embedderResponse.json();
+					const data = (await embedderResponse.json()) as PaginatedEmbedderList;
+					const embedders = data.items;
 					embedder = embedders.find((e) => e.embedder_id === embeddedDataset!.embedder_id) || null;
 				}
 			}
@@ -140,10 +122,8 @@
 			if (!response.ok) {
 				throw new Error(`Failed to fetch visualization transforms: ${response.statusText}`);
 			}
-			const transformData = await response.json();
-			const allTransforms: VisualizationTransform[] = Array.isArray(transformData)
-				? transformData
-				: transformData.items || [];
+			const transformData = (await response.json()) as PaginatedResponse<VisualizationTransform>;
+			const allTransforms = transformData.items;
 			visualizationTransforms = allTransforms.filter(
 				(t) => t.embedded_dataset_id === embeddedDataset!.embedded_dataset_id
 			);

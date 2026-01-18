@@ -22,6 +22,8 @@ use crate::{
 };
 use semantic_explorer_core::encryption::EncryptionService;
 
+//TODO: Refactor this mess properly.
+
 #[utoipa::path(
     request_body = SearchRequest,
     responses(
@@ -34,13 +36,13 @@ use semantic_explorer_core::encryption::EncryptionService;
 #[post("/api/search")]
 #[tracing::instrument(
     name = "search",
-    skip(user, qdrant_client, postgres_pool, search_request, req, encryption)
+    skip(user, qdrant_client, pool, search_request, req, encryption)
 )]
 pub(crate) async fn search(
     user: AuthenticatedUser,
     req: HttpRequest,
     qdrant_client: Data<Qdrant>,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     encryption: Data<EncryptionService>,
     Json(search_request): Json<SearchRequest>,
 ) -> impl Responder {
@@ -55,28 +57,25 @@ pub(crate) async fn search(
         return ApiError::BadRequest("Query cannot be empty".to_string()).error_response();
     }
 
-    // Track search request
-    let dataset_ids: Vec<String> = search_request
+    let embedded_dataset_ids: Vec<String> = search_request
         .embedded_dataset_ids
         .iter()
         .map(|id| id.to_string())
         .collect();
-    events::search_request(&req, &user.as_owner(), &user, &dataset_ids);
+    events::search_request(&req, &user.as_owner(), &user, &embedded_dataset_ids);
 
     // Batch fetch all embedded datasets and embedders upfront to avoid N+1 queries
     let embedded_datasets_map = match embedded_datasets::get_embedded_datasets_with_details_batch(
-        &postgres_pool,
+        &pool,
         &user.as_owner(),
         &search_request.embedded_dataset_ids,
     )
     .await
     {
-        Ok(eds) => {
-            // Convert to HashMap for fast lookup
-            eds.into_iter()
-                .map(|ed| (ed.embedded_dataset_id, ed))
-                .collect::<HashMap<_, _>>()
-        }
+        Ok(eds) => eds
+            .into_iter()
+            .map(|ed| (ed.embedded_dataset_id, ed))
+            .collect::<HashMap<_, _>>(),
         Err(e) => {
             tracing::error!("Failed to fetch embedded datasets in batch: {}", e);
             return ApiError::Internal(format!("Failed to fetch embedded datasets: {}", e))
@@ -93,15 +92,11 @@ pub(crate) async fn search(
         .collect();
 
     let embedders_map =
-        match embedders::get_embedders_batch(&postgres_pool, &user, &embedder_ids, &encryption)
-            .await
-        {
-            Ok(embs) => {
-                // Convert to HashMap for fast lookup
-                embs.into_iter()
-                    .map(|emb| (emb.embedder_id, emb))
-                    .collect::<HashMap<_, _>>()
-            }
+        match embedders::get_embedders_batch(&pool, &user, &embedder_ids, &encryption).await {
+            Ok(embs) => embs
+                .into_iter()
+                .map(|emb| (emb.embedder_id, emb))
+                .collect::<HashMap<_, _>>(),
             Err(e) => {
                 tracing::error!("Failed to fetch embedders in batch: {}", e);
                 return ApiError::Internal(format!("Failed to fetch embedders: {}", e))

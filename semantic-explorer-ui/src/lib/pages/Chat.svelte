@@ -4,6 +4,15 @@
 	import { marked } from 'marked';
 	import { onMount } from 'svelte';
 	import PageHeader from '../components/PageHeader.svelte';
+	import type {
+		ChatSession,
+		ChatMessage,
+		LLM,
+		EmbeddedDataset,
+		PaginatedEmbeddedDatasetList,
+		RetrievedDocument,
+		PaginatedResponse,
+	} from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
 
 	// Lazy load highlight.js
@@ -27,46 +36,6 @@
 		breaks: true,
 		gfm: true,
 	});
-
-	interface ChatSession {
-		session_id: string;
-		embedded_dataset_id: number;
-		llm_id: number;
-		title: string | null;
-		created_at: string;
-		updated_at: string;
-	}
-
-	interface RetrievedDocument {
-		document_id: string | null;
-		text: string;
-		similarity_score: number;
-		item_title: string | null;
-	}
-
-	interface ChatMessage {
-		message_id: number;
-		role: string;
-		content: string;
-		documents_retrieved: number | null;
-		status: string; // 'complete', 'incomplete', 'error'
-		created_at: string;
-		retrieved_documents?: RetrievedDocument[];
-	}
-
-	interface EmbeddedDataset {
-		embedded_dataset_id: number;
-		title: string;
-		embedder_name: string;
-		source_dataset_title: string;
-		source_dataset_id: number;
-	}
-
-	interface LLM {
-		llm_id: number;
-		name: string;
-		provider: string;
-	}
 
 	let sessions = $state<ChatSession[]>([]);
 	let embeddedDatasets = $state<EmbeddedDataset[]>([]);
@@ -130,11 +99,12 @@
 
 	async function fetchEmbeddedDatasets() {
 		try {
-			const response = await fetch('/api/embedded-datasets');
+			const response = await fetch('/api/embedded-datasets?limit=1000');
 			if (!response.ok) {
 				throw new Error(`Failed to fetch embedded datasets: ${response.statusText}`);
 			}
-			embeddedDatasets = await response.json();
+			const data = (await response.json()) as PaginatedEmbeddedDatasetList;
+			embeddedDatasets = data.embedded_datasets;
 		} catch (e) {
 			console.error('Failed to fetch embedded datasets:', e);
 		}
@@ -142,11 +112,12 @@
 
 	async function fetchLLMs() {
 		try {
-			const response = await fetch('/api/llms');
+			const response = await fetch('/api/llms?limit=100');
 			if (!response.ok) {
 				throw new Error(`Failed to fetch LLMs: ${response.statusText}`);
 			}
-			llms = await response.json();
+			const data = (await response.json()) as PaginatedResponse<LLM>;
+			llms = data.items;
 		} catch (e) {
 			console.error('Failed to fetch LLMs:', e);
 		}
@@ -239,9 +210,11 @@
 					message_id: userMessageId,
 					role: 'user',
 					content: userContent,
+					created_at: new Date().toISOString(),
+					tokens_used: null,
+					metadata: null,
 					documents_retrieved: null,
 					status: 'complete',
-					created_at: new Date().toISOString(),
 				},
 			];
 
@@ -253,9 +226,11 @@
 					message_id: assistantPlaceholderId,
 					role: 'assistant',
 					content: '',
+					created_at: new Date().toISOString(),
+					tokens_used: null,
+					metadata: null,
 					documents_retrieved: 0,
 					status: 'incomplete',
-					created_at: new Date().toISOString(),
 					retrieved_documents: [],
 				},
 			];

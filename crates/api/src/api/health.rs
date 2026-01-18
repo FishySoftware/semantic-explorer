@@ -60,25 +60,20 @@ impl HealthResponse {
     }
 }
 
-/// Simple liveness probe - just confirms the process is running
-/// Used by Kubernetes for basic liveness checks
 #[get("/health/live")]
 pub async fn liveness() -> impl Responder {
     HttpResponse::Ok().body("ok")
 }
 
-/// Readiness probe - checks if all dependencies are available
-/// Used by Kubernetes to determine if the pod should receive traffic
 #[get("/health/ready")]
-#[tracing::instrument(name = "health.readiness", skip_all)]
 pub async fn readiness(
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     qdrant_client: Data<Qdrant>,
     s3_client: Data<S3Client>,
     nats_client: Data<async_nats::Client>,
 ) -> impl Responder {
     let (postgres_health, qdrant_health, s3_health, nats_health) = tokio::join!(
-        check_postgres(&postgres_pool),
+        check_postgres(&pool),
         check_qdrant(&qdrant_client),
         check_s3(&s3_client),
         check_nats(&nats_client),
@@ -103,12 +98,6 @@ pub async fn readiness(
         HealthStatus::Degraded => HttpResponse::Ok().json(response),
         HealthStatus::Unhealthy => HttpResponse::ServiceUnavailable().json(response),
     }
-}
-
-/// Legacy health endpoint for backward compatibility
-#[get("/health")]
-pub async fn health() -> impl Responder {
-    HttpResponse::Ok().body("up")
 }
 
 async fn check_postgres(pool: &Pool<Postgres>) -> ComponentHealth {
@@ -154,8 +143,6 @@ async fn check_qdrant(client: &Qdrant) -> ComponentHealth {
 
 async fn check_s3(client: &S3Client) -> ComponentHealth {
     let start = Instant::now();
-
-    // List buckets is a lightweight operation to verify S3 connectivity
     match client.list_buckets().send().await {
         Ok(_) => ComponentHealth {
             status: HealthStatus::Healthy,
@@ -175,8 +162,6 @@ async fn check_s3(client: &S3Client) -> ComponentHealth {
 
 async fn check_nats(client: &async_nats::Client) -> ComponentHealth {
     let start = Instant::now();
-
-    // Check connection state - NATS client maintains connection status
     let state = client.connection_state();
     let latency = start.elapsed().as_secs_f64() * 1000.0;
 

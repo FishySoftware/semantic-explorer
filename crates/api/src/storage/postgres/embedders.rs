@@ -42,6 +42,13 @@ fn decrypt_embedders_api_keys(
         .collect()
 }
 
+pub(crate) struct PaginatedResult<T> {
+    pub(crate) items: Vec<T>,
+    pub(crate) total_count: i64,
+    pub(crate) limit: i64,
+    pub(crate) offset: i64,
+}
+
 #[derive(FromRow)]
 pub struct EmbedderConfig {
     pub provider: String,
@@ -61,6 +68,23 @@ const GET_EMBEDDERS_QUERY: &str = r#"
     SELECT embedder_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, batch_size, dimensions, max_input_tokens, truncate_strategy, collection_name, is_public, created_at, updated_at
     FROM embedders
     ORDER BY created_at DESC
+    LIMIT $1 OFFSET $2
+"#;
+
+const GET_EMBEDDERS_WITH_SEARCH_QUERY: &str = r#"
+    SELECT embedder_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, batch_size, dimensions, max_input_tokens, truncate_strategy, collection_name, is_public, created_at, updated_at
+    FROM embedders
+    WHERE name ILIKE $1
+    ORDER BY created_at DESC
+    LIMIT $2 OFFSET $3
+"#;
+
+const COUNT_EMBEDDERS_QUERY: &str = r#"
+    SELECT COUNT(*) as count FROM embedders
+"#;
+
+const COUNT_EMBEDDERS_SEARCH_QUERY: &str = r#"
+    SELECT COUNT(*) as count FROM embedders WHERE name ILIKE $1
 "#;
 
 const CREATE_EMBEDDER_QUERY: &str = r#"
@@ -188,13 +212,24 @@ pub(crate) async fn get_embedders_batch(
 pub(crate) async fn get_embedders(
     pool: &Pool<Postgres>,
     user: &AuthenticatedUser,
+    limit: i64,
+    offset: i64,
     encryption: &EncryptionService,
-) -> Result<Vec<Embedder>> {
+) -> Result<PaginatedResult<Embedder>> {
     let mut tx = pool.begin().await?;
     super::rls::set_rls_user_tx(&mut tx, user.as_str()).await?;
 
+    // Get total count
+    let count_result = sqlx::query_as::<_, (i64,)>(COUNT_EMBEDDERS_QUERY)
+        .fetch_one(&mut *tx)
+        .await?;
+    let total_count = count_result.0;
+
+    // Get paginated results
     let start = Instant::now();
     let result = sqlx::query_as::<_, Embedder>(GET_EMBEDDERS_QUERY)
+        .bind(limit)
+        .bind(offset)
         .fetch_all(&mut *tx)
         .await;
 
@@ -204,7 +239,60 @@ pub(crate) async fn get_embedders(
 
     let embedders = result?;
     tx.commit().await?;
-    decrypt_embedders_api_keys(encryption, embedders)
+    let decrypted = decrypt_embedders_api_keys(encryption, embedders)?;
+
+    Ok(PaginatedResult {
+        items: decrypted,
+        total_count,
+        limit,
+        offset,
+    })
+}
+
+#[tracing::instrument(name = "database.get_embedders_with_search", skip(pool, encryption), fields(database.system = "postgresql", database.operation = "SELECT", username = %user.as_str()))]
+pub(crate) async fn get_embedders_with_search(
+    pool: &Pool<Postgres>,
+    user: &AuthenticatedUser,
+    search_query: &str,
+    limit: i64,
+    offset: i64,
+    encryption: &EncryptionService,
+) -> Result<PaginatedResult<Embedder>> {
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, user.as_str()).await?;
+
+    let search_pattern = format!("%{}%", search_query);
+
+    // Get total count
+    let count_result = sqlx::query_as::<_, (i64,)>(COUNT_EMBEDDERS_SEARCH_QUERY)
+        .bind(&search_pattern)
+        .fetch_one(&mut *tx)
+        .await?;
+    let total_count = count_result.0;
+
+    // Get paginated results
+    let start = Instant::now();
+    let result = sqlx::query_as::<_, Embedder>(GET_EMBEDDERS_WITH_SEARCH_QUERY)
+        .bind(&search_pattern)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&mut *tx)
+        .await;
+
+    let duration = start.elapsed().as_secs_f64();
+    let success = result.is_ok();
+    record_database_query("SELECT", "embedders", duration, success);
+
+    let embedders = result?;
+    tx.commit().await?;
+    let decrypted = decrypt_embedders_api_keys(encryption, embedders)?;
+
+    Ok(PaginatedResult {
+        items: decrypted,
+        total_count,
+        limit,
+        offset,
+    })
 }
 
 #[tracing::instrument(name = "database.create_embedder", skip(pool, create_embedder, encryption), fields(database.system = "postgresql", database.operation = "INSERT", owner_id = %user.as_owner()))]

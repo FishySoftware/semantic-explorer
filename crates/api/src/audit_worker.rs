@@ -64,24 +64,7 @@ pub async fn start_audit_consumer(
 
 /// Store an audit event in the database using the storage layer
 async fn store_audit_event(pool: &Pool<Postgres>, event: &AuditEvent) -> Result<(), sqlx::Error> {
-    audit::store_audit_event(
-        pool,
-        &event.timestamp,
-        &format!("{:?}", event.event_type),
-        &format!("{:?}", event.outcome),
-        &event.user,
-        &event.user_display,
-        event.request_id.as_deref(),
-        event.client_ip.as_deref(),
-        event
-            .resource_type
-            .as_ref()
-            .map(|rt| format!("{:?}", rt))
-            .as_deref(),
-        event.resource_id.as_deref(),
-        event.details.as_deref(),
-    )
-    .await
+    audit::store_audit_event_simple(pool, event).await
 }
 
 /// Ensure the AUDIT_EVENTS stream exists in NATS JetStream

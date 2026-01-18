@@ -405,7 +405,7 @@ A health check HTTP server runs on port 8081 (configurable via `HEALTH_CHECK_POR
 
 #### Liveness Probe
 ```bash
-curl http://localhost:8081/health
+curl http://localhost:8081/health/live
 # Returns 200 OK if worker process is running
 ```
 
@@ -442,7 +442,7 @@ spec:
     # Liveness: restart if worker process dies
     livenessProbe:
       httpGet:
-        path: /health
+        path: /health/live
         port: health
       initialDelaySeconds: 30
       periodSeconds: 10
@@ -452,7 +452,7 @@ spec:
     # Readiness: remove from service if degraded
     readinessProbe:
       httpGet:
-        path: /ready
+        path: /health/ready
         port: health
       initialDelaySeconds: 15
       periodSeconds: 5

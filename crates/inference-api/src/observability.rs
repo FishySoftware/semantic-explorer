@@ -15,7 +15,6 @@ pub fn init_observability(config: &ObservabilityConfig) -> Result<PrometheusMetr
     };
 
     let endpoints_to_exclude = [
-        ("/health", None),
         ("/health/.*", Some("/health/.*")),
         ("/metrics", None),
         ("/swagger-ui", None),

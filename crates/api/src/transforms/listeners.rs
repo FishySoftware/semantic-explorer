@@ -19,15 +19,15 @@ use crate::storage::postgres::dataset_transform_batches::{self, CreateBatchReque
 use crate::storage::postgres::datasets;
 use crate::storage::postgres::embedded_datasets;
 use crate::storage::postgres::visualization_transforms::{
-    get_visualization, get_visualization_transform_by_id, update_visualization,
-    update_visualization_transform_status,
+    VisualizationUpdate, get_visualization, get_visualization_transform_by_id,
+    update_visualization, update_visualization_transform_status,
 };
 use crate::storage::s3::delete_file;
 use crate::transforms::dataset::scanner::trigger_dataset_transform_scan;
 
 #[derive(Clone)]
 struct TransformContext {
-    postgres_pool: Pool<Postgres>,
+    pool: Pool<Postgres>,
     s3_client: S3Client,
     nats_client: NatsClient,
     encryption: EncryptionService,
@@ -93,13 +93,13 @@ async fn publish_transform_status(
 }
 
 pub(crate) async fn start_result_listeners(
-    postgres_pool: Pool<Postgres>,
+    pool: Pool<Postgres>,
     s3_client: S3Client,
     nats_client: NatsClient,
     encryption: EncryptionService,
 ) -> Result<()> {
     let context = TransformContext {
-        postgres_pool: postgres_pool.clone(),
+        pool: pool.clone(),
         s3_client: s3_client.clone(),
         nats_client: nats_client.clone(),
         encryption,
@@ -379,7 +379,7 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
 
     // Fetch the transform first to get collection_id for status updates
     let transform = match collection_transforms::get_collection_transform(
-        &ctx.postgres_pool,
+        &ctx.pool,
         &result.owner_id,
         result.collection_transform_id,
     )
@@ -397,7 +397,7 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
 
     // Check if this file was already successfully processed to avoid duplicates
     match collection_transforms::is_file_already_processed(
-        &ctx.postgres_pool,
+        &ctx.pool,
         result.collection_transform_id,
         &result.source_file_key,
     )
@@ -429,7 +429,7 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
             result.source_file_key, result.error
         );
         if let Err(e) = collection_transforms::record_processed_file(
-            &ctx.postgres_pool,
+            &ctx.pool,
             result.collection_transform_id,
             &result.source_file_key,
             0,
@@ -467,7 +467,7 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
             result.source_file_key
         );
         if let Err(e) = collection_transforms::record_processed_file(
-            &ctx.postgres_pool,
+            &ctx.pool,
             result.collection_transform_id,
             &result.source_file_key,
             0,
@@ -500,7 +500,7 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
     if title.is_empty() {
         error!("File key is empty or contains only whitespace, cannot create dataset item");
         if let Err(e) = collection_transforms::record_processed_file(
-            &ctx.postgres_pool,
+            &ctx.pool,
             result.collection_transform_id,
             &result.source_file_key,
             0,
@@ -574,7 +574,8 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
 
     info!("Creating dataset item for: {}", title);
     if let Err(e) = datasets::create_dataset_item(
-        &ctx.postgres_pool,
+        &ctx.pool,
+        &result.owner_id,
         transform.dataset_id,
         title,
         &chunks,
@@ -585,7 +586,7 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
         let error_msg = format!("Failed to create dataset item: {}", e);
         error!("{}", error_msg);
         if let Err(e) = collection_transforms::record_processed_file(
-            &ctx.postgres_pool,
+            &ctx.pool,
             result.collection_transform_id,
             &result.source_file_key,
             0,
@@ -618,7 +619,7 @@ async fn handle_file_result(result: CollectionTransformResult, ctx: &TransformCo
         result.source_file_key, chunk_count
     );
     if let Err(e) = collection_transforms::record_processed_file(
-        &ctx.postgres_pool,
+        &ctx.pool,
         result.collection_transform_id,
         &result.source_file_key,
         chunk_count,
@@ -658,7 +659,7 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
 
     // Validate ownership by fetching the embedded dataset
     let embedded_dataset = match embedded_datasets::get_embedded_dataset(
-        &ctx.postgres_pool,
+        &ctx.pool,
         &result.owner_id,
         result.embedded_dataset_id,
     )
@@ -682,7 +683,7 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
                 result.batch_file_key, result.embedded_dataset_id, result.chunk_count
             );
             if let Err(e) = embedded_datasets::record_processed_batch(
-                &ctx.postgres_pool,
+                &ctx.pool,
                 result.embedded_dataset_id,
                 &result.batch_file_key,
                 result.chunk_count as i32,
@@ -697,7 +698,7 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
 
             // Also record in dataset_transform_batches for tracking at transform level
             if let Err(e) = dataset_transform_batches::create_batch(
-                &ctx.postgres_pool,
+                &ctx.pool,
                 CreateBatchRequest {
                     dataset_transform_id: embedded_dataset.dataset_transform_id,
                     batch_key: result.batch_file_key.clone(),
@@ -725,7 +726,7 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
                 .unwrap_or_else(|| "Unknown error".to_string());
 
             if let Err(e) = embedded_datasets::record_processed_batch(
-                &ctx.postgres_pool,
+                &ctx.pool,
                 result.embedded_dataset_id,
                 &result.batch_file_key,
                 0,
@@ -740,7 +741,7 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
 
             // Also update batch record at transform level
             if let Err(e) = dataset_transform_batches::update_batch_status(
-                &ctx.postgres_pool,
+                &ctx.pool,
                 embedded_dataset.dataset_transform_id,
                 &result.batch_file_key,
                 "failed",
@@ -774,7 +775,7 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
                 result.processing_duration_ms.unwrap_or(0)
             );
             if let Err(e) = embedded_datasets::record_processed_batch(
-                &ctx.postgres_pool,
+                &ctx.pool,
                 result.embedded_dataset_id,
                 &result.batch_file_key,
                 result.chunk_count as i32,
@@ -790,7 +791,7 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
 
             // Also update batch record at transform level
             if let Err(e) = dataset_transform_batches::update_batch_status(
-                &ctx.postgres_pool,
+                &ctx.pool,
                 embedded_dataset.dataset_transform_id,
                 &result.batch_file_key,
                 "success",
@@ -865,34 +866,31 @@ async fn handle_visualization_result(result: VisualizationTransformResult, ctx: 
     );
 
     // Verify visualization exists
-    if let Err(e) = get_visualization(&ctx.postgres_pool, result.visualization_id).await {
+    if let Err(e) = get_visualization(&ctx.pool, result.visualization_id).await {
         error!("Visualization {} not found: {}", result.visualization_id, e);
         return;
     }
 
     // Fetch the transform to get embedded_dataset_id for status updates
-    let visualization_transform = match get_visualization_transform_by_id(
-        &ctx.postgres_pool,
-        result.visualization_transform_id,
-    )
-    .await
-    {
-        Ok(Some(t)) => t,
-        Ok(None) => {
-            error!(
-                "Visualization transform {} not found",
-                result.visualization_transform_id
-            );
-            return;
-        }
-        Err(e) => {
-            error!(
-                "Failed to get visualization transform {}: {}",
-                result.visualization_transform_id, e
-            );
-            return;
-        }
-    };
+    let visualization_transform =
+        match get_visualization_transform_by_id(&ctx.pool, result.visualization_transform_id).await
+        {
+            Ok(Some(t)) => t,
+            Ok(None) => {
+                error!(
+                    "Visualization transform {} not found",
+                    result.visualization_transform_id
+                );
+                return;
+            }
+            Err(e) => {
+                error!(
+                    "Failed to get visualization transform {}: {}",
+                    result.visualization_transform_id, e
+                );
+                return;
+            }
+        };
 
     let now = sqlx::types::chrono::Utc::now();
 
@@ -902,20 +900,11 @@ async fn handle_visualization_result(result: VisualizationTransformResult, ctx: 
         let stats = result.stats_json.clone().unwrap_or_default();
 
         // Update visualization with progress info (keep existing data, just update stats)
-        if let Err(e) = update_visualization(
-            &ctx.postgres_pool,
-            result.visualization_id,
-            Some("processing"),
-            None, // Don't override started_at
-            None, // Don't set completed_at yet
-            None, // Don't override html_s3_key
-            None, // Don't override point_count
-            None, // Don't override cluster_count
-            None, // Don't override error_message
-            Some(&stats),
-        )
-        .await
-        {
+        let update = VisualizationUpdate::new()
+            .status("processing")
+            .stats_json(stats.clone());
+
+        if let Err(e) = update_visualization(&ctx.pool, result.visualization_id, &update).await {
             error!(
                 "Failed to update visualization {} progress: {}",
                 result.visualization_id, e
@@ -930,7 +919,7 @@ async fn handle_visualization_result(result: VisualizationTransformResult, ctx: 
 
         // Also update the transform's status so the UI can show progress
         if let Err(e) = update_visualization_transform_status(
-            &ctx.postgres_pool,
+            &ctx.pool,
             result.visualization_transform_id,
             Some("processing"),
             Some(now),
@@ -970,20 +959,26 @@ async fn handle_visualization_result(result: VisualizationTransformResult, ctx: 
     }
 
     // Update visualization record with results
-    if let Err(e) = update_visualization(
-        &ctx.postgres_pool,
-        result.visualization_id,
-        Some(status),
-        Some(now),
-        Some(now),
-        result.html_s3_key.as_deref(),
-        result.point_count.map(|p| p as i32),
-        result.cluster_count,
-        error_message.as_deref(),
-        Some(&stats),
-    )
-    .await
-    {
+    let mut update = VisualizationUpdate::new()
+        .status(status)
+        .started_at(now)
+        .completed_at(now)
+        .stats_json(stats.clone());
+
+    if let Some(html_s3_key) = result.html_s3_key.as_ref() {
+        update = update.html_s3_key(html_s3_key);
+    }
+    if let Some(point_count) = result.point_count {
+        update = update.point_count(point_count as i32);
+    }
+    if let Some(cluster_count) = result.cluster_count {
+        update = update.cluster_count(cluster_count);
+    }
+    if let Some(error_msg) = error_message.as_ref() {
+        update = update.error_message(error_msg);
+    }
+
+    if let Err(e) = update_visualization(&ctx.pool, result.visualization_id, &update).await {
         error!(
             "Failed to update visualization {}: {}",
             result.visualization_id, e
@@ -993,7 +988,7 @@ async fn handle_visualization_result(result: VisualizationTransformResult, ctx: 
 
     // Also update the transform's status
     if let Err(e) = update_visualization_transform_status(
-        &ctx.postgres_pool,
+        &ctx.pool,
         result.visualization_transform_id,
         Some(status),
         Some(now),
@@ -1065,7 +1060,7 @@ fn start_dataset_transform_scan_listener(context: TransformContext, nats_client:
                     );
 
                     // Spawn the actual processing in a separate task to avoid blocking the listener
-                    let postgres_pool = context.postgres_pool.clone();
+                    let pool = context.pool.clone();
                     let s3_client = context.s3_client.clone();
                     let nats = nats_client.clone();
                     let encryption = context.encryption.clone();
@@ -1074,7 +1069,7 @@ fn start_dataset_transform_scan_listener(context: TransformContext, nats_client:
 
                     actix_web::rt::spawn(async move {
                         if let Err(e) = trigger_dataset_transform_scan(
-                            &postgres_pool,
+                            &pool,
                             &nats,
                             &s3_client,
                             dataset_transform_id,

@@ -3,10 +3,34 @@ use sqlx::FromRow;
 use sqlx::types::chrono::{DateTime, Utc};
 use utoipa::ToSchema;
 
+#[derive(Debug, Deserialize, ToSchema, utoipa::IntoParams)]
+pub(crate) struct LlmListQuery {
+    pub(crate) search: Option<String>,
+    #[schema(default = 20, minimum = 1, maximum = 1000)]
+    #[serde(default = "default_limit")]
+    pub(crate) limit: i64,
+    #[schema(default = 0, minimum = 0)]
+    #[serde(default)]
+    pub(crate) offset: i64,
+}
+
+fn default_limit() -> i64 {
+    20
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct PaginatedLLMList {
+    pub(crate) items: Vec<LargeLanguageModel>,
+    pub(crate) total_count: i64,
+    pub(crate) limit: i64,
+    pub(crate) offset: i64,
+}
+
 #[derive(Serialize, Deserialize, ToSchema)]
 pub(crate) struct CreateLLM {
     pub(crate) name: String,
     pub(crate) provider: String,
+    pub(crate) model: String,
     pub(crate) base_url: String,
     pub(crate) api_key: Option<String>,
     #[schema(value_type = Object)]

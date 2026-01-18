@@ -37,6 +37,13 @@
 		title: string;
 	}
 
+	interface PaginatedEmbedderList {
+		items: Embedder[];
+		total_count: number;
+		limit: number;
+		offset: number;
+	}
+
 	interface Props {
 		embedderId: number;
 		onBack: () => void;
@@ -84,11 +91,12 @@
 		try {
 			loading = true;
 			error = null;
-			const response = await fetch('/api/embedders');
+			const response = await fetch('/api/embedders?limit=10&offset=0');
 			if (!response.ok) {
 				throw new Error(`Failed to fetch embedders: ${response.statusText}`);
 			}
-			const embedders: Embedder[] = await response.json();
+			const data: PaginatedEmbedderList = await response.json();
+			const embedders: Embedder[] = data.items;
 			embedder = embedders.find((e) => e.embedder_id === embedderId) || null;
 			if (!embedder) {
 				throw new Error('Embedder not found');
@@ -125,7 +133,8 @@
 			if (!response.ok) {
 				throw new Error(`Failed to fetch embedded datasets: ${response.statusText}`);
 			}
-			const allEmbeddedDatasets: EmbeddedDataset[] = await response.json();
+			const data = await response.json();
+			const allEmbeddedDatasets: EmbeddedDataset[] = data.embedded_datasets || [];
 			embeddedDatasets = allEmbeddedDatasets
 				.filter((ed) => ed.embedder_id === embedderId)
 				.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());

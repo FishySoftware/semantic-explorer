@@ -7,13 +7,20 @@ use crate::storage::postgres::chat as chat_storage;
 
 const SYSTEM_PROMPT: &str = "You are a helpful assistant that answers questions based on the provided context. When answering, always cite the specific chunk number (e.g., 'According to Chunk 1' or 'As mentioned in Chunk 2 and Chunk 3') to reference where your information comes from. If the context doesn't contain relevant information to answer the question, say so explicitly.";
 
+/// Configuration for LLM API requests
+#[derive(Debug, Clone)]
+struct LLMRequestConfig {
+    api_base: String,
+    model: String,
+    api_key: Option<String>,
+    temperature: f32,
+    max_tokens: i32,
+}
+
 /// Generate an LLM response with RAG context
-#[tracing::instrument(
-    name = "generate_llm_response",
-    skip(postgres_pool, query, context, encryption)
-)]
+#[tracing::instrument(name = "generate_llm_response", skip(pool, query, context, encryption))]
 pub(crate) async fn generate_response(
-    postgres_pool: &Pool<Postgres>,
+    pool: &Pool<Postgres>,
     encryption: &EncryptionService,
     llm_id: i32,
     query: &str,
@@ -33,7 +40,7 @@ pub(crate) async fn generate_response(
 
     // Fetch LLM details from database
     let (name, provider, base_url, model, api_key) =
-        chat_storage::get_llm_details(postgres_pool, encryption, llm_id)
+        chat_storage::get_llm_details(pool, encryption, llm_id)
             .await
             .map_err(|e| format!("database error: {e}"))?;
 
@@ -209,10 +216,10 @@ async fn call_cohere_api(
 /// Generate a streaming LLM response with RAG context
 #[tracing::instrument(
     name = "generate_llm_response_stream",
-    skip(postgres_pool, query, context, encryption)
+    skip(pool, query, context, encryption)
 )]
 pub(crate) async fn generate_response_stream(
-    postgres_pool: &Pool<Postgres>,
+    pool: &Pool<Postgres>,
     encryption: &EncryptionService,
     llm_id: i32,
     query: &str,
@@ -222,7 +229,7 @@ pub(crate) async fn generate_response_stream(
 ) -> Result<impl Stream<Item = Result<String, String>>, String> {
     // Fetch LLM details from database
     let (name, provider, base_url, model, api_key) =
-        chat_storage::get_llm_details(postgres_pool, encryption, llm_id)
+        chat_storage::get_llm_details(pool, encryption, llm_id)
             .await
             .map_err(|e| format!("database error: {e}"))?;
 
@@ -237,47 +244,22 @@ pub(crate) async fn generate_response_stream(
 
     tracing::debug!(llm_name = %name, provider = %provider, "starting streaming LLM response");
 
+    // Build config for the LLM request
+    let config = LLMRequestConfig {
+        api_base: base_url,
+        model,
+        api_key,
+        temperature,
+        max_tokens,
+    };
+
     // Create streaming request based on provider
     let response = match provider.to_lowercase().as_str() {
-        "openai" => {
-            make_streaming_request(
-                &base_url,
-                &model,
-                api_key.as_deref(),
-                SYSTEM_PROMPT,
-                &user_prompt,
-                "openai",
-                temperature,
-                max_tokens,
-            )
-            .await?
-        }
+        "openai" => make_streaming_request(&config, SYSTEM_PROMPT, &user_prompt, "openai").await?,
         "anthropic" => {
-            make_streaming_request(
-                &base_url,
-                &model,
-                api_key.as_deref(),
-                SYSTEM_PROMPT,
-                &user_prompt,
-                "anthropic",
-                temperature,
-                max_tokens,
-            )
-            .await?
+            make_streaming_request(&config, SYSTEM_PROMPT, &user_prompt, "anthropic").await?
         }
-        "cohere" => {
-            make_streaming_request(
-                &base_url,
-                &model,
-                api_key.as_deref(),
-                SYSTEM_PROMPT,
-                &user_prompt,
-                "cohere",
-                temperature,
-                max_tokens,
-            )
-            .await?
-        }
+        "cohere" => make_streaming_request(&config, SYSTEM_PROMPT, &user_prompt, "cohere").await?,
         _ => return Err(format!("unsupported LLM provider: {}", provider)),
     };
 
@@ -328,76 +310,52 @@ pub(crate) async fn generate_response_stream(
 }
 
 /// Make a streaming request to an LLM provider
-#[allow(clippy::too_many_arguments)]
 async fn make_streaming_request(
-    api_base: &str,
-    model: &str,
-    api_key: Option<&str>,
+    config: &LLMRequestConfig,
     system_prompt: &str,
     user_prompt: &str,
     provider: &str,
-    temperature: f32,
-    max_tokens: i32,
 ) -> Result<reqwest::Response, String> {
-    let api_key = api_key.ok_or_else(|| format!("API key not configured for {}", provider))?;
+    let api_key = config
+        .api_key
+        .as_deref()
+        .ok_or_else(|| format!("API key not configured for {}", provider))?;
     let client = &*HTTP_CLIENT;
 
     let response = match provider {
         "openai" => {
             let request_body = serde_json::json!({
-                "model": model,
+                "model": config.model,
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                "temperature": temperature,
-                "max_tokens": max_tokens,
+                "temperature": config.temperature,
+                "max_tokens": config.max_tokens,
                 "stream": true,
             });
 
             client
-                .post(format!("{}/v1/chat/completions", api_base))
+                .post(format!("{}/v1/chat/completions", config.api_base))
                 .header("Authorization", format!("Bearer {}", api_key))
                 .json(&request_body)
                 .send()
                 .await
                 .map_err(|e| format!("OpenAI API request failed: {e}"))?
         }
-        "anthropic" => {
-            let request_body = serde_json::json!({
-                "model": model,
-                "messages": [
-                    {"role": "user", "content": user_prompt}
-                ],
-                "system": system_prompt,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "stream": true,
-            });
-
-            client
-                .post(format!("{}/messages", api_base))
-                .header("x-api-key", api_key)
-                .header("anthropic-version", "2023-06-01")
-                .header("Content-Type", "application/json")
-                .json(&request_body)
-                .send()
-                .await
-                .map_err(|e| format!("Anthropic API request failed: {e}"))?
-        }
         "cohere" => {
             let request_body = serde_json::json!({
-                "model": model,
+                "model": config.model,
                 "messages": [
                     {"role": "user", "content": user_prompt}
                 ],
-                "max_tokens": max_tokens,
-                "temperature": temperature,
+                "max_tokens": config.max_tokens,
+                "temperature": config.temperature,
                 "stream": true,
             });
 
             client
-                .post(format!("{}/chat", api_base))
+                .post(format!("{}/chat", config.api_base))
                 .header("Authorization", format!("Bearer {}", api_key))
                 .header("Accept", "text/event-stream")
                 .json(&request_body)

@@ -34,21 +34,14 @@ use semantic_explorer_core::encryption::EncryptionService;
     tag = "Chat",
 )]
 #[post("/api/chat/sessions")]
-#[tracing::instrument(name = "create_chat_session", skip(user, postgres_pool, req))]
+#[tracing::instrument(name = "create_chat_session", skip(user, pool, req))]
 pub(crate) async fn create_chat_session(
     user: AuthenticatedUser,
     req: HttpRequest,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     request: Json<CreateChatSessionRequest>,
 ) -> impl Responder {
-    match chat::create_chat_session(
-        &postgres_pool.into_inner(),
-        &user.as_owner(),
-        &user,
-        &request,
-    )
-    .await
-    {
+    match chat::create_chat_session(&pool.into_inner(), &user.as_owner(), &user, &request).await {
         Ok(session) => {
             events::resource_created_with_request(
                 &req,
@@ -74,12 +67,12 @@ pub(crate) async fn create_chat_session(
     tag = "Chat",
 )]
 #[get("/api/chat/sessions")]
-#[tracing::instrument(name = "get_chat_sessions", skip(user, postgres_pool))]
+#[tracing::instrument(name = "get_chat_sessions", skip(user, pool))]
 pub(crate) async fn get_chat_sessions(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
 ) -> impl Responder {
-    match chat::get_chat_sessions(&postgres_pool.into_inner(), &user.as_owner()).await {
+    match chat::get_chat_sessions(&pool.into_inner(), &user.as_owner()).await {
         Ok(sessions) => HttpResponse::Ok().json(sessions),
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch chat sessions");
@@ -100,13 +93,13 @@ pub(crate) async fn get_chat_sessions(
     tag = "Chat",
 )]
 #[get("/api/chat/sessions/{session_id}")]
-#[tracing::instrument(name = "get_chat_session", skip(user, postgres_pool))]
+#[tracing::instrument(name = "get_chat_session", skip(user, pool))]
 pub(crate) async fn get_chat_session(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     session_id: Path<String>,
 ) -> impl Responder {
-    match chat::get_chat_session(&postgres_pool.into_inner(), &session_id, &user.as_owner()).await {
+    match chat::get_chat_session(&pool.into_inner(), &session_id, &user.as_owner()).await {
         Ok(session) => {
             events::resource_read(&user.as_owner(), &user, ResourceType::Session, &session_id);
             HttpResponse::Ok().json(session)
@@ -130,16 +123,14 @@ pub(crate) async fn get_chat_session(
     tag = "Chat",
 )]
 #[delete("/api/chat/sessions/{session_id}")]
-#[tracing::instrument(name = "delete_chat_session", skip(user, postgres_pool, req))]
+#[tracing::instrument(name = "delete_chat_session", skip(user, pool, req))]
 pub(crate) async fn delete_chat_session(
     user: AuthenticatedUser,
     req: HttpRequest,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     session_id: Path<String>,
 ) -> impl Responder {
-    match chat::delete_chat_session(&postgres_pool.into_inner(), &session_id, &user.as_owner())
-        .await
-    {
+    match chat::delete_chat_session(&pool.into_inner(), &session_id, &user.as_owner()).await {
         Ok(()) => {
             events::resource_deleted_with_request(
                 &req,
@@ -169,21 +160,19 @@ pub(crate) async fn delete_chat_session(
     tag = "Chat",
 )]
 #[get("/api/chat/sessions/{session_id}/messages")]
-#[tracing::instrument(name = "get_chat_messages", skip(user, postgres_pool))]
+#[tracing::instrument(name = "get_chat_messages", skip(user, pool))]
 pub(crate) async fn get_chat_messages(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     session_id: Path<String>,
 ) -> impl Responder {
-    match chat::get_chat_session(&postgres_pool, &session_id, &user.as_owner()).await {
-        Ok(_) => match chat::get_chat_messages(&postgres_pool, &session_id).await {
+    match chat::get_chat_session(&pool, &session_id, &user.as_owner()).await {
+        Ok(_) => match chat::get_chat_messages(&pool, &session_id).await {
             Ok(messages) => {
                 let mut messages_response: Vec<ChatMessageResponse> = Vec::new();
                 for message in messages {
                     let retrieved_documents = if message.role == "assistant" {
-                        match chat::get_retrieved_documents(&postgres_pool, message.message_id)
-                            .await
-                        {
+                        match chat::get_retrieved_documents(&pool, message.message_id).await {
                             Ok(docs) => {
                                 if docs.is_empty() {
                                     None
@@ -241,20 +230,19 @@ pub(crate) async fn get_chat_messages(
 #[post("/api/chat/sessions/{session_id}/messages")]
 #[tracing::instrument(
     name = "send_chat_message",
-    skip(user, postgres_pool, request, qdrant_client, req, encryption)
+    skip(user, pool, request, qdrant_client, req, encryption)
 )]
 pub(crate) async fn send_chat_message(
     user: AuthenticatedUser,
     req: HttpRequest,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     qdrant_client: Data<Qdrant>,
     encryption: Data<EncryptionService>,
     session_id: Path<String>,
     request: Json<CreateChatMessageRequest>,
 ) -> impl Responder {
     // Verify session ownership and get session details
-    let session = match chat::get_chat_session(&postgres_pool, &session_id, &user.as_owner()).await
-    {
+    let session = match chat::get_chat_session(&pool, &session_id, &user.as_owner()).await {
         Ok(s) => s,
         Err(e) => {
             tracing::error!(error = %e, session_id = %session_id, "session not found");
@@ -264,7 +252,7 @@ pub(crate) async fn send_chat_message(
 
     // Store user message
     if let Err(e) = chat::add_chat_message(
-        &postgres_pool,
+        &pool,
         &session_id,
         "user",
         &request.content,
@@ -290,7 +278,7 @@ pub(crate) async fn send_chat_message(
     }
 
     let retrieved_documents = match rag::retrieve_documents(
-        &postgres_pool,
+        &pool,
         qdrant_client.as_ref(),
         session.embedded_dataset_id,
         &request.content,
@@ -313,7 +301,7 @@ pub(crate) async fn send_chat_message(
 
     // Generate response using LLM with RAG context
     let response_content = match llm::generate_response(
-        &postgres_pool,
+        &pool,
         &encryption,
         session.llm_id,
         &request.content,
@@ -336,7 +324,7 @@ pub(crate) async fn send_chat_message(
 
     // Store assistant message with transformed content
     let assistant_message = match chat::add_chat_message(
-        &postgres_pool,
+        &pool,
         &session_id,
         "assistant",
         &transformed_content,
@@ -354,12 +342,9 @@ pub(crate) async fn send_chat_message(
     };
 
     // Store retrieved documents for this message
-    if let Err(e) = chat::store_retrieved_documents(
-        &postgres_pool,
-        assistant_message.message_id,
-        &retrieved_documents,
-    )
-    .await
+    if let Err(e) =
+        chat::store_retrieved_documents(&pool, assistant_message.message_id, &retrieved_documents)
+            .await
     {
         tracing::error!(error = %e, "failed to store retrieved documents");
         // Continue anyway - this is not critical
@@ -394,12 +379,12 @@ pub(crate) async fn send_chat_message(
 #[post("/api/chat/sessions/{session_id}/messages/stream")]
 #[tracing::instrument(
     name = "stream_chat_message",
-    skip(user, postgres_pool, qdrant_client, request, req, encryption)
+    skip(user, pool, qdrant_client, request, req, encryption)
 )]
 pub(crate) async fn stream_chat_message(
     user: AuthenticatedUser,
     req: HttpRequest,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     qdrant_client: Data<Qdrant>,
     encryption: Data<EncryptionService>,
     session_id: Path<String>,
@@ -408,8 +393,7 @@ pub(crate) async fn stream_chat_message(
     use actix_web::http::header;
 
     // Verify session ownership
-    let session = match chat::get_chat_session(&postgres_pool, &session_id, &user.as_owner()).await
-    {
+    let session = match chat::get_chat_session(&pool, &session_id, &user.as_owner()).await {
         Ok(s) => s,
         Err(e) => {
             tracing::error!(error = %e, session_id = %session_id, "session not found");
@@ -421,7 +405,7 @@ pub(crate) async fn stream_chat_message(
 
     // Store user message
     if let Err(e) = chat::add_chat_message(
-        &postgres_pool,
+        &pool,
         &session_id,
         "user",
         &request.content,
@@ -449,7 +433,7 @@ pub(crate) async fn stream_chat_message(
     }
 
     let retrieved_documents = match rag::retrieve_documents(
-        &postgres_pool,
+        &pool,
         qdrant_client.as_ref(),
         session.embedded_dataset_id,
         &request.content,
@@ -469,7 +453,7 @@ pub(crate) async fn stream_chat_message(
 
     // Create assistant message with status='incomplete'
     let assistant_message = match chat::add_chat_message(
-        &postgres_pool,
+        &pool,
         &session_id,
         "assistant",
         "",
@@ -488,19 +472,16 @@ pub(crate) async fn stream_chat_message(
     };
 
     // Store retrieved documents
-    if let Err(e) = chat::store_retrieved_documents(
-        &postgres_pool,
-        assistant_message.message_id,
-        &retrieved_documents,
-    )
-    .await
+    if let Err(e) =
+        chat::store_retrieved_documents(&pool, assistant_message.message_id, &retrieved_documents)
+            .await
     {
         tracing::error!(error = %e, "failed to store retrieved documents");
     }
 
     let message_id = assistant_message.message_id;
     let owner = user.0.clone();
-    let postgres_pool_clone = postgres_pool.clone();
+    let postgres_pool_clone = pool.clone();
     let encryption_clone = encryption.clone();
 
     // Create SSE stream
@@ -683,14 +664,11 @@ pub(crate) struct RegenerateMessageQuery {
     ),
 )]
 #[post("/api/chat/messages/{message_id}/regenerate")]
-#[tracing::instrument(
-    name = "regenerate_chat_message",
-    skip(user, postgres_pool, req, encryption)
-)]
+#[tracing::instrument(name = "regenerate_chat_message", skip(user, pool, req, encryption))]
 pub(crate) async fn regenerate_chat_message(
     user: AuthenticatedUser,
     req: HttpRequest,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     encryption: Data<EncryptionService>,
     message_id: Path<i32>,
     query: Query<RegenerateMessageQuery>,
@@ -698,7 +676,7 @@ pub(crate) async fn regenerate_chat_message(
     let message_id = message_id.into_inner();
 
     // Get the message and verify ownership
-    let message = match chat::get_message_by_id(&postgres_pool, message_id, &user.0).await {
+    let message = match chat::get_message_by_id(&pool, message_id, &user.0).await {
         Ok(msg) => msg,
         Err(e) => {
             tracing::error!(error = %e, message_id, "message not found");
@@ -716,20 +694,18 @@ pub(crate) async fn regenerate_chat_message(
     }
 
     // Get session info
-    let session =
-        match chat::get_chat_session(&postgres_pool, &message.session_id, &user.as_owner()).await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!(error = %e, session_id = %message.session_id, "session not found");
-                return HttpResponse::NotFound().json(serde_json::json!({
-                    "error": format!("session not found: {:?}", e)
-                }));
-            }
-        };
+    let session = match chat::get_chat_session(&pool, &message.session_id, &user.as_owner()).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(error = %e, session_id = %message.session_id, "session not found");
+            return HttpResponse::NotFound().json(serde_json::json!({
+                "error": format!("session not found: {:?}", e)
+            }));
+        }
+    };
 
     // Get existing retrieved documents (reuse them)
-    let retrieved_documents = match chat::get_retrieved_documents(&postgres_pool, message_id).await
-    {
+    let retrieved_documents = match chat::get_retrieved_documents(&pool, message_id).await {
         Ok(docs) => docs,
         Err(e) => {
             tracing::error!(error = %e, message_id, "failed to get retrieved documents");
@@ -738,7 +714,7 @@ pub(crate) async fn regenerate_chat_message(
     };
 
     // Get previous user message to regenerate from
-    let messages = match chat::get_chat_messages(&postgres_pool, &message.session_id).await {
+    let messages = match chat::get_chat_messages(&pool, &message.session_id).await {
         Ok(msgs) => msgs,
         Err(e) => {
             tracing::error!(error = %e, "failed to get messages");
@@ -776,7 +752,7 @@ pub(crate) async fn regenerate_chat_message(
 
     // Generate new response (non-streaming)
     let response_content = match llm::generate_response(
-        &postgres_pool,
+        &pool,
         &encryption,
         session.llm_id,
         user_query,
@@ -801,7 +777,7 @@ pub(crate) async fn regenerate_chat_message(
 
     // Update message
     if let Err(e) = chat::update_message_content_and_status(
-        &postgres_pool,
+        &pool,
         message_id,
         &transformed_content,
         "complete",

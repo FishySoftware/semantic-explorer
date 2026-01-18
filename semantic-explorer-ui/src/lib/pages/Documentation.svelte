@@ -372,7 +372,7 @@
 				<p class="text-xs text-gray-700 dark:text-gray-300">
 					<strong>💡 API Usage:</strong> Programmatically query supported types via
 					<code class="px-1 py-0.5 bg-white dark:bg-gray-800 rounded text-xs"
-						>GET /api/collections/allowed-file-types</code
+						>GET /api/collections-allowed-file-types</code
 					>
 					to get the current list of allowed MIME types in JSON format.
 				</p>

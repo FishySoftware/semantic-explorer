@@ -13,12 +13,6 @@ const GET_DATASET_QUERY: &str = r#"
     WHERE dataset_id = $1
 "#;
 
-const GET_DATASETS_QUERY: &str = r#"
-    SELECT dataset_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at FROM datasets
-    ORDER BY created_at DESC
-    LIMIT 1000
-"#;
-
 const GET_DATASETS_PAGINATED_QUERY: &str = r#"
     SELECT dataset_id, title, details, owner_id, owner_display_name, tags, is_public, item_count, total_chunks, created_at, updated_at
     FROM datasets
@@ -181,25 +175,6 @@ pub(crate) async fn get_dataset(
     let dataset = result?;
     tx.commit().await?;
     Ok(dataset)
-}
-
-#[tracing::instrument(name = "database.get_datasets", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", owner_id = %owner_id))]
-pub(crate) async fn get_datasets(pool: &Pool<Postgres>, owner_id: &str) -> Result<Vec<Dataset>> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
-
-    let start = Instant::now();
-    let result = sqlx::query_as::<_, Dataset>(GET_DATASETS_QUERY)
-        .fetch_all(&mut *tx)
-        .await;
-
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "datasets", duration, success);
-
-    let datasets = result?;
-    tx.commit().await?;
-    Ok(datasets)
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -375,22 +350,28 @@ pub(crate) async fn delete_dataset(
     Ok(())
 }
 
-#[tracing::instrument(name = "database.create_dataset_item", skip(pool, metadata), fields(database.system = "postgresql", database.operation = "INSERT", dataset_id = %dataset_id, title = %title, chunk_count = chunks.len()))]
+#[tracing::instrument(name = "database.create_dataset_item", skip(pool, metadata), fields(database.system = "postgresql", database.operation = "INSERT", dataset_id = %dataset_id, title = %title, chunk_count = chunks.len(), owner_id = %owner_id))]
 pub(crate) async fn create_dataset_item(
     pool: &Pool<Postgres>,
+    owner_id: &str,
     dataset_id: i32,
     title: &str,
     chunks: &[ChunkWithMetadata],
     metadata: serde_json::Value,
 ) -> Result<DatasetItem> {
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
+
     let chunks_json = serde_json::to_value(chunks)?;
     let item = sqlx::query_as::<_, DatasetItem>(INSERT_DATASET_ITEM_QUERY)
         .bind(dataset_id)
         .bind(title)
         .bind(&chunks_json)
         .bind(&metadata)
-        .fetch_one(pool)
+        .fetch_one(&mut *tx)
         .await?;
+
+    tx.commit().await?;
     Ok(item)
 }
 
@@ -398,6 +379,7 @@ pub(crate) async fn create_dataset_item(
 /// Returns a tuple of (successfully inserted items, failed titles)
 pub(crate) async fn create_dataset_items_batch(
     pool: &Pool<Postgres>,
+    owner_id: &str,
     dataset_id: i32,
     items: Vec<(String, Vec<ChunkWithMetadata>, serde_json::Value)>,
 ) -> Result<(Vec<DatasetItem>, Vec<String>)> {
@@ -408,11 +390,13 @@ pub(crate) async fn create_dataset_items_batch(
         return Ok((Vec::new(), Vec::new()));
     }
 
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
+
     let mut successful = Vec::new();
     let mut failed = Vec::new();
 
     // Process in chunks of 500 items to avoid parameter limits
-    // PostgreSQL has a limit of ~65535 parameters per query
     const BATCH_SIZE: usize = 500;
 
     for chunk in items.chunks(BATCH_SIZE) {
@@ -444,33 +428,20 @@ pub(crate) async fn create_dataset_items_batch(
             .bind(&titles)
             .bind(&chunks_array)
             .bind(&metadata_array)
-            .fetch_all(pool)
+            .fetch_all(&mut *tx)
             .await
         {
             Ok(items) => {
                 successful.extend(items);
             }
             Err(e) => {
-                // If bulk insert fails, fall back to individual inserts for this chunk
-                tracing::warn!(
-                    "Bulk insert failed for {} items, falling back to individual inserts: {}",
-                    titles.len(),
-                    e
-                );
-                for (title, chunks, metadata) in chunk {
-                    match create_dataset_item(pool, dataset_id, title, chunks, metadata.clone())
-                        .await
-                    {
-                        Ok(item) => successful.push(item),
-                        Err(e) => {
-                            failed.push(title.clone());
-                            tracing::warn!("Failed to insert dataset item '{}': {}", title, e);
-                        }
-                    }
-                }
+                failed.extend(titles.clone());
+                tracing::warn!("Failed to insert dataset items: {}", e);
             }
         }
     }
+
+    tx.commit().await?;
 
     let duration = start.elapsed().as_secs_f64();
     let success = failed.is_empty();
@@ -733,6 +704,7 @@ pub(crate) async fn grab_public_dataset(
             for item in source_items {
                 if let Err(e) = create_dataset_item(
                     pool,
+                    owner_id,
                     new_dataset.dataset_id,
                     &item.title,
                     &item.chunks,

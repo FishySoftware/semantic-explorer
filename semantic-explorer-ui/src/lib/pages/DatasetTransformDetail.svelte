@@ -162,7 +162,8 @@
 			});
 
 			if (response.ok) {
-				const allEmbedders: Embedder[] = await response.json();
+				const data = await response.json();
+				const allEmbedders: Embedder[] = data.items || [];
 				embedders = allEmbedders.filter((e) => ids.includes(e.embedder_id));
 			}
 		} catch (e) {

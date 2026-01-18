@@ -6,24 +6,8 @@
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import CreateDatasetTransformModal from '../components/CreateDatasetTransformModal.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
+	import type { Dataset, PaginatedResponse } from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
-
-	interface Dataset {
-		dataset_id: number;
-		title: string;
-		details: string | null;
-		owner: string;
-		tags: string[];
-		item_count?: number;
-		total_chunks?: number;
-	}
-
-	interface PaginatedDatasetList {
-		items: Dataset[];
-		total_count: number;
-		limit: number;
-		offset: number;
-	}
 
 	let { onViewDataset: handleViewDataset } = $props<{
 		onViewDataset: (_: number) => void;
@@ -84,7 +68,7 @@
 			if (!response.ok) {
 				throw new Error(`Failed to fetch datasets: ${response.statusText}`);
 			}
-			const data: PaginatedDatasetList = await response.json();
+			const data: PaginatedResponse<Dataset> = await response.json();
 			datasets = data.items;
 			totalCount = data.total_count;
 		} catch (e) {

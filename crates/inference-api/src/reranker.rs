@@ -1,10 +1,11 @@
 use fastembed::{RerankInitOptions, RerankerModel, TextRerank};
+use futures::stream::StreamExt;
 use once_cell::sync::OnceCell;
 use ort::ep::CUDA;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::Mutex as TokioMutex;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::config::ModelConfig;
 use crate::errors::InferenceError;
@@ -20,10 +21,10 @@ static RERANKER_MODELS: OnceCell<RerankerCache> = OnceCell::new();
 ///
 /// This function:
 /// 1. Takes the ModelConfig to determine which models to load
-/// 2. Gets a list of models to load (all supported or filtered by allowed_models)
+/// 2. Gets a list of models to load (all supported or filtered by allowed_rerank_models)
 /// 3. Loads each model from the filesystem cache, fetching if needed
 /// 4. Pre-populates the cache at startup to validate model availability
-pub fn init_cache(config: &ModelConfig) {
+pub async fn init_cache(config: &ModelConfig) {
     let cache = RERANKER_MODELS.get_or_init(|| Arc::new(Mutex::new(HashMap::new())));
 
     // Get list of models to load
@@ -37,8 +38,43 @@ pub fn init_cache(config: &ModelConfig) {
     tracing::info!(
         models = ?models_to_load,
         count = models_to_load.len(),
-        "Pre-loading reranker models at startup"
+        "Pre-loading reranker models at startup with concurrency limit"
     );
+
+    let concurrency_limit = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+
+    tracing::info!("Using concurrency limit: {}", concurrency_limit);
+
+    // Parallel loading
+    let results = futures::stream::iter(models_to_load)
+        .map(|model_id| {
+            let config = config.clone();
+            async move {
+                let model_id_clone = model_id.clone();
+                let res = tokio::task::spawn_blocking(move || {
+                    match resolve_reranker_model(&model_id_clone) {
+                        Ok(reranker_model) => match create_text_rerank(reranker_model, &config) {
+                            Ok(text_rerank) => Ok((model_id_clone, text_rerank)),
+                            Err(e) => Err((model_id_clone, e)),
+                        },
+                        Err(e) => Err((model_id_clone, e)),
+                    }
+                })
+                .await;
+
+                match res {
+                    Ok(inner_res) => inner_res,
+                    Err(join_err) => {
+                        Err((model_id, InferenceError::ModelLoad(join_err.to_string())))
+                    }
+                }
+            }
+        })
+        .buffer_unordered(concurrency_limit)
+        .collect::<Vec<_>>()
+        .await;
 
     let mut cache_guard = match cache.lock() {
         Ok(guard) => guard,
@@ -48,26 +84,17 @@ pub fn init_cache(config: &ModelConfig) {
         }
     };
 
-    for model_id in models_to_load {
-        match resolve_reranker_model(&model_id) {
-            Ok(reranker_model) => match create_text_rerank(reranker_model, config) {
-                Ok(text_rerank) => {
-                    cache_guard.insert(model_id.clone(), Arc::new(TokioMutex::new(text_rerank)));
-                    tracing::info!(model_id = %model_id, "Pre-loaded reranker model");
-                }
-                Err(e) => {
-                    tracing::error!(
-                        model_id = %model_id,
-                        error = %e,
-                        "Failed to load reranker model during initialization"
-                    );
-                }
-            },
-            Err(e) => {
+    for result in results {
+        match result {
+            Ok((model_id, text_rerank)) => {
+                cache_guard.insert(model_id.clone(), Arc::new(TokioMutex::new(text_rerank)));
+                tracing::info!(model_id = %model_id, "Pre-loaded reranker model");
+            }
+            Err((model_id, e)) => {
                 tracing::error!(
                     model_id = %model_id,
                     error = %e,
-                    "Failed to resolve reranker model during initialization"
+                    "Failed to load reranker model during initialization"
                 );
             }
         }
@@ -76,9 +103,9 @@ pub fn init_cache(config: &ModelConfig) {
 
 /// Get the list of reranker models to load based on configuration
 fn get_models_to_load(config: &ModelConfig) -> Vec<String> {
-    if !config.allowed_models.is_empty() {
+    if !config.allowed_rerank_models.is_empty() {
         // Use allowed models list if configured
-        config.allowed_models.clone()
+        config.allowed_rerank_models.clone()
     } else {
         // Use all supported reranker models if no restrictions
         get_all_supported_reranker_models()
@@ -125,11 +152,11 @@ fn create_text_rerank(
 ) -> Result<TextRerank, InferenceError> {
     // Try CUDA execution provider, fall back to CPU if unavailable
     let mut options = if std::env::var("CUDA_VISIBLE_DEVICES").is_ok() {
-        info!("CUDA available, using CUDA execution provider for reranking");
+        debug!("CUDA available, using CUDA execution provider for reranking");
         let cuda_provider = CUDA::default().build();
         RerankInitOptions::new(model).with_execution_providers(vec![cuda_provider])
     } else {
-        info!("CUDA not available, using CPU execution provider");
+        debug!("CUDA not available, using CPU execution provider");
         RerankInitOptions::new(model)
     };
 
@@ -153,7 +180,7 @@ pub async fn rerank_documents(
     top_k: Option<usize>,
 ) -> Result<Vec<fastembed::RerankResult>, InferenceError> {
     // Check if model is allowed
-    if !config.is_model_allowed(model_id) {
+    if !config.is_rerank_model_allowed(model_id) {
         return Err(InferenceError::UnsupportedModel(format!(
             "Model {} is not in the allowed models list",
             model_id

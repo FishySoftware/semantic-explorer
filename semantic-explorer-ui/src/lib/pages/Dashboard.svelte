@@ -1,46 +1,15 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import type {
+		Collection,
+		Dataset,
+		EmbeddedDataset,
+		Embedder,
+		LLM,
+		Visualization,
+	} from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { formatRelativeTime } from '../utils/ui-helpers';
-	import type { Visualization } from '../types/visualizations';
-
-	interface Collection {
-		collection_id: number;
-		title: string;
-		details: string | null;
-		updated_at: string;
-		tags: string[];
-	}
-
-	interface Dataset {
-		dataset_id: number;
-		title: string;
-		details: string | null;
-		updated_at: string;
-		tags: string[];
-	}
-
-	interface Embedder {
-		embedder_id: number;
-		name: string;
-		provider: string;
-		updated_at: string;
-	}
-
-	interface LLM {
-		llm_id: number;
-		name: string;
-		provider: string;
-		updated_at: string;
-	}
-
-	interface EmbeddedDataset {
-		embedded_dataset_id: number;
-		title: string;
-		source_dataset_title?: string;
-		embedder_name?: string;
-		updated_at: string;
-	}
 
 	let collections = $state<Collection[]>([]);
 	let datasets = $state<Dataset[]>([]);
@@ -113,21 +82,21 @@
 			collections = allCollections
 				.sort(
 					(a: Collection, b: Collection) =>
-						new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+						new Date(b.updated_at ?? 0).getTime() - new Date(a.updated_at ?? 0).getTime()
 				)
 				.slice(0, 5);
 
 			datasets = allDatasets
 				.sort(
 					(a: Dataset, b: Dataset) =>
-						new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+						new Date(b.updated_at ?? 0).getTime() - new Date(a.updated_at ?? 0).getTime()
 				)
 				.slice(0, 5);
 
 			embeddedDatasets = allEmbeddedDatasets
 				.sort(
 					(a: EmbeddedDataset, b: EmbeddedDataset) =>
-						new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+						new Date(b.updated_at ?? 0).getTime() - new Date(a.updated_at ?? 0).getTime()
 				)
 				.slice(0, 5);
 

@@ -35,7 +35,7 @@ pub fn get_embedding_models(config: &ModelConfig) -> Vec<ModelInfo> {
             let model_id = model_enum_to_id(&m.model);
 
             // Filter by allowed models if configured
-            if !config.is_model_allowed(&model_id) {
+            if !config.is_embedding_model_allowed(&model_id) {
                 return None;
             }
 
@@ -65,7 +65,7 @@ pub fn get_reranker_models(config: &ModelConfig) -> Vec<ModelInfo> {
             let model_id = reranker_enum_to_id(&m.model);
 
             // Filter by allowed models if configured
-            if !config.is_model_allowed(&model_id) {
+            if !config.is_rerank_model_allowed(&model_id) {
                 return None;
             }
 

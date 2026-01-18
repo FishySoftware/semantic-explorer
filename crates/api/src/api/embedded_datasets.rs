@@ -1,8 +1,8 @@
 use crate::audit::{ResourceType, events};
 use crate::auth::AuthenticatedUser;
 use crate::embedded_datasets::{
-    EmbeddedDataset, EmbeddedDatasetProcessedBatch, EmbeddedDatasetStats,
-    EmbeddedDatasetWithDetails,
+    EmbeddedDataset, EmbeddedDatasetListQuery, EmbeddedDatasetProcessedBatch, EmbeddedDatasetStats,
+    EmbeddedDatasetWithDetails, PaginatedEmbeddedDatasetList,
 };
 use crate::errors::{bad_request, not_found};
 use crate::storage::postgres::embedded_datasets;
@@ -50,23 +50,68 @@ pub struct PointsResponse {
     pub next_offset: Option<u64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UpdateEmbeddedDatasetRequest {
+    pub title: String,
+}
+
 #[utoipa::path(
     get,
     path = "/api/embedded-datasets",
     tag = "Embedded Datasets",
+    params(
+        ("search" = Option<String>, Query, description = "Search by title"),
+        ("limit" = i64, Query, description = "Number of items per page"),
+        ("offset" = i64, Query, description = "Pagination offset"),
+    ),
     responses(
-        (status = 200, description = "List of embedded datasets", body = Vec<EmbeddedDataset>),
+        (status = 200, description = "Paginated list of embedded datasets", body = PaginatedEmbeddedDatasetList),
         (status = 401, description = "Unauthorized"),
     ),
 )]
 #[get("/api/embedded-datasets")]
-#[tracing::instrument(name = "get_embedded_datasets", skip(user, postgres_pool))]
+#[tracing::instrument(name = "get_embedded_datasets", skip(user, pool))]
 pub async fn get_embedded_datasets(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
+    query: Query<EmbeddedDatasetListQuery>,
 ) -> impl Responder {
-    match embedded_datasets::get_embedded_datasets(&postgres_pool, &user.as_owner()).await {
-        Ok(datasets) => HttpResponse::Ok().json(datasets),
+    let search_query = query.search.as_ref().and_then(|s| {
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
+
+    let limit = query.limit.clamp(1, 100);
+    let offset = query.offset.max(0);
+
+    let result = if let Some(q) = search_query {
+        embedded_datasets::get_embedded_datasets_with_search(
+            &pool,
+            &user.as_owner(),
+            q,
+            limit,
+            offset,
+        )
+        .await
+    } else {
+        embedded_datasets::get_embedded_datasets_paginated(&pool, &user.as_owner(), limit, offset)
+            .await
+    };
+
+    match result {
+        Ok((datasets, total_count)) => {
+            let paginated_response = PaginatedEmbeddedDatasetList {
+                embedded_datasets: datasets,
+                total_count,
+                limit,
+                offset,
+            };
+            HttpResponse::Ok().json(paginated_response)
+        }
         Err(e) => {
             error!("Failed to fetch embedded datasets: {}", e);
             HttpResponse::InternalServerError().json(serde_json::json!({
@@ -90,16 +135,14 @@ pub async fn get_embedded_datasets(
     ),
 )]
 #[get("/api/embedded-datasets/{id}")]
-#[tracing::instrument(name = "get_embedded_dataset", skip(user, postgres_pool), fields(embedded_dataset_id = %path.as_ref()))]
+#[tracing::instrument(name = "get_embedded_dataset", skip(user, pool), fields(embedded_dataset_id = %path.as_ref()))]
 pub async fn get_embedded_dataset(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
     let id = path.into_inner();
-    match embedded_datasets::get_embedded_dataset_with_details(&postgres_pool, &user.as_owner(), id)
-        .await
-    {
+    match embedded_datasets::get_embedded_dataset_with_details(&pool, &user.as_owner(), id).await {
         Ok(dataset) => {
             events::resource_read(
                 &user.as_owner(),
@@ -130,30 +173,27 @@ pub async fn get_embedded_dataset(
     ),
 )]
 #[delete("/api/embedded-datasets/{id}")]
-#[tracing::instrument(name = "delete_embedded_dataset", skip(user, postgres_pool, qdrant_client, req), fields(embedded_dataset_id = %path.as_ref()))]
+#[tracing::instrument(name = "delete_embedded_dataset", skip(user, pool, qdrant_client, req), fields(embedded_dataset_id = %path.as_ref()))]
 pub async fn delete_embedded_dataset(
     user: AuthenticatedUser,
     req: HttpRequest,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     qdrant_client: Data<Qdrant>,
     path: Path<i32>,
 ) -> impl Responder {
     let embedded_dataset_id = path.into_inner();
 
     // First get the embedded dataset to retrieve the collection name
-    let embedded_dataset = match embedded_datasets::get_embedded_dataset(
-        &postgres_pool,
-        &user.as_owner(),
-        embedded_dataset_id,
-    )
-    .await
-    {
-        Ok(dataset) => dataset,
-        Err(e) => {
-            error!("Failed to find embedded dataset: {}", e);
-            return not_found(format!("Embedded dataset not found: {}", e));
-        }
-    };
+    let embedded_dataset =
+        match embedded_datasets::get_embedded_dataset(&pool, &user.as_owner(), embedded_dataset_id)
+            .await
+        {
+            Ok(dataset) => dataset,
+            Err(e) => {
+                error!("Failed to find embedded dataset: {}", e);
+                return not_found(format!("Embedded dataset not found: {}", e));
+            }
+        };
 
     // Delete the Qdrant collection
     if let Err(e) = qdrant_client
@@ -164,17 +204,11 @@ pub async fn delete_embedded_dataset(
             "Failed to delete Qdrant collection {}: {}",
             embedded_dataset.collection_name, e
         );
-        // Continue with database deletion even if Qdrant deletion fails
-        // This prevents orphaned database records
     }
 
     // Delete the database entry
-    match embedded_datasets::delete_embedded_dataset(
-        &postgres_pool,
-        &user.as_owner(),
-        embedded_dataset_id,
-    )
-    .await
+    match embedded_datasets::delete_embedded_dataset(&pool, &user.as_owner(), embedded_dataset_id)
+        .await
     {
         Ok(_) => {
             info!(
@@ -213,25 +247,19 @@ pub async fn delete_embedded_dataset(
     ),
 )]
 #[get("/api/embedded-datasets/{id}/stats")]
-#[tracing::instrument(name = "get_embedded_dataset_stats", skip(user, postgres_pool), fields(embedded_dataset_id = %path.as_ref()))]
+#[tracing::instrument(name = "get_embedded_dataset_stats", skip(user, pool), fields(embedded_dataset_id = %path.as_ref()))]
 pub async fn get_embedded_dataset_stats(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
     let embedded_dataset_id = path.into_inner();
 
-    match embedded_datasets::get_embedded_dataset(
-        &postgres_pool,
-        &user.as_owner(),
-        embedded_dataset_id,
-    )
-    .await
+    match embedded_datasets::get_embedded_dataset(&pool, &user.as_owner(), embedded_dataset_id)
+        .await
     {
         Ok(_) => {
-            match embedded_datasets::get_embedded_dataset_stats(&postgres_pool, embedded_dataset_id)
-                .await
-            {
+            match embedded_datasets::get_embedded_dataset_stats(&pool, embedded_dataset_id).await {
                 Ok(stats) => HttpResponse::Ok().json(stats),
                 Err(e) => {
                     error!("Failed to get stats: {}", e);
@@ -259,17 +287,17 @@ pub async fn get_embedded_dataset_stats(
     ),
 )]
 #[post("/api/embedded-datasets/batch-stats")]
-#[tracing::instrument(name = "get_batch_embedded_dataset_stats", skip(user, postgres_pool))]
+#[tracing::instrument(name = "get_batch_embedded_dataset_stats", skip(user, pool))]
 pub async fn get_batch_embedded_dataset_stats(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     body: Json<BatchStatsRequest>,
 ) -> impl Responder {
     let embedded_dataset_ids = &body.embedded_dataset_ids;
 
     // Verify all embedded datasets belong to the user
     for &id in embedded_dataset_ids {
-        match embedded_datasets::get_embedded_dataset(&postgres_pool, &user.as_owner(), id).await {
+        match embedded_datasets::get_embedded_dataset(&pool, &user.as_owner(), id).await {
             Ok(_) => {}
             Err(_) => {
                 return not_found(format!("Embedded dataset {} not found", id));
@@ -277,9 +305,7 @@ pub async fn get_batch_embedded_dataset_stats(
         }
     }
 
-    match embedded_datasets::get_batch_embedded_dataset_stats(&postgres_pool, embedded_dataset_ids)
-        .await
-    {
+    match embedded_datasets::get_batch_embedded_dataset_stats(&pool, embedded_dataset_ids).await {
         Ok(stats_map) => HttpResponse::Ok().json(stats_map),
         Err(e) => {
             error!("Failed to get batch stats: {}", e);
@@ -306,10 +332,10 @@ pub async fn get_batch_embedded_dataset_stats(
     ),
 )]
 #[get("/api/embedded-datasets/{id}/points")]
-#[tracing::instrument(name = "get_embedded_dataset_points", skip(user, postgres_pool, qdrant_client), fields(embedded_dataset_id = %path.as_ref()))]
+#[tracing::instrument(name = "get_embedded_dataset_points", skip(user, pool, qdrant_client), fields(embedded_dataset_id = %path.as_ref()))]
 pub async fn get_embedded_dataset_points(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     qdrant_client: Data<Qdrant>,
     path: Path<i32>,
     query: Query<PointsQuery>,
@@ -317,19 +343,16 @@ pub async fn get_embedded_dataset_points(
     let embedded_dataset_id = path.into_inner();
 
     // Verify embedded dataset exists and belongs to user
-    let embedded_dataset = match embedded_datasets::get_embedded_dataset(
-        &postgres_pool,
-        &user.as_owner(),
-        embedded_dataset_id,
-    )
-    .await
-    {
-        Ok(dataset) => dataset,
-        Err(e) => {
-            error!("Embedded dataset not found: {}", e);
-            return not_found(format!("Embedded dataset not found: {}", e));
-        }
-    };
+    let embedded_dataset =
+        match embedded_datasets::get_embedded_dataset(&pool, &user.as_owner(), embedded_dataset_id)
+            .await
+        {
+            Ok(dataset) => dataset,
+            Err(e) => {
+                error!("Embedded dataset not found: {}", e);
+                return not_found(format!("Embedded dataset not found: {}", e));
+            }
+        };
 
     // Get collection info for total count
     let collection_info = match qdrant_client
@@ -392,7 +415,6 @@ pub async fn get_embedded_dataset_points(
         })
         .collect();
 
-    // next_page_offset is Option<PointId>, we'll convert it to u64 if it's a numeric ID
     let next_offset = scroll_result.next_page_offset.and_then(|offset_id| {
         // Try to extract numeric ID if possible
         match offset_id.point_id_options {
@@ -423,29 +445,26 @@ pub async fn get_embedded_dataset_points(
     ),
 )]
 #[get("/api/embedded-datasets/{id}/points/{point_id}/vector")]
-#[tracing::instrument(name = "get_point_vector", skip(user, postgres_pool, qdrant_client))]
+#[tracing::instrument(name = "get_point_vector", skip(user, pool, qdrant_client))]
 pub async fn get_point_vector(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     qdrant_client: Data<Qdrant>,
     path: Path<(i32, String)>,
 ) -> impl Responder {
     let (embedded_dataset_id, point_id) = path.into_inner();
 
     // Verify embedded dataset exists and belongs to user
-    let embedded_dataset = match embedded_datasets::get_embedded_dataset(
-        &postgres_pool,
-        &user.as_owner(),
-        embedded_dataset_id,
-    )
-    .await
-    {
-        Ok(dataset) => dataset,
-        Err(e) => {
-            error!("Embedded dataset not found: {}", e);
-            return not_found(format!("Embedded dataset not found: {}", e));
-        }
-    };
+    let embedded_dataset =
+        match embedded_datasets::get_embedded_dataset(&pool, &user.as_owner(), embedded_dataset_id)
+            .await
+        {
+            Ok(dataset) => dataset,
+            Err(e) => {
+                error!("Embedded dataset not found: {}", e);
+                return not_found(format!("Embedded dataset not found: {}", e));
+            }
+        };
 
     // Convert the string point_id to a PointId
     // Try to parse as UUID first, then as u64
@@ -527,34 +546,26 @@ pub async fn get_point_vector(
     ),
 )]
 #[get("/api/embedded-datasets/{id}/processed-batches")]
-#[tracing::instrument(name = "get_processed_batches", skip(user, postgres_pool), fields(embedded_dataset_id = %path.as_ref()))]
+#[tracing::instrument(name = "get_processed_batches", skip(user, pool), fields(embedded_dataset_id = %path.as_ref()))]
 pub async fn get_processed_batches(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
     let embedded_dataset_id = path.into_inner();
 
-    match embedded_datasets::get_embedded_dataset(
-        &postgres_pool,
-        &user.as_owner(),
-        embedded_dataset_id,
-    )
-    .await
+    match embedded_datasets::get_embedded_dataset(&pool, &user.as_owner(), embedded_dataset_id)
+        .await
     {
-        Ok(_) => {
-            match embedded_datasets::get_processed_batches(&postgres_pool, embedded_dataset_id)
-                .await
-            {
-                Ok(batches) => HttpResponse::Ok().json(batches),
-                Err(e) => {
-                    error!("Failed to get processed batches: {}", e);
-                    HttpResponse::InternalServerError().json(serde_json::json!({
-                        "error": format!("Failed to get processed batches: {}", e)
-                    }))
-                }
+        Ok(_) => match embedded_datasets::get_processed_batches(&pool, embedded_dataset_id).await {
+            Ok(batches) => HttpResponse::Ok().json(batches),
+            Err(e) => {
+                error!("Failed to get processed batches: {}", e);
+                HttpResponse::InternalServerError().json(serde_json::json!({
+                    "error": format!("Failed to get processed batches: {}", e)
+                }))
             }
-        }
+        },
         Err(e) => {
             error!("Embedded dataset not found: {}", e);
             not_found(format!("Embedded dataset not found: {}", e))
@@ -575,14 +586,14 @@ pub async fn get_processed_batches(
     ),
 )]
 #[get("/api/datasets/{dataset_id}/embedded-datasets")]
-#[tracing::instrument(name = "get_embedded_datasets_for_dataset", skip(user, postgres_pool), fields(dataset_id = %path.as_ref()))]
+#[tracing::instrument(name = "get_embedded_datasets_for_dataset", skip(user, pool), fields(dataset_id = %path.as_ref()))]
 pub async fn get_embedded_datasets_for_dataset(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
     match embedded_datasets::get_embedded_datasets_for_dataset(
-        &postgres_pool,
+        &pool,
         &user.as_owner(),
         path.into_inner(),
     )
@@ -596,11 +607,6 @@ pub async fn get_embedded_datasets_for_dataset(
             }))
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct UpdateEmbeddedDatasetRequest {
-    pub title: String,
 }
 
 #[utoipa::path(
@@ -619,10 +625,10 @@ pub struct UpdateEmbeddedDatasetRequest {
     ),
 )]
 #[patch("/api/embedded-datasets/{id}")]
-#[tracing::instrument(name = "update_embedded_dataset", skip(user, postgres_pool), fields(embedded_dataset_id = %path.as_ref()))]
+#[tracing::instrument(name = "update_embedded_dataset", skip(user, pool), fields(embedded_dataset_id = %path.as_ref()))]
 pub async fn update_embedded_dataset(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     path: Path<i32>,
     body: Json<UpdateEmbeddedDatasetRequest>,
 ) -> impl Responder {
@@ -634,7 +640,7 @@ pub async fn update_embedded_dataset(
     }
 
     match embedded_datasets::update_embedded_dataset_title(
-        &postgres_pool,
+        &pool,
         &user.as_owner(),
         embedded_dataset_id,
         body.title.trim(),

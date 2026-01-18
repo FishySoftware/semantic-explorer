@@ -3,7 +3,7 @@ use actix_web::{
     web::{Data, Path, Query},
 };
 use aws_sdk_s3::Client;
-use semantic_explorer_core::encryption::EncryptionService;
+use semantic_explorer_core::{config::S3Config, encryption::EncryptionService};
 use serde::Deserialize;
 use sqlx::{Pool, Postgres};
 
@@ -30,12 +30,12 @@ pub(crate) struct RecentCollectionsQuery {
     tag = "Marketplace",
 )]
 #[get("/api/marketplace/collections")]
-#[tracing::instrument(name = "get_public_collections", skip(_user, postgres_pool))]
+#[tracing::instrument(name = "get_public_collections", skip(_user, pool))]
 pub(crate) async fn get_public_collections(
     _user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
 ) -> impl Responder {
-    match collections::get_public_collections(&postgres_pool.into_inner()).await {
+    match collections::get_public_collections(&pool.into_inner()).await {
         Ok(collections_list) => HttpResponse::Ok().json(collections_list),
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch public collections");
@@ -56,14 +56,14 @@ pub(crate) async fn get_public_collections(
     tag = "Marketplace",
 )]
 #[get("/api/marketplace/collections/recent")]
-#[tracing::instrument(name = "get_recent_public_collections", skip(_user, postgres_pool))]
+#[tracing::instrument(name = "get_recent_public_collections", skip(_user, pool))]
 pub(crate) async fn get_recent_public_collections(
     _user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     Query(query): Query<RecentCollectionsQuery>,
 ) -> impl Responder {
-    let limit = query.limit.unwrap_or(5);
-    match collections::get_recent_public_collections(&postgres_pool.into_inner(), limit).await {
+    let limit = query.limit.unwrap_or(5).clamp(0, 100);
+    match collections::get_recent_public_collections(&pool.into_inner(), limit).await {
         Ok(collections_list) => HttpResponse::Ok().json(collections_list),
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch recent public collections");
@@ -84,14 +84,14 @@ pub(crate) async fn get_recent_public_collections(
     tag = "Marketplace",
 )]
 #[get("/api/marketplace/datasets/recent")]
-#[tracing::instrument(name = "get_recent_public_datasets", skip(_user, postgres_pool))]
+#[tracing::instrument(name = "get_recent_public_datasets", skip(_user, pool))]
 pub(crate) async fn get_recent_public_datasets(
     _user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     Query(query): Query<RecentCollectionsQuery>,
 ) -> impl Responder {
-    let limit = query.limit.unwrap_or(5);
-    match datasets::get_recent_public_datasets(&postgres_pool.into_inner(), limit).await {
+    let limit = query.limit.unwrap_or(5).clamp(0, 100);
+    match datasets::get_recent_public_datasets(&pool.into_inner(), limit).await {
         Ok(datasets_list) => HttpResponse::Ok().json(datasets_list),
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch recent public datasets");
@@ -100,6 +100,8 @@ pub(crate) async fn get_recent_public_datasets(
         }
     }
 }
+
+//TODO: implement pagination and search for these later on.
 
 #[utoipa::path(
     responses(
@@ -112,20 +114,15 @@ pub(crate) async fn get_recent_public_datasets(
     tag = "Marketplace",
 )]
 #[get("/api/marketplace/embedders/recent")]
-#[tracing::instrument(
-    name = "get_recent_public_embedders",
-    skip(_user, postgres_pool, encryption)
-)]
+#[tracing::instrument(name = "get_recent_public_embedders", skip(_user, pool, encryption))]
 pub(crate) async fn get_recent_public_embedders(
     _user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     encryption: Data<EncryptionService>,
     Query(query): Query<RecentCollectionsQuery>,
 ) -> impl Responder {
-    let limit = query.limit.unwrap_or(5);
-    match embedders::get_recent_public_embedders(&postgres_pool.into_inner(), limit, &encryption)
-        .await
-    {
+    let limit = query.limit.unwrap_or(5).clamp(0, 100);
+    match embedders::get_recent_public_embedders(&pool.into_inner(), limit, &encryption).await {
         Ok(embedders_list) => HttpResponse::Ok().json(embedders_list),
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch recent public embedders");
@@ -146,18 +143,15 @@ pub(crate) async fn get_recent_public_embedders(
     tag = "Marketplace",
 )]
 #[get("/api/marketplace/llms/recent")]
-#[tracing::instrument(
-    name = "get_recent_public_llms",
-    skip(_user, postgres_pool, encryption)
-)]
+#[tracing::instrument(name = "get_recent_public_llms", skip(_user, pool, encryption))]
 pub(crate) async fn get_recent_public_llms(
     _user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     encryption: Data<EncryptionService>,
     Query(query): Query<RecentCollectionsQuery>,
 ) -> impl Responder {
-    let limit = query.limit.unwrap_or(5);
-    match llms::get_recent_public_llms(&postgres_pool.into_inner(), limit, &encryption).await {
+    let limit = query.limit.unwrap_or(5).clamp(0, 100);
+    match llms::get_recent_public_llms(&pool.into_inner(), limit, &encryption).await {
         Ok(llms_list) => HttpResponse::Ok().json(llms_list),
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch recent public LLMs");
@@ -175,12 +169,12 @@ pub(crate) async fn get_recent_public_llms(
     tag = "Marketplace",
 )]
 #[get("/api/marketplace/datasets")]
-#[tracing::instrument(name = "get_public_datasets", skip(_user, postgres_pool))]
+#[tracing::instrument(name = "get_public_datasets", skip(_user, pool))]
 pub(crate) async fn get_public_datasets(
     _user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
 ) -> impl Responder {
-    match datasets::get_public_datasets(&postgres_pool.into_inner()).await {
+    match datasets::get_public_datasets(&pool.into_inner()).await {
         Ok(datasets_list) => HttpResponse::Ok().json(datasets_list),
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch public datasets");
@@ -197,13 +191,13 @@ pub(crate) async fn get_public_datasets(
     tag = "Marketplace",
 )]
 #[get("/api/marketplace/embedders")]
-#[tracing::instrument(name = "get_public_embedders", skip(_user, postgres_pool, encryption))]
+#[tracing::instrument(name = "get_public_embedders", skip(_user, pool, encryption))]
 pub(crate) async fn get_public_embedders(
     _user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     encryption: Data<EncryptionService>,
 ) -> impl Responder {
-    match embedders::get_public_embedders(&postgres_pool.into_inner(), &encryption).await {
+    match embedders::get_public_embedders(&pool.into_inner(), &encryption).await {
         Ok(embedders_list) => HttpResponse::Ok().json(embedders_list),
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch public embedders");
@@ -220,13 +214,13 @@ pub(crate) async fn get_public_embedders(
     tag = "Marketplace",
 )]
 #[get("/api/marketplace/llms")]
-#[tracing::instrument(name = "get_public_llms", skip(_user, postgres_pool, encryption))]
+#[tracing::instrument(name = "get_public_llms", skip(_user, pool, encryption))]
 pub(crate) async fn get_public_llms(
     _user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     encryption: Data<EncryptionService>,
 ) -> impl Responder {
-    match llms::get_public_llms(&postgres_pool.into_inner(), &encryption).await {
+    match llms::get_public_llms(&pool.into_inner(), &encryption).await {
         Ok(llms_list) => HttpResponse::Ok().json(llms_list),
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch public LLMs");
@@ -247,20 +241,17 @@ pub(crate) async fn get_public_llms(
     tag = "Marketplace",
 )]
 #[post("/api/marketplace/collections/{collection_id}/grab")]
-#[tracing::instrument(
-    name = "grab_collection",
-    skip(user, s3_client, s3_config, postgres_pool, req)
-)]
+#[tracing::instrument(name = "grab_collection", skip(user, s3_client, s3_config, pool, req))]
 pub(crate) async fn grab_collection(
     user: AuthenticatedUser,
     s3_client: Data<Client>,
-    s3_config: Data<semantic_explorer_core::config::S3Config>,
-    postgres_pool: Data<Pool<Postgres>>,
+    s3_config: Data<S3Config>,
+    pool: Data<Pool<Postgres>>,
     collection_id: Path<i32>,
     req: actix_web::HttpRequest,
 ) -> impl Responder {
     match collections::grab_public_collection(
-        &postgres_pool.into_inner(),
+        &pool.into_inner(),
         &s3_client.into_inner(),
         &s3_config.bucket_name,
         &user.as_owner(),
@@ -299,20 +290,15 @@ pub(crate) async fn grab_collection(
     tag = "Marketplace",
 )]
 #[post("/api/marketplace/datasets/{dataset_id}/grab")]
-#[tracing::instrument(name = "grab_dataset", skip(user, postgres_pool, req))]
+#[tracing::instrument(name = "grab_dataset", skip(user, pool, req))]
 pub(crate) async fn grab_dataset(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     dataset_id: Path<i32>,
     req: actix_web::HttpRequest,
 ) -> impl Responder {
-    match datasets::grab_public_dataset(
-        &postgres_pool.into_inner(),
-        &user.as_owner(),
-        &user,
-        *dataset_id,
-    )
-    .await
+    match datasets::grab_public_dataset(&pool.into_inner(), &user.as_owner(), &user, *dataset_id)
+        .await
     {
         Ok(dataset) => {
             // Audit log the marketplace grab
@@ -344,24 +330,18 @@ pub(crate) async fn grab_dataset(
     tag = "Marketplace",
 )]
 #[post("/api/marketplace/embedders/{embedder_id}/grab")]
-#[tracing::instrument(name = "grab_embedder", skip(user, postgres_pool, encryption, req))]
+#[tracing::instrument(name = "grab_embedder", skip(user, pool, encryption, req))]
 pub(crate) async fn grab_embedder(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     encryption: Data<EncryptionService>,
     embedder_id: Path<i32>,
     req: actix_web::HttpRequest,
 ) -> impl Responder {
-    match embedders::grab_public_embedder(
-        &postgres_pool.into_inner(),
-        &user,
-        *embedder_id,
-        &encryption,
-    )
-    .await
+    match embedders::grab_public_embedder(&pool.into_inner(), &user, *embedder_id, &encryption)
+        .await
     {
         Ok(embedder) => {
-            // Audit log the marketplace grab
             crate::audit::events::marketplace_grab(
                 &req,
                 &user.as_owner(),
@@ -390,17 +370,16 @@ pub(crate) async fn grab_embedder(
     tag = "Marketplace",
 )]
 #[post("/api/marketplace/llms/{llm_id}/grab")]
-#[tracing::instrument(name = "grab_llm", skip(user, postgres_pool, encryption, req))]
+#[tracing::instrument(name = "grab_llm", skip(user, pool, encryption, req))]
 pub(crate) async fn grab_llm(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     encryption: Data<EncryptionService>,
     llm_id: Path<i32>,
     req: actix_web::HttpRequest,
 ) -> impl Responder {
-    match llms::grab_public_llm(&postgres_pool.into_inner(), &user, *llm_id, &encryption).await {
+    match llms::grab_public_llm(&pool.into_inner(), &user, *llm_id, &encryption).await {
         Ok(llm) => {
-            // Audit log the marketplace grab
             crate::audit::events::marketplace_grab(
                 &req,
                 &user.as_owner(),

@@ -231,3 +231,12 @@ pub(crate) struct PaginationParams {
 fn default_page_size() -> i64 {
     10
 }
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct DatasetListParams {
+    #[schema(default = 20, minimum = 1, maximum = 1000)]
+    pub(crate) limit: Option<i64>,
+    #[schema(default = 0, minimum = 0)]
+    pub(crate) offset: Option<i64>,
+    pub(crate) search: Option<String>,
+}

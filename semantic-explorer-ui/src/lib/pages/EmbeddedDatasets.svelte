@@ -1,8 +1,17 @@
 <script lang="ts">
 	import { Table, TableBody, TableBodyCell, TableHead, TableHeadCell } from 'flowbite-svelte';
 	import { onMount } from 'svelte';
+	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import ActionMenu from '../components/ActionMenu.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
+	import type {
+		Dataset,
+		EmbeddedDataset,
+		PaginatedEmbeddedDatasetList,
+		Embedder,
+		EmbeddedDatasetStats as Stats,
+		ProcessedBatch,
+	} from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { formatNumber } from '../utils/ui-helpers';
 
@@ -11,73 +20,15 @@
 		onViewDataset: (_datasetId: number) => void;
 	}>();
 
-	interface EmbeddedDataset {
-		embedded_dataset_id: number;
-		title: string;
-		dataset_transform_id: number;
-		source_dataset_id: number;
-		embedder_id: number;
-		owner: string;
-		collection_name: string;
-		created_at: string;
-		updated_at: string;
-		// These will be populated after fetching
-		source_dataset_title?: string;
-		embedder_name?: string;
-	}
-
-	interface Dataset {
-		dataset_id: number;
-		title: string;
-		details: string | null;
-		owner: string;
-		tags: string[];
-		item_count?: number;
-		total_chunks?: number;
-	}
-
-	interface Embedder {
-		embedder_id: number;
-		name: string;
-		title: string;
-		owner: string;
-		provider: string;
-		base_url: string;
-		api_key: string | null;
-		config: Record<string, any>;
-		batch_size?: number;
-		dimensions?: number;
-		collection_name: string;
-		created_at: string;
-		updated_at: string;
-	}
-
-	interface Stats {
-		embedded_dataset_id: number;
-		total_batches_processed: number;
-		successful_batches: number;
-		failed_batches: number;
-		total_chunks_embedded: number;
-		total_chunks_failed: number;
-	}
-
-	interface ProcessedBatch {
-		id: number;
-		embedded_dataset_id: number;
-		file_key: string;
-		processed_at: string;
-		item_count: number;
-		process_status: string;
-		process_error: string | null;
-		processing_duration_ms: number | null;
-	}
-
 	let embeddedDatasets = $state<EmbeddedDataset[]>([]);
 	let statsMap = $state<Map<number, Stats>>(new Map());
 	let datasetsCache = $state<Map<number, Dataset>>(new Map());
 	let embeddersCache = $state<Map<number, Embedder>>(new Map());
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+	let totalCount = $state(0);
+	let currentOffset = $state(0);
+	const pageSize = 20;
 
 	let searchQuery = $state('');
 
@@ -133,11 +84,22 @@
 		try {
 			loading = true;
 			error = null;
-			const response = await fetch('/api/embedded-datasets');
+			const params = new SvelteURLSearchParams();
+			if (searchQuery.trim()) {
+				params.append('search', searchQuery.trim());
+			}
+			params.append('limit', pageSize.toString());
+			params.append('offset', currentOffset.toString());
+			const url = params.toString()
+				? `/api/embedded-datasets?${params.toString()}`
+				: '/api/embedded-datasets';
+			const response = await fetch(url);
 			if (!response.ok) {
 				throw new Error(`Failed to fetch embedded datasets: ${response.statusText}`);
 			}
-			embeddedDatasets = await response.json();
+			const data: PaginatedEmbeddedDatasetList = await response.json();
+			embeddedDatasets = data.embedded_datasets;
+			totalCount = data.total_count;
 
 			// Fetch related datasets and embedders
 			// Fetch all stats in one batch request
@@ -306,8 +268,30 @@
 		showRenameModal = true;
 	}
 
+	function goToPreviousPage() {
+		if (currentOffset > 0) {
+			currentOffset = Math.max(0, currentOffset - pageSize);
+			fetchEmbeddedDatasets();
+		}
+	}
+
+	function goToNextPage() {
+		if (currentOffset + pageSize < totalCount) {
+			currentOffset += pageSize;
+			fetchEmbeddedDatasets();
+		}
+	}
+
 	onMount(() => {
 		fetchEmbeddedDatasets();
+	});
+
+	$effect(() => {
+		// Reset to first page when search changes
+		if (searchQuery || !searchQuery) {
+			currentOffset = 0;
+			fetchEmbeddedDatasets();
+		}
 	});
 
 	let filteredDatasets = $derived(
@@ -484,6 +468,30 @@
 					{/each}
 				</TableBody>
 			</Table>
+
+			<!-- Pagination Controls -->
+			<div class="mt-6 px-4 pb-4 flex items-center justify-between">
+				<div class="text-sm text-gray-600 dark:text-gray-400">
+					Showing {currentOffset + 1}-{Math.min(currentOffset + pageSize, totalCount)} of {totalCount}
+					embedded datasets
+				</div>
+				<div class="flex gap-2">
+					<button
+						onclick={goToPreviousPage}
+						disabled={currentOffset === 0}
+						class="px-4 py-2 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100 dark:hover:bg-gray-700"
+					>
+						Previous
+					</button>
+					<button
+						onclick={goToNextPage}
+						disabled={currentOffset + pageSize >= totalCount}
+						class="px-4 py-2 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100 dark:hover:bg-gray-700"
+					>
+						Next
+					</button>
+				</div>
+			</div>
 		</div>
 	{/if}
 </div>

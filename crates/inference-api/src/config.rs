@@ -36,9 +36,12 @@ pub struct ModelConfig {
     pub hf_endpoint: Option<String>,
     /// Custom model directory for user-provided ONNX models
     pub model_path: Option<PathBuf>,
-    /// Optional list of allowed models (comma-separated)
-    /// If empty, all models are allowed
-    pub allowed_models: Vec<String>,
+    /// Optional list of allowed embedding models (comma-separated)
+    /// If empty, all embedding models are allowed
+    pub allowed_embedding_models: Vec<String>,
+    /// Optional list of allowed rerank models (comma-separated)
+    /// If empty, all rerank models are allowed
+    pub allowed_rerank_models: Vec<String>,
     /// Maximum batch size for embedding requests
     pub max_batch_size: usize,
 }
@@ -118,7 +121,11 @@ impl ServerConfig {
 
 impl ModelConfig {
     pub fn from_env() -> Result<Self> {
-        let allowed_models = env::var("INFERENCE_ALLOWED_MODELS")
+        let allowed_embedding_models = env::var("INFERENCE_ALLOWED_EMBEDDING_MODELS")
+            .map(|s| s.split(',').map(|m| m.trim().to_string()).collect())
+            .unwrap_or_default();
+
+        let allowed_rerank_models = env::var("INFERENCE_ALLOWED_RERANK_MODELS")
             .map(|s| s.split(',').map(|m| m.trim().to_string()).collect())
             .unwrap_or_default();
 
@@ -126,7 +133,8 @@ impl ModelConfig {
             hf_home: env::var("HF_HOME").ok().map(PathBuf::from),
             hf_endpoint: env::var("HF_ENDPOINT").ok(),
             model_path: env::var("INFERENCE_MODEL_PATH").ok().map(PathBuf::from),
-            allowed_models,
+            allowed_embedding_models,
+            allowed_rerank_models,
             max_batch_size: env::var("INFERENCE_MAX_BATCH_SIZE")
                 .unwrap_or_else(|_| "256".to_string())
                 .parse()
@@ -134,10 +142,20 @@ impl ModelConfig {
         })
     }
 
-    /// Check if a model is allowed based on configuration
-    /// Returns true if allowed_models is empty (all allowed) or if model is in the list
-    pub fn is_model_allowed(&self, model_id: &str) -> bool {
-        self.allowed_models.is_empty() || self.allowed_models.contains(&model_id.to_string())
+    /// Check if an embedding model is allowed based on configuration
+    /// Returns true if allowed_embedding_models is empty (all allowed) or if model is in the list
+    pub fn is_embedding_model_allowed(&self, model_id: &str) -> bool {
+        self.allowed_embedding_models.is_empty()
+            || self
+                .allowed_embedding_models
+                .contains(&model_id.to_string())
+    }
+
+    /// Check if a rerank model is allowed based on configuration
+    /// Returns true if allowed_rerank_models is empty (all allowed) or if model is in the list
+    pub fn is_rerank_model_allowed(&self, model_id: &str) -> bool {
+        self.allowed_rerank_models.is_empty()
+            || self.allowed_rerank_models.contains(&model_id.to_string())
     }
 }
 
@@ -171,14 +189,15 @@ mod tests {
             hf_home: Some(PathBuf::from("/tmp/hf_cache")),
             hf_endpoint: Some("https://hf-mirror.example.com".to_string()),
             model_path: Some(PathBuf::from("/models/custom")),
-            allowed_models: vec![
+            allowed_embedding_models: vec![
                 "BAAI/bge-small-en-v1.5".to_string(),
-                "BAAI/bge-reranker-base".to_string(),
+                "sentence-transformers/all-MiniLM-L6-v2".to_string(),
             ],
+            allowed_rerank_models: vec![],
             max_batch_size: 256,
         };
 
-        assert_eq!(model.allowed_models.len(), 2);
+        assert_eq!(model.allowed_embedding_models.len(), 2);
         assert_eq!(model.hf_home, Some(PathBuf::from("/tmp/hf_cache")));
         assert_eq!(
             model.hf_endpoint,
@@ -188,31 +207,41 @@ mod tests {
     }
 
     #[test]
-    fn test_is_model_allowed() {
+    fn test_model_filtering() {
         // Empty allowed list = all models allowed
         let config_all_allowed = ModelConfig {
             hf_home: None,
             hf_endpoint: None,
             model_path: None,
-            allowed_models: vec![],
+            allowed_embedding_models: vec![],
+            allowed_rerank_models: vec![],
             max_batch_size: 256,
         };
-        assert!(config_all_allowed.is_model_allowed("any-model"));
+        assert!(config_all_allowed.is_embedding_model_allowed("any-model"));
+        assert!(config_all_allowed.is_rerank_model_allowed("any-model"));
 
         // Specific allowed list
         let config_restricted = ModelConfig {
             hf_home: None,
             hf_endpoint: None,
             model_path: None,
-            allowed_models: vec![
+            allowed_embedding_models: vec![
                 "BAAI/bge-small-en-v1.5".to_string(),
                 "sentence-transformers/all-MiniLM-L6-v2".to_string(),
             ],
+            allowed_rerank_models: vec!["BAAI/bge-reranker-base".to_string()],
             max_batch_size: 256,
         };
-        assert!(config_restricted.is_model_allowed("BAAI/bge-small-en-v1.5"));
-        assert!(config_restricted.is_model_allowed("sentence-transformers/all-MiniLM-L6-v2"));
-        assert!(!config_restricted.is_model_allowed("BAAI/bge-large-en-v1.5"));
+        // Embedding checks
+        assert!(config_restricted.is_embedding_model_allowed("BAAI/bge-small-en-v1.5"));
+        assert!(
+            config_restricted.is_embedding_model_allowed("sentence-transformers/all-MiniLM-L6-v2")
+        );
+        assert!(!config_restricted.is_embedding_model_allowed("BAAI/bge-large-en-v1.5"));
+
+        // Rerank checks
+        assert!(config_restricted.is_rerank_model_allowed("BAAI/bge-reranker-base"));
+        assert!(!config_restricted.is_rerank_model_allowed("BAAI/bge-reranker-v2-m3"));
     }
 
     #[test]

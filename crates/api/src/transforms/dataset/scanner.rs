@@ -15,7 +15,7 @@ use semantic_explorer_core::storage::{DocumentUpload, upload_document};
 use crate::auth::AuthenticatedUser;
 use crate::embedded_datasets::EmbeddedDataset;
 use crate::storage::postgres::dataset_transforms::{
-    get_active_dataset_transforms, get_dataset_transform,
+    get_active_dataset_transforms_privileged, get_dataset_transform,
 };
 use crate::storage::postgres::datasets;
 use crate::storage::postgres::embedded_datasets;
@@ -23,9 +23,19 @@ use crate::storage::postgres::embedders;
 use crate::storage::s3;
 use crate::transforms::dataset::models::DatasetTransform;
 
+/// Configuration for batch processing of dataset items
+#[derive(Debug, Clone)]
+struct DatasetBatchConfig {
+    embedder_config: EmbedderConfig,
+    vector_db_config: VectorDatabaseConfig,
+    s3_bucket: String,
+    embedded_dataset_prefix: String,
+    embedding_batch_size: usize,
+}
+
 /// Initialize the background scanner for dataset transforms
 pub(crate) fn initialize_scanner(
-    postgres_pool: Pool<Postgres>,
+    pool: Pool<Postgres>,
     nats_client: NatsClient,
     s3_client: S3Client,
     encryption: EncryptionService,
@@ -34,13 +44,8 @@ pub(crate) fn initialize_scanner(
         let mut interval = interval(Duration::from_secs(10)); // Check for new dataset transform jobs every 10 seconds
         loop {
             interval.tick().await;
-            if let Err(e) = scan_active_dataset_transforms(
-                &postgres_pool,
-                &nats_client,
-                &s3_client,
-                &encryption,
-            )
-            .await
+            if let Err(e) =
+                scan_active_dataset_transforms(&pool, &nats_client, &s3_client, &encryption).await
             {
                 error!("Error scanning dataset transforms: {}", e);
             }
@@ -55,7 +60,7 @@ async fn scan_active_dataset_transforms(
     s3: &S3Client,
     encryption: &EncryptionService,
 ) -> Result<()> {
-    let transforms = get_active_dataset_transforms(pool).await?;
+    let transforms = get_active_dataset_transforms_privileged(pool).await?;
     info!("Scanning {} active dataset transforms", transforms.len());
 
     for transform in transforms {
@@ -256,17 +261,20 @@ async fn process_dataset_transform_scan(
         // If all existing batches are processed (or none exist), check if we need to create new batches
         if unprocessed_existing.is_empty() {
             // Get dataset items that haven't been batched yet
+            let batch_config = DatasetBatchConfig {
+                embedder_config: embedder_config.clone(),
+                vector_db_config: vector_db_config.clone(),
+                s3_bucket: s3_bucket.clone(),
+                embedded_dataset_prefix: embedded_dataset_prefix.clone(),
+                embedding_batch_size,
+            };
             let items_created = create_batches_from_dataset_items(
                 pool,
                 s3,
                 nats,
                 transform,
                 &embedded_dataset,
-                &embedder_config,
-                &vector_db_config,
-                &s3_bucket,
-                &embedded_dataset_prefix,
-                embedding_batch_size,
+                &batch_config,
             )
             .await?;
             total_jobs += items_created;
@@ -282,18 +290,13 @@ async fn process_dataset_transform_scan(
 }
 
 /// Create batch files from dataset items and dispatch jobs
-#[allow(clippy::too_many_arguments)]
 async fn create_batches_from_dataset_items(
     pool: &Pool<Postgres>,
     s3: &S3Client,
     nats: &NatsClient,
     transform: &DatasetTransform,
     embedded_dataset: &EmbeddedDataset,
-    embedder_config: &EmbedderConfig,
-    vector_db_config: &VectorDatabaseConfig,
-    s3_bucket: &str,
-    embedded_dataset_prefix: &str,
-    embedding_batch_size: usize,
+    config: &DatasetBatchConfig,
 ) -> Result<usize> {
     // Use timestamp-based tracking to identify new items that need processing
     let last_processed_at = embedded_dataset.last_processed_at;
@@ -368,18 +371,21 @@ async fn create_batches_from_dataset_items(
 
     // Split into batches and upload to S3, then dispatch jobs
     let mut jobs_created = 0;
-    let chunks_per_batch = embedding_batch_size * 10; // Create larger batches for efficiency
+    let chunks_per_batch = config.embedding_batch_size * 10; // Create larger batches for efficiency
 
     for (batch_idx, batch_chunk) in all_batch_items.chunks(chunks_per_batch).enumerate() {
         let batch_filename = format!("batch-{}-{}.json", batch_idx, Uuid::new_v4());
-        let batch_key = format!("{}/batches/{}", embedded_dataset_prefix, batch_filename);
+        let batch_key = format!(
+            "{}/batches/{}",
+            config.embedded_dataset_prefix, batch_filename
+        );
         let batch_json = serde_json::to_vec(batch_chunk)?;
 
         // Upload batch to S3 using single-bucket architecture
         if let Err(e) = upload_document(
             s3,
             DocumentUpload {
-                collection_id: s3_bucket.to_string(),
+                collection_id: config.s3_bucket.clone(),
                 name: batch_key.clone(),
                 content: batch_json,
                 mime_type: "application/json".to_string(),
@@ -389,17 +395,17 @@ async fn create_batches_from_dataset_items(
         {
             error!(
                 "Failed to upload batch {} to s3://{}/{}: {}",
-                batch_filename, s3_bucket, batch_key, e
+                batch_filename, config.s3_bucket, batch_key, e
             );
             continue;
         }
 
         info!(
-            "Uploaded batch {} with {} chunks for embedded dataset {} (s3://{}/{})",
+            "Uploaded batch {} with {} chunks for embedded dataset {} (s3://{}/{}) ",
             batch_filename,
             batch_chunk.len(),
             embedded_dataset.embedded_dataset_id,
-            s3_bucket,
+            config.s3_bucket,
             batch_key
         );
 
@@ -407,15 +413,15 @@ async fn create_batches_from_dataset_items(
         let job = DatasetTransformJob {
             job_id: Uuid::new_v4(),
             batch_file_key: batch_key.clone(),
-            bucket: s3_bucket.to_string(),
+            bucket: config.s3_bucket.clone(),
             dataset_id: transform.source_dataset_id,
             dataset_transform_id: transform.dataset_transform_id,
             embedded_dataset_id: embedded_dataset.embedded_dataset_id,
             owner_id: transform.owner_id.clone(),
-            embedder_config: embedder_config.clone(),
-            vector_database_config: vector_db_config.clone(),
+            embedder_config: config.embedder_config.clone(),
+            vector_database_config: config.vector_db_config.clone(),
             collection_name: embedded_dataset.collection_name.clone(),
-            batch_size: Some(embedding_batch_size),
+            batch_size: Some(config.embedding_batch_size),
         };
 
         let payload = serde_json::to_vec(&job)?;

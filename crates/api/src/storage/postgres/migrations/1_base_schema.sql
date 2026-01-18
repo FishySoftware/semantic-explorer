@@ -1,17 +1,4 @@
 -- ============================================================================
--- CONSOLIDATED MIGRATION: Complete Database Schema
--- ============================================================================
--- This single migration file consolidates all schema changes including:
--- 1. Base schema (collections, datasets, transforms, chat, audit)
--- 2. Row-level security policies
--- 3. OIDC session management
--- 4. Performance optimization indexes
---
--- Purpose: Fresh database setup from scratch
--- Idempotent: All CREATE TABLE/INDEX use IF NOT EXISTS
--- ============================================================================
-
--- ============================================================================
 -- Collections & Datasets
 -- ============================================================================
 
@@ -52,7 +39,6 @@ CREATE TABLE IF NOT EXISTS datasets (
     updated_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
--- Optimized indexes for datasets
 CREATE INDEX IF NOT EXISTS idx_datasets_owner_created ON datasets(owner_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_datasets_is_public ON datasets(is_public) WHERE is_public = TRUE;
 CREATE INDEX IF NOT EXISTS idx_datasets_title_tsvector 
@@ -72,13 +58,11 @@ CREATE TABLE IF NOT EXISTS dataset_items (
     updated_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
--- Optimized indexes for dataset_items
 CREATE INDEX IF NOT EXISTS idx_dataset_items_dataset_created ON dataset_items(dataset_id, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_dataset_items_dataset_title_unique ON dataset_items(dataset_id, title);
 CREATE INDEX IF NOT EXISTS idx_dataset_items_name 
   ON dataset_items(title) 
   WHERE title IS NOT NULL;
--- Index for efficient ORDER BY item_id DESC pagination within a dataset
 CREATE INDEX IF NOT EXISTS idx_dataset_items_dataset_item_desc 
   ON dataset_items(dataset_id, item_id DESC);
 
@@ -142,7 +126,7 @@ CREATE TABLE IF NOT EXISTS embedders (
     base_url             TEXT                     NOT NULL,
     api_key_encrypted    TEXT                     NULL,
     config               JSONB                    NOT NULL DEFAULT '{}',
-    batch_size           INTEGER                  NOT NULL DEFAULT 100,
+    batch_size           INTEGER                  NOT NULL DEFAULT 96,
     dimensions           INTEGER                  NOT NULL DEFAULT 1536,
     max_input_tokens     INTEGER                  NOT NULL DEFAULT 8191,
     truncate_strategy    VARCHAR(50)              NOT NULL DEFAULT 'NONE',
@@ -152,7 +136,6 @@ CREATE TABLE IF NOT EXISTS embedders (
     updated_at           TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
--- Optimized indexes for embedders
 CREATE INDEX IF NOT EXISTS idx_embedders_owner_public ON embedders(owner_id, is_public);
 CREATE INDEX IF NOT EXISTS idx_embedders_provider ON embedders(provider);
 CREATE INDEX IF NOT EXISTS idx_embedders_is_public ON embedders(is_public) WHERE is_public = TRUE;
@@ -167,14 +150,13 @@ CREATE TABLE IF NOT EXISTS llms (
     provider             TEXT                     NOT NULL,
     base_url             TEXT                     NOT NULL,
     api_key_encrypted    TEXT                     NULL,
-    model                TEXT                     NOT NULL DEFAULT 'gpt-4',
+    model                TEXT                     NOT NULL,
     config               JSONB                    NOT NULL DEFAULT '{}',
     is_public            BOOLEAN                  NOT NULL DEFAULT FALSE,
     created_at           TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at           TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
--- Optimized indexes for LLMs
 CREATE INDEX IF NOT EXISTS idx_llms_owner_public ON llms(owner_id, is_public);
 CREATE INDEX IF NOT EXISTS idx_llms_provider ON llms(provider);
 CREATE INDEX IF NOT EXISTS idx_llms_is_public ON llms(is_public) WHERE is_public = TRUE;
@@ -199,7 +181,6 @@ CREATE TABLE IF NOT EXISTS collection_transforms (
     updated_at              TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
--- Optimized indexes for collection_transforms
 CREATE INDEX IF NOT EXISTS idx_collection_transforms_owner_created ON collection_transforms(owner_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_collection_transforms_collection ON collection_transforms(collection_id, is_enabled);
 CREATE INDEX IF NOT EXISTS idx_collection_transforms_dataset ON collection_transforms(dataset_id);
@@ -221,7 +202,6 @@ CREATE TABLE IF NOT EXISTS dataset_transforms (
     updated_at           TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
--- Optimized indexes for dataset_transforms
 CREATE INDEX IF NOT EXISTS idx_dataset_transforms_owner_created ON dataset_transforms(owner_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_dataset_transforms_source_enabled ON dataset_transforms(source_dataset_id, is_enabled);
 CREATE INDEX IF NOT EXISTS idx_dataset_transforms_enabled ON dataset_transforms(owner_id, is_enabled) WHERE is_enabled = TRUE;
@@ -244,7 +224,7 @@ CREATE TABLE IF NOT EXISTS embedded_datasets (
     UNIQUE(dataset_transform_id, embedder_id)
 );
 
--- Optimized indexes for embedded_datasets
+
 CREATE INDEX IF NOT EXISTS idx_embedded_datasets_owner_created ON embedded_datasets(owner_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_embedded_datasets_transform ON embedded_datasets(dataset_transform_id);
 CREATE INDEX IF NOT EXISTS idx_embedded_datasets_collection ON embedded_datasets(collection_name);
@@ -305,7 +285,6 @@ CREATE TABLE IF NOT EXISTS visualizations (
     created_at                 TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
--- Optimized indexes for visualizations
 CREATE INDEX IF NOT EXISTS idx_visualizations_transform_created ON visualizations(visualization_transform_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_visualizations_status ON visualizations(status) WHERE status IN ('pending', 'processing');
 
@@ -341,7 +320,6 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
     updated_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
--- Optimized indexes for chat_sessions  
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_owner_updated ON chat_sessions(owner_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_embedded_dataset ON chat_sessions(embedded_dataset_id);
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_created 
@@ -357,7 +335,6 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
--- Optimized indexes for chat_messages (covering index for common query)
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session_created ON chat_messages(session_id, created_at DESC) INCLUDE (role, status);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session_status ON chat_messages(session_id, status) WHERE status != 'complete';
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session 
@@ -374,7 +351,6 @@ CREATE TABLE IF NOT EXISTS chat_message_retrieved_documents (
     created_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
--- Optimized index for retrieved documents (covering common columns)
 CREATE INDEX IF NOT EXISTS idx_chat_message_retrieved_docs ON chat_message_retrieved_documents(message_id, similarity_score DESC) 
     INCLUDE (document_id, item_title, text);
 
@@ -396,7 +372,6 @@ CREATE TABLE IF NOT EXISTS audit_events (
     details          TEXT                     NULL
 );
 
--- Optimized indexes for audit queries (most common patterns)
 CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp ON audit_events(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_events_user_timestamp ON audit_events(user_id, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_events_username_display_timestamp ON audit_events(username_display, timestamp DESC);
@@ -407,22 +382,52 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_resource ON audit_events(resource_ty
 -- Row-Level Security (RLS) Policies
 -- ============================================================================
 -- Enable RLS on all user-owned tables
+-- FORCE ROW LEVEL SECURITY ensures RLS applies even for table owners/superusers
 
 ALTER TABLE collections ENABLE ROW LEVEL SECURITY;
+ALTER TABLE collections FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE datasets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE datasets FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE dataset_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE dataset_items FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE embedders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE embedders FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE llms ENABLE ROW LEVEL SECURITY;
+ALTER TABLE llms FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE collection_transforms ENABLE ROW LEVEL SECURITY;
+ALTER TABLE collection_transforms FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE dataset_transforms ENABLE ROW LEVEL SECURITY;
+ALTER TABLE dataset_transforms FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE embedded_datasets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE embedded_datasets FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE dataset_transform_batches ENABLE ROW LEVEL SECURITY;
+ALTER TABLE dataset_transform_batches FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE visualization_transforms ENABLE ROW LEVEL SECURITY;
+ALTER TABLE visualization_transforms FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE visualizations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE visualizations FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE transform_processed_files ENABLE ROW LEVEL SECURITY;
+ALTER TABLE transform_processed_files FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE chat_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE chat_sessions FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE chat_messages FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE chat_message_retrieved_documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE chat_message_retrieved_documents FORCE ROW LEVEL SECURITY;
 
 -- Collections RLS Policies
 CREATE POLICY collections_access_policy ON collections
@@ -445,7 +450,6 @@ CREATE POLICY collections_delete_policy ON collections
     FOR DELETE
     USING (owner_id = current_setting('app.current_user', TRUE)::text);
 
--- Datasets RLS Policies
 CREATE POLICY datasets_access_policy ON datasets
     FOR ALL
     USING (
@@ -466,7 +470,6 @@ CREATE POLICY datasets_delete_policy ON datasets
     FOR DELETE
     USING (owner_id = current_setting('app.current_user', TRUE)::text);
 
--- Dataset Items RLS Policies (inherits access from parent dataset)
 CREATE POLICY dataset_items_access_policy ON dataset_items
     FOR ALL
     USING (
@@ -510,7 +513,6 @@ CREATE POLICY dataset_items_delete_policy ON dataset_items
         )
     );
 
--- Embedders RLS Policies
 CREATE POLICY embedders_access_policy ON embedders
     FOR ALL
     USING (
@@ -531,7 +533,6 @@ CREATE POLICY embedders_delete_policy ON embedders
     FOR DELETE
     USING (owner_id = current_setting('app.current_user', TRUE)::text);
 
--- LLMs RLS Policies
 CREATE POLICY llms_access_policy ON llms
     FOR ALL
     USING (
@@ -552,7 +553,6 @@ CREATE POLICY llms_delete_policy ON llms
     FOR DELETE
     USING (owner_id = current_setting('app.current_user', TRUE)::text);
 
--- Collection Transforms RLS Policies
 CREATE POLICY collection_transforms_access_policy ON collection_transforms
     FOR ALL
     USING (owner_id = current_setting('app.current_user', TRUE)::text);
@@ -570,7 +570,6 @@ CREATE POLICY collection_transforms_delete_policy ON collection_transforms
     FOR DELETE
     USING (owner_id = current_setting('app.current_user', TRUE)::text);
 
--- Dataset Transforms RLS Policies
 CREATE POLICY dataset_transforms_access_policy ON dataset_transforms
     FOR ALL
     USING (owner_id = current_setting('app.current_user', TRUE)::text);
@@ -588,7 +587,6 @@ CREATE POLICY dataset_transforms_delete_policy ON dataset_transforms
     FOR DELETE
     USING (owner_id = current_setting('app.current_user', TRUE)::text);
 
--- Embedded Datasets RLS Policies
 CREATE POLICY embedded_datasets_access_policy ON embedded_datasets
     FOR ALL
     USING (owner_id = current_setting('app.current_user', TRUE)::text);
@@ -606,7 +604,6 @@ CREATE POLICY embedded_datasets_delete_policy ON embedded_datasets
     FOR DELETE
     USING (owner_id = current_setting('app.current_user', TRUE)::text);
 
--- Dataset Transform Batches RLS Policies (inherits from dataset_transforms)
 CREATE POLICY dataset_transform_batches_access_policy ON dataset_transform_batches
     FOR ALL
     USING (
@@ -617,7 +614,6 @@ CREATE POLICY dataset_transform_batches_access_policy ON dataset_transform_batch
         )
     );
 
--- Visualization Transforms RLS Policies
 CREATE POLICY visualization_transforms_access_policy ON visualization_transforms
     FOR ALL
     USING (owner_id = current_setting('app.current_user', TRUE)::text);
@@ -635,7 +631,6 @@ CREATE POLICY visualization_transforms_delete_policy ON visualization_transforms
     FOR DELETE
     USING (owner_id = current_setting('app.current_user', TRUE)::text);
 
--- Visualizations RLS Policies (inherits from visualization_transforms)
 CREATE POLICY visualizations_access_policy ON visualizations
     FOR ALL
     USING (
@@ -646,7 +641,6 @@ CREATE POLICY visualizations_access_policy ON visualizations
         )
     );
 
--- Transform Processed Files RLS Policies
 CREATE POLICY transform_processed_files_collection_transforms ON transform_processed_files
     FOR ALL
     USING (
@@ -680,7 +674,6 @@ CREATE POLICY transform_processed_files_visualization_transforms ON transform_pr
         )
     );
 
--- Chat Sessions RLS Policies
 CREATE POLICY chat_sessions_access_policy ON chat_sessions
     FOR ALL
     USING (owner_id = current_setting('app.current_user', TRUE)::text);
@@ -698,7 +691,6 @@ CREATE POLICY chat_sessions_delete_policy ON chat_sessions
     FOR DELETE
     USING (owner_id = current_setting('app.current_user', TRUE)::text);
 
--- Chat Messages RLS Policies (inherits from chat_sessions)
 CREATE POLICY chat_messages_access_policy ON chat_messages
     FOR ALL
     USING (
@@ -709,7 +701,6 @@ CREATE POLICY chat_messages_access_policy ON chat_messages
         )
     );
 
--- Chat Message Retrieved Documents RLS Policies (inherits from chat_messages)
 CREATE POLICY chat_message_retrieved_documents_access_policy ON chat_message_retrieved_documents
     FOR ALL
     USING (
@@ -720,18 +711,3 @@ CREATE POLICY chat_message_retrieved_documents_access_policy ON chat_message_ret
             AND cs.owner_id = current_setting('app.current_user', TRUE)::text
         )
     );
-
--- ============================================================================
--- Table Comments for Documentation
--- ============================================================================
-
-COMMENT ON TABLE dataset_transform_batches IS
-    'Tracks individual batch processing operations for dataset transforms. Status: pending, processing, success, failed, skipped.';
-COMMENT ON TABLE chat_messages IS
-    'Chat messages with streaming support. Status: complete (default), incomplete (streaming), error (failed).';
-COMMENT ON TABLE audit_events IS
-    'Security and compliance audit log for all system events.';
-COMMENT ON COLUMN embedders.api_key_encrypted IS
-    'AES-256-GCM encrypted API key. Format: base64(nonce || ciphertext) where nonce is 12 bytes. Required for production.';
-COMMENT ON COLUMN llms.api_key_encrypted IS
-    'AES-256-GCM encrypted API key. Format: base64(nonce || ciphertext) where nonce is 12 bytes. Required for production.';

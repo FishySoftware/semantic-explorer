@@ -12,6 +12,11 @@ pub async fn generate_embedding(
 
     let (url, body, needs_auth) = match provider {
         "openai" => {
+            if base_url.trim().is_empty() {
+                return Err(anyhow::anyhow!(
+                    "Invalid embedder configuration: base_url cannot be empty for OpenAI provider"
+                ));
+            }
             let model = config
                 .get("model")
                 .and_then(|v| v.as_str())
@@ -24,6 +29,11 @@ pub async fn generate_embedding(
             (endpoint, body, true)
         }
         "cohere" => {
+            if base_url.trim().is_empty() {
+                return Err(anyhow::anyhow!(
+                    "Invalid embedder configuration: base_url cannot be empty for Cohere provider"
+                ));
+            }
             let model = config
                 .get("model")
                 .and_then(|v| v.as_str())
@@ -37,12 +47,14 @@ pub async fn generate_embedding(
             (endpoint, body, true)
         }
         "local" => {
-            // Local inference via inference-api service
+            // Local inference via inference-api service uses INFERENCE_API_URL environment variable
             let model = config
                 .get("model")
                 .and_then(|v| v.as_str())
                 .unwrap_or("BAAI/bge-small-en-v1.5");
-            let endpoint = format!("{}/api/embed", base_url.trim_end_matches('/'));
+            let inference_url = std::env::var("INFERENCE_API_URL")
+                .unwrap_or_else(|_| "http://localhost:8090".to_string());
+            let endpoint = format!("{}/api/embed", inference_url.trim_end_matches('/'));
             let body = serde_json::json!({
                 "text": query,
                 "model": model,

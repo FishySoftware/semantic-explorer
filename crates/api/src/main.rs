@@ -11,7 +11,6 @@ mod embedding;
 mod errors;
 mod llms;
 mod observability;
-mod providers;
 mod search;
 mod storage;
 mod transforms;
@@ -81,21 +80,21 @@ async fn main() -> Result<()> {
 
     let s3_client = storage::s3::initialize_client().await?;
     let qdrant_client = storage::qdrant::initialize_client(&config.qdrant).await?;
-    let postgres_pool = storage::postgres::initialize_pool(&config.database).await?;
+    let pool = storage::postgres::initialize_pool(&config.database).await?;
     let openid_client =
         auth::oidc::initialize_client(format!("{public_url}/auth_callback")).await?;
     let nats_client = async_nats::connect(&config.nats.url).await?;
 
     // Keep references for graceful shutdown
     let nats_shutdown = nats_client.clone();
-    let postgres_shutdown = postgres_pool.clone();
+    let postgres_shutdown = pool.clone();
 
     semantic_explorer_core::nats::initialize_jetstream(&nats_client, &config.nats).await?;
 
     // Start audit event consumer worker
     let audit_consumer_handle = {
         let nats = nats_client.clone();
-        let db = postgres_pool.clone();
+        let db = pool.clone();
         tokio::spawn(async move {
             if let Err(e) = audit_worker::start_audit_consumer(nats, db).await {
                 tracing::error!(error = %e, "Audit consumer exited with error");
@@ -104,7 +103,7 @@ async fn main() -> Result<()> {
     };
 
     transforms::listeners::start_result_listeners(
-        postgres_pool.clone(),
+        pool.clone(),
         s3_client.clone(),
         nats_client.clone(),
         encryption_service.clone(),
@@ -122,7 +121,7 @@ async fn main() -> Result<()> {
 
     // Start scanners for each transform type
     let collection_scanner_handle = transforms::collection::scanner::initialize_scanner(
-        postgres_pool.clone(),
+        pool.clone(),
         nats_client.clone(),
         s3_client.clone(),
         config.s3.bucket_name.clone(),
@@ -130,14 +129,14 @@ async fn main() -> Result<()> {
     );
 
     let dataset_scanner_handle = transforms::dataset::scanner::initialize_scanner(
-        postgres_pool.clone(),
+        pool.clone(),
         nats_client.clone(),
         s3_client.clone(),
         encryption_service.clone(),
     );
 
     // Initialize audit event infrastructure (database and NATS)
-    audit::events::init(postgres_pool.clone(), nats_client.clone());
+    audit::events::init(pool.clone(), nats_client.clone());
 
     let server = HttpServer::new(move || {
         // Build CORS configuration based on allowed origins
@@ -191,50 +190,56 @@ async fn main() -> Result<()> {
             .app_data(web::Data::new(s3_client.clone()))
             .app_data(web::Data::new(config.s3.clone()))
             .app_data(web::Data::new(qdrant_client.clone()))
-            .app_data(web::Data::new(postgres_pool.clone()))
+            .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(nats_client.clone()))
             .app_data(web::Data::new(encryption_service.clone()))
             .app_data(
                 MultipartFormConfig::default()
-                    .total_limit(max_upload_size)
-                    .memory_limit(max_upload_size), // Same limit for total and memory (no temp files)
+                    .total_limit(max_upload_size) //TODO fix this with proper vars
+                    .memory_limit(max_upload_size),
             )
             .app_data(web::Data::new(static_files_directory.clone()))
             .app_data(web::Data::new(inference_config.clone()))
             .into_utoipa_app()
             .openapi(ApiDoc::openapi())
-            .service(api::collections::get_collections)
-            .service(api::collections::get_allowed_file_types)
-            .service(api::collections::search_collections)
             .service(api::collections::get_collection)
+            .service(api::collections::get_collections)
             .service(api::collections::create_collections)
             .service(api::collections::update_collections)
             .service(api::collections::delete_collections)
             .service(api::collections::upload_to_collection)
+            .service(api::collections::delete_collection_file)
+            .service(api::collections::search_collections)
             .service(api::collections::list_collection_files)
             .service(api::collections::download_collection_file)
-            .service(api::collections::delete_collection_file)
-            .service(api::datasets::get_datasets)
-            .service(api::datasets::get_datasets_embedders)
+            .service(api::collections::get_allowed_file_types)
             .service(api::datasets::get_dataset)
+            .service(api::datasets::get_datasets)
             .service(api::datasets::create_dataset)
             .service(api::datasets::update_dataset)
             .service(api::datasets::delete_dataset)
             .service(api::datasets::get_dataset_items)
             .service(api::datasets::get_dataset_items_summary)
             .service(api::datasets::get_dataset_item_chunks)
-            .service(api::datasets::upload_to_dataset)
             .service(api::datasets::delete_dataset_item)
-            .service(api::embedders::get_embedders)
+            .service(api::datasets::upload_to_dataset)
+            .service(api::embedded_datasets::get_embedded_dataset)
+            .service(api::embedded_datasets::get_embedded_datasets)
+            .service(api::embedded_datasets::update_embedded_dataset)
+            .service(api::embedded_datasets::delete_embedded_dataset)
+            .service(api::embedded_datasets::get_embedded_dataset_stats)
+            .service(api::embedded_datasets::get_batch_embedded_dataset_stats)
+            .service(api::embedded_datasets::get_embedded_dataset_points)
+            .service(api::embedded_datasets::get_point_vector)
+            .service(api::embedded_datasets::get_processed_batches)
+            .service(api::embedded_datasets::get_embedded_datasets_for_dataset)
             .service(api::embedders::get_embedder)
+            .service(api::embedders::get_embedders)
             .service(api::embedders::create_embedder)
             .service(api::embedders::update_embedder)
             .service(api::embedders::delete_embedder)
-            .service(api::embedders::detect_dimensions)
             .service(api::embedders::test_embedder)
-            .service(api::inference::test_inference_embedder)
-            .service(api::inference::list_inference_embedders)
-            .service(api::inference::list_inference_rerankers)
+            .service(api::embedding_inference::list_inference_embedders)
             .service(api::llms::get_llms)
             .service(api::llms::get_llm)
             .service(api::llms::create_llm)
@@ -279,16 +284,6 @@ async fn main() -> Result<()> {
             .service(api::dataset_transforms::get_dataset_transform_batch)
             .service(api::dataset_transforms::get_dataset_transform_batch_stats)
             .service(api::dataset_transforms::get_dataset_transforms_for_dataset)
-            .service(api::embedded_datasets::get_embedded_datasets)
-            .service(api::embedded_datasets::get_embedded_dataset)
-            .service(api::embedded_datasets::delete_embedded_dataset)
-            .service(api::embedded_datasets::update_embedded_dataset)
-            .service(api::embedded_datasets::get_embedded_dataset_stats)
-            .service(api::embedded_datasets::get_batch_embedded_dataset_stats)
-            .service(api::embedded_datasets::get_embedded_dataset_points)
-            .service(api::embedded_datasets::get_point_vector)
-            .service(api::embedded_datasets::get_processed_batches)
-            .service(api::embedded_datasets::get_embedded_datasets_for_dataset)
             .service(api::visualization_transforms::get_visualization_transforms)
             .service(api::visualization_transforms::stream_visualization_transform_status)
             .service(api::visualization_transforms::get_visualization_transform)
@@ -315,7 +310,6 @@ async fn main() -> Result<()> {
             })
             .into_app()
             // Health check endpoints (must be outside OpenAPI to avoid auth)
-            .service(api::health::health)
             .service(api::health::liveness)
             .service(api::health::readiness)
             .service(api::base)

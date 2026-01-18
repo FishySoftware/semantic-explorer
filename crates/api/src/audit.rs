@@ -205,23 +205,7 @@ impl AuditEvent {
 
     /// Store this audit event in the database for long-term retention and querying
     pub async fn store(&self, pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
-        audit_storage::store_audit_event(
-            pool,
-            &self.timestamp,
-            &format!("{:?}", self.event_type),
-            &format!("{:?}", self.outcome),
-            &self.user,
-            &self.user_display,
-            self.request_id.as_deref(),
-            self.client_ip.as_deref(),
-            self.resource_type
-                .as_ref()
-                .map(|rt| format!("{:?}", rt))
-                .as_deref(),
-            self.resource_id.as_deref(),
-            self.details.as_deref(),
-        )
-        .await
+        audit_storage::store_audit_event_simple(pool, self).await
     }
 }
 

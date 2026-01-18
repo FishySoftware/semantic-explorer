@@ -2,6 +2,7 @@ use crate::embedded_datasets::EmbeddedDataset;
 use crate::transforms::dataset::models::{DatasetTransform, DatasetTransformStats};
 use anyhow::{Context, Result};
 use semantic_explorer_core::models::PaginatedResponse;
+use semantic_explorer_core::owner_info::OwnerInfo;
 use sqlx::{Pool, Postgres, Transaction};
 
 fn validate_sort_field(sort_by: &str) -> Result<String> {
@@ -236,7 +237,22 @@ pub async fn get_dataset_transforms_for_dataset(
     Ok(transforms)
 }
 
-pub async fn get_active_dataset_transforms(pool: &Pool<Postgres>) -> Result<Vec<DatasetTransform>> {
+/// **PRIVILEGED OPERATION** - Bypasses RLS for system worker access
+///
+/// This function intentionally bypasses Row-Level Security to fetch ALL active
+/// dataset transforms across all users. It should ONLY be called by system
+/// workers (dataset-transforms worker) that need to process transforms for
+/// all users.
+///
+/// For user-specific queries from API endpoints, use:
+/// - `get_dataset_transform()` with RLS context
+/// - `get_dataset_transforms_paginated()` with RLS context
+///
+/// # Returns
+/// All enabled dataset transforms regardless of ownership
+pub async fn get_active_dataset_transforms_privileged(
+    pool: &Pool<Postgres>,
+) -> Result<Vec<DatasetTransform>> {
     let transforms = sqlx::query_as::<_, DatasetTransform>(GET_ACTIVE_DATASET_TRANSFORMS_QUERY)
         .fetch_all(pool)
         .await?;
@@ -248,20 +264,19 @@ pub async fn create_dataset_transform(
     title: &str,
     source_dataset_id: i32,
     embedder_ids: &[i32],
-    owner: &str,
-    owner_display_name: &str,
+    owner: &OwnerInfo,
     job_config: &serde_json::Value,
 ) -> Result<(DatasetTransform, Vec<EmbeddedDataset>)> {
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
-    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+    super::rls::set_rls_user_tx(&mut tx, &owner.owner_id).await?;
 
     // Step 1: Create the Dataset Transform
     let transform = sqlx::query_as::<_, DatasetTransform>(CREATE_DATASET_TRANSFORM_QUERY)
         .bind(title)
         .bind(source_dataset_id)
         .bind(embedder_ids.to_vec())
-        .bind(owner)
-        .bind(owner_display_name)
+        .bind(&owner.owner_id)
+        .bind(&owner.owner_display_name)
         .bind(job_config)
         .fetch_one(&mut *tx)
         .await
@@ -276,7 +291,6 @@ pub async fn create_dataset_transform(
             source_dataset_id,
             *embedder_id,
             owner,
-            owner_display_name,
             &transform.title,
         )
         .await
@@ -389,15 +403,14 @@ async fn create_embedded_dataset_internal(
     dataset_transform_id: i32,
     source_dataset_id: i32,
     embedder_id: i32,
-    owner_id: &str,
-    owner_display_name: &str,
+    owner: &OwnerInfo,
     dataset_transform_title: &str,
 ) -> Result<EmbeddedDataset> {
     // Import the create function from embedded_datasets module
     use crate::storage::postgres::embedded_datasets::create_embedded_dataset_in_transaction;
 
     let title = format!("{dataset_transform_title}-{embedder_id}");
-    let collection_name = EmbeddedDataset::generate_collection_name(0, owner_id); // Will be updated with actual ID
+    let collection_name = EmbeddedDataset::generate_collection_name(0, &owner.owner_id); // Will be updated with actual ID
 
     create_embedded_dataset_in_transaction(
         tx,
@@ -405,8 +418,7 @@ async fn create_embedded_dataset_internal(
         dataset_transform_id,
         source_dataset_id,
         embedder_id,
-        owner_id,
-        owner_display_name,
+        owner,
         &collection_name,
     )
     .await
@@ -441,14 +453,17 @@ async fn sync_embedded_datasets(
         .collect();
 
     // Add new embedded datasets
+    let owner = OwnerInfo::new(
+        transform.owner_id.clone(),
+        transform.owner_display_name.clone(),
+    );
     for embedder_id in to_add {
         create_embedded_dataset_internal(
             tx,
             transform.dataset_transform_id,
             transform.source_dataset_id,
             embedder_id,
-            &transform.owner_id,
-            &transform.owner_display_name,
+            &owner,
             &transform.title,
         )
         .await?;

@@ -12,7 +12,7 @@
 	} from 'flowbite-svelte';
 	import { DownloadOutline, EyeOutline } from 'flowbite-svelte-icons';
 	import { onDestroy, onMount } from 'svelte';
-	import type { Visualization, VisualizationTransform } from '../types/visualizations';
+	import type { Visualization, VisualizationTransform } from '../types/models';
 	import { ArrowLeftIcon } from '../utils/icons';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { createSSEConnection, type SSEConnection } from '../utils/sse';

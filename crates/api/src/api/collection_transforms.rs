@@ -7,6 +7,7 @@ use crate::transforms::collection::models::{
     UpdateCollectionTransform,
 };
 use crate::transforms::collection::scanner::trigger_collection_transform_scan;
+use semantic_explorer_core::config::S3Config;
 use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::models::PaginatedResponse;
 use semantic_explorer_core::validation;
@@ -18,6 +19,11 @@ use aws_sdk_s3::Client as S3Client;
 use serde::Deserialize;
 use sqlx::{Pool, Postgres};
 use tracing::error;
+
+use actix_web::http::header;
+use futures_util::stream::StreamExt;
+use std::time::Duration;
+use tokio::time::interval;
 
 #[derive(Deserialize, Debug)]
 pub struct SortParams {
@@ -44,6 +50,16 @@ fn default_sort_direction() -> String {
     "desc".to_string()
 }
 
+#[derive(Deserialize, utoipa::ToSchema, Debug)]
+pub struct BatchCollectionTransformStatsRequest {
+    pub collection_transform_ids: Vec<i32>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SSEStreamQuery {
+    pub collection_id: Option<i32>,
+}
+
 #[utoipa::path(
     get,
     path = "/api/collection-transforms",
@@ -61,14 +77,14 @@ fn default_sort_direction() -> String {
     ),
 )]
 #[get("/api/collection-transforms")]
-#[tracing::instrument(name = "get_collection_transforms", skip(user, postgres_pool, params))]
+#[tracing::instrument(name = "get_collection_transforms", skip(user, pool, params))]
 pub async fn get_collection_transforms(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     params: Query<SortParams>,
 ) -> impl Responder {
     match collection_transforms::get_collection_transforms_paginated(
-        &postgres_pool,
+        &pool,
         &user.as_owner(),
         params.limit,
         params.offset,
@@ -102,16 +118,14 @@ pub async fn get_collection_transforms(
     ),
 )]
 #[get("/api/collection-transforms/{id}")]
-#[tracing::instrument(name = "get_collection_transform", skip(user, postgres_pool), fields(collection_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "get_collection_transform", skip(user, pool), fields(collection_transform_id = %path.as_ref()))]
 pub async fn get_collection_transform(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
     let id = path.into_inner();
-    match collection_transforms::get_collection_transform(&postgres_pool, &user.as_owner(), id)
-        .await
-    {
+    match collection_transforms::get_collection_transform(&pool, &user.as_owner(), id).await {
         Ok(transform) => {
             events::resource_read(
                 &user.as_owner(),
@@ -140,40 +154,38 @@ pub async fn get_collection_transform(
     ),
 )]
 #[post("/api/collection-transforms")]
-#[tracing::instrument(name = "create_collection_transform", skip(user, postgres_pool, nats_client, s3_client, encryption, body, req), fields(title = %body.title))]
-#[allow(clippy::too_many_arguments)]
+#[tracing::instrument(name = "create_collection_transform", skip(user, pool, nats_client, s3_client, encryption, body, req), fields(title = %body.title))]
+#[allow(clippy::too_many_arguments)] // Actix-web handler with dependency injection
 pub async fn create_collection_transform(
     user: AuthenticatedUser,
     req: HttpRequest,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     nats_client: Data<NatsClient>,
     s3_client: Data<S3Client>,
-    s3_config: Data<semantic_explorer_core::config::S3Config>,
+    s3_config: Data<S3Config>,
     encryption: Data<EncryptionService>,
     body: Json<CreateCollectionTransform>,
 ) -> impl Responder {
-    // Validate input
     if let Err(e) = validation::validate_title(&body.title) {
         return bad_request(e);
     }
 
+    let owner = user.to_owner_info();
     match collection_transforms::create_collection_transform(
-        &postgres_pool,
+        &pool,
         &body.title,
         body.collection_id,
         body.dataset_id,
-        &user.as_owner(),
-        &user,
+        &owner,
         body.chunk_size,
         &body.job_config,
     )
     .await
     {
         Ok(transform) => {
-            // Trigger the scan immediately upon creation
             let collection_transform_id = transform.collection_transform_id;
             if let Err(e) = trigger_collection_transform_scan(
-                &postgres_pool,
+                &pool,
                 &nats_client,
                 &s3_client,
                 &s3_config.bucket_name,
@@ -219,14 +231,13 @@ pub async fn create_collection_transform(
     ),
 )]
 #[patch("/api/collection-transforms/{id}")]
-#[tracing::instrument(name = "update_collection_transform", skip(user, postgres_pool, body), fields(collection_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "update_collection_transform", skip(user, pool, body), fields(collection_transform_id = %path.as_ref()))]
 pub async fn update_collection_transform(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     path: Path<i32>,
     body: Json<UpdateCollectionTransform>,
 ) -> impl Responder {
-    // Validate input if title is provided
     if let Some(ref title) = body.title
         && let Err(e) = validation::validate_title(title)
     {
@@ -235,7 +246,7 @@ pub async fn update_collection_transform(
 
     let id = path.into_inner();
     match collection_transforms::update_collection_transform(
-        &postgres_pool,
+        &pool,
         &user.as_owner(),
         id,
         body.title.as_deref(),
@@ -275,17 +286,15 @@ pub async fn update_collection_transform(
     ),
 )]
 #[delete("/api/collection-transforms/{id}")]
-#[tracing::instrument(name = "delete_collection_transform", skip(user, postgres_pool, req), fields(collection_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "delete_collection_transform", skip(user, pool, req), fields(collection_transform_id = %path.as_ref()))]
 pub async fn delete_collection_transform(
     user: AuthenticatedUser,
     req: HttpRequest,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
     let id = path.into_inner();
-    match collection_transforms::delete_collection_transform(&postgres_pool, &user.as_owner(), id)
-        .await
-    {
+    match collection_transforms::delete_collection_transform(&pool, &user.as_owner(), id).await {
         Ok(_) => {
             events::resource_deleted_with_request(
                 &req,
@@ -317,16 +326,16 @@ pub async fn delete_collection_transform(
     ),
 )]
 #[post("/api/collection-transforms/{id}/trigger")]
-#[tracing::instrument(name = "trigger_collection_transform", skip(user, postgres_pool), fields(collection_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "trigger_collection_transform", skip(user, pool), fields(collection_transform_id = %path.as_ref()))]
 pub async fn trigger_collection_transform(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
     let collection_transform_id = path.into_inner();
 
     match collection_transforms::get_collection_transform(
-        &postgres_pool,
+        &pool,
         &user.as_owner(),
         collection_transform_id,
     )
@@ -357,16 +366,16 @@ pub async fn trigger_collection_transform(
     ),
 )]
 #[get("/api/collection-transforms/{id}/stats")]
-#[tracing::instrument(name = "get_collection_transform_stats", skip(user, postgres_pool), fields(collection_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "get_collection_transform_stats", skip(user, pool), fields(collection_transform_id = %path.as_ref()))]
 pub async fn get_collection_transform_stats(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
     let collection_transform_id = path.into_inner();
 
     match collection_transforms::get_collection_transform(
-        &postgres_pool,
+        &pool,
         &user.as_owner(),
         collection_transform_id,
     )
@@ -374,7 +383,7 @@ pub async fn get_collection_transform_stats(
     {
         Ok(_) => {
             match collection_transforms::get_collection_transform_stats(
-                &postgres_pool,
+                &pool,
                 collection_transform_id,
             )
             .await
@@ -395,11 +404,6 @@ pub async fn get_collection_transform_stats(
     }
 }
 
-#[derive(Deserialize, utoipa::ToSchema, Debug)]
-pub struct BatchCollectionTransformStatsRequest {
-    pub collection_transform_ids: Vec<i32>,
-}
-
 #[utoipa::path(
     post,
     path = "/api/collection-transforms/batch-stats",
@@ -412,22 +416,17 @@ pub struct BatchCollectionTransformStatsRequest {
     ),
 )]
 #[post("/api/collection-transforms/batch-stats")]
-#[tracing::instrument(
-    name = "get_batch_collection_transform_stats",
-    skip(user, postgres_pool)
-)]
+#[tracing::instrument(name = "get_batch_collection_transform_stats", skip(user, pool))]
 pub async fn get_batch_collection_transform_stats(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     body: Json<BatchCollectionTransformStatsRequest>,
 ) -> impl Responder {
     let transform_ids = &body.collection_transform_ids;
 
     // Verify ownership of all transforms
     for &id in transform_ids {
-        match collection_transforms::get_collection_transform(&postgres_pool, &user.as_owner(), id)
-            .await
-        {
+        match collection_transforms::get_collection_transform(&pool, &user.as_owner(), id).await {
             Ok(_) => {}
             Err(_) => {
                 return HttpResponse::NotFound().json(serde_json::json!({
@@ -437,9 +436,7 @@ pub async fn get_batch_collection_transform_stats(
         }
     }
 
-    match collection_transforms::get_batch_collection_transform_stats(&postgres_pool, transform_ids)
-        .await
-    {
+    match collection_transforms::get_batch_collection_transform_stats(&pool, transform_ids).await {
         Ok(stats_map) => HttpResponse::Ok().json(stats_map),
         Err(e) => {
             error!("Failed to get batch stats: {}", e);
@@ -466,29 +463,24 @@ pub async fn get_batch_collection_transform_stats(
     ),
 )]
 #[get("/api/collection-transforms/{id}/processed-files")]
-#[tracing::instrument(name = "get_processed_files", skip(user, postgres_pool, params), fields(collection_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "get_processed_files", skip(user, pool, params), fields(collection_transform_id = %path.as_ref()))]
 pub async fn get_processed_files(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     path: Path<i32>,
     params: Query<SortParams>,
 ) -> impl Responder {
     let collection_transform_id = path.into_inner();
 
     match collection_transforms::get_collection_transform(
-        &postgres_pool,
+        &pool,
         &user.as_owner(),
         collection_transform_id,
     )
     .await
     {
         Ok(_) => {
-            match collection_transforms::get_processed_files(
-                &postgres_pool,
-                collection_transform_id,
-            )
-            .await
-            {
+            match collection_transforms::get_processed_files(&pool, collection_transform_id).await {
                 Ok(files) => {
                     let total_count = files.len() as i64;
                     let offset = params.offset as usize;
@@ -532,14 +524,14 @@ pub async fn get_processed_files(
     ),
 )]
 #[get("/api/collections/{collection_id}/transforms")]
-#[tracing::instrument(name = "get_collection_transforms_for_collection", skip(user, postgres_pool), fields(collection_id = %path.as_ref()))]
+#[tracing::instrument(name = "get_collection_transforms_for_collection", skip(user, pool), fields(collection_id = %path.as_ref()))]
 pub async fn get_collection_transforms_for_collection(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
     match collection_transforms::get_collection_transforms_for_collection(
-        &postgres_pool,
+        &pool,
         &user.as_owner(),
         path.into_inner(),
     )
@@ -568,14 +560,14 @@ pub async fn get_collection_transforms_for_collection(
     ),
 )]
 #[get("/api/datasets/{dataset_id}/collection-transforms")]
-#[tracing::instrument(name = "get_collection_transforms_for_dataset", skip(user, postgres_pool), fields(dataset_id = %path.as_ref()))]
+#[tracing::instrument(name = "get_collection_transforms_for_dataset", skip(user, pool), fields(dataset_id = %path.as_ref()))]
 pub async fn get_collection_transforms_for_dataset(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
     match collection_transforms::get_collection_transforms_for_dataset(
-        &postgres_pool,
+        &pool,
         &user.as_owner(),
         path.into_inner(),
     )
@@ -589,12 +581,6 @@ pub async fn get_collection_transforms_for_dataset(
             }))
         }
     }
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct SSEStreamQuery {
-    /// Optional collection_id to filter updates for a specific collection
-    pub collection_id: Option<i32>,
 }
 
 #[utoipa::path(
@@ -616,11 +602,6 @@ pub async fn stream_collection_transform_status(
     nats_client: Data<NatsClient>,
     query: Query<SSEStreamQuery>,
 ) -> impl Responder {
-    use actix_web::http::header;
-    use futures_util::stream::StreamExt;
-    use std::time::Duration;
-    use tokio::time::interval;
-
     let owner = user.to_string();
     let nats = nats_client.get_ref().clone();
     let collection_id_filter = query.collection_id;

@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use crate::collections::models::Collection;
 use semantic_explorer_core::observability::record_database_query;
+use semantic_explorer_core::owner_info::OwnerInfo;
 
 // SQL queries - RLS policies handle owner filtering automatically
 const GET_COLLECTION_QUERY: &str = r#"
@@ -194,26 +195,24 @@ pub(crate) async fn search_collections(
     Ok((collections, total_count))
 }
 
-#[tracing::instrument(name = "database.create_collection", skip(pool), fields(database.system = "postgresql", database.operation = "INSERT", title = %title, owner_id = %owner_id))]
-#[allow(clippy::too_many_arguments)]
+#[tracing::instrument(name = "database.create_collection", skip(pool), fields(database.system = "postgresql", database.operation = "INSERT", title = %title, owner_id = %owner.owner_id))]
 pub(crate) async fn create_collection(
     pool: &Pool<Postgres>,
     title: &str,
     details: Option<&str>,
-    owner_id: &str,
-    owner_display_name: &str,
+    owner: &OwnerInfo,
     tags: &[String],
     is_public: bool,
 ) -> Result<Collection> {
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
+    super::rls::set_rls_user_tx(&mut tx, &owner.owner_id).await?;
 
     let start = Instant::now();
     let result = sqlx::query_as::<_, Collection>(CREATE_COLLECTION_QUERY)
         .bind(title)
         .bind(details)
-        .bind(owner_id)
-        .bind(owner_display_name)
+        .bind(&owner.owner_id)
+        .bind(&owner.owner_display_name)
         .bind(tags)
         .bind(is_public)
         .fetch_one(&mut *tx)

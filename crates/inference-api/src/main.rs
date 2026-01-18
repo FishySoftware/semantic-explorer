@@ -59,19 +59,34 @@ async fn main() -> Result<()> {
     );
 
     // Log allowed models configuration
-    if config.models.allowed_models.is_empty() {
-        info!("All models are allowed (no INFERENCE_ALLOWED_MODELS configured)");
+    if config.models.allowed_embedding_models.is_empty() {
+        info!(
+            "All embedding models are allowed (no INFERENCE_ALLOWED_EMBEDDING_MODELS configured)"
+        );
     } else {
         info!(
-            allowed_models = ?config.models.allowed_models,
-            count = config.models.allowed_models.len(),
-            "Model access restricted to allowed list"
+            allowed_models = ?config.models.allowed_embedding_models,
+            count = config.models.allowed_embedding_models.len(),
+            "Embedding model access restricted to allowed list"
         );
     }
 
-    // Initialize model caches and pre-load models based on configuration
-    embedding::init_cache(&config.models);
-    reranker::init_cache(&config.models);
+    if config.models.allowed_rerank_models.is_empty() {
+        info!("All rerank models are allowed (no INFERENCE_ALLOWED_RERANK_MODELS configured)");
+    } else {
+        info!(
+            allowed_models = ?config.models.allowed_rerank_models,
+            count = config.models.allowed_rerank_models.len(),
+            "Rerank model access restricted to allowed list"
+        );
+    }
+
+    tokio::join!(
+        embedding::init_cache(&config.models),
+        reranker::init_cache(&config.models)
+    );
+
+    info!("Model caches initialized.");
 
     let model_config = web::Data::new(config.models.clone());
     let hostname = config.server.hostname.clone();
@@ -105,7 +120,6 @@ async fn main() -> Result<()> {
             .app_data(model_config.clone())
             .into_utoipa_app()
             .openapi(ApiDoc::openapi())
-            .service(api::health::health)
             .service(api::health::health_live)
             .service(api::health::health_ready)
             .service(api::embedding::list_embedders)

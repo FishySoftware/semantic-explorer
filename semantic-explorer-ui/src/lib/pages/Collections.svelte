@@ -6,26 +6,8 @@
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import CreateCollectionTransformModal from '../components/CreateCollectionTransformModal.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
+	import type { Collection, PaginatedCollectionList } from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
-
-	interface Collection {
-		collection_id: number;
-		title: string;
-		details: string | null;
-		owner: string;
-		bucket: string;
-		tags: string[];
-		created_at?: string;
-		updated_at?: string;
-		file_count: number;
-	}
-
-	interface PaginatedCollectionList {
-		collections: Collection[];
-		total_count: number;
-		limit: number;
-		offset: number;
-	}
 
 	let { onViewCollection: handleViewCollection } = $props<{
 		onViewCollection: (_: number) => void;

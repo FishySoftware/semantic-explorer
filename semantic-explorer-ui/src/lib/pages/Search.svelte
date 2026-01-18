@@ -4,10 +4,23 @@
 	import PageHeader from '../components/PageHeader.svelte';
 	import { apiCall } from '../utils/api';
 	import { formatError, toastStore } from '../utils/notifications';
+	import type {
+		Dataset,
+		EmbeddedDataset,
+		Embedder,
+		SearchResponse,
+		PaginatedResponse,
+		PaginatedEmbeddedDatasetList,
+	} from '../types/models';
 
-	let { onViewDataset: handleViewDataset, onViewEmbedder: handleViewEmbedder } = $props<{
+	let {
+		onViewDataset: handleViewDataset,
+		onViewEmbedder: handleViewEmbedder,
+		onViewEmbeddedDataset: handleViewEmbeddedDataset,
+	} = $props<{
 		onViewDataset?: (_: number) => void;
 		onViewEmbedder?: (_: number) => void;
+		onViewEmbeddedDataset?: (_: number) => void;
 	}>();
 
 	const onViewDataset = (id: number) => {
@@ -18,64 +31,15 @@
 		handleViewEmbedder?.(id);
 	};
 
-	interface Dataset {
-		dataset_id: number;
-		title: string;
-		details: string | null;
-		owner: string;
-		tags: string[];
-	}
-
-	interface EmbeddedDataset {
-		embedded_dataset_id: number;
-		title: string;
-		dataset_transform_id: number;
-		source_dataset_id: number;
-		source_dataset_title: string;
-		embedder_id: number;
-		embedder_name: string;
-		owner: string;
-		collection_name: string;
-		created_at: string;
-		updated_at: string;
-	}
-
-	interface SearchMatch {
-		id: string;
-		score: number;
-		text: string;
-		metadata: Record<string, any>;
-	}
-
-	interface DocumentResult {
-		item_id: number;
-		item_title: string;
-		best_score: number;
-		chunk_count: number;
-		best_chunk: SearchMatch;
-	}
-
-	interface EmbeddedDatasetSearchResults {
-		embedded_dataset_id: number;
-		embedded_dataset_title: string;
-		source_dataset_id: number;
-		source_dataset_title: string;
-		embedder_id: number;
-		embedder_name: string;
-		collection_name: string;
-		matches: SearchMatch[];
-		documents?: DocumentResult[];
-		error?: string;
-	}
-
-	interface SearchResponse {
-		results: EmbeddedDatasetSearchResults[];
-		query: string;
-		search_mode: 'documents' | 'chunks';
-	}
+	const onViewEmbeddedDataset = (id: number) => {
+		handleViewEmbeddedDataset?.(id);
+	};
 
 	let datasets = $state<Dataset[]>([]);
+	let embedders = $state<Embedder[]>([]);
 	let allEmbeddedDatasets = $state<EmbeddedDataset[]>([]);
+	let datasetsCache = new SvelteMap<number, Dataset>();
+	let embeddersCache = new SvelteMap<number, Embedder>();
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
@@ -124,13 +88,22 @@
 			loading = true;
 			error = null;
 
-			const [datasetsData, embeddedDatasetsData] = await Promise.all([
-				apiCall<Dataset[]>('/api/datasets'),
-				apiCall<EmbeddedDataset[]>('/api/embedded-datasets'),
+			const [datasetsResponse, embeddedDatasetsResponse, embeddersResponse] = await Promise.all([
+				apiCall<PaginatedResponse<Dataset>>('/api/datasets?limit=1000'),
+				apiCall<PaginatedEmbeddedDatasetList>('/api/embedded-datasets?limit=1000'),
+				apiCall<PaginatedResponse<Embedder>>('/api/embedders?limit=1000'),
 			]);
 
-			datasets = datasetsData;
-			allEmbeddedDatasets = embeddedDatasetsData;
+			datasets = datasetsResponse.items;
+			embedders = embeddersResponse.items;
+			allEmbeddedDatasets = embeddedDatasetsResponse.embedded_datasets;
+
+			// Build caches for quick lookup
+			datasetsCache.clear();
+			datasets.forEach((d) => datasetsCache.set(d.dataset_id, d));
+
+			embeddersCache.clear();
+			embedders.forEach((e) => embeddersCache.set(e.embedder_id, e));
 
 			// Default to first dataset for filtering display
 			if (datasets.length > 0 && selectedDatasetId === null) {
@@ -335,6 +308,8 @@
 					{:else}
 						<div class="space-y-2">
 							{#each filteredEmbeddedDatasets as embeddedDataset (embeddedDataset.embedded_dataset_id)}
+								{@const dataset = datasetsCache.get(embeddedDataset.source_dataset_id)}
+								{@const embedder = embeddersCache.get(embeddedDataset.embedder_id)}
 								<label
 									class="flex items-start gap-3 cursor-pointer bg-white dark:bg-gray-800 px-3 py-2 rounded border border-gray-200 dark:border-gray-600 hover:border-blue-400 dark:hover:border-blue-500 transition-colors"
 								>
@@ -344,16 +319,74 @@
 										onchange={() => toggleEmbeddedDataset(embeddedDataset.embedded_dataset_id)}
 										class="mt-1 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
 									/>
-									<div class="flex-1 flex flex-col">
-										<span class="text-sm font-medium text-gray-900 dark:text-white">
+									<div class="flex-1 flex flex-col gap-2">
+										<button
+											type="button"
+											onclick={(e) => {
+												e.stopPropagation();
+												onViewEmbeddedDataset(embeddedDataset.embedded_dataset_id);
+											}}
+											class="text-sm font-semibold text-blue-600 dark:text-blue-400 hover:underline text-left"
+										>
 											{embeddedDataset.title}
-										</span>
-										<div class="text-xs text-gray-500 dark:text-gray-400 mt-1 space-y-0.5">
-											<div>Dataset: {embeddedDataset.source_dataset_title}</div>
-											<div>Embedder: {embeddedDataset.embedder_name}</div>
-											<div class="font-mono text-[10px]">
-												{embeddedDataset.collection_name}
+										</button>
+
+										<div
+											class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-600 dark:text-gray-400"
+										>
+											<div class="flex items-center gap-1">
+												<span class="text-gray-500 dark:text-gray-500">Dataset:</span>
+												{#if dataset}
+													<button
+														type="button"
+														onclick={(e) => {
+															e.stopPropagation();
+															onViewDataset(dataset.dataset_id);
+														}}
+														class="text-blue-600 dark:text-blue-400 hover:underline font-medium"
+													>
+														{dataset.title}
+													</button>
+												{:else}
+													<span class="text-gray-400 dark:text-gray-500">Loading...</span>
+												{/if}
 											</div>
+
+											<div class="flex items-center gap-1">
+												<span class="text-gray-500 dark:text-gray-500">Embedder:</span>
+												{#if embedder}
+													<button
+														type="button"
+														onclick={(e) => {
+															e.stopPropagation();
+															onViewEmbedder(embedder.embedder_id);
+														}}
+														class="text-blue-600 dark:text-blue-400 hover:underline font-medium"
+													>
+														{embedder.name}
+													</button>
+												{:else}
+													<span class="text-gray-400 dark:text-gray-500">Loading...</span>
+												{/if}
+											</div>
+
+											{#if embedder?.dimensions}
+												<div class="flex items-center gap-1">
+													<span class="text-gray-500 dark:text-gray-500">Dimensions:</span>
+													<span class="font-mono text-indigo-600 dark:text-indigo-400"
+														>{embedder.dimensions}</span
+													>
+												</div>
+											{/if}
+										</div>
+
+										<div class="flex items-center gap-1 mt-1">
+											<span class="text-gray-500 dark:text-gray-500 text-[10px]">Qdrant:</span>
+											<code
+												class="font-mono text-[10px] text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded"
+											>
+												{embeddedDataset.collection_name}
+											</code>
 										</div>
 									</div>
 								</label>
@@ -498,7 +531,8 @@
 												{result.embedded_dataset_title}
 											</h3>
 											<p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
-												Dataset: <button
+												Source Dataset:
+												<button
 													onclick={() => onViewDataset(result.source_dataset_id)}
 													class="text-blue-600 dark:text-blue-400 hover:underline font-medium"
 												>
@@ -596,7 +630,8 @@
 												{result.embedded_dataset_title}
 											</h3>
 											<p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
-												Dataset: <button
+												Source Dataset:
+												<button
 													onclick={() => onViewDataset(result.source_dataset_id)}
 													class="text-blue-600 dark:text-blue-400 hover:underline font-medium"
 												>
@@ -604,7 +639,8 @@
 												</button>
 											</p>
 											<p class="text-xs text-gray-500 dark:text-gray-500 mt-1">
-												Embedder: <button
+												Embedder:
+												<button
 													onclick={() => onViewEmbedder(result.embedder_id)}
 													class="text-blue-600 dark:text-blue-400 hover:underline"
 												>

@@ -1,18 +1,38 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use sqlx::types::chrono::{DateTime, Utc};
 use utoipa::ToSchema;
 
-/// Embedded Dataset: Result entity created by Dataset Transform
-/// One Embedded Dataset per embedder in the Dataset Transform
-/// Contains vector embeddings stored in Qdrant
+#[derive(Debug, Deserialize, ToSchema, utoipa::IntoParams)]
+pub struct EmbeddedDatasetListQuery {
+    pub search: Option<String>,
+    #[schema(default = 20, minimum = 1, maximum = 1000)]
+    #[serde(default = "default_limit")]
+    pub limit: i64,
+    #[schema(default = 0, minimum = 0)]
+    #[serde(default)]
+    pub offset: i64,
+}
+
+fn default_limit() -> i64 {
+    20
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct PaginatedEmbeddedDatasetList {
+    pub embedded_datasets: Vec<EmbeddedDataset>,
+    pub total_count: i64,
+    pub limit: i64,
+    pub offset: i64,
+}
+
 #[derive(Serialize, ToSchema, FromRow, Debug, Clone)]
 pub struct EmbeddedDataset {
     pub embedded_dataset_id: i32,
     pub title: String,
     pub dataset_transform_id: i32, // Parent Dataset Transform
     pub source_dataset_id: i32,
-    pub embedder_id: i32, // Single embedder
+    pub embedder_id: i32,
     pub owner_id: String,
     pub owner_display_name: String,
     pub collection_name: String, // Qdrant collection name

@@ -36,6 +36,13 @@
 		total_count: number | null;
 	}
 
+	interface PaginatedResponse<T> {
+		items: T[];
+		total_count: number;
+		limit: number;
+		offset: number;
+	}
+
 	interface Collection {
 		collection_id: number;
 		title: string;
@@ -186,8 +193,8 @@
 			transformsLoading = true;
 			const response = await fetch('/api/collection-transforms');
 			if (response.ok) {
-				const data = await response.json();
-				const allTransforms: CollectionTransform[] = Array.isArray(data) ? data : data.items || [];
+				const data = (await response.json()) as PaginatedResponse<CollectionTransform>;
+				const allTransforms = data.items;
 				collectionTransforms = allTransforms
 					.filter((t) => t.collection_id === collectionId)
 					.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
@@ -219,7 +226,7 @@
 
 	async function fetchAllowedFileTypes() {
 		try {
-			const response = await fetch('/api/collections/allowed-file-types');
+			const response = await fetch('/api/collections-allowed-file-types');
 			if (response.ok) {
 				const mimeTypes: string[] = await response.json();
 				// Convert MIME types to file input accept format

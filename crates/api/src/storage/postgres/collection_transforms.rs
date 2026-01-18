@@ -5,6 +5,7 @@ use crate::transforms::collection::models::{
     CollectionTransform, CollectionTransformStats, ProcessedFile,
 };
 use semantic_explorer_core::models::PaginatedResponse;
+use semantic_explorer_core::owner_info::OwnerInfo;
 
 fn validate_sort_field(sort_by: &str) -> Result<String> {
     match sort_by {
@@ -267,7 +268,20 @@ pub async fn get_collection_transforms_for_dataset(
     Ok(transforms)
 }
 
-pub async fn get_active_collection_transforms(
+/// **PRIVILEGED OPERATION** - Bypasses RLS for system worker access
+///
+/// This function intentionally bypasses Row-Level Security to fetch ALL active
+/// collection transforms across all users. It should ONLY be called by system
+/// workers (collection-transforms worker) that need to process transforms for
+/// all users
+///
+/// For user-specific queries from API endpoints, use:
+/// - `get_collection_transform()` with RLS context
+/// - `get_collection_transforms_paginated()` with RLS context
+///
+/// # Returns
+/// All enabled collection transforms regardless of ownership
+pub async fn get_active_collection_transforms_privileged(
     pool: &Pool<Postgres>,
 ) -> Result<Vec<CollectionTransform>> {
     let transforms =
@@ -277,26 +291,24 @@ pub async fn get_active_collection_transforms(
     Ok(transforms)
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn create_collection_transform(
     pool: &Pool<Postgres>,
     title: &str,
     collection_id: i32,
     dataset_id: i32,
-    owner_id: &str,
-    owner_display_name: &str,
+    owner: &OwnerInfo,
     chunk_size: i32,
     job_config: &serde_json::Value,
 ) -> Result<CollectionTransform> {
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
+    super::rls::set_rls_user_tx(&mut tx, &owner.owner_id).await?;
 
     let transform = sqlx::query_as::<_, CollectionTransform>(CREATE_COLLECTION_TRANSFORM_QUERY)
         .bind(title)
         .bind(collection_id)
         .bind(dataset_id)
-        .bind(owner_id)
-        .bind(owner_display_name)
+        .bind(&owner.owner_id)
+        .bind(&owner.owner_display_name)
         .bind(chunk_size)
         .bind(job_config)
         .fetch_one(&mut *tx)

@@ -307,7 +307,7 @@ pub(crate) async fn store_retrieved_documents(
     // - Larger batches = fewer round trips but more memory
     // - Smaller batches = more round trips but less memory per batch
     // - 500 is a good balance: ~2,500 params, allows ~26 full batches per max
-    // FUTURE: Make configurable via ChatConfig if workload characteristics change
+    // TODO: Make configurable via ChatConfig if workload characteristics change
     const BATCH_SIZE: usize = 500;
 
     for chunk in documents.chunks(BATCH_SIZE) {

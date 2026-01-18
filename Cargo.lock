@@ -3401,6 +3401,7 @@ dependencies = [
  "anyhow",
  "dotenvy",
  "fastembed",
+ "futures",
  "mimalloc",
  "once_cell",
  "ort",

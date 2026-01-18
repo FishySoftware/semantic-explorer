@@ -537,16 +537,16 @@ Health check endpoints running on port 8081:
 
 ```bash
 # Liveness probe (is the worker running?)
-curl http://localhost:8081/health
+curl http://localhost:8081/health/live
 
 # Readiness probe (is the worker ready to accept jobs?)
-curl http://localhost:8081/ready
+curl http://localhost:8081/health/ready
 
 # Kubernetes probes (in values.yaml)
 workerVisualizationsPy:
   livenessProbe:
     httpGet:
-      path: /health
+      path: /health/live
       port: 8081
     initialDelaySeconds: 30
     periodSeconds: 10
@@ -554,7 +554,7 @@ workerVisualizationsPy:
 
   readinessProbe:
     httpGet:
-      path: /ready
+      path: /health/ready
       port: 8081
     initialDelaySeconds: 15
     periodSeconds: 5

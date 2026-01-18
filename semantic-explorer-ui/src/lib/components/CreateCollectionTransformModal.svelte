@@ -28,6 +28,20 @@
 		provider: string;
 	}
 
+	interface PaginatedEmbedderList {
+		items: Embedder[];
+		total_count: number;
+		limit: number;
+		offset: number;
+	}
+
+	interface PaginatedDatasetList {
+		items: Dataset[];
+		total_count: number;
+		limit: number;
+		offset: number;
+	}
+
 	let {
 		open = $bindable(false),
 		collectionId = null,
@@ -135,9 +149,9 @@
 	async function fetchDatasets() {
 		try {
 			loadingDatasets = true;
-			const response = await fetch('/api/datasets');
+			const response = await fetch('/api/datasets?limit=100&offset=0');
 			if (!response.ok) throw new Error('Failed to fetch datasets');
-			const data = await response.json();
+			const data: PaginatedDatasetList = await response.json();
 			datasets = data.items ?? [];
 			// Default to first dataset if available, otherwise 'new'
 			if (datasets.length > 0 && datasetOption === 'new') {
@@ -153,9 +167,11 @@
 	async function fetchEmbedders() {
 		try {
 			loadingEmbedders = true;
-			const response = await fetch('/api/embedders');
+			const response = await fetch('/api/embedders?limit=10&offset=0');
 			if (!response.ok) throw new Error('Failed to fetch embedders');
-			embedders = await response.json();
+			const data: PaginatedEmbedderList = await response.json();
+			// Handle paginated response from the API
+			embedders = data.items || [];
 		} catch (e) {
 			console.error('Failed to fetch embedders:', e);
 		} finally {

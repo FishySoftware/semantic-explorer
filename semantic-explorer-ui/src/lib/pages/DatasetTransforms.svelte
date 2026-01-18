@@ -5,6 +5,13 @@
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import CreateDatasetTransformModal from '../components/CreateDatasetTransformModal.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
+	import type {
+		DatasetTransform,
+		DatasetTransformStats as Stats,
+		Dataset,
+		Embedder,
+		PaginatedResponse,
+	} from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
 
 	interface Props {
@@ -13,46 +20,6 @@
 	}
 
 	let { onViewTransform }: Props = $props();
-
-	interface DatasetTransform {
-		dataset_transform_id: number;
-		title: string;
-		source_dataset_id: number;
-		embedder_ids: number[];
-		owner: string;
-		is_enabled: boolean;
-		job_config: any;
-		created_at: string;
-		updated_at: string;
-	}
-
-	interface Dataset {
-		dataset_id: number;
-		title: string;
-	}
-
-	interface Embedder {
-		embedder_id: number;
-		name: string;
-		provider: string;
-	}
-
-	interface Stats {
-		dataset_transform_id: number;
-		embedder_count: number;
-		total_batches_processed: number;
-		successful_batches: number;
-		failed_batches: number;
-		total_chunks_embedded: number;
-		total_chunks_failed: number;
-	}
-
-	interface PaginatedResponse {
-		items: DatasetTransform[];
-		total_count: number;
-		limit: number;
-		offset: number;
-	}
 
 	let transforms = $state<DatasetTransform[]>([]);
 	let datasets = $state<Dataset[]>([]);
@@ -163,7 +130,7 @@
 			if (!response.ok) {
 				throw new Error(`Failed to fetch dataset transforms: ${response.statusText}`);
 			}
-			const data: PaginatedResponse = await response.json();
+			const data: PaginatedResponse<DatasetTransform> = await response.json();
 			transforms = data.items;
 			totalCount = data.total_count;
 
@@ -292,7 +259,8 @@
 			if (!response.ok) {
 				throw new Error(`Failed to fetch embedders: ${response.statusText}`);
 			}
-			embedders = await response.json();
+			const data = await response.json();
+			embedders = data.items || [];
 		} catch (e) {
 			console.error('Failed to fetch embedders:', e);
 		}

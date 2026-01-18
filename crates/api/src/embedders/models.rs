@@ -3,6 +3,29 @@ use sqlx::FromRow;
 use sqlx::types::chrono::{DateTime, Utc};
 use utoipa::ToSchema;
 
+#[derive(Debug, Deserialize, ToSchema, utoipa::IntoParams)]
+pub(crate) struct EmbedderListQuery {
+    pub(crate) search: Option<String>,
+    #[schema(default = 20, minimum = 1, maximum = 1000)]
+    #[serde(default = "default_limit")]
+    pub(crate) limit: i64,
+    #[schema(default = 0, minimum = 0)]
+    #[serde(default)]
+    pub(crate) offset: i64,
+}
+
+fn default_limit() -> i64 {
+    20
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct PaginatedEmbedderList {
+    pub(crate) items: Vec<Embedder>,
+    pub(crate) total_count: i64,
+    pub(crate) limit: i64,
+    pub(crate) offset: i64,
+}
+
 #[derive(Serialize, Deserialize, ToSchema)]
 pub(crate) struct CreateEmbedder {
     pub(crate) name: String,

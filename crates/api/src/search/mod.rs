@@ -26,7 +26,7 @@ pub(crate) async fn search_collection(
 ) -> Result<Vec<SearchMatch>> {
     // In document mode, fetch chunks in batches until we have enough unique documents
     if matches!(request.search_mode, SearchMode::Documents) {
-        const BATCH_SIZE: u64 = 200;
+        const BATCH_SIZE: u64 = 200; //TODO: make configurable
         let target_documents = request.limit as usize;
         let mut all_matches = Vec::new();
         let mut unique_item_ids = HashSet::new();

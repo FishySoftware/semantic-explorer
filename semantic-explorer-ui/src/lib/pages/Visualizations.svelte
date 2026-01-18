@@ -14,7 +14,7 @@
 	import ActionMenu from '../components/ActionMenu.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
-	import type { Visualization, VisualizationTransform } from '../types/visualizations';
+	import type { Visualization, VisualizationTransform, PaginatedResponse } from '../types/models';
 	import { InfoIcon } from '../utils/icons';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { formatDate } from '../utils/ui-helpers';
@@ -98,8 +98,8 @@
 			if (!response.ok) {
 				throw new Error(`Failed to fetch visualization transforms: ${response.statusText}`);
 			}
-			const data = await response.json();
-			transforms = Array.isArray(data) ? data : data.items || [];
+			const data = (await response.json()) as PaginatedResponse<VisualizationTransform>;
+			transforms = data.items;
 
 			// Load completed visualizations for each transform
 			await loadCompletedVisualizations();

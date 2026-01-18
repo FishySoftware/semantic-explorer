@@ -154,8 +154,7 @@
 				throw new Error(`Failed to fetch visualizations: ${response.statusText}`);
 			}
 
-			const data = await response.json();
-			const dbVisualizations: DatabaseVisualization[] = Array.isArray(data) ? data : [];
+			const dbVisualizations = (await response.json()) as DatabaseVisualization[];
 
 			// Transform from database format to UI format
 			visualizations = dbVisualizations.map((v) => ({

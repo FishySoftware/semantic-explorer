@@ -257,6 +257,7 @@ where
 
             match process_job(job, ctx).await {
                 Ok(_) => {
+                    info!("Job processed successfully.");
                     // Acknowledge success
                     if let Err(e) = msg.ack().await {
                         error!("Failed to acknowledge successful job: {}", e);

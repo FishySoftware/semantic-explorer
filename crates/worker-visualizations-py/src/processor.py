@@ -165,7 +165,7 @@ class VisualizationProcessor:
 
     def _run_umap(self, vectors, job):
         """Synchronous wrapper for UMAP."""
-        return asyncio.run(self._apply_umap(vectors, job)) if asyncio.iscoroutinefunction(self._apply_umap) else self._apply_umap_sync(vectors, job)
+        return self._apply_umap_sync(vectors, job)
     
     def _run_hdbscan(self, vectors, job):
         """Synchronous wrapper for HDBSCAN."""
@@ -201,7 +201,7 @@ class VisualizationProcessor:
             texts = []
 
             # If collection is small enough, fetch all
-            if point_count <= MAX_POINTS:
+            if point_count is not None and point_count <= MAX_POINTS:
                 logger.info(f"Collection size {point_count} <= {MAX_POINTS}. Fetching all points.")
                 offset = None
                 limit = 1000  # Batch size for scrolling

@@ -7,38 +7,11 @@ use crate::llms::models::{CreateLLM, LargeLanguageModel, UpdateLargeLanguageMode
 use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::observability::record_database_query;
 
-/// Helper to encrypt an optional API key
-fn encrypt_api_key(
-    encryption: &EncryptionService,
-    api_key: &Option<String>,
-) -> Result<Option<String>> {
-    match api_key {
-        Some(key) if !key.is_empty() => Ok(Some(encryption.encrypt(key)?)),
-        _ => Ok(None),
-    }
-}
-
-/// Helper to decrypt api_key in a LargeLanguageModel
-fn decrypt_llm_api_key(
-    encryption: &EncryptionService,
-    mut llm: LargeLanguageModel,
-) -> Result<LargeLanguageModel> {
-    if let Some(ref encrypted_key) = llm.api_key
-        && !encrypted_key.is_empty()
-    {
-        llm.api_key = Some(encryption.decrypt(encrypted_key)?);
-    }
-    Ok(llm)
-}
-
-/// Helper to decrypt api_key in multiple LargeLanguageModels
-fn decrypt_llms_api_keys(
-    encryption: &EncryptionService,
-    llms: Vec<LargeLanguageModel>,
-) -> Result<Vec<LargeLanguageModel>> {
-    llms.into_iter()
-        .map(|llm| decrypt_llm_api_key(encryption, llm))
-        .collect()
+pub(crate) struct PaginatedResult<T> {
+    pub(crate) items: Vec<T>,
+    pub(crate) total_count: i64,
+    pub(crate) limit: i64,
+    pub(crate) offset: i64,
 }
 
 const GET_LLM_QUERY: &str = r#"
@@ -51,6 +24,7 @@ const GET_LLMS_QUERY: &str = r#"
     SELECT llm_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at
     FROM llms
     ORDER BY created_at DESC
+    LIMIT $1 OFFSET $2
 "#;
 
 const GET_LLMS_WITH_SEARCH_QUERY: &str = r#"
@@ -58,6 +32,15 @@ const GET_LLMS_WITH_SEARCH_QUERY: &str = r#"
     FROM llms
     WHERE name ILIKE $1
     ORDER BY created_at DESC
+    LIMIT $2 OFFSET $3
+"#;
+
+const COUNT_LLMS_QUERY: &str = r#"
+    SELECT COUNT(*) as count FROM llms
+"#;
+
+const COUNT_LLMS_SEARCH_QUERY: &str = r#"
+    SELECT COUNT(*) as count FROM llms WHERE name ILIKE $1
 "#;
 
 const GET_PUBLIC_LLMS_QUERY: &str = r#"
@@ -76,8 +59,8 @@ const GET_RECENT_PUBLIC_LLMS_QUERY: &str = r#"
 "#;
 
 const CREATE_LLM_QUERY: &str = r#"
-    INSERT INTO llms (name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+    INSERT INTO llms (name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, model, config, is_public, created_at, updated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
     RETURNING llm_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at
 "#;
 
@@ -98,8 +81,8 @@ const UPDATE_LLM_QUERY: &str = r#"
 "#;
 
 const GRAB_PUBLIC_LLM_QUERY: &str = r#"
-    INSERT INTO llms (name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at)
-    SELECT name || ' - grabbed', $1, $2, provider, base_url, api_key_encrypted, config, FALSE, NOW(), NOW()
+    INSERT INTO llms (name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, model, config, is_public, created_at, updated_at)
+    SELECT name || ' - grabbed', $1, $2, provider, base_url, api_key_encrypted, model, config, FALSE, NOW(), NOW()
     FROM llms
     WHERE llm_id = $3 AND is_public = TRUE
     RETURNING llm_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at
@@ -134,13 +117,24 @@ pub(crate) async fn get_llm(
 pub(crate) async fn get_llms(
     pool: &Pool<Postgres>,
     user: &AuthenticatedUser,
+    limit: i64,
+    offset: i64,
     encryption: &EncryptionService,
-) -> Result<Vec<LargeLanguageModel>> {
+) -> Result<PaginatedResult<LargeLanguageModel>> {
     let mut tx = pool.begin().await?;
     super::rls::set_rls_user_tx(&mut tx, user.as_str()).await?;
 
+    // Get total count
+    let count_result = sqlx::query_as::<_, (i64,)>(COUNT_LLMS_QUERY)
+        .fetch_one(&mut *tx)
+        .await?;
+    let total_count = count_result.0;
+
+    // Get paginated results
     let start = Instant::now();
     let result = sqlx::query_as::<_, LargeLanguageModel>(GET_LLMS_QUERY)
+        .bind(limit)
+        .bind(offset)
         .fetch_all(&mut *tx)
         .await;
 
@@ -150,7 +144,14 @@ pub(crate) async fn get_llms(
 
     let llms = result?;
     tx.commit().await?;
-    decrypt_llms_api_keys(encryption, llms)
+    let decrypted = decrypt_llms_api_keys(encryption, llms)?;
+
+    Ok(PaginatedResult {
+        items: decrypted,
+        total_count,
+        limit,
+        offset,
+    })
 }
 
 #[tracing::instrument(name = "database.get_llms_with_search", skip(pool, encryption), fields(database.system = "postgresql", database.operation = "SELECT", username = %user.as_str()))]
@@ -158,15 +159,28 @@ pub(crate) async fn get_llms_with_search(
     pool: &Pool<Postgres>,
     user: &AuthenticatedUser,
     search_query: &str,
+    limit: i64,
+    offset: i64,
     encryption: &EncryptionService,
-) -> Result<Vec<LargeLanguageModel>> {
+) -> Result<PaginatedResult<LargeLanguageModel>> {
     let mut tx = pool.begin().await?;
     super::rls::set_rls_user_tx(&mut tx, user.as_str()).await?;
 
-    let start = Instant::now();
     let search_pattern = format!("%{}%", search_query);
+
+    // Get total count
+    let count_result = sqlx::query_as::<_, (i64,)>(COUNT_LLMS_SEARCH_QUERY)
+        .bind(&search_pattern)
+        .fetch_one(&mut *tx)
+        .await?;
+    let total_count = count_result.0;
+
+    // Get paginated results
+    let start = Instant::now();
     let result = sqlx::query_as::<_, LargeLanguageModel>(GET_LLMS_WITH_SEARCH_QUERY)
         .bind(&search_pattern)
+        .bind(limit)
+        .bind(offset)
         .fetch_all(&mut *tx)
         .await;
 
@@ -176,7 +190,14 @@ pub(crate) async fn get_llms_with_search(
 
     let llms = result?;
     tx.commit().await?;
-    decrypt_llms_api_keys(encryption, llms)
+    let decrypted = decrypt_llms_api_keys(encryption, llms)?;
+
+    Ok(PaginatedResult {
+        items: decrypted,
+        total_count,
+        limit,
+        offset,
+    })
 }
 
 #[tracing::instrument(name = "database.get_public_llms", skip(pool, encryption), fields(database.system = "postgresql", database.operation = "SELECT"))]
@@ -236,6 +257,7 @@ pub(crate) async fn create_llm(
         .bind(&create_llm.provider)
         .bind(&create_llm.base_url)
         .bind(&encrypted_api_key)
+        .bind(&create_llm.model)
         .bind(&create_llm.config)
         .bind(create_llm.is_public)
         .fetch_one(&mut *tx)
@@ -337,4 +359,38 @@ pub(crate) async fn grab_public_llm(
     tx.commit().await?;
     // Decrypt api_key for the response
     decrypt_llm_api_key(encryption, llm)
+}
+
+/// Helper to encrypt an optional API key
+fn encrypt_api_key(
+    encryption: &EncryptionService,
+    api_key: &Option<String>,
+) -> Result<Option<String>> {
+    match api_key {
+        Some(key) if !key.is_empty() => Ok(Some(encryption.encrypt(key)?)),
+        _ => Ok(None),
+    }
+}
+
+/// Helper to decrypt api_key in a LargeLanguageModel
+fn decrypt_llm_api_key(
+    encryption: &EncryptionService,
+    mut llm: LargeLanguageModel,
+) -> Result<LargeLanguageModel> {
+    if let Some(ref encrypted_key) = llm.api_key
+        && !encrypted_key.is_empty()
+    {
+        llm.api_key = Some(encryption.decrypt(encrypted_key)?);
+    }
+    Ok(llm)
+}
+
+/// Helper to decrypt api_key in multiple LargeLanguageModels
+fn decrypt_llms_api_keys(
+    encryption: &EncryptionService,
+    llms: Vec<LargeLanguageModel>,
+) -> Result<Vec<LargeLanguageModel>> {
+    llms.into_iter()
+        .map(|llm| decrypt_llm_api_key(encryption, llm))
+        .collect()
 }

@@ -1,18 +1,9 @@
 //! Health check endpoints for the inference API.
 
 use actix_web::{HttpResponse, Responder, get};
-use serde::Serialize;
-use utoipa::ToSchema;
 
 use crate::embedding;
 use crate::reranker;
-
-/// Health status response
-#[derive(Serialize, ToSchema)]
-pub struct HealthStatus {
-    status: String,
-    service: String,
-}
 
 /// Liveness probe - always returns OK if the service is running
 #[utoipa::path(
@@ -60,21 +51,4 @@ pub async fn health_ready() -> impl Responder {
             "reranker": reranker_ready
         }))
     }
-}
-
-/// Health check
-#[utoipa::path(
-    get,
-    path = "/health",
-    responses(
-        (status = 200, description = "Service health status", body = HealthStatus)
-    ),
-    tag = "health"
-)]
-#[get("/health")]
-pub async fn health() -> impl Responder {
-    HttpResponse::Ok().json(HealthStatus {
-        status: "ok".to_string(),
-        service: "inference-api".to_string(),
-    })
 }

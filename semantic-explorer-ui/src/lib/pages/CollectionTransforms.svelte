@@ -6,6 +6,14 @@
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import CreateCollectionTransformModal from '../components/CreateCollectionTransformModal.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
+	import type {
+		CollectionTransform,
+		CollectionTransformStats as Stats,
+		Collection,
+		Dataset,
+		PaginatedResponse,
+		ProcessedFile,
+	} from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
 
 	interface Props {
@@ -14,56 +22,6 @@
 	}
 
 	let { onViewTransform }: Props = $props();
-
-	interface CollectionTransform {
-		collection_transform_id: number;
-		title: string;
-		collection_id: number;
-		dataset_id: number;
-		owner: string;
-		is_enabled: boolean;
-		chunk_size: number;
-		job_config: any;
-		created_at: string;
-		updated_at: string;
-	}
-
-	interface Collection {
-		collection_id: number;
-		title: string;
-	}
-
-	interface Dataset {
-		dataset_id: number;
-		title: string;
-	}
-
-	interface Stats {
-		collection_transform_id: number;
-		total_files_processed: number;
-		successful_files: number;
-		failed_files: number;
-		total_items_created: number;
-	}
-
-	interface ProcessedFile {
-		id: number;
-		transform_type: string;
-		transform_id: number;
-		file_key: string;
-		processed_at: string;
-		item_count: number;
-		process_status: string;
-		process_error: string | null;
-		processing_duration_ms: number | null;
-	}
-
-	interface PaginatedResponse {
-		items: CollectionTransform[];
-		total_count: number;
-		limit: number;
-		offset: number;
-	}
 
 	let transforms = $state<CollectionTransform[]>([]);
 	let collections = $state<Collection[]>([]);
@@ -186,7 +144,7 @@
 			if (!response.ok) {
 				throw new Error(`Failed to fetch collection transforms: ${response.statusText}`);
 			}
-			const data: PaginatedResponse = await response.json();
+			const data: PaginatedResponse<CollectionTransform> = await response.json();
 			transforms = data.items;
 			totalCount = data.total_count;
 
@@ -719,10 +677,10 @@
 										onclick={() => onViewTransform(transform.collection_transform_id)}
 										class="text-blue-600 dark:text-blue-400 hover:underline"
 									>
-										{transform.title}
+										{transform.dataset_title}
 									</button>
 								{:else}
-									{transform.title}
+									{transform.dataset_title}
 								{/if}
 							</td>
 							<td class="px-4 py-3 text-sm">
@@ -754,7 +712,7 @@
 								{stats?.total_files_processed ?? '-'}
 							</td>
 							<td class="px-4 py-3">
-								{stats?.total_items_created ?? '-'}
+								{stats?.total_chunks_created ?? '-'}
 							</td>
 							<td class="px-4 py-3">
 								{new Date(transform.created_at).toLocaleDateString()}
@@ -838,7 +796,7 @@
 <ConfirmDialog
 	open={transformPendingDelete !== null}
 	message={transformPendingDelete
-		? `Are you sure you want to delete "${transformPendingDelete.title}"? This action cannot be undone.`
+		? `Are you sure you want to delete the transform "${transformPendingDelete.collection_title} > ${transformPendingDelete.dataset_title}"? This action cannot be undone.`
 		: ''}
 	confirmLabel="Delete"
 	variant="danger"

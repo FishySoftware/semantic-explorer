@@ -29,6 +29,7 @@ tokio = { workspace = true }
 once_cell = { workspace = true }
 fastembed = { version = "5.8.1", features = ["hf-hub-rustls-tls", "cudnn", "cuda"], default-features = false }
 ort = { version = "2.0.0-rc.11", features = ["cuda"], default-features = false }
+futures = "0.3.31"
 
 [target.'cfg(target_env = "musl")'.dependencies]
 mimalloc = { version = "0.1.48", features = ["v3"], default-features = false }

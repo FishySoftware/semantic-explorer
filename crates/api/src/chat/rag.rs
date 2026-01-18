@@ -8,9 +8,9 @@ use semantic_explorer_core::encryption::EncryptionService;
 use sqlx::{Pool, Postgres};
 use tracing::{debug, error, instrument, warn};
 
-#[instrument(name = "retrieve_documents", skip(postgres_pool, qdrant_client, encryption), fields(embedded_dataset_id, query_len = query.len()))]
+#[instrument(name = "retrieve_documents", skip(pool, qdrant_client, encryption), fields(embedded_dataset_id, query_len = query.len()))]
 pub async fn retrieve_documents(
-    postgres_pool: &Pool<Postgres>,
+    pool: &Pool<Postgres>,
     qdrant_client: &Qdrant,
     embedded_dataset_id: i32,
     query: &str,
@@ -18,19 +18,18 @@ pub async fn retrieve_documents(
     encryption: &EncryptionService,
 ) -> Result<Vec<RetrievedDocument>, String> {
     // Fetch embedded dataset info (collection name and embedder ID)
-    let dataset_info =
-        embedded_datasets::get_embedded_dataset_info(postgres_pool, embedded_dataset_id)
-            .await
-            .map_err(|e| {
-                error!(error = %e, "failed to get embedded dataset info");
-                format!("failed to get embedded dataset info: {e}")
-            })?;
+    let dataset_info = embedded_datasets::get_embedded_dataset_info(pool, embedded_dataset_id)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to get embedded dataset info");
+            format!("failed to get embedded dataset info: {e}")
+        })?;
 
     let collection_name = dataset_info.collection_name;
     let embedder_id = dataset_info.embedder_id;
 
     // Fetch embedder configuration (api_key is decrypted by storage layer)
-    let embedder_config = embedders::get_embedder_config(postgres_pool, embedder_id, encryption)
+    let embedder_config = embedders::get_embedder_config(pool, embedder_id, encryption)
         .await
         .map_err(|e| {
             error!(error = %e, "failed to get embedder config");

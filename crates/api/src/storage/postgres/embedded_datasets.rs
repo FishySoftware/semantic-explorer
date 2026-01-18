@@ -1,4 +1,5 @@
 use anyhow::Result;
+use semantic_explorer_core::owner_info::OwnerInfo;
 use sqlx::types::chrono::{DateTime, Utc};
 use sqlx::{FromRow, Pool, Postgres, Transaction};
 
@@ -20,12 +21,32 @@ const GET_EMBEDDED_DATASET_QUERY: &str = r#"
     WHERE embedded_dataset_id = $1
 "#;
 
-const GET_EMBEDDED_DATASETS_QUERY: &str = r#"
+const COUNT_EMBEDDED_DATASETS_QUERY: &str = r#"
+    SELECT COUNT(*)
+    FROM embedded_datasets
+"#;
+
+const COUNT_EMBEDDED_DATASETS_SEARCH_QUERY: &str = r#"
+    SELECT COUNT(*)
+    FROM embedded_datasets
+    WHERE title ILIKE $1
+"#;
+
+const GET_EMBEDDED_DATASETS_PAGINATED_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
            owner_id, owner_display_name, collection_name, created_at, updated_at, last_processed_at
     FROM embedded_datasets
-    WHERE 1=1
     ORDER BY created_at DESC
+    LIMIT $1 OFFSET $2
+"#;
+
+const GET_EMBEDDED_DATASETS_WITH_SEARCH_QUERY: &str = r#"
+    SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
+           owner_id, owner_display_name, collection_name, created_at, updated_at, last_processed_at
+    FROM embedded_datasets
+    WHERE title ILIKE $1
+    ORDER BY created_at DESC
+    LIMIT $2 OFFSET $3
 "#;
 
 const GET_EMBEDDED_DATASETS_FOR_DATASET_QUERY: &str = r#"
@@ -188,19 +209,63 @@ pub async fn get_embedded_dataset(
     Ok(embedded_dataset)
 }
 
-pub async fn get_embedded_datasets(
+pub async fn get_embedded_datasets_paginated(
     pool: &Pool<Postgres>,
     owner: &str,
-) -> Result<Vec<EmbeddedDataset>> {
+    limit: i64,
+    offset: i64,
+) -> Result<(Vec<EmbeddedDataset>, i64)> {
     let mut tx = pool.begin().await?;
     super::rls::set_rls_user_tx(&mut tx, owner).await?;
 
-    let embedded_datasets = sqlx::query_as::<_, EmbeddedDataset>(GET_EMBEDDED_DATASETS_QUERY)
-        .fetch_all(&mut *tx)
+    // Get total count
+    let count_result = sqlx::query_as::<_, (i64,)>(COUNT_EMBEDDED_DATASETS_QUERY)
+        .fetch_one(&mut *tx)
         .await?;
+    let total_count = count_result.0;
+
+    // Get paginated results
+    let embedded_datasets =
+        sqlx::query_as::<_, EmbeddedDataset>(GET_EMBEDDED_DATASETS_PAGINATED_QUERY)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&mut *tx)
+            .await?;
 
     tx.commit().await?;
-    Ok(embedded_datasets)
+    Ok((embedded_datasets, total_count))
+}
+
+pub async fn get_embedded_datasets_with_search(
+    pool: &Pool<Postgres>,
+    owner: &str,
+    search_query: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<(Vec<EmbeddedDataset>, i64)> {
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
+    let search_pattern = format!("%{}%", search_query);
+
+    // Get total count with search filter
+    let count_result = sqlx::query_as::<_, (i64,)>(COUNT_EMBEDDED_DATASETS_SEARCH_QUERY)
+        .bind(&search_pattern)
+        .fetch_one(&mut *tx)
+        .await?;
+    let total_count = count_result.0;
+
+    // Get paginated results with search filter
+    let embedded_datasets =
+        sqlx::query_as::<_, EmbeddedDataset>(GET_EMBEDDED_DATASETS_WITH_SEARCH_QUERY)
+            .bind(&search_pattern)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&mut *tx)
+            .await?;
+
+    tx.commit().await?;
+    Ok((embedded_datasets, total_count))
 }
 
 pub async fn get_embedded_datasets_for_dataset(
@@ -407,15 +472,13 @@ pub async fn update_embedded_dataset_last_processed_at_to(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn create_embedded_dataset_in_transaction(
     tx: &mut Transaction<'_, Postgres>,
     title: &str,
     dataset_transform_id: i32,
     source_dataset_id: i32,
     embedder_id: i32,
-    owner_id: &str,
-    owner_display_name: &str,
+    owner: &OwnerInfo,
     collection_name: &str,
 ) -> Result<EmbeddedDataset> {
     let mut embedded_dataset = sqlx::query_as::<_, EmbeddedDataset>(CREATE_EMBEDDED_DATASET_QUERY)
@@ -423,14 +486,16 @@ pub async fn create_embedded_dataset_in_transaction(
         .bind(dataset_transform_id)
         .bind(source_dataset_id)
         .bind(embedder_id)
-        .bind(owner_id)
-        .bind(owner_display_name)
+        .bind(&owner.owner_id)
+        .bind(&owner.owner_display_name)
         .bind(collection_name)
         .fetch_one(&mut **tx)
         .await?;
 
-    let actual_collection_name =
-        EmbeddedDataset::generate_collection_name(embedded_dataset.embedded_dataset_id, owner_id);
+    let actual_collection_name = EmbeddedDataset::generate_collection_name(
+        embedded_dataset.embedded_dataset_id,
+        &owner.owner_id,
+    );
     embedded_dataset =
         sqlx::query_as::<_, EmbeddedDataset>(UPDATE_EMBEDDED_DATASET_COLLECTION_NAME_QUERY)
             .bind(embedded_dataset.embedded_dataset_id)

@@ -337,7 +337,7 @@ workerVisualizationsPy:
     targetMemoryUtilizationPercentage: 80
   livenessProbe:
     httpGet:
-      path: /health
+      path: /health/live
       port: 8081
     initialDelaySeconds: 30
     periodSeconds: 10
@@ -346,7 +346,7 @@ workerVisualizationsPy:
     successThreshold: 1
   readinessProbe:
     httpGet:
-      path: /ready
+      path: /health/ready
       port: 8081
     initialDelaySeconds: 15
     periodSeconds: 5

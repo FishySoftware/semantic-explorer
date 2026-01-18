@@ -1,36 +1,21 @@
-use crate::providers::metadata::ModelMetadataService;
 use crate::{
     audit::{ResourceType, events},
     auth::AuthenticatedUser,
-    embedders::models::{CreateEmbedder, Embedder, UpdateEmbedder},
+    embedders::models::{
+        CreateEmbedder, Embedder, EmbedderListQuery, PaginatedEmbedderList, UpdateEmbedder,
+    },
     errors::ApiError,
     storage::postgres::embedders,
 };
 use actix_web::{
     HttpRequest, HttpResponse, Responder, ResponseError, delete, get, patch, post,
-    web::{Data, Json, Path},
+    web::{self, Data, Json, Path},
 };
 use semantic_explorer_core::validation;
 use semantic_explorer_core::{
-    config::InferenceConfig, encryption::EncryptionService, http_client::HTTP_CLIENT,
+    config::EmbeddingInferenceConfig, encryption::EncryptionService, http_client::HTTP_CLIENT,
 };
 use sqlx::{Pool, Postgres};
-
-#[derive(serde::Deserialize, utoipa::ToSchema, Debug)]
-pub(crate) struct DetectDimensionsRequest {
-    provider: String,
-    base_url: String,
-    api_key: Option<String>,
-    config: serde_json::Value,
-}
-
-#[derive(serde::Serialize, utoipa::ToSchema)]
-pub(crate) struct DetectDimensionsResponse {
-    dimensions: Option<usize>,
-    detected: bool,
-    source: String, // "detected", "known", or "error"
-    message: String,
-}
 
 #[derive(serde::Serialize, utoipa::ToSchema)]
 pub(crate) struct TestEmbedderResponse {
@@ -40,6 +25,9 @@ pub(crate) struct TestEmbedderResponse {
 }
 
 #[utoipa::path(
+    params(
+        EmbedderListQuery
+    ),
     responses(
         (status = 200, description = "OK", body = Vec<Embedder>),
         (status = 500, description = "Internal Server Error"),
@@ -47,18 +35,73 @@ pub(crate) struct TestEmbedderResponse {
     tag = "Embedders",
 )]
 #[get("/api/embedders")]
-#[tracing::instrument(name = "get_embedders", skip(user, postgres_pool, encryption))]
+#[tracing::instrument(name = "get_embedders", skip(user, pool, query, encryption))]
 pub(crate) async fn get_embedders(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     encryption: Data<EncryptionService>,
+    query: web::Query<EmbedderListQuery>,
 ) -> impl Responder {
-    match embedders::get_embedders(&postgres_pool.into_inner(), &user, &encryption).await {
-        Ok(embedders_list) => HttpResponse::Ok().json(embedders_list),
-        Err(e) => {
-            tracing::error!(error = %e, "failed to fetch embedders");
-            ApiError::Internal(format!("error fetching embedders: {:?}", e)).error_response()
+    let search_query = query.search.as_ref().and_then(|s| {
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
         }
+    });
+
+    match search_query {
+        Some(q) => {
+            match embedders::get_embedders_with_search(
+                &pool.into_inner(),
+                &user,
+                q,
+                query.limit,
+                query.offset,
+                &encryption,
+            )
+            .await
+            {
+                Ok(result) => {
+                    let response = PaginatedEmbedderList {
+                        items: result.items,
+                        total_count: result.total_count,
+                        limit: result.limit,
+                        offset: result.offset,
+                    };
+                    HttpResponse::Ok().json(response)
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "failed to fetch embedders");
+                    ApiError::Internal(format!("error fetching embedders: {:?}", e))
+                        .error_response()
+                }
+            }
+        }
+        None => match embedders::get_embedders(
+            &pool.into_inner(),
+            &user,
+            query.limit,
+            query.offset,
+            &encryption,
+        )
+        .await
+        {
+            Ok(result) => {
+                let response = PaginatedEmbedderList {
+                    items: result.items,
+                    total_count: result.total_count,
+                    limit: result.limit,
+                    offset: result.offset,
+                };
+                HttpResponse::Ok().json(response)
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "failed to fetch embedders");
+                ApiError::Internal(format!("error fetching embedders: {:?}", e)).error_response()
+            }
+        },
     }
 }
 
@@ -74,21 +117,14 @@ pub(crate) async fn get_embedders(
     tag = "Embedders",
 )]
 #[get("/api/embedders/{embedder_id}")]
-#[tracing::instrument(name = "get_embedder", skip(user, postgres_pool, encryption))]
+#[tracing::instrument(name = "get_embedder", skip(user, pool, encryption))]
 pub(crate) async fn get_embedder(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     encryption: Data<EncryptionService>,
     embedder_id: Path<i32>,
 ) -> impl Responder {
-    match embedders::get_embedder(
-        &postgres_pool.into_inner(),
-        &user,
-        *embedder_id,
-        &encryption,
-    )
-    .await
-    {
+    match embedders::get_embedder(&pool.into_inner(), &user, *embedder_id, &encryption).await {
         Ok(embedder) => {
             events::resource_read(
                 &user.as_owner(),
@@ -117,25 +153,28 @@ pub(crate) async fn get_embedder(
 #[post("/api/embedders")]
 #[tracing::instrument(
     name = "create_embedder",
-    skip(user, postgres_pool, create_embedder, req, encryption)
+    skip(user, pool, create_embedder, req, encryption)
 )]
 pub(crate) async fn create_embedder(
     user: AuthenticatedUser,
     req: HttpRequest,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     encryption: Data<EncryptionService>,
     create_embedder: Json<CreateEmbedder>,
 ) -> impl Responder {
     let payload = create_embedder.into_inner();
 
-    // Validate input
     if let Err(e) = validation::validate_title(&payload.name) {
         return ApiError::Validation(e).error_response();
     }
 
-    match embedders::create_embedder(&postgres_pool.into_inner(), &user, &payload, &encryption)
-        .await
-    {
+    // Validate base_url is not empty for non-local providers
+    if payload.provider != "local" && payload.base_url.trim().is_empty() {
+        return ApiError::BadRequest("base_url cannot be empty for this provider".to_string())
+            .error_response();
+    }
+
+    match embedders::create_embedder(&pool.into_inner(), &user, &payload, &encryption).await {
         Ok(embedder) => {
             events::resource_created_with_request(
                 &req,
@@ -168,16 +207,15 @@ pub(crate) async fn create_embedder(
 #[patch("/api/embedders/{embedder_id}")]
 #[tracing::instrument(
     name = "update_embedder",
-    skip(user, postgres_pool, update_embedder, encryption)
+    skip(user, pool, update_embedder, encryption)
 )]
 pub(crate) async fn update_embedder(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     encryption: Data<EncryptionService>,
     embedder_id: Path<i32>,
     update_embedder: Json<UpdateEmbedder>,
 ) -> impl Responder {
-    // Validate input if name is provided
     if let Some(ref name) = update_embedder.name
         && let Err(e) = validation::validate_title(name)
     {
@@ -185,7 +223,7 @@ pub(crate) async fn update_embedder(
     }
 
     match embedders::update_embedder(
-        &postgres_pool.into_inner(),
+        &pool.into_inner(),
         &user,
         *embedder_id,
         &update_embedder,
@@ -244,14 +282,14 @@ pub(crate) async fn update_embedder(
     tag = "Embedders",
 )]
 #[delete("/api/embedders/{embedder_id}")]
-#[tracing::instrument(name = "delete_embedder", skip(user, postgres_pool, req))]
+#[tracing::instrument(name = "delete_embedder", skip(user, pool, req))]
 pub(crate) async fn delete_embedder(
     user: AuthenticatedUser,
     req: HttpRequest,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     embedder_id: Path<i32>,
 ) -> impl Responder {
-    match embedders::delete_embedder(&postgres_pool.into_inner(), &user, *embedder_id).await {
+    match embedders::delete_embedder(&pool.into_inner(), &user, *embedder_id).await {
         Ok(()) => {
             events::resource_deleted_with_request(
                 &req,
@@ -271,204 +309,6 @@ pub(crate) async fn delete_embedder(
 
 #[utoipa::path(
     post,
-    path = "/api/embedders/detect-dimensions",
-    tag = "Embedders",
-    request_body = DetectDimensionsRequest,
-    responses(
-        (status = 200, description = "Dimension detection result", body = DetectDimensionsResponse),
-        (status = 400, description = "Bad Request"),
-        (status = 500, description = "Detection failed"),
-    ),
-)]
-#[post("/api/embedders/detect-dimensions")]
-#[tracing::instrument(name = "detect_dimensions", skip(_user, inference_config))]
-pub(crate) async fn detect_dimensions(
-    _user: AuthenticatedUser,
-    inference_config: Data<InferenceConfig>,
-    request: Json<DetectDimensionsRequest>,
-) -> impl Responder {
-    let req = request.into_inner();
-
-    // First try to get dimensions from known model metadata
-    let metadata_service = ModelMetadataService::new();
-    if let Some(model) = req.config.get("model").and_then(|v| v.as_str())
-        && let Some(known_dimensions) = metadata_service.get_dimensions(model)
-    {
-        return HttpResponse::Ok().json(DetectDimensionsResponse {
-            dimensions: Some(known_dimensions),
-            detected: false,
-            source: "known".to_string(),
-            message: format!("Using known dimensions for model {}", model),
-        });
-    }
-
-    // If not known, try to detect dimensions by making a test API call
-    let test_text = "Test embedding request for dimension detection";
-
-    let result = match req.provider.as_str() {
-        "openai" => {
-            let model = req
-                .config
-                .get("model")
-                .and_then(|v| v.as_str())
-                .unwrap_or("text-embedding-ada-002");
-
-            let body = serde_json::json!({
-                "input": test_text,
-                "model": model,
-            });
-
-            let mut request_builder = HTTP_CLIENT
-                .post(format!("{}/embeddings", req.base_url.trim_end_matches('/')))
-                .json(&body);
-
-            if let Some(api_key) = &req.api_key {
-                request_builder = request_builder.bearer_auth(api_key);
-            }
-
-            match request_builder.send().await {
-                Ok(response) => {
-                    if !response.status().is_success() {
-                        Err(format!(
-                            "HTTP {}: check API key and base URL",
-                            response.status()
-                        ))
-                    } else {
-                        match response.json::<serde_json::Value>().await {
-                            Ok(json) => {
-                                if let Some(dims) = json["data"][0]["embedding"].as_array() {
-                                    Ok(dims.len())
-                                } else {
-                                    Err("unexpected response format".to_string())
-                                }
-                            }
-                            Err(e) => Err(format!("failed to parse response: {}", e)),
-                        }
-                    }
-                }
-                Err(e) => Err(format!("{}", e)),
-            }
-        }
-        "cohere" => {
-            let model = req
-                .config
-                .get("model")
-                .and_then(|v| v.as_str())
-                .unwrap_or("embed-english-v3.0");
-
-            let body = serde_json::json!({
-                "texts": [test_text],
-                "model": model,
-                "input_type": "search_document",
-            });
-
-            let base = req.base_url.trim_end_matches('/');
-            let url = if base.ends_with("/embed") {
-                base.to_string()
-            } else {
-                format!("{}/embed", base)
-            };
-
-            let mut request_builder = HTTP_CLIENT.post(&url).json(&body);
-
-            if let Some(api_key) = &req.api_key {
-                request_builder = request_builder.bearer_auth(api_key);
-            }
-
-            match request_builder.send().await {
-                Ok(response) => {
-                    if !response.status().is_success() {
-                        let status = response.status();
-                        match response.text().await {
-                            Ok(text) => Err(format!("HTTP {}: {}", status, text)),
-                            Err(_) => Err(format!("HTTP {}: check API key and base URL", status)),
-                        }
-                    } else {
-                        match response.json::<serde_json::Value>().await {
-                            Ok(json) => {
-                                if let Some(dims) = json["embeddings"][0].as_array() {
-                                    Ok(dims.len())
-                                } else {
-                                    Err("unexpected response format".to_string())
-                                }
-                            }
-                            Err(e) => Err(format!("failed to parse response: {}", e)),
-                        }
-                    }
-                }
-                Err(e) => Err(format!("{}", e)),
-            }
-        }
-        "local" => {
-            let model = req
-                .config
-                .get("model")
-                .and_then(|v| v.as_str())
-                .unwrap_or("BAAI/bge-small-en-v1.5");
-
-            let body = serde_json::json!({
-                "text": test_text,
-                "model": model,
-            });
-
-            let url = format!("{}/api/embed", inference_config.url.trim_end_matches('/'));
-            let request_builder = HTTP_CLIENT.post(&url).json(&body);
-
-            match request_builder.send().await {
-                Ok(response) => {
-                    if !response.status().is_success() {
-                        let status = response.status();
-                        match response.text().await {
-                            Ok(text) => Err(format!("HTTP {}: {}", status, text)),
-                            Err(_) => Err(format!("HTTP {}: check inference-api URL", status)),
-                        }
-                    } else {
-                        match response.json::<serde_json::Value>().await {
-                            Ok(json) => {
-                                if let Some(dims) = json["dimensions"].as_u64() {
-                                    Ok(dims as usize)
-                                } else if let Some(embeddings) = json["embeddings"].as_array() {
-                                    if let Some(first) = embeddings.first() {
-                                        if let Some(arr) = first.as_array() {
-                                            Ok(arr.len())
-                                        } else {
-                                            Err("unexpected embedding format".to_string())
-                                        }
-                                    } else {
-                                        Err("empty embeddings array".to_string())
-                                    }
-                                } else {
-                                    Err("unexpected response format".to_string())
-                                }
-                            }
-                            Err(e) => Err(format!("failed to parse response: {}", e)),
-                        }
-                    }
-                }
-                Err(e) => Err(format!("{}", e)),
-            }
-        }
-        _ => Err(format!("unsupported provider: {}", req.provider)),
-    };
-
-    match result {
-        Ok(dimensions) => HttpResponse::Ok().json(DetectDimensionsResponse {
-            dimensions: Some(dimensions),
-            detected: true,
-            source: "detected".to_string(),
-            message: format!("Successfully detected {} dimensions from API", dimensions),
-        }),
-        Err(error) => HttpResponse::Ok().json(DetectDimensionsResponse {
-            dimensions: None,
-            detected: false,
-            source: "error".to_string(),
-            message: format!("Failed to detect dimensions: {}", error),
-        }),
-    }
-}
-
-#[utoipa::path(
-    post,
     path = "/api/embedders/{embedder_id}/test",
     tag = "Embedders",
     params(
@@ -481,21 +321,19 @@ pub(crate) async fn detect_dimensions(
     ),
 )]
 #[post("/api/embedders/{embedder_id}/test")]
-#[tracing::instrument(name = "test_embedder", skip(user, postgres_pool, encryption, inference_config), fields(embedder_id = %path.as_ref()))]
+#[tracing::instrument(name = "test_embedder", skip(user, pool, encryption, inference_config), fields(embedder_id = %path.as_ref()))]
 pub(crate) async fn test_embedder(
     user: AuthenticatedUser,
-    postgres_pool: Data<Pool<Postgres>>,
+    pool: Data<Pool<Postgres>>,
     encryption: Data<EncryptionService>,
-    inference_config: Data<InferenceConfig>,
+    inference_config: Data<EmbeddingInferenceConfig>,
     path: Path<i32>,
 ) -> impl Responder {
     let embedder_id = path.into_inner();
 
     // Fetch the embedder (api_key is decrypted by storage layer)
     let embedder =
-        match embedders::get_embedder(&postgres_pool.into_inner(), &user, embedder_id, &encryption)
-            .await
-        {
+        match embedders::get_embedder(&pool.into_inner(), &user, embedder_id, &encryption).await {
             Ok(e) => e,
             Err(e) => {
                 return ApiError::NotFound(format!("embedder not found: {}", e)).error_response();
@@ -699,4 +537,19 @@ pub(crate) async fn test_embedder(
             ApiError::Internal(format!("embedder test failed: {}", error)).error_response()
         }
     }
+}
+
+#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub(crate) struct ModelInfo {
+    /// Model identifier (HuggingFace repo format)
+    pub id: String,
+    /// Human-readable model name
+    pub name: String,
+    /// Model description
+    pub description: String,
+    /// Model type (embedding or reranker)
+    pub model_type: String,
+    /// Output dimensions (for embeddings)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dimensions: Option<usize>,
 }

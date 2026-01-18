@@ -18,7 +18,7 @@ pub struct AppConfig {
     pub observability: ObservabilityConfig,
     pub tls: TlsConfig,
     pub oidc_session: OidcSessionConfig,
-    pub inference: InferenceConfig,
+    pub inference: EmbeddingInferenceConfig,
 }
 
 /// Database configuration
@@ -140,7 +140,7 @@ pub struct OidcSessionConfig {
 
 /// Local inference API configuration
 #[derive(Debug, Clone)]
-pub struct InferenceConfig {
+pub struct EmbeddingInferenceConfig {
     /// URL of the local inference API service
     pub url: String,
     /// Request timeout in seconds
@@ -162,7 +162,7 @@ impl AppConfig {
             observability: ObservabilityConfig::from_env()?,
             tls: TlsConfig::from_env()?,
             oidc_session: OidcSessionConfig::from_env()?,
-            inference: InferenceConfig::from_env()?,
+            inference: EmbeddingInferenceConfig::from_env()?,
         })
     }
 }
@@ -449,7 +449,7 @@ impl OidcSessionConfig {
     }
 }
 
-impl InferenceConfig {
+impl EmbeddingInferenceConfig {
     pub fn from_env() -> Result<Self> {
         Ok(Self {
             url: env::var("INFERENCE_API_URL")

@@ -7,6 +7,77 @@ use sqlx::{
 use crate::transforms::visualization::models::{Visualization, VisualizationTransform};
 use semantic_explorer_core::models::PaginatedResponse;
 
+/// Builder for updating visualization fields.
+///
+/// This builder provides a clean API for constructing partial updates to visualizations
+/// with optional fields.
+#[derive(Debug, Default, Clone)]
+pub struct VisualizationUpdate {
+    pub status: Option<String>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub html_s3_key: Option<String>,
+    pub point_count: Option<i32>,
+    pub cluster_count: Option<i32>,
+    pub error_message: Option<String>,
+    pub stats_json: Option<serde_json::Value>,
+}
+
+impl VisualizationUpdate {
+    /// Create a new empty update builder
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the status
+    pub fn status(mut self, status: impl Into<String>) -> Self {
+        self.status = Some(status.into());
+        self
+    }
+
+    /// Set the started_at timestamp
+    pub fn started_at(mut self, started_at: DateTime<Utc>) -> Self {
+        self.started_at = Some(started_at);
+        self
+    }
+
+    /// Set the completed_at timestamp
+    pub fn completed_at(mut self, completed_at: DateTime<Utc>) -> Self {
+        self.completed_at = Some(completed_at);
+        self
+    }
+
+    /// Set the HTML S3 key
+    pub fn html_s3_key(mut self, html_s3_key: impl Into<String>) -> Self {
+        self.html_s3_key = Some(html_s3_key.into());
+        self
+    }
+
+    /// Set the point count
+    pub fn point_count(mut self, point_count: i32) -> Self {
+        self.point_count = Some(point_count);
+        self
+    }
+
+    /// Set the cluster count
+    pub fn cluster_count(mut self, cluster_count: i32) -> Self {
+        self.cluster_count = Some(cluster_count);
+        self
+    }
+
+    /// Set the error message
+    pub fn error_message(mut self, error_message: impl Into<String>) -> Self {
+        self.error_message = Some(error_message.into());
+        self
+    }
+
+    /// Set the stats JSON
+    pub fn stats_json(mut self, stats_json: serde_json::Value) -> Self {
+        self.stats_json = Some(stats_json);
+        self
+    }
+}
+
 fn validate_sort_field(sort_by: &str) -> Result<String> {
     match sort_by {
         "title" | "is_enabled" | "last_run_status" | "created_at" | "updated_at" => {
@@ -175,29 +246,21 @@ pub async fn get_recent_visualizations(
     Ok(visualizations)
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn update_visualization(
     pool: &Pool<Postgres>,
     visualization_id: i32,
-    status: Option<&str>,
-    started_at: Option<DateTime<Utc>>,
-    completed_at: Option<DateTime<Utc>>,
-    html_s3_key: Option<&str>,
-    point_count: Option<i32>,
-    cluster_count: Option<i32>,
-    error_message: Option<&str>,
-    stats_json: Option<&serde_json::Value>,
+    update: &VisualizationUpdate,
 ) -> Result<Visualization> {
     let visualization = sqlx::query_as::<_, Visualization>(UPDATE_VISUALIZATION_QUERY)
         .bind(visualization_id)
-        .bind(status)
-        .bind(started_at)
-        .bind(completed_at)
-        .bind(html_s3_key)
-        .bind(point_count)
-        .bind(cluster_count)
-        .bind(error_message)
-        .bind(stats_json)
+        .bind(update.status.as_deref())
+        .bind(update.started_at)
+        .bind(update.completed_at)
+        .bind(update.html_s3_key.as_deref())
+        .bind(update.point_count)
+        .bind(update.cluster_count)
+        .bind(update.error_message.as_deref())
+        .bind(update.stats_json.as_ref())
         .fetch_one(pool)
         .await?;
     Ok(visualization)

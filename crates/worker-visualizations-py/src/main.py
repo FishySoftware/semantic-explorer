@@ -181,8 +181,8 @@ async def start_health_check_server():
         return None
 
     app = web.Application()
-    app.router.add_get("/health", health_check_handler)
-    app.router.add_get("/ready", readiness_check_handler)
+    app.router.add_get("/health/live", health_check_handler)
+    app.router.add_get("/health/ready", readiness_check_handler)
 
     runner = web.AppRunner(app)
     await runner.setup()

@@ -1,9 +1,10 @@
 use fastembed::{EmbeddingModel, TextEmbedding, TextInitOptions};
+use futures::stream::StreamExt;
 use once_cell::sync::OnceCell;
 use ort::ep::CUDA;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::config::ModelConfig;
 use crate::errors::InferenceError;
@@ -19,10 +20,10 @@ static EMBEDDING_MODELS: OnceCell<EmbeddingCache> = OnceCell::new();
 ///
 /// This function:
 /// 1. Takes the ModelConfig to determine which models to load
-/// 2. Gets a list of models to load (all supported or filtered by allowed_models)
+/// 2. Gets a list of models to load (all supported or filtered by allowed_embedding_models)
 /// 3. Loads each model from the filesystem cache, fetching if needed
 /// 4. Pre-populates the cache at startup to validate model availability
-pub fn init_cache(config: &ModelConfig) {
+pub async fn init_cache(config: &ModelConfig) {
     let cache = EMBEDDING_MODELS.get_or_init(|| Arc::new(Mutex::new(HashMap::new())));
 
     // Get list of models to load
@@ -36,8 +37,46 @@ pub fn init_cache(config: &ModelConfig) {
     tracing::info!(
         models = ?models_to_load,
         count = models_to_load.len(),
-        "Pre-loading embedding models at startup"
+        "Pre-loading embedding models at startup with concurrency limit"
     );
+
+    let concurrency_limit = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+
+    tracing::info!("Using concurrency limit: {}", concurrency_limit);
+
+    // Parallel loading
+    let results = futures::stream::iter(models_to_load)
+        .map(|model_id| {
+            let config = config.clone();
+            async move {
+                let model_id_clone = model_id.clone();
+                let res = tokio::task::spawn_blocking(move || {
+                    match resolve_embedding_model(&model_id_clone) {
+                        Ok(embedding_model) => {
+                            match create_text_embedding(embedding_model, &config) {
+                                Ok(text_embedding) => Ok((model_id_clone, text_embedding)),
+                                Err(e) => Err((model_id_clone, e)),
+                            }
+                        }
+                        Err(e) => Err((model_id_clone, e)),
+                    }
+                })
+                .await;
+
+                match res {
+                    Ok(inner_res) => inner_res,
+                    Err(join_err) => {
+                        // This happens if task panics
+                        Err((model_id, InferenceError::ModelLoad(join_err.to_string())))
+                    }
+                }
+            }
+        })
+        .buffer_unordered(concurrency_limit)
+        .collect::<Vec<_>>()
+        .await;
 
     let mut cache_guard = match cache.lock() {
         Ok(guard) => guard,
@@ -47,26 +86,17 @@ pub fn init_cache(config: &ModelConfig) {
         }
     };
 
-    for model_id in models_to_load {
-        match resolve_embedding_model(&model_id) {
-            Ok(embedding_model) => match create_text_embedding(embedding_model, config) {
-                Ok(text_embedding) => {
-                    cache_guard.insert(model_id.clone(), Arc::new(Mutex::new(text_embedding)));
-                    tracing::info!(model_id = %model_id, "Pre-loaded embedding model");
-                }
-                Err(e) => {
-                    tracing::error!(
-                        model_id = %model_id,
-                        error = %e,
-                        "Failed to load embedding model during initialization"
-                    );
-                }
-            },
-            Err(e) => {
+    for result in results {
+        match result {
+            Ok((model_id, text_embedding)) => {
+                cache_guard.insert(model_id.clone(), Arc::new(Mutex::new(text_embedding)));
+                tracing::info!(model_id = %model_id, "Pre-loaded embedding model");
+            }
+            Err((model_id, e)) => {
                 tracing::error!(
                     model_id = %model_id,
                     error = %e,
-                    "Failed to resolve embedding model during initialization"
+                    "Failed to load embedding model during initialization"
                 );
             }
         }
@@ -75,9 +105,9 @@ pub fn init_cache(config: &ModelConfig) {
 
 /// Get the list of embedding models to load based on configuration
 fn get_models_to_load(config: &ModelConfig) -> Vec<String> {
-    if !config.allowed_models.is_empty() {
+    if !config.allowed_embedding_models.is_empty() {
         // Use allowed models list if configured
-        config.allowed_models.clone()
+        config.allowed_embedding_models.clone()
     } else {
         // Use all supported embedding models if no restrictions
         get_all_supported_embedding_models()
@@ -207,11 +237,11 @@ fn create_text_embedding(
 ) -> Result<TextEmbedding, InferenceError> {
     // Try CUDA execution provider, fall back to CPU if unavailable
     let mut options = if std::env::var("CUDA_VISIBLE_DEVICES").is_ok() {
-        info!("CUDA available, using CUDA execution provider for embeddings");
+        debug!("CUDA available, using CUDA execution provider for embeddings");
         let cuda_provider = CUDA::default().build();
         TextInitOptions::new(model).with_execution_providers(vec![cuda_provider])
     } else {
-        info!("CUDA not available, using CPU execution provider");
+        debug!("CUDA not available, using CPU execution provider");
         TextInitOptions::new(model)
     };
 
@@ -233,7 +263,7 @@ pub async fn generate_embeddings(
     texts: Vec<String>,
 ) -> Result<Vec<Vec<f32>>, InferenceError> {
     // Check if model is allowed
-    if !config.is_model_allowed(model_id) {
+    if !config.is_embedding_model_allowed(model_id) {
         return Err(InferenceError::UnsupportedModel(format!(
             "Model {} is not in the allowed models list",
             model_id

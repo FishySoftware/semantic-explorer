@@ -75,7 +75,8 @@
 			loadingEmbedders = true;
 			const response = await fetch('/api/embedders');
 			if (!response.ok) throw new Error('Failed to fetch embedders');
-			embedders = await response.json();
+			const data = await response.json();
+			embedders = data.items ?? [];
 		} catch (e) {
 			console.error('Failed to fetch embedders:', e);
 		} finally {

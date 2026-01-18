@@ -4,7 +4,15 @@
 	import { SvelteSet, SvelteURLSearchParams } from 'svelte/reactivity';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
-	import type { VisualizationConfig, VisualizationTransform } from '../types/visualizations';
+	import type {
+		VisualizationConfig,
+		VisualizationTransform,
+		VisualizationStats as Stats,
+		EmbeddedDataset,
+		PaginatedEmbeddedDatasetList,
+		PaginatedResponse,
+		LLM,
+	} from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { showTooltip } from '../utils/ui-helpers';
 	import { InfoIcon } from '../utils/icons';
@@ -16,23 +24,9 @@
 
 	let { onViewTransform }: Props = $props();
 
-	interface EmbeddedDataset {
-		embedded_dataset_id: number;
-		title: string;
-		embedder_name: string;
-		source_dataset_title: string;
-	}
-
-	interface Stats {
-		visualization_transform_id: number;
-		total_points: number;
-		total_clusters: number;
-		noise_points: number;
-	}
-
 	let transforms = $state<VisualizationTransform[]>([]);
 	let embeddedDatasets = $state<EmbeddedDataset[]>([]);
-	let llms = $state<Array<{ llm_id: number; name: string; provider: string }>>([]);
+	let llms = $state<LLM[]>([]);
 	let statsMap = $state<Map<number, Stats>>(new Map());
 	let loading = $state(true);
 	let error = $state<string | null>(null);
@@ -210,9 +204,9 @@
 			if (!response.ok) {
 				throw new Error(`Failed to fetch visualization transforms: ${response.statusText}`);
 			}
-			const data = await response.json();
-			const rawTransforms = Array.isArray(data) ? data : data.items || [];
-			totalCount = data.total_count ?? (Array.isArray(data) ? data.length : rawTransforms.length);
+			const data = (await response.json()) as PaginatedResponse<VisualizationTransform>;
+			const rawTransforms = data.items;
+			totalCount = data.total_count;
 
 			transforms = rawTransforms.map((t: VisualizationTransform) => ({
 				...t,
@@ -278,11 +272,12 @@
 
 	async function fetchEmbeddedDatasets() {
 		try {
-			const response = await fetch('/api/embedded-datasets');
+			const response = await fetch('/api/embedded-datasets?limit=10&offset=0');
 			if (!response.ok) {
 				throw new Error(`Failed to fetch embedded datasets: ${response.statusText}`);
 			}
-			embeddedDatasets = await response.json();
+			const data: PaginatedEmbeddedDatasetList = await response.json();
+			embeddedDatasets = data.embedded_datasets;
 			// Auto-select first option if available and nothing selected
 			if (embeddedDatasets.length > 0 && newEmbeddedDatasetId === null) {
 				newEmbeddedDatasetId = embeddedDatasets[0].embedded_dataset_id;
@@ -294,11 +289,12 @@
 
 	async function fetchLLMs() {
 		try {
-			const response = await fetch('/api/llms');
+			const response = await fetch('/api/llms?limit=10&offset=0');
 			if (!response.ok) {
 				throw new Error(`Failed to fetch LLMs: ${response.statusText}`);
 			}
-			llms = await response.json();
+			const data: PaginatedResponse<LLM> = await response.json();
+			llms = data.items;
 			// Auto-select first option if available and nothing selected
 			if (llms.length > 0 && config.topic_naming_llm_id === null) {
 				config.topic_naming_llm_id = llms[0].llm_id;

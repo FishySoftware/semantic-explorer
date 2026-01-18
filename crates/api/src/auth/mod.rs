@@ -1,6 +1,7 @@
 use actix_web::{FromRequest, HttpRequest, HttpResponse, dev::Payload};
 use actix_web_openidconnect::openid_middleware::Authenticated;
 use futures_util::future::{Ready, err, ok};
+use semantic_explorer_core::owner_info::OwnerInfo;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::ops::Deref;
@@ -35,6 +36,11 @@ impl AuthenticatedUser {
     /// used in NATS subjects, or used in S3 object paths.
     pub fn as_owner(&self) -> String {
         hash_username_for_owner(&self.0)
+    }
+
+    /// Convert to OwnerInfo struct for database operations
+    pub fn to_owner_info(&self) -> OwnerInfo {
+        OwnerInfo::new(self.as_owner(), self.0.clone())
     }
 }
 

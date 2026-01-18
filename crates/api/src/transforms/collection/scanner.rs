@@ -13,7 +13,7 @@ use semantic_explorer_core::models::{CollectionTransformJob, EmbedderConfig};
 
 use crate::auth::AuthenticatedUser;
 use crate::storage::postgres::collection_transforms::{
-    get_active_collection_transforms, get_collection_transform, get_processed_files,
+    get_active_collection_transforms_privileged, get_collection_transform, get_processed_files,
 };
 use crate::storage::postgres::{collections, embedders};
 use crate::storage::s3;
@@ -21,7 +21,7 @@ use crate::transforms::collection::models::CollectionTransform;
 
 /// Initialize the background scanner for collection transforms
 pub(crate) fn initialize_scanner(
-    postgres_pool: Pool<Postgres>,
+    pool: Pool<Postgres>,
     nats_client: NatsClient,
     s3_client: S3Client,
     s3_bucket_name: String,
@@ -32,7 +32,7 @@ pub(crate) fn initialize_scanner(
         loop {
             interval.tick().await;
             if let Err(e) = scan_active_collection_transforms(
-                &postgres_pool,
+                &pool,
                 &nats_client,
                 &s3_client,
                 &s3_bucket_name,
@@ -54,7 +54,7 @@ async fn scan_active_collection_transforms(
     s3_bucket_name: &str,
     encryption: &EncryptionService,
 ) -> Result<()> {
-    let transforms = get_active_collection_transforms(pool).await?;
+    let transforms = get_active_collection_transforms_privileged(pool).await?;
     info!("Scanning {} active collection transforms", transforms.len());
 
     for transform in transforms {
@@ -227,11 +227,6 @@ async fn process_collection_transform_scan(
         files_found += files.files.len();
 
         for file in files.files {
-            // Skip chunk files (outputs from previous transforms)
-            if file.key.starts_with("chunks/") {
-                continue;
-            }
-
             // Skip already processed files
             if !processed_keys.contains(&file.key) {
                 let msg_id = format!("ct-{}-{}", transform.collection_transform_id, file.key);

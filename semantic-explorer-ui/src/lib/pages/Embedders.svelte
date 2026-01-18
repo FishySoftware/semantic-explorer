@@ -2,8 +2,11 @@
 	import ActionMenu from '$lib/components/ActionMenu.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
+	import type { Embedder, PaginatedResponse, ProviderDefaultConfig } from '$lib/types/models';
+	import { toastStore } from '$lib/utils/notifications';
 	import { Table, TableBody, TableBodyCell, TableHead, TableHeadCell } from 'flowbite-svelte';
 	import { onMount } from 'svelte';
+	import { SvelteURLSearchParams } from 'svelte/reactivity';
 
 	let { onViewEmbedder: handleViewEmbedder } = $props<{
 		onViewEmbedder?: (_: number) => void;
@@ -13,34 +16,12 @@
 		handleViewEmbedder?.(id);
 	};
 
-	interface Embedder {
-		embedder_id: number;
-		name: string;
-		owner: string;
-		provider: string;
-		base_url: string;
-		api_key: string | null;
-		config: Record<string, any>;
-		batch_size?: number;
-		dimensions?: number;
-		collection_name: string;
-		is_public: boolean;
-		created_at: string;
-		updated_at: string;
-	}
-
-	type ProviderDefaultConfig = {
-		url: string;
-		models: string[];
-		inputTypes?: string[];
-		embeddingTypes?: string[];
-		truncate?: string[];
-		config: Record<string, any>;
-	};
-
 	let embedders = $state<Embedder[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+	let totalCount = $state(0);
+	let currentOffset = $state(0);
+	const pageSize = 20;
 	let showCreateForm = $state(false);
 	let editingEmbedder = $state<Embedder | null>(null);
 
@@ -72,13 +53,6 @@
 	let userEditedName = $state(false);
 	let inferenceModels = $state<string[]>([]);
 	let inferenceModelDimensions = $state<Record<string, number>>({});
-
-	// Dimension detection state
-	let dimensionDetectionStatus = $state<'idle' | 'detecting' | 'success' | 'error'>('idle');
-	let detectedDimensions = $state<number | null>(null);
-	let dimensionSource = $state<string>(''); // 'known', 'detected', 'configured'
-	let dimensionMessage = $state<string>('');
-
 	let localModelsForDisplay = $derived([...inferenceModels].sort((a, b) => a.localeCompare(b)));
 
 	function getProviderDefaults(): Record<string, ProviderDefaultConfig> {
@@ -126,24 +100,23 @@
 
 	async function fetchInferenceModels() {
 		try {
-			const response = await fetch('/api/inference/models/embedders');
+			const response = await fetch('/api/embedding-inference/models');
 			if (!response.ok) {
 				console.error('Failed to fetch inference models:', response.statusText);
 				return;
 			}
-			const embedderModels = await response.json();
-			if (Array.isArray(embedderModels)) {
-				// Clear previous models and set new ones
-				inferenceModels = [...new Set(embedderModels.map((m: any) => m.id))].sort();
-				// Build dimensions map
-				const dimMap: Record<string, number> = {};
-				for (const model of embedderModels) {
-					if (model.dimensions) {
-						dimMap[model.id] = model.dimensions;
-					}
+			const embedderModels: any[] = await response.json();
+
+			// Clear previous models and set new ones
+			inferenceModels = [...new Set(embedderModels.map((m: any) => m.id))].sort();
+			// Build dimensions map
+			const dimMap: Record<string, number> = {};
+			for (const model of embedderModels) {
+				if (model.dimensions) {
+					dimMap[model.id] = model.dimensions;
 				}
-				inferenceModelDimensions = dimMap;
 			}
+			inferenceModelDimensions = dimMap;
 		} catch (e) {
 			console.error('Error fetching inference models:', e);
 		}
@@ -186,18 +159,7 @@
 					}),
 				});
 			} else if (formProvider === 'local') {
-				// Test local inference through the backend API
-				const model = config.model || 'BAAI/bge-small-en-v1.5';
-				response = await fetch('/api/inference/test', {
-					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json',
-					},
-					body: JSON.stringify({
-						model,
-						texts: testText,
-					}),
-				});
+				return; // Testing local embedders is not needed
 			} else {
 				testStatus = 'error';
 				testMessage = 'Testing custom providers is not supported. Please save and test manually.';
@@ -230,7 +192,7 @@
 			} else if (formProvider === 'openai') {
 				embeddingCount = result.data?.length || 0;
 			} else if (formProvider === 'local') {
-				embeddingCount = result.embeddings?.length || 0;
+				return; // Testing local embedders is not needed
 			}
 
 			testMessage = `Connection successful! Generated ${embeddingCount} embedding(s).`;
@@ -240,74 +202,10 @@
 		}
 	}
 
-	async function autoDetectDimensions() {
-		if (!formProvider || (formProvider !== 'local' && !formApiKey)) {
-			dimensionDetectionStatus = 'error';
-			dimensionMessage = 'API key required for dimension detection';
-			return;
-		}
-
-		try {
-			dimensionDetectionStatus = 'detecting';
-			dimensionMessage = '';
-
-			const config = JSON.parse(formConfig);
-
-			const response = await fetch('/api/embedders/detect-dimensions', {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-				},
-				body: JSON.stringify({
-					provider: formProvider,
-					base_url: formBaseUrl,
-					api_key: formApiKey || null,
-					config: config,
-				}),
-			});
-
-			if (!response.ok) {
-				throw new Error(`HTTP ${response.status}`);
-			}
-
-			const result = await response.json();
-
-			if (result.dimensions) {
-				detectedDimensions = result.dimensions;
-				formDimensions = result.dimensions;
-				dimensionSource = result.source;
-				dimensionDetectionStatus = 'success';
-				dimensionMessage = result.message;
-
-				// Update config with detected dimensions
-				const updatedConfig = { ...config, dimensions: result.dimensions };
-				formConfig = JSON.stringify(updatedConfig, null, 2);
-			} else {
-				dimensionDetectionStatus = 'error';
-				dimensionMessage = result.message || 'Failed to detect dimensions';
-			}
-		} catch (e: any) {
-			dimensionDetectionStatus = 'error';
-			dimensionMessage = e.message || 'Failed to detect dimensions';
-		}
-	}
-
-	// Check for dimension mismatches
-	let dimensionMismatch = $derived.by(() => {
-		if (!detectedDimensions || !formDimensions) return null;
-		if (detectedDimensions !== formDimensions) {
-			return {
-				detected: detectedDimensions,
-				configured: formDimensions,
-			};
-		}
-		return null;
-	});
-
 	function extractSearchParamFromHash() {
 		const hashParts = window.location.hash.split('?');
 		if (hashParts.length > 1) {
-			const urlParams = new URLSearchParams(hashParts[1]);
+			const urlParams = new SvelteURLSearchParams(hashParts[1]);
 			const nameParam = urlParams.get('name');
 
 			if (nameParam) {
@@ -323,10 +221,13 @@
 		}
 	}
 
+	let hasMount = false;
+
 	onMount(() => {
 		fetchEmbedders();
 		fetchInferenceModels();
 		extractSearchParamFromHash();
+		hasMount = true;
 	});
 
 	$effect(() => {
@@ -339,13 +240,22 @@
 		loading = true;
 		error = null;
 		try {
-			const response = await fetch('/api/embedders');
+			const params = new SvelteURLSearchParams();
+			if (searchQuery.trim()) {
+				params.append('search', searchQuery.trim());
+			}
+			params.append('limit', pageSize.toString());
+			params.append('offset', currentOffset.toString());
+			const url = params.toString() ? `/api/embedders?${params.toString()}` : '/api/embedders';
+			const response = await fetch(url);
 			if (!response.ok) {
 				const errorText = await response.text();
 				console.error('Failed to fetch embedders:', errorText);
 				throw new Error(`Failed to fetch embedders: ${response.status}`);
 			}
-			embedders = await response.json();
+			const data: PaginatedResponse<Embedder> = await response.json();
+			embedders = data.items;
+			totalCount = data.total_count;
 		} catch (e: any) {
 			console.error('Error fetching embedders:', e);
 			error = e.message || 'Failed to load embedders';
@@ -527,16 +437,9 @@
 				throw new Error(`Failed to save embedder: ${response.status}`);
 			}
 
-			const newEmbedder = await response.json();
 			showCreateForm = false;
-
-			if (!editingEmbedder) {
-				// Fetch updated list and then redirect to show the new embedder
-				await fetchEmbedders();
-				window.location.hash = `#/embedders/${newEmbedder.embedder_id}/details`;
-			} else {
-				await fetchEmbedders();
-			}
+			toastStore.success(`Embedder ${editingEmbedder ? 'updated' : 'created'} successfully!`);
+			await fetchEmbedders();
 		} catch (e: any) {
 			console.error('Error saving embedder:', e);
 			error = e.message || 'Failed to save embedder';
@@ -568,18 +471,41 @@
 		}
 	}
 
-	let filteredEmbedders = $derived(
-		embedders.filter((e) => {
-			if (!searchQuery.trim()) return true;
-			const query = searchQuery.toLowerCase();
-			return (
-				e.name.toLowerCase().includes(query) ||
-				e.provider.toLowerCase().includes(query) ||
-				e.owner.toLowerCase().includes(query) ||
-				e.base_url.toLowerCase().includes(query)
-			);
-		})
-	);
+	// Refetch when search query changes
+	// Debounce search to avoid spamming API on every keystroke
+	let searchDebounceTimeout: ReturnType<typeof setTimeout> | null = null;
+	let previousSearchQuery = '';
+
+	$effect(() => {
+		// Only trigger fetch if we've mounted and search query actually changed
+		if (hasMount && searchQuery !== previousSearchQuery) {
+			previousSearchQuery = searchQuery;
+			currentOffset = 0; // Reset to first page when searching
+			if (searchDebounceTimeout) {
+				clearTimeout(searchDebounceTimeout);
+			}
+			searchDebounceTimeout = setTimeout(() => {
+				fetchEmbedders();
+			}, 300); // 300ms debounce
+		}
+		return () => {
+			if (searchDebounceTimeout) {
+				clearTimeout(searchDebounceTimeout);
+			}
+		};
+	});
+
+	function goToPreviousPage() {
+		currentOffset = Math.max(0, currentOffset - pageSize);
+		fetchEmbedders();
+	}
+
+	function goToNextPage() {
+		if (currentOffset + pageSize < totalCount) {
+			currentOffset += pageSize;
+			fetchEmbedders();
+		}
+	}
 </script>
 
 <div class="max-w-7xl mx-auto">
@@ -712,13 +638,6 @@
 											config['dimensions'] = dimensions;
 											localDimensions = dimensions;
 											formDimensions = dimensions;
-											dimensionSource = 'known';
-											dimensionMessage = `Known dimensions for ${value}`;
-										} else {
-											// Reset dimension info for unknown models
-											dimensionSource = '';
-											dimensionMessage = '';
-											detectedDimensions = null;
 										}
 										formConfig = JSON.stringify(config, null, 2);
 									}
@@ -790,44 +709,7 @@
 									class="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 									placeholder="e.g., 384, 768, 1536"
 								/>
-								<button
-									type="button"
-									onclick={autoDetectDimensions}
-									disabled={dimensionDetectionStatus === 'detecting' ||
-										(formProvider !== 'local' && !formApiKey)}
-									class="px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-								>
-									{#if dimensionDetectionStatus === 'detecting'}
-										Detecting...
-									{:else}
-										Auto-Detect
-									{/if}
-								</button>
 							</div>
-							<div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-								{#if dimensionSource === 'known'}
-									<span class="text-green-600 dark:text-green-400">{dimensionMessage}</span>
-								{:else if dimensionSource === 'detected'}
-									<span class="text-blue-600 dark:text-blue-400">{dimensionMessage}</span>
-								{:else if localModel && localModel !== '__custom__' && inferenceModelDimensions[localModel]}
-									Default for {localModel}: {inferenceModelDimensions[localModel]}
-								{:else}
-									Enter embedding vector dimensions for this model
-								{/if}
-							</div>
-							{#if dimensionDetectionStatus === 'error'}
-								<div class="mt-1 text-xs text-red-600 dark:text-red-400">
-									{dimensionMessage}
-								</div>
-							{/if}
-							{#if dimensionMismatch}
-								<div
-									class="mt-1 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded px-2 py-1"
-								>
-									⚠️ Warning: Configured dimensions ({dimensionMismatch.configured}) don't match
-									detected dimensions ({dimensionMismatch.detected})
-								</div>
-							{/if}
 						</div>
 
 						<div>
@@ -1161,23 +1043,28 @@
 		</div>
 	{:else if embedders.length === 0}
 		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-12 text-center">
-			<p class="text-gray-500 dark:text-gray-400 mb-4">No embedders yet</p>
-			<button
-				onclick={() => openCreateForm()}
-				class="text-blue-600 dark:text-blue-400 hover:underline"
-			>
-				Create your first embedder
-			</button>
-		</div>
-	{:else if filteredEmbedders.length === 0}
-		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-12 text-center">
-			<p class="text-gray-500 dark:text-gray-400 mb-4">No embedders match your search</p>
-			<button
-				onclick={() => (searchQuery = '')}
-				class="text-blue-600 dark:text-blue-400 hover:underline"
-			>
-				Clear search
-			</button>
+			<p class="text-gray-500 dark:text-gray-400 mb-4">
+				{#if searchQuery.trim()}
+					No embedders match your search
+				{:else}
+					No embedders yet
+				{/if}
+			</p>
+			{#if searchQuery.trim()}
+				<button
+					onclick={() => (searchQuery = '')}
+					class="text-blue-600 dark:text-blue-400 hover:underline"
+				>
+					Clear search
+				</button>
+			{:else}
+				<button
+					onclick={() => openCreateForm()}
+					class="text-blue-600 dark:text-blue-400 hover:underline"
+				>
+					Create your first embedder
+				</button>
+			{/if}
 		</div>
 	{:else}
 		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
@@ -1193,7 +1080,7 @@
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Actions</TableHeadCell>
 				</TableHead>
 				<TableBody>
-					{#each filteredEmbedders as embedder (embedder.embedder_id)}
+					{#each embedders as embedder (embedder.embedder_id)}
 						<tr class="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50">
 							<TableBodyCell class="px-4 py-3">
 								<button
@@ -1246,6 +1133,30 @@
 					{/each}
 				</TableBody>
 			</Table>
+
+			<!-- Pagination Controls -->
+			<div class="mt-6 px-4 pb-4 flex items-center justify-between">
+				<div class="text-sm text-gray-600 dark:text-gray-400">
+					Showing {currentOffset + 1}-{Math.min(currentOffset + pageSize, totalCount)} of {totalCount}
+					embedders
+				</div>
+				<div class="flex gap-2">
+					<button
+						onclick={goToPreviousPage}
+						disabled={currentOffset === 0}
+						class="px-4 py-2 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100 dark:hover:bg-gray-700"
+					>
+						Previous
+					</button>
+					<button
+						onclick={goToNextPage}
+						disabled={currentOffset + pageSize >= totalCount}
+						class="px-4 py-2 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100 dark:hover:bg-gray-700"
+					>
+						Next
+					</button>
+				</div>
+			</div>
 		</div>
 	{/if}
 </div>

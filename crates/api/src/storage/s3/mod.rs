@@ -129,8 +129,8 @@ pub(crate) async fn list_files(
         for obj in output.contents() {
             let key = obj.key().unwrap_or_default();
 
-            // Skip chunk files
-            if key.starts_with(&format!("{}chunks/", prefix)) {
+            // Skip the directory marker itself
+            if key == prefix {
                 continue;
             }
 
@@ -388,8 +388,8 @@ pub(crate) async fn count_collection_files(
         };
         for obj in output.contents() {
             let key = obj.key().unwrap_or_default();
-            // Skip chunk files - only exclude if they are in the chunks directory
-            if !key.starts_with(&format!("{}chunks/", prefix)) {
+            // Skip the directory marker itself
+            if key != prefix {
                 count += 1;
             }
         }

@@ -19,6 +19,13 @@
 		updated_at: string;
 	}
 
+	interface PaginatedLLMList {
+		items: LLM[];
+		total_count: number;
+		limit: number;
+		offset: number;
+	}
+
 	type ProviderDefaultConfig = {
 		url: string;
 		models: string[];
@@ -28,6 +35,9 @@
 	let llms = $state<LLM[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+	let totalCount = $state(0);
+	let currentOffset = $state(0);
+	const pageSize = 20;
 	let showCreateForm = $state(false);
 	let editingLLM = $state<LLM | null>(null);
 
@@ -169,6 +179,8 @@
 			if (searchQuery.trim()) {
 				params.append('search', searchQuery.trim());
 			}
+			params.append('limit', pageSize.toString());
+			params.append('offset', currentOffset.toString());
 			const url = params.toString() ? `/api/llms?${params.toString()}` : '/api/llms';
 			const response = await fetch(url);
 			if (!response.ok) {
@@ -176,7 +188,9 @@
 				console.error('Failed to fetch LLMs:', errorText);
 				throw new Error(`Failed to fetch LLMs: ${response.status}`);
 			}
-			llms = await response.json();
+			const data: PaginatedLLMList = await response.json();
+			llms = data.items;
+			totalCount = data.total_count;
 		} catch (e: any) {
 			console.error('Error fetching LLMs:', e);
 			error = e.message || 'Failed to load LLMs';
@@ -267,9 +281,17 @@
 		error = null;
 		try {
 			const config = JSON.parse(formConfig);
+
+			// Extract model from config - it should be there
+			const model = config.model;
+			if (!model) {
+				throw new Error('Model is required in configuration');
+			}
+
 			const body: any = {
 				name: formName,
 				provider: formProvider,
+				model,
 				base_url: formBaseUrl,
 				api_key: formApiKey || null,
 				config,
@@ -333,10 +355,36 @@
 	}
 
 	// Refetch when search query changes
+	// Debounce search to avoid spamming API on every keystroke
+	let searchDebounceTimeout: ReturnType<typeof setTimeout> | null = null;
 	$effect(() => {
-		searchQuery;
-		fetchLLMs();
+		if (searchQuery !== undefined) {
+			currentOffset = 0; // Reset to first page when searching
+			if (searchDebounceTimeout) {
+				clearTimeout(searchDebounceTimeout);
+			}
+			searchDebounceTimeout = setTimeout(() => {
+				fetchLLMs();
+			}, 300); // 300ms debounce
+		}
+		return () => {
+			if (searchDebounceTimeout) {
+				clearTimeout(searchDebounceTimeout);
+			}
+		};
 	});
+
+	function goToPreviousPage() {
+		currentOffset = Math.max(0, currentOffset - pageSize);
+		fetchLLMs();
+	}
+
+	function goToNextPage() {
+		if (currentOffset + pageSize < totalCount) {
+			currentOffset += pageSize;
+			fetchLLMs();
+		}
+	}
 </script>
 
 <div class="max-w-7xl mx-auto">
@@ -704,6 +752,30 @@
 					{/each}
 				</TableBody>
 			</Table>
+
+			<!-- Pagination Controls -->
+			<div class="mt-6 px-4 pb-4 flex items-center justify-between">
+				<div class="text-sm text-gray-600 dark:text-gray-400">
+					Showing {currentOffset + 1}-{Math.min(currentOffset + pageSize, totalCount)} of {totalCount}
+					LLMs
+				</div>
+				<div class="flex gap-2">
+					<button
+						onclick={goToPreviousPage}
+						disabled={currentOffset === 0}
+						class="px-4 py-2 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100 dark:hover:bg-gray-700"
+					>
+						Previous
+					</button>
+					<button
+						onclick={goToNextPage}
+						disabled={currentOffset + pageSize >= totalCount}
+						class="px-4 py-2 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100 dark:hover:bg-gray-700"
+					>
+						Next
+					</button>
+				</div>
+			</div>
 		</div>
 	{/if}
 </div>

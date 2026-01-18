@@ -10,7 +10,6 @@ pub(crate) fn init_observability() -> Result<PrometheusMetrics> {
 
     let endpoints_to_exclude = [
         ("/", None),
-        ("/health", None),
         ("/health/.*", Some("/health/.*")),
         ("/metrics", None),
         ("/swagger-ui", None),
