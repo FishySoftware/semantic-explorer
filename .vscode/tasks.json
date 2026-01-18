@@ -47,11 +47,11 @@
             "problemMatcher": []
         },
         {
-            "label": "Run Inference API",
+            "label": "Run Embedding Inference API",
             "type": "shell",
             "command": "set -a && source .env && set +a && ./run_with_cuda.sh run",
             "options": {
-                "cwd": "${workspaceFolder}/crates/inference-api"
+                "cwd": "${workspaceFolder}/crates/embedding-inference-api"
             },
             "presentation": {
                 "reveal": "always",

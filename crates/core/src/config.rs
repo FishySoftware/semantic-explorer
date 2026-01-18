@@ -452,12 +452,12 @@ impl OidcSessionConfig {
 impl EmbeddingInferenceConfig {
     pub fn from_env() -> Result<Self> {
         Ok(Self {
-            url: env::var("INFERENCE_API_URL")
+            url: env::var("EMBEDDING_INFERENCE_API_URL")
                 .unwrap_or_else(|_| "http://localhost:8090".to_string()),
-            timeout_secs: env::var("INFERENCE_API_TIMEOUT_SECS")
+            timeout_secs: env::var("EMBEDDING_INFERENCE_API_TIMEOUT_SECS")
                 .unwrap_or_else(|_| "120".to_string())
                 .parse()
-                .context("INFERENCE_API_TIMEOUT_SECS must be a number")?,
+                .context("EMBEDDING_INFERENCE_API_TIMEOUT_SECS must be a number")?,
         })
     }
 }

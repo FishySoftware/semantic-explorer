@@ -181,11 +181,11 @@ services:
   #   networks:
   #     - semantic-explorer-net
 
-  # # Local inference service for embeddings and reranking (CUDA GPU accelerated)
-  # inference-api:
+  # # Embedding inference service for embeddings and reranking (CUDA GPU accelerated)
+  # embedding-inference-api:
   #   build:
   #     context: ../../
-  #     dockerfile: crates/inference-api/Dockerfile
+  #     dockerfile: crates/embedding-inference-api/Dockerfile
   #   restart: unless-stopped
   #   deploy:
   #     resources:
@@ -195,7 +195,7 @@ services:
   #             count: 1
   #             capabilities: [gpu]
   #   environment:
-  #     - RUST_LOG=debug,inference_api=debug
+  #     - RUST_LOG=debug,embedding_inference_api=debug
   #     - LOG_FORMAT=pretty
   #     - INFERENCE_HOSTNAME=0.0.0.0
   #     - INFERENCE_PORT=8090
@@ -209,7 +209,7 @@ services:
   #     - INFERENCE_MAX_BATCH_SIZE=256
   #     - HF_HOME=/models
   #     - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
-  #     - SERVICE_NAME=inference-api
+  #     - SERVICE_NAME=embedding-inference-api
   #   volumes:
   #     - inference_models:/models:rw
   #     - tensorrt_cache:/tensorrt-cache:rw
@@ -217,6 +217,51 @@ services:
   #     - "8090:8090"
   #   healthcheck:
   #     test: ["CMD", "wget", "--spider", "-q", "http://localhost:8090/health/live"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 3
+  #     start_period: 120s
+  #   networks:
+  #     - semantic-explorer-net
+
+  # # LLM inference service for text generation (CUDA GPU accelerated)
+  # llm-inference-api:
+  #   build:
+  #     context: ../../
+  #     dockerfile: crates/llm-inference-api/Dockerfile
+  #   restart: unless-stopped
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   environment:
+  #     - RUST_LOG=debug,llm_inference_api=debug
+  #     - LOG_FORMAT=pretty
+  #     - LLM_INFERENCE_HOSTNAME=0.0.0.0
+  #     - LLM_INFERENCE_PORT=8091
+  #     - CORS_ALLOWED_ORIGINS=*
+  #     # GPU Configuration
+  #     - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+  #     # Model configuration
+  #     - LLM_ALLOWED_MODELS=mistralai/Mistral-7B-Instruct-v0.2
+  #     - LLM_DEFAULT_MODEL=mistralai/Mistral-7B-Instruct-v0.2
+  #     - LLM_MAX_CONCURRENT_REQUESTS=10
+  #     - LLM_DEFAULT_TEMPERATURE=0.7
+  #     - LLM_DEFAULT_TOP_P=0.9
+  #     - LLM_DEFAULT_MAX_TOKENS=512
+  #     - LLM_MAX_TOKENS_LIMIT=4096
+  #     - HF_HOME=/models
+  #     - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+  #     - SERVICE_NAME=llm-inference-api
+  #   volumes:
+  #     - llm_models:/models:rw
+  #   ports:
+  #     - "8091:8091"
+  #   healthcheck:
+  #     test: ["CMD", "wget", "--spider", "-q", "http://localhost:8091/health/live"]
   #     interval: 10s
   #     timeout: 5s
   #     retries: 3
@@ -613,4 +658,5 @@ volumes:
   prometheus_data:
   grafana_data:
   inference_models:
+  llm_models:
   tensorrt_cache:

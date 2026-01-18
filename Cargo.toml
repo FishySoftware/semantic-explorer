@@ -3,7 +3,8 @@ resolver = "2"
 members = [
     "crates/api",
     "crates/core",
-    "crates/inference-api",
+    "crates/embedding-inference-api",
+    "crates/llm-inference-api",
     "crates/worker-collections",
     "crates/worker-datasets"
 ]

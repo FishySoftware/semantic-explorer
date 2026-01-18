@@ -165,32 +165,62 @@ spec:
       {{- end }}
   {{- end }}
 {{- end }}---
-{{- if .Values.inferenceApi.autoscaling.enabled }}
+{{- if .Values.embeddingInferenceApi.autoscaling.enabled }}
 apiVersion: {{ include "semantic-explorer.hpa.apiVersion" . }}
 kind: HorizontalPodAutoscaler
 metadata:
-  name: {{ include "semantic-explorer.fullname" . }}-inference-api
+  name: {{ include "semantic-explorer.fullname" . }}-embedding-inference-api
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "semantic-explorer.inferenceApi.labels" . | nindent 4 }}
+    {{- include "semantic-explorer.embeddingInferenceApi.labels" . | nindent 4 }}
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: StatefulSet
-    name: {{ include "semantic-explorer.fullname" . }}-inference-api
-  minReplicas: {{ .Values.inferenceApi.autoscaling.minReplicas }}
-  maxReplicas: {{ .Values.inferenceApi.autoscaling.maxReplicas }}
+    name: {{ include "semantic-explorer.fullname" . }}-embedding-inference-api
+  minReplicas: {{ .Values.embeddingInferenceApi.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.embeddingInferenceApi.autoscaling.maxReplicas }}
   metrics:
-  {{- if .Values.inferenceApi.autoscaling.targetCPUUtilizationPercentage }}
+  {{- if .Values.embeddingInferenceApi.autoscaling.targetCPUUtilizationPercentage }}
   - type: Resource
     resource:
       name: cpu
       {{- if semverCompare ">=1.23-0" .Capabilities.KubeVersion.GitVersion }}
       target:
         type: Utilization
-        averageUtilization: {{ .Values.inferenceApi.autoscaling.targetCPUUtilizationPercentage }}
+        averageUtilization: {{ .Values.embeddingInferenceApi.autoscaling.targetCPUUtilizationPercentage }}
       {{- else }}
-      targetAverageUtilization: {{ .Values.inferenceApi.autoscaling.targetCPUUtilizationPercentage }}
+      targetAverageUtilization: {{ .Values.embeddingInferenceApi.autoscaling.targetCPUUtilizationPercentage }}
+      {{- end }}
+  {{- end }}
+{{- end }}
+---
+{{- if .Values.llmInferenceApi.autoscaling.enabled }}
+apiVersion: {{ include "semantic-explorer.hpa.apiVersion" . }}
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-llm-embedding-inference-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.llmInferenceApi.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: {{ include "semantic-explorer.fullname" . }}-llm-embedding-inference-api
+  minReplicas: {{ .Values.llmInferenceApi.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.llmInferenceApi.autoscaling.maxReplicas }}
+  metrics:
+  {{- if .Values.llmInferenceApi.autoscaling.targetCPUUtilizationPercentage }}
+  - type: Resource
+    resource:
+      name: cpu
+      {{- if semverCompare ">=1.23-0" .Capabilities.KubeVersion.GitVersion }}
+      target:
+        type: Utilization
+        averageUtilization: {{ .Values.llmInferenceApi.autoscaling.targetCPUUtilizationPercentage }}
+      {{- else }}
+      targetAverageUtilization: {{ .Values.llmInferenceApi.autoscaling.targetCPUUtilizationPercentage }}
       {{- end }}
   {{- end }}
 {{- end }}

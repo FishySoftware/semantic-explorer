@@ -7,6 +7,9 @@ import globals from 'globals';
 import svelteParser from 'svelte-eslint-parser';
 
 export default [
+	{
+		ignores: ['vite.config.d.ts'],
+	},
 	js.configs.recommended,
 	{
 		languageOptions: {

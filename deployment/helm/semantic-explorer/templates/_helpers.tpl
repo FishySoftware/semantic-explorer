@@ -704,14 +704,14 @@ Quickwit gRPC port for init container
 {{/*
 Inference API labels
 */}}
-{{- define "semantic-explorer.inferenceApi.labels" -}}
+{{- define "semantic-explorer.embeddingInferenceApi.labels" -}}
 helm.sh/chart: {{ include "semantic-explorer.chart" . }}
-{{ include "semantic-explorer.inferenceApi.selectorLabels" . }}
+{{ include "semantic-explorer.embeddingInferenceApi.selectorLabels" . }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
-app.kubernetes.io/component: inference-api
+app.kubernetes.io/component: embedding-inference-api
 {{- with .Values.commonLabels }}
 {{ toYaml . }}
 {{- end }}
@@ -720,30 +720,85 @@ app.kubernetes.io/component: inference-api
 {{/*
 Inference API selector labels
 */}}
-{{- define "semantic-explorer.inferenceApi.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "semantic-explorer.name" . }}-inference-api
+{{- define "semantic-explorer.embeddingInferenceApi.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "semantic-explorer.name" . }}-embedding-inference-api
 app.kubernetes.io/instance: {{ .Release.Name }}
-app.kubernetes.io/component: inference-api
+app.kubernetes.io/component: embedding-inference-api
 {{- end }}
 
 {{/*
 Inference API service account name
 */}}
-{{- define "semantic-explorer.inferenceApi.serviceAccountName" -}}
-{{- if .Values.inferenceApi.serviceAccount.create }}
-{{- default (printf "%s-inference-api" (include "semantic-explorer.fullname" .)) .Values.inferenceApi.serviceAccount.name }}
+{{- define "semantic-explorer.embeddingInferenceApi.serviceAccountName" -}}
+{{- if .Values.embeddingInferenceApi.serviceAccount.create }}
+{{- default (printf "%s-embedding-inference-api" (include "semantic-explorer.fullname" .)) .Values.embeddingInferenceApi.serviceAccount.name }}
 {{- else }}
-{{- default "default" .Values.inferenceApi.serviceAccount.name }}
+{{- default "default" .Values.embeddingInferenceApi.serviceAccount.name }}
 {{- end }}
 {{- end }}
 
 {{/*
 Inference API image
 */}}
-{{- define "semantic-explorer.inferenceApi.image" -}}
-{{- $registry := include "semantic-explorer.imageRegistry" (dict "registry" .Values.inferenceApi.image.registry "global" .Values.global) }}
-{{- $repository := .Values.inferenceApi.image.repository }}
-{{- $tag := .Values.inferenceApi.image.tag | default .Chart.AppVersion }}
+{{- define "semantic-explorer.embeddingInferenceApi.image" -}}
+{{- $registry := include "semantic-explorer.imageRegistry" (dict "registry" .Values.embeddingInferenceApi.image.registry "global" .Values.global) }}
+{{- $repository := .Values.embeddingInferenceApi.image.repository }}
+{{- $tag := .Values.embeddingInferenceApi.image.tag | default .Chart.AppVersion }}
+{{- if $registry }}
+{{- printf "%s/%s:%s" $registry $repository $tag }}
+{{- else }}
+{{- printf "%s:%s" $repository $tag }}
+{{- end }}
+{{- end }}
+{{/*
+==================================================================================
+LLM Inference API Helpers
+==================================================================================
+*/}}
+
+{{/*
+LLM Inference API labels
+*/}}
+{{- define "semantic-explorer.llmInferenceApi.labels" -}}
+helm.sh/chart: {{ include "semantic-explorer.chart" . }}
+{{ include "semantic-explorer.llmInferenceApi.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+app.kubernetes.io/component: llm-embedding-inference-api
+{{- with .Values.commonLabels }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{/*
+LLM Inference API selector labels
+*/}}
+{{- define "semantic-explorer.llmInferenceApi.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "semantic-explorer.name" . }}-llm-embedding-inference-api
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: llm-embedding-inference-api
+{{- end }}
+
+{{/*
+LLM Inference API service account name
+*/}}
+{{- define "semantic-explorer.llmInferenceApi.serviceAccountName" -}}
+{{- if .Values.llmInferenceApi.serviceAccount.create }}
+{{- default (printf "%s-llm-embedding-inference-api" (include "semantic-explorer.fullname" .)) .Values.llmInferenceApi.serviceAccount.name }}
+{{- else }}
+{{- default "default" .Values.llmInferenceApi.serviceAccount.name }}
+{{- end }}
+{{- end }}
+
+{{/*
+LLM Inference API image
+*/}}
+{{- define "semantic-explorer.llmInferenceApi.image" -}}
+{{- $registry := include "semantic-explorer.imageRegistry" (dict "registry" .Values.llmInferenceApi.image.registry "global" .Values.global) }}
+{{- $repository := .Values.llmInferenceApi.image.repository }}
+{{- $tag := .Values.llmInferenceApi.image.tag | default .Chart.AppVersion }}
 {{- if $registry }}
 {{- printf "%s/%s:%s" $registry $repository $tag }}
 {{- else }}

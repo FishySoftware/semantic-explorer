@@ -401,12 +401,12 @@ workerVisualizationsPy:
   metrics:
     enabled: false
 
-# Inference API Configuration (GPU-accelerated embeddings and reranking)
-inferenceApi:
+# Embedding Inference API Configuration (GPU-accelerated embeddings and reranking)
+embeddingInferenceApi:
   enabled: true
   replicaCount: 2
   image:
-    repository: jofish89/inference-api
+    repository: jofish89/embedding-inference-api
     tag: "latest"
     pullPolicy: Always
   statefulset:
@@ -508,7 +508,7 @@ inferenceApi:
   serviceAccount:
     create: true
     annotations: {}
-    name: "sa-semantic-explorer-inference-api"
+    name: "sa-semantic-explorer-embedding-inference-api"
   podAnnotations: {}
   podLabels: {}
   metrics:
@@ -531,6 +531,132 @@ inferenceApi:
     enabled: false
     size: 10Gi
     mountPath: /tensorrt-cache
+
+# LLM Inference API Configuration (GPU-accelerated text generation)
+llmInferenceApi:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: jofish89/llm-inference-api
+    tag: "latest"
+    pullPolicy: Always
+  statefulset:
+    podManagementPolicy: Parallel
+    updateStrategy:
+      type: RollingUpdate
+      rollingUpdate:
+        partition: 0
+  service:
+    type: ClusterIP
+    port: 8091
+    targetPort: 8091
+    annotations: {}
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 8Gi
+      nvidia.com/gpu: 1
+    limits:
+      cpu: 4000m
+      memory: 16Gi
+      nvidia.com/gpu: 1
+  autoscaling:
+    enabled: false  # GPU nodes typically don't benefit from autoscaling
+    minReplicas: 2
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 70
+  livenessProbe:
+    httpGet:
+      path: /health/live
+      port: 8091
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+  readinessProbe:
+    httpGet:
+      path: /health/ready
+      port: 8091
+    initialDelaySeconds: 30
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+    successThreshold: 1
+  startupProbe:
+    httpGet:
+      path: /health/live
+      port: 8091
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 30  # Allow 5 minutes for model loading
+    successThreshold: 1
+  env:
+    RUST_LOG: "warn,llm_inference_api=info"
+    LOG_FORMAT: "json"
+    LLM_INFERENCE_HOSTNAME: "0.0.0.0"
+    LLM_INFERENCE_PORT: "8091"
+    CORS_ALLOWED_ORIGINS: "*"
+    # Model configuration
+    LLM_ALLOWED_MODELS: "mistralai/Mistral-7B-Instruct-v0.2"
+    LLM_DEFAULT_MODEL: "mistralai/Mistral-7B-Instruct-v0.2"
+    LLM_MAX_CONCURRENT_REQUESTS: "10"
+    LLM_DEFAULT_TEMPERATURE: "0.7"
+    LLM_DEFAULT_TOP_P: "0.9"
+    LLM_DEFAULT_MAX_TOKENS: "512"
+    LLM_MAX_TOKENS_LIMIT: "4096"
+    # HuggingFace cache directory - mounted from PVC
+    HF_HOME: "/models"
+    # For airgapped deployments, set HF_ENDPOINT to your Artifactory proxy
+    # HF_ENDPOINT: "https://artifactory.company.com/huggingface"
+    SERVICE_NAME: "llm-inference-api"
+  envFrom: []
+  # GPU node selector - adjust labels based on your cluster
+  nodeSelector:
+    nvidia.com/gpu: "true"
+  # Tolerations for GPU nodes if they're tainted
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values:
+                    - llm-inference-api
+            topologyKey: kubernetes.io/hostname
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  priorityClassName: ""
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: "sa-semantic-explorer-llm-inference-api"
+  podAnnotations: {}
+  podLabels: {}
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 15s
+      scrapeTimeout: 5s
+  # Persistent volume for model cache
+  persistence:
+    enabled: true
+    storageClass: ""  # Use default storage class or specify
+    accessMode: ReadWriteOnce
+    size: 100Gi  # LLM models are larger than embedding models
+    mountPath: /models
+    # For ReadWriteMany, models can be shared across pods
+    # For ReadWriteOnce, each pod gets its own cache
 
 # PostgreSQL Configuration (Optional Infrastructure)
 # Disabled by default - configure external.* for production use

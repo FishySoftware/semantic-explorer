@@ -1,15 +1,14 @@
-//! Inference API service entry point.
+//! LLM Inference API service entry point.
 //!
-//! Local AI inference service for Semantic Explorer providing embedding and reranking
-//! capabilities using fastembed-rs ONNX models with CUDA GPU acceleration.
+//! Local AI inference service for Semantic Explorer providing text generation,
+//! streaming, and chat capabilities using mistral.rs with CUDA GPU acceleration.
 
 mod api;
 mod config;
-mod embedding;
 mod errors;
+mod llm;
 mod models;
 mod observability;
-mod reranker;
 
 use actix_cors::Cors;
 use actix_web::{App, HttpServer, middleware::Compress, web};
@@ -20,19 +19,19 @@ use utoipa::OpenApi;
 use utoipa_actix_web::AppExt;
 use utoipa_swagger_ui::SwaggerUi;
 
-use config::InferenceConfig;
+use config::LlmInferenceConfig;
 
 #[derive(OpenApi)]
 #[openapi(
     info(
-        title = "Inference API",
-        description = "Local AI inference service for embeddings and reranking with CUDA GPU acceleration",
+        title = "LLM Inference API",
+        description = "Local AI inference service for text generation with CUDA GPU acceleration via mistral.rs",
         version = "1.0.0"
     ),
     tags(
         (name = "health", description = "Health check endpoints"),
-        (name = "embedding", description = "Text embedding generation"),
-        (name = "reranking", description = "Document reranking"),
+        (name = "generation", description = "Text generation"),
+        (name = "chat", description = "Chat completions"),
         (name = "models", description = "Model discovery and listing")
     )
 )]
@@ -43,7 +42,7 @@ async fn main() -> Result<()> {
     dotenv().ok();
 
     // Load configuration
-    let config = InferenceConfig::from_env()?;
+    let config = LlmInferenceConfig::from_env()?;
 
     // Initialize observability
     let prometheus = observability::init_observability(&config.observability)?;
@@ -51,40 +50,42 @@ async fn main() -> Result<()> {
     info!(
         hostname = %config.server.hostname,
         port = config.server.port,
-        "Starting inference-api server with CUDA GPU acceleration (controlled by CUDA_VISIBLE_DEVICES)"
+        "Starting llm-inference-api server with CUDA GPU acceleration (controlled by CUDA_VISIBLE_DEVICES)"
     );
 
     // Log allowed models configuration
-    if config.models.allowed_embedding_models.is_empty() {
-        info!(
-            "All embedding models are allowed (no INFERENCE_ALLOWED_EMBEDDING_MODELS configured)"
-        );
+    if config.models.allowed_models.is_empty() {
+        info!("All LLM models are allowed (no LLM_ALLOWED_MODELS configured)");
     } else {
         info!(
-            allowed_models = ?config.models.allowed_embedding_models,
-            count = config.models.allowed_embedding_models.len(),
-            "Embedding model access restricted to allowed list"
+            allowed_models = ?config.models.allowed_models,
+            count = config.models.allowed_models.len(),
+            "LLM model access restricted to allowed list"
         );
     }
 
-    if config.models.allowed_rerank_models.is_empty() {
-        info!("All rerank models are allowed (no INFERENCE_ALLOWED_RERANK_MODELS configured)");
-    } else {
-        info!(
-            allowed_models = ?config.models.allowed_rerank_models,
-            count = config.models.allowed_rerank_models.len(),
-            "Rerank model access restricted to allowed list"
-        );
-    }
-
-    tokio::join!(
-        embedding::init_cache(&config.models),
-        reranker::init_cache(&config.models)
+    // Log default model
+    info!(
+        default_model = %config.models.default_model,
+        "Default model configured"
     );
 
-    info!("Model caches initialized.");
+    // Log generation defaults
+    info!(
+        temperature = config.generation.default_temperature,
+        top_p = config.generation.default_top_p,
+        max_tokens = config.generation.default_max_tokens,
+        max_tokens_limit = config.generation.max_tokens_limit,
+        "Generation defaults configured"
+    );
+
+    // Initialize model cache
+    llm::init_cache(&config.models).await;
+
+    info!("Model cache initialized.");
 
     let model_config = web::Data::new(config.models.clone());
+    let gen_config = web::Data::new(config.generation.clone());
     let hostname = config.server.hostname.clone();
     let port = config.server.port;
     let cors_origins = config.server.cors_allowed_origins.clone();
@@ -114,15 +115,19 @@ async fn main() -> Result<()> {
             .wrap(cors)
             .wrap(Compress::default())
             .app_data(model_config.clone())
+            .app_data(gen_config.clone())
             .into_utoipa_app()
             .openapi(ApiDoc::openapi())
+            // Health endpoints
             .service(api::health::health_live)
             .service(api::health::health_ready)
-            .service(api::embedding::list_embedders)
-            .service(api::embedding::embed)
-            .service(api::embedding::embed_batch)
-            .service(api::reranking::list_rerankers)
-            .service(api::reranking::rerank)
+            // Model listing
+            .service(api::generation::list_models)
+            // Generation endpoints
+            .service(api::generation::generate)
+            .service(api::streaming::generate_stream)
+            .service(api::chat::chat_completion)
+            // Swagger UI
             .openapi_service(|api| {
                 SwaggerUi::new("/swagger-ui/{_:.*}").url("/api/openapi.json", api)
             })

@@ -1,5 +1,5 @@
 [package]
-name = "embedding-inference-api"
+name = "llm-inference-api"
 version = "0.1.0"
 edition = "2024"
 authors = ["Jonathan Poisson"]
@@ -7,7 +7,7 @@ readme = "README.md"
 license-file = "LICENSE"
 
 [[bin]]
-name = "embedding-inference-api"
+name = "llm-inference-api"
 
 [features]
 default = []
@@ -27,9 +27,8 @@ dotenvy = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
 once_cell = { workspace = true }
-fastembed = { version = "5.8.1", features = ["hf-hub-rustls-tls", "cudnn", "cuda"], default-features = false }
-ort = { version = "2.0.0-rc.11", features = ["cuda"], default-features = false }
 futures = "0.3.31"
+mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs", features = ["cuda"] }
 
 [lints.clippy]
 enum_glob_use = "deny"

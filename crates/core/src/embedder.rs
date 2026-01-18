@@ -10,8 +10,8 @@ const DEFAULT_OPENAI_BATCH_SIZE: usize = 2048;
 const DEFAULT_COHERE_BATCH_SIZE: usize = 96;
 const DEFAULT_LOCAL_BATCH_SIZE: usize = 256;
 
-fn get_inference_api_url() -> String {
-    std::env::var("INFERENCE_API_URL").unwrap_or_else(|_| "http://localhost:8090".to_string())
+fn get_embedding_inference_api_url() -> String {
+    std::env::var("EMBEDDING_INFERENCE_API_URL").unwrap_or_else(|_| "http://localhost:8090".to_string())
 }
 
 pub async fn generate_batch_embeddings(
@@ -106,7 +106,7 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
                 "texts": texts,
                 "model": model,
             });
-            let inference_url = get_inference_api_url();
+            let inference_url = get_embedding_inference_api_url();
             let url = format!("{}/api/embed/batch", inference_url.trim_end_matches('/'));
             (url, body, false)
         }

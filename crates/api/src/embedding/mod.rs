@@ -47,12 +47,12 @@ pub async fn generate_embedding(
             (endpoint, body, true)
         }
         "local" => {
-            // Local inference via inference-api service uses INFERENCE_API_URL environment variable
+            // Local inference via embedding-inference-api service uses EMBEDDING_INFERENCE_API_URL environment variable
             let model = config
                 .get("model")
                 .and_then(|v| v.as_str())
                 .unwrap_or("BAAI/bge-small-en-v1.5");
-            let inference_url = std::env::var("INFERENCE_API_URL")
+            let inference_url = std::env::var("EMBEDDING_INFERENCE_API_URL")
                 .unwrap_or_else(|_| "http://localhost:8090".to_string());
             let endpoint = format!("{}/api/embed", inference_url.trim_end_matches('/'));
             let body = serde_json::json!({

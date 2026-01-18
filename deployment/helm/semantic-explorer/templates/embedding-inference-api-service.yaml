@@ -1,22 +1,22 @@
-{{- if .Values.inferenceApi.enabled }}
+{{- if .Values.embeddingInferenceApi.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "semantic-explorer.fullname" . }}-inference-api
+  name: {{ include "semantic-explorer.fullname" . }}-embedding-inference-api
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "semantic-explorer.inferenceApi.labels" . | nindent 4 }}
-  {{- with .Values.inferenceApi.service.annotations }}
+    {{- include "semantic-explorer.embeddingInferenceApi.labels" . | nindent 4 }}
+  {{- with .Values.embeddingInferenceApi.service.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  type: {{ .Values.inferenceApi.service.type }}
+  type: {{ .Values.embeddingInferenceApi.service.type }}
   ports:
-    - port: {{ .Values.inferenceApi.service.port }}
-      targetPort: {{ .Values.inferenceApi.service.targetPort }}
+    - port: {{ .Values.embeddingInferenceApi.service.port }}
+      targetPort: {{ .Values.embeddingInferenceApi.service.targetPort }}
       protocol: TCP
       name: http
   selector:
-    {{- include "semantic-explorer.inferenceApi.selectorLabels" . | nindent 4 }}
+    {{- include "semantic-explorer.embeddingInferenceApi.selectorLabels" . | nindent 4 }}
 {{- end }}
