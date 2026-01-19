@@ -47,3 +47,6 @@ helm/
 **/coverage/
 **/.pytest_cache/
 **/.coverage
+
+**/.fastembed_cache
+**/.onnxruntime-cuda

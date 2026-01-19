@@ -117,13 +117,14 @@ spec:
         {{- end }}
         - name: tmp
           mountPath: /tmp
-        - name: cache
-          mountPath: /root/.cache
+        - name: hf-cache
+          mountPath: /home/appuser/.cache
       volumes:
       - name: tmp
         emptyDir: {}
-      - name: cache
-        emptyDir: {}
+      - name: hf-cache
+        emptyDir:
+          sizeLimit: 1Gi
       {{- with .Values.llmInferenceApi.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

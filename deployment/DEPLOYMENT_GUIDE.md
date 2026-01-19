@@ -756,39 +756,31 @@ worker_ready
 
 ### Grafana Dashboards
 
-Four dashboards are pre-provisioned:
-
-**1. Service Operations Dashboard** (`01-service-operations.json`)
-- Consolidated view for API, inference API, SSE, and worker throughput
-- HTTP latency percentiles, error rates, and request mix by route
-- Worker job velocity, retry spikes, and queue backlog insights
-- Embedding and reranker timing breakdowns plus SSE connection health
-
-**2. Infrastructure Dashboard** (`02-infrastructure.json`)
-- PostgreSQL connection pool saturation, slow query budget, and vacuum cadence
-- NATS JetStream backlog indicators and consumer lag burn-down
-- Storage latency (S3/MinIO) across operations with success vs error buckets
-- Dataset and collection pipeline saturation signals plus cache health
-
-**3. Audit Events Dashboard** (`03-audit-events.json`)
-- SQL-driven charts sourced from the `postgres-audit` datasource
-- Event volume trends grouped by action, resource, and outcome
-- High-signal tables for recent failures, privileged actors, and IP activity
-- Filters for tenant, subject, and time window to support investigations
-
-**4. Quickwit Logs & Traces Dashboard** (`04-quickwit-observability.json`)
-- Federated Loki queries highlight error and warning rates across services
-- Live log streams with deduplicated error signatures and warning context
-- Jaeger-backed panels surface dependency graphs, slow traces, and error traces
-- Adjustable lookback presets to inspect hot paths and trace bottlenecks quickly
+Grafana is pre-configured with datasources for observability:
 
 **Datasource UIDs**
 - `prometheus` — primary metrics store for services and infrastructure panels
-- `postgres-audit` — Postgres datasource backing the audit events dashboard
-- `quickwit-logs` — Loki-compatible endpoint powering log rate stats and streams
-- `quickwit-traces` — Jaeger-compatible endpoint used for dependency and trace panels
+- `quickwit-logs` — Loki-compatible endpoint for log rate stats and streams
+- `quickwit-traces` — Jaeger-compatible endpoint for dependency and trace panels
+- `postgres-audit` — Postgres datasource for querying the audit_events table
 
-**Access Dashboards:**
+> **Note:** Pre-built dashboards are not currently included. You can create custom dashboards using the available datasources and metrics exposed by the services.
+
+**Available Metrics:**
+The following OpenTelemetry metrics are exported via Prometheus:
+- `database_query_*` — Database query counts and latencies
+- `storage_operations_*` — S3/MinIO storage operation metrics
+- `worker_jobs_*` — Worker job processing counts and durations
+- `collection_transform_*` — Collection transform pipeline metrics
+- `dataset_transform_*` — Dataset embedding pipeline metrics
+- `visualization_transform_*` — Visualization generation metrics
+- `nats_stream_*` / `nats_consumer_*` — NATS JetStream queue metrics
+- `search_request_*` — Search request latencies and counts
+- `inference_embed_*` / `inference_rerank_*` / `inference_llm_*` — Inference API metrics
+- `sse_*` — Server-Sent Events connection metrics
+- `{prefix}_http_requests_*` — HTTP request metrics from actix-web-prom (prefix varies by service)
+
+**Access Grafana:**
 
 Docker Compose:
 ```bash

@@ -4,275 +4,305 @@ networks:
     driver: bridge
 
 services:
-  # semantic-explorer:
-  #   build:
-  #     context: ../../
-  #     dockerfile: crates/api/Dockerfile
-  #   depends_on:
-  #     - minio-1
-  #     - minio-2
-  #     - minio-3
-  #     - minio-4
-  #     - minio-init
-  #     - qdrant
-  #     - dex
-  #     - postgres
-  #     - nats-1
-  #     - nats-2
-  #     - nats-3
-  #     - otel-collector
-  #   restart: unless-stopped
-  #   extra_hosts:
-  #     - "localhost:host-gateway"
-  #   environment:
-  #     - HOSTNAME=0.0.0.0
-  #     - PORT=8080
-  #     - PUBLIC_URL=http://localhost:8080
-  #     - RUST_LOG=warn,actix_web_prom=error,semantic_explorer=debug
-  #     - LOG_FORMAT=pretty
-  #     - AWS_ACCESS_KEY_ID=test_access_key
-  #     - AWS_SECRET_ACCESS_KEY=test_secret_key
-  #     - AWS_REGION=us-east-1
-  #     - AWS_ENDPOINT_URL=http://minio-1:9000
-  #     - S3_BUCKET_NAME=semantic-explorer-local
-  #     - S3_FORCE_PATH_STYLE=true
-  #     - S3_MAX_DOWNLOAD_SIZE_BYTES=104857600
-  #     - S3_MAX_UPLOAD_SIZE_BYTES=1073741824
-  #     - QDRANT_URL=http://qdrant:6334
-  #     - QDRANT_TIMEOUT_SECS=30
-  #     - QDRANT_CONNECT_TIMEOUT_SECS=10
-  #     - DATABASE_URL=postgresql://user:password@postgres:5432/explorer
-  #     - DB_MIN_CONNECTIONS=2
-  #     - DB_MAX_CONNECTIONS=20
-  #     - DB_ACQUIRE_TIMEOUT_SECS=30
-  #     - DB_IDLE_TIMEOUT_SECS=300
-  #     - DB_MAX_LIFETIME_SECS=1800
-  #     - OIDC_ISSUER_URL=http://localhost:5556/dex
-  #     - OIDC_CLIENT_ID=semantic-explorer
-  #     - OIDC_CLIENT_SECRET=ZXhhbXBsZS1hcHAtc2VjcmV0
-  #     - NATS_URL=nats://nats-1:4222
-  #     - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
-  #     - SERVICE_NAME=semantic-explorer
-  #     - SHUTDOWN_TIMEOUT_SECS=30
-  #     # Embedding and LLM inference API URLs
-  #     - EMBEDDING_INFERENCE_API_URL=http://embedding-inference-api:8090
-  #     - EMBEDDING_INFERENCE_API_TIMEOUT_SECS=120
-  #     - LLM_INFERENCE_API_URL=http://llm-inference-api:8091
-  #     - LLM_INFERENCE_API_TIMEOUT_SECS=120
-  #     - ENCRYPTION_MASTER_KEY=e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4
-  #   ports:
-  #     - "8080:8080"
-  #   healthcheck:
-  #     test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health/live"]
-  #     interval: 10s
-  #     timeout: 5s
-  #     retries: 3
-  #     start_period: 30s
-  #   networks:
-  #     - semantic-explorer-net
+  semantic-explorer:
+    image: semantic-explorer:dev
+    build:
+      context: ../../
+      dockerfile: crates/api/Dockerfile
+    depends_on:
+      minio-1:
+        condition: service_healthy
+      minio-2:
+        condition: service_healthy
+      minio-3:
+        condition: service_healthy
+      minio-4:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      qdrant:
+        condition: service_healthy
+      dex:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      nats-1:
+        condition: service_healthy
+      nats-2:
+        condition: service_healthy
+      nats-3:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+      embedding-inference-api:
+        condition: service_healthy
+      llm-inference-api:
+        condition: service_healthy
+    restart: unless-stopped
+    extra_hosts:
+      - "localhost:host-gateway"
+    environment:
+      - RUST_LOG=info,actix_web_prom=error
+      - HOSTNAME=0.0.0.0
+      - PORT=8080
+      - PUBLIC_URL=http://localhost:8080
+      - LOG_FORMAT=json
+      - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test_access_key
+      - AWS_SECRET_ACCESS_KEY=test_secret_key
+      - AWS_ENDPOINT_URL=http://minio-1:9000
+      - S3_BUCKET_NAME=semantic-explorer-local
+      - S3_FORCE_PATH_STYLE=true
+      - S3_MAX_DOWNLOAD_SIZE_BYTES=104857600
+      - S3_MAX_UPLOAD_SIZE_BYTES=1073741824
+      - QDRANT_URL=http://qdrant:6334
+      - QDRANT_TIMEOUT_SECS=30
+      - QDRANT_CONNECT_TIMEOUT_SECS=10
+      - DATABASE_URL=postgresql://user:password@postgres:5432/explorer
+      - DB_MIN_CONNECTIONS=2
+      - DB_MAX_CONNECTIONS=20
+      - DB_ACQUIRE_TIMEOUT_SECS=30
+      - DB_IDLE_TIMEOUT_SECS=300
+      - DB_MAX_LIFETIME_SECS=1800
+      - NATS_URL=nats://nats-1:4222
+      - OIDC_ISSUER_URL=http://localhost:5556/dex
+      - OIDC_CLIENT_ID=semantic-explorer
+      - OIDC_CLIENT_SECRET=ZXhhbXBsZS1hcHAtc2VjcmV0
+      - OIDC_USE_PKCE=false
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - SERVICE_NAME=semantic-explorer
+      - SHUTDOWN_TIMEOUT_SECS=30
+      - EMBEDDING_INFERENCE_API_URL=http://embedding-inference-api:8090
+      - EMBEDDING_INFERENCE_API_TIMEOUT_SECS=120
+      - LLM_INFERENCE_API_URL=http://llm-inference-api:8091
+      - LLM_INFERENCE_API_TIMEOUT_SECS=120
+      - ENCRYPTION_MASTER_KEY=e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4
+    ports:
+      - "8080:8080"
+    volumes:
+      - api_tmp:/tmp:rw
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - semantic-explorer-net
 
-  # worker-collections:
-  #   build:
-  #     context: ../../
-  #     dockerfile: crates/worker-collections/Dockerfile
-  #   depends_on:
-  #     - nats-1
-  #     - nats-2
-  #     - nats-3
-  #     - minio-1
-  #     - minio-init
-  #     - otel-collector
-  #   restart: unless-stopped
-  #   environment:
-  #     - RUST_LOG=info,actix_web_prom=error,worker-collections=debug
-  #     - LOG_FORMAT=pretty
-  #     - NATS_URL=nats://nats-1:4222
-  #     - AWS_ACCESS_KEY_ID=test_access_key
-  #     - AWS_SECRET_ACCESS_KEY=test_secret_key
-  #     - AWS_REGION=us-east-1
-  #     - AWS_ENDPOINT_URL=http://minio-1:9000
-  #     - S3_BUCKET_NAME=semantic-explorer-local
-  #     - S3_FORCE_PATH_STYLE=true
-  #     - S3_MAX_DOWNLOAD_SIZE_BYTES=104857600
-  #     - S3_MAX_UPLOAD_SIZE_BYTES=1073741824
-  #     - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
-  #     - SERVICE_NAME=worker-collections
-  #     - ENCRYPTION_MASTER_KEY=e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4
-  #   networks:
-  #     - semantic-explorer-net
+  worker-collections:
+    image: worker-collections:dev
+    build:
+      context: ../../
+      dockerfile: crates/worker-collections/Dockerfile
+    depends_on:
+      - nats-1
+      - nats-2
+      - nats-3
+      - minio-1
+      - minio-init
+      - otel-collector
+    restart: unless-stopped
+    environment:
+      - RUST_LOG=info
+      - LOG_FORMAT=json
+      - NATS_URL=nats://nats-1:4222
+      - AWS_ACCESS_KEY_ID=test_access_key
+      - AWS_SECRET_ACCESS_KEY=test_secret_key
+      - AWS_REGION=us-east-1
+      - AWS_ENDPOINT_URL=http://minio-1:9000
+      - S3_BUCKET_NAME=semantic-explorer-local
+      - S3_FORCE_PATH_STYLE=true
+      - S3_MAX_DOWNLOAD_SIZE_BYTES=104857600
+      - S3_MAX_UPLOAD_SIZE_BYTES=1073741824
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - SERVICE_NAME=worker-collections
+      - ENCRYPTION_MASTER_KEY=e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4
+    networks:
+      - semantic-explorer-net
 
-  # worker-datasets:
-  #   build:
-  #     context: ../../
-  #     dockerfile: crates/worker-datasets/Dockerfile
-  #   depends_on:
-  #     nats-1:
-  #       condition: service_healthy
-  #     nats-2:
-  #       condition: service_healthy
-  #     nats-3:
-  #       condition: service_healthy
-  #     minio-1:
-  #       condition: service_healthy
-  #     minio-init:
-  #       condition: service_completed_successfully
-  #     qdrant:
-  #       condition: service_healthy
-  #     otel-collector:
-  #       condition: service_started
-  #   restart: unless-stopped
-  #   environment:
-  #     - RUST_LOG=info,actix_web_prom=error,worker-datasets=debug
-  #     - LOG_FORMAT=pretty
-  #     - NATS_URL=nats://nats-1:4222
-  #     - AWS_ACCESS_KEY_ID=test_access_key
-  #     - AWS_SECRET_ACCESS_KEY=test_secret_key
-  #     - AWS_REGION=us-east-1
-  #     - AWS_ENDPOINT_URL=http://minio-1:9000
-  #     - S3_BUCKET_NAME=semantic-explorer-local
-  #     - S3_FORCE_PATH_STYLE=true
-  #     - S3_MAX_DOWNLOAD_SIZE_BYTES=104857600
-  #     - S3_MAX_UPLOAD_SIZE_BYTES=1073741824
-  #     - QDRANT_URL=http://qdrant:6334
-  #     - QDRANT_TIMEOUT_SECS=30
-  #     - QDRANT_CONNECT_TIMEOUT_SECS=10
-  #     - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
-  #     - SERVICE_NAME=worker-datasets
-  #     - ENCRYPTION_MASTER_KEY=e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4
-  #   networks:
-  #     - semantic-explorer-net
+  worker-datasets:
+    image: worker-datasets:dev
+    build:
+      context: ../../
+      dockerfile: crates/worker-datasets/Dockerfile
+    depends_on:
+      nats-1:
+        condition: service_healthy
+      nats-2:
+        condition: service_healthy
+      nats-3:
+        condition: service_healthy
+      minio-1:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      qdrant:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    restart: unless-stopped
+    environment:
+      - RUST_LOG=info
+      - LOG_FORMAT=json
+      - NATS_URL=nats://nats-1:4222
+      - AWS_ACCESS_KEY_ID=test_access_key
+      - AWS_SECRET_ACCESS_KEY=test_secret_key
+      - AWS_REGION=us-east-1
+      - AWS_ENDPOINT_URL=http://minio-1:9000
+      - S3_BUCKET_NAME=semantic-explorer-local
+      - S3_FORCE_PATH_STYLE=true
+      - S3_MAX_DOWNLOAD_SIZE_BYTES=104857600
+      - S3_MAX_UPLOAD_SIZE_BYTES=1073741824
+      - QDRANT_URL=http://qdrant:6334
+      - QDRANT_TIMEOUT_SECS=30
+      - QDRANT_CONNECT_TIMEOUT_SECS=10
+      - EMBEDDING_INFERENCE_API_URL=http://embedding-inference-api:8090
+      - EMBEDDING_INFERENCE_API_TIMEOUT_SECS=120
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - SERVICE_NAME=worker-datasets
+      - MAX_CONCURRENT_JOBS=10
+      - ENCRYPTION_MASTER_KEY=e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4
+    networks:
+      - semantic-explorer-net
 
-  # worker-visualizations-py:
-  #   build:
-  #     context: ../../crates/worker-visualizations-py
-  #     dockerfile: Dockerfile
-  #   depends_on:
-  #     nats-1:
-  #       condition: service_healthy
-  #     nats-2:
-  #       condition: service_healthy
-  #     nats-3:
-  #       condition: service_healthy
-  #     qdrant:
-  #       condition: service_healthy
-  #     minio-1:
-  #       condition: service_healthy
-  #     minio-init:
-  #       condition: service_completed_successfully
-  #     otel-collector:
-  #       condition: service_started
-  #   restart: unless-stopped
-  #   environment:
-  #     - NATS_URL=nats://nats-1:4222
-  #     - NATS_STREAM_RETRY_ATTEMPTS=30
-  #     - NATS_STREAM_RETRY_DELAY=2.0
-  #     - NATS_BATCH_SIZE=1
-  #     - NATS_FETCH_TIMEOUT=5.0
-  #     - QDRANT_URL=http://qdrant:6334
-  #     - AWS_ENDPOINT_URL=http://minio-1:9000
-  #     - AWS_ACCESS_KEY_ID=test_access_key
-  #     - AWS_SECRET_ACCESS_KEY=test_secret_key
-  #     - AWS_REGION=us-east-1
-  #     - S3_BUCKET_NAME=semantic-explorer-local
-  #     - S3_FORCE_PATH_STYLE=true
-  #     - S3_MAX_DOWNLOAD_SIZE_BYTES=104857600
-  #     - S3_MAX_UPLOAD_SIZE_BYTES=1073741824
-  #     - LOG_LEVEL=DEBUG
-  #     - WORKER_ID=py-worker-dev-1
-  #     - PROCESSING_TIMEOUT_SECS=3600
-  #     - MAX_CONCURRENT_JOBS=3
-  #     - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
-  #     - ENCRYPTION_MASTER_KEY=e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4
-  #   networks:
-  #     - semantic-explorer-net
+  worker-visualizations-py:
+    image: worker-visualizations-py:dev
+    build:
+      context: ../../crates/worker-visualizations-py
+      dockerfile: Dockerfile
+    depends_on:
+      nats-1:
+        condition: service_healthy
+      nats-2:
+        condition: service_healthy
+      nats-3:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      minio-1:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      otel-collector:
+        condition: service_started
+    restart: unless-stopped
+    environment:
+      - NATS_URL=nats://nats-1:4222
+      - NATS_STREAM_RETRY_ATTEMPTS=30
+      - NATS_STREAM_RETRY_DELAY=2.0
+      - NATS_BATCH_SIZE=1
+      - NATS_FETCH_TIMEOUT=5.0
+      - QDRANT_URL=http://qdrant:6334
+      - AWS_ENDPOINT_URL=http://minio-1:9000
+      - AWS_ACCESS_KEY_ID=test_access_key
+      - AWS_SECRET_ACCESS_KEY=test_secret_key
+      - AWS_REGION=us-east-1
+      - S3_BUCKET_NAME=semantic-explorer-local
+      - S3_FORCE_PATH_STYLE=true
+      - S3_MAX_DOWNLOAD_SIZE_BYTES=104857600
+      - S3_MAX_UPLOAD_SIZE_BYTES=1073741824
+      - LOG_LEVEL=INFO
+      - WORKER_ID=py-worker-local-1
+      - PROCESSING_TIMEOUT_SECS=3600
+      - MAX_CONCURRENT_JOBS=3
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - PROMETHEUS_METRICS_PORT=9093
+      - ENCRYPTION_MASTER_KEY=e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4
+    networks:
+      - semantic-explorer-net
 
-  # # Embedding inference service for embeddings and reranking (CUDA GPU accelerated)
-  # embedding-inference-api:
-  #   build:
-  #     context: ../../
-  #     dockerfile: crates/embedding-inference-api/Dockerfile
-  #   restart: unless-stopped
-  #   deploy:
-  #     resources:
-  #       reservations:
-  #         devices:
-  #           - driver: nvidia
-  #             count: 1
-  #             capabilities: [gpu]
-  #   environment:
-  #     - RUST_LOG=debug,embedding_inference_api=debug
-  #     - LOG_FORMAT=pretty
-  #     - INFERENCE_HOSTNAME=0.0.0.0
-  #     - INFERENCE_PORT=8090
-  #     # GPU Configuration: Set CUDA_VISIBLE_DEVICES to control which GPU(s) to use
-  #     # Examples: CUDA_VISIBLE_DEVICES=0 (first GPU), CUDA_VISIBLE_DEVICES=0,1 (multiple GPUs)
-  #     - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
-  #     # Preload models at startup
-  #     - INFERENCE_PRELOAD_MODELS=BAAI/bge-small-en-v1.5,BAAI/bge-reranker-base
-  #     - INFERENCE_DEFAULT_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
-  #     - INFERENCE_DEFAULT_RERANKER_MODEL=BAAI/bge-reranker-base
-  #     - INFERENCE_MAX_BATCH_SIZE=256
-  #     - HF_HOME=/models
-  #     - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
-  #     - SERVICE_NAME=embedding-inference-api
-  #   volumes:
-  #     - inference_models:/models:rw
-  #     - tensorrt_cache:/tensorrt-cache:rw
-  #   ports:
-  #     - "8090:8090"
-  #   healthcheck:
-  #     test: ["CMD", "wget", "--spider", "-q", "http://localhost:8090/health/live"]
-  #     interval: 10s
-  #     timeout: 5s
-  #     retries: 3
-  #     start_period: 120s
-  #   networks:
-  #     - semantic-explorer-net
+  # Embedding inference service for embeddings and reranking (CUDA GPU accelerated)
+  embedding-inference-api:
+    image: embedding-inference-api:dev
+    build:
+      context: ../../
+      dockerfile: crates/embedding-inference-api/Dockerfile
+    depends_on:
+      otel-collector:
+        condition: service_started
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - RUST_LOG=info,actix_web_prom=error
+      - LOG_FORMAT=json
+      - INFERENCE_HOSTNAME=0.0.0.0
+      - INFERENCE_PORT=8090
+      - CORS_ALLOWED_ORIGINS=*
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+      - INFERENCE_ALLOWED_EMBEDDING_MODELS=sentence-transformers/all-MiniLM-L6-v2
+      - INFERENCE_ALLOWED_RERANK_MODELS=jinaai/jina-reranker-v2-base-multilingual
+      - INFERENCE_MAX_BATCH_SIZE=256
+      - INFERENCE_MAX_CONCURRENT_REQUESTS=2
+      - HF_HOME=/models
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - SERVICE_NAME=embedding-inference-api
+    volumes:
+      - inference_models:/models:rw
+      - tensorrt_cache:/tensorrt-cache:rw
+    ports:
+      - "8090:8090"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8090/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+    networks:
+      - semantic-explorer-net
 
-  # # LLM inference service for text generation (CUDA GPU accelerated)
-  # llm-inference-api:
-  #   build:
-  #     context: ../../
-  #     dockerfile: crates/llm-inference-api/Dockerfile
-  #   restart: unless-stopped
-  #   deploy:
-  #     resources:
-  #       reservations:
-  #         devices:
-  #           - driver: nvidia
-  #             count: 1
-  #             capabilities: [gpu]
-  #   environment:
-  #     - RUST_LOG=debug,llm_inference_api=debug
-  #     - LOG_FORMAT=pretty
-  #     - LLM_INFERENCE_HOSTNAME=0.0.0.0
-  #     - LLM_INFERENCE_PORT=8091
-  #     - CORS_ALLOWED_ORIGINS=*
-  #     # GPU Configuration
-  #     - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
-  #     # Model configuration
-  #     - LLM_ALLOWED_MODELS=mistralai/Mistral-7B-Instruct-v0.2
-  #     - LLM_DEFAULT_MODEL=mistralai/Mistral-7B-Instruct-v0.2
-  #     - LLM_MAX_CONCURRENT_REQUESTS=10
-  #     - LLM_DEFAULT_TEMPERATURE=0.7
-  #     - LLM_DEFAULT_TOP_P=0.9
-  #     - LLM_DEFAULT_MAX_TOKENS=512
-  #     - LLM_MAX_TOKENS_LIMIT=4096
-  #     - HF_HOME=/models
-  #     - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
-  #     - SERVICE_NAME=llm-inference-api
-  #   volumes:
-  #     - llm_models:/models:rw
-  #   ports:
-  #     - "8091:8091"
-  #   healthcheck:
-  #     test: ["CMD", "wget", "--spider", "-q", "http://localhost:8091/health/live"]
-  #     interval: 10s
-  #     timeout: 5s
-  #     retries: 3
-  #     start_period: 120s
-  #   networks:
-  #     - semantic-explorer-net
+  # LLM inference service for text generation (CUDA GPU accelerated)
+  llm-inference-api:
+    image: llm-inference-api:dev
+    build:
+      context: ../../
+      dockerfile: crates/llm-inference-api/Dockerfile
+    depends_on:
+      otel-collector:
+        condition: service_started
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - RUST_LOG=info,actix_web_prom=error
+      - LOG_FORMAT=json
+      - LLM_INFERENCE_HOSTNAME=0.0.0.0
+      - LLM_INFERENCE_PORT=8091
+      - CORS_ALLOWED_ORIGINS=*
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+      - LLM_ALLOWED_MODELS=TinyLlama/TinyLlama-1.1B-Chat-v1.0
+      - LLM_MAX_CONCURRENT_REQUESTS=2
+      - LLM_DEFAULT_TEMPERATURE=0.7
+      - LLM_DEFAULT_TOP_P=0.9
+      - LLM_DEFAULT_MAX_TOKENS=512
+      - LLM_MAX_TOKENS_LIMIT=4096
+      - HF_HOME=/models
+      - SERVICE_NAME=llm-inference-api
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+    volumes:
+      - llm_models:/models:rw
+      - llm_hf_cache:/home/appuser/.cache:rw
+    ports:
+      - "8091:8091"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8091/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+    networks:
+      - semantic-explorer-net
 
 
   # MinIO distributed cluster - 4 nodes for production-like erasure coding
@@ -412,7 +442,8 @@ services:
       - QDRANT__GPU__INDEXING=1
       - NVIDIA_VISIBLE_DEVICES=all
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      # GPU image has no curl/wget, use bash TCP check
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/6333' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -438,6 +469,12 @@ services:
       - postgres_data:/var/lib/postgresql/data:rw
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d explorer"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     networks:
       - semantic-explorer-net
 
@@ -666,4 +703,6 @@ volumes:
   grafana_data:
   inference_models:
   llm_models:
+  llm_hf_cache:
   tensorrt_cache:
+  api_tmp:

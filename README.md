@@ -1,23 +1,31 @@
 # Semantic Explorer
 
-A comprehensive, production-ready semantic search and RAG (Retrieval-Augmented Generation) platform for document analysis, visualization, and AI-powered chat. Process documents, generate embeddings, visualize high-dimensional data, and perform hybrid search across your knowledge base.
+![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
+![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)
+![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)
+![Docker](https://img.shields.io/badge/docker-compose%20v2%2B-blue.svg)
 
-## Overview
+A platform for document processing, embedding generation, visualization, and semantic search with chat capabilities.
 
-Semantic Explorer is a full-stack platform that transforms unstructured documents into searchable, semantically-indexed knowledge bases with interactive visualizations and AI chat capabilities. Built with Rust for performance, Python for ML workloads, and Svelte for the UI.
+Process documents, generate vector embeddings, create interactive visualizations, and search across your data.
 
-### Key Features
+---
 
-- **Multi-Format Document Processing**: Extract and chunk text from 10+ file formats (PDF, Office docs, Markdown, code files, archives)
-- **Flexible Embedding Pipeline**: Support for local and cloud embedding providers (OpenAI, Cohere, Jina AI, Voyage AI, FastEmbed)
-- **Hybrid Search**: Combine vector similarity with BM25 keyword search for optimal retrieval
-- **Interactive Visualizations**: UMAP dimensionality reduction with HDBSCAN clustering and LLM-generated topic labels
-- **RAG Chat Interface**: Conversational AI with context-aware responses and streaming support
-- **Scalable Architecture**: Microservices with NATS JetStream message queue, PostgreSQL, and Qdrant vector database
-- **Production Observability**: OpenTelemetry metrics, distributed tracing, structured logging, and Grafana dashboards
-- **Multiple Deployment Options**: Docker Compose, Kubernetes/Helm, air-gapped environments
+## ✨ Key Features
 
-## Architecture
+| Feature | Description |
+|---------|-------------|
+| **Multi-Format Processing** | Extract text from PDF, Office (docx/xlsx/pptx), legacy Office (doc/xls/ppt), OpenDocument, Markdown, HTML, XML, JSON, RTF, EPUB, email (eml/msg), log files, and archives (zip/tar/gz) |
+| **Flexible Embeddings** | Local embedding via FastEmbed/ONNX, or cloud providers (OpenAI, Cohere) |
+| **Vector Search** | Semantic similarity search across embedded datasets using Qdrant |
+| **Interactive Visualizations** | UMAP dimensionality reduction with HDBSCAN clustering and LLM-generated topic labels |
+| **Chat with Context** | Conversational interface with context retrieval and SSE streaming responses |
+| **Production Observability** | OpenTelemetry metrics, distributed tracing, structured logging, Grafana dashboards |
+| **Scalable Architecture** | Microservices with NATS JetStream, PostgreSQL, and Qdrant vector database |
+
+---
+
+## 🏗️ Architecture
 
 ```mermaid
 graph TB
@@ -41,7 +49,7 @@ graph TB
 
     subgraph "Optional Inference APIs"
         EMB[embedding-inference-api<br/>FastEmbed + ONNX<br/>Port 8090]
-        LLM[llm-inference-api<br/>mistral.rs<br/>CUDA support]
+        LLM[llm-inference-api<br/>mistral.rs<br/>Port 8091]
     end
 
     subgraph "Data Stores"
@@ -89,7 +97,8 @@ graph TB
     GRAF -->|Query| PG
 ```
 
-### Data Flow
+<details>
+<summary><strong>📊 Data Flow Sequence</strong></summary>
 
 ```mermaid
 sequenceDiagram
@@ -158,7 +167,11 @@ sequenceDiagram
     API-->>UI: Stream response
 ```
 
-## Project Structure
+</details>
+
+---
+
+## 📁 Project Structure
 
 ```
 semantic-explorer/
@@ -174,38 +187,42 @@ semantic-explorer/
 ├── deployment/
 │   ├── compose/                      # Docker Compose configs
 │   └── helm/                         # Kubernetes/Helm charts
-├── Cargo.toml                        # Rust workspace definition
-└── README.md                         # This file
+└── README.md
 ```
 
 ### Component Documentation
 
-- **[API Server](crates/api/README.md)** - REST API, authentication, search, chat
-- **[Core Library](crates/core/README.md)** - Shared configuration, observability, NATS setup
-- **[Collections Worker](crates/worker-collections/README.md)** - File extraction and chunking
-- **[Datasets Worker](crates/worker-datasets/README.md)** - Embedding generation
-- **[Visualizations Worker](crates/worker-visualizations-py/README.md)** - UMAP/HDBSCAN processing
-- **[Embedding Inference API](crates/embedding-inference-api/README.md)** - Local embedding server
-- **[LLM Inference API](crates/llm-inference-api/README.md)** - Local LLM server
-- **[Svelte UI](semantic-explorer-ui/README.md)** - Frontend application
+| Component | Description | README |
+|-----------|-------------|--------|
+| **API Server** | REST API, authentication, search, chat | [crates/api/README.md](crates/api/README.md) |
+| **Core Library** | Shared configuration, observability, NATS setup | [crates/core/README.md](crates/core/README.md) |
+| **Collections Worker** | File extraction and chunking | [crates/worker-collections/README.md](crates/worker-collections/README.md) |
+| **Datasets Worker** | Embedding generation | [crates/worker-datasets/README.md](crates/worker-datasets/README.md) |
+| **Visualizations Worker** | UMAP/HDBSCAN processing | [crates/worker-visualizations-py/README.md](crates/worker-visualizations-py/README.md) |
+| **Embedding Inference API** | Local embedding server (FastEmbed) | [crates/embedding-inference-api/README.md](crates/embedding-inference-api/README.md) |
+| **LLM Inference API** | Local LLM server (mistral.rs) | [crates/llm-inference-api/README.md](crates/llm-inference-api/README.md) |
+| **Svelte UI** | Frontend application | [semantic-explorer-ui/README.md](semantic-explorer-ui/README.md) |
 
-## Quick Start
+---
+
+## 🚀 Quick Start
 
 ### Prerequisites
 
-- **Docker & Docker Compose** (v2.0+) or **Kubernetes** (v1.28+) with Helm
-- **Rust** (1.75+) for local development
-- **Python** (3.11+) for visualization worker development
-- **Node.js** (20+) for UI development
+- **Docker & Docker Compose** v2.0+
+- **NVIDIA GPU** (optional, for local inference)
+- **Rust** 1.75+ (for development)
+- **Python** 3.11+ (for visualization worker development)
+- **Node.js** 20+ (for UI development)
 
-### Development with Docker Compose
+### Development Stack
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/semantic-explorer.git
+git clone https://github.com/FishySoftware/semantic-explorer.git
 cd semantic-explorer
 
-# Start all services (minimal development stack)
+# Start all services
 cd deployment/compose
 docker compose -f compose.dev.yaml up -d
 
@@ -220,48 +237,199 @@ open http://localhost:8080
 ```
 
 The dev stack includes:
-- API server + UI
+- API server + Svelte UI (port 8080)
 - 3 worker services
-- PostgreSQL, NATS, Qdrant, MinIO
-- Prometheus, Grafana, Jaeger (observability)
+- PostgreSQL, NATS (3-node cluster), Qdrant, MinIO (4-node cluster)
+- Prometheus, Grafana, Jaeger, Quickwit (observability)
+- Dex (OIDC provider for development)
 
-### Production Deployment with Docker Compose
+### Production Deployment
 
 ```bash
 cd deployment/compose
 docker compose -f compose.yaml up -d
 ```
 
-See [deployment/compose/README.md](deployment/compose/README.md) for configuration options.
+See [deployment/DEPLOYMENT_GUIDE.md](deployment/DEPLOYMENT_GUIDE.md) for detailed production configuration.
 
-### Kubernetes/Helm Deployment
+---
 
-```bash
-# Add Helm repository (if published)
-helm repo add semantic-explorer https://charts.example.com
-helm repo update
+## ⚙️ Environment Variables Reference
 
-# Install with default values (dev configuration)
-helm install my-semantic-explorer semantic-explorer/semantic-explorer \
-  -f deployment/helm/semantic-explorer/examples/values-all-included-dev.yaml
+All services are configured via environment variables. This is the **complete reference** for the entire platform.
 
-# Or for production
-helm install my-semantic-explorer semantic-explorer/semantic-explorer \
-  -f deployment/helm/semantic-explorer/examples/values-all-included-prod.yaml
+<details>
+<summary><strong>🔧 Server Configuration</strong></summary>
 
-# Check deployment status
-kubectl get pods -l app.kubernetes.io/name=semantic-explorer
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `HOSTNAME` | `localhost` | No | Server bind address |
+| `PORT` | `8080` | No | Server port |
+| `PUBLIC_URL` | - | No | External URL for OIDC callbacks |
+| `CORS_ALLOWED_ORIGINS` | - | No | Comma-separated allowed origins |
+| `STATIC_FILES_DIR` | `./semantic-explorer-ui/` | No | Path to static UI files |
+| `SHUTDOWN_TIMEOUT_SECS` | - | No | Graceful shutdown timeout |
 
-# Port-forward to access UI
-kubectl port-forward svc/semantic-explorer 8080:8080
-open http://localhost:8080
-```
+</details>
 
-See [deployment/helm/semantic-explorer/README.md](deployment/helm/semantic-explorer/README.md) for detailed Helm configuration.
+<details>
+<summary><strong>🗄️ Database (PostgreSQL)</strong></summary>
 
-## Building from Source
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `DATABASE_URL` | - | **Yes** | PostgreSQL connection string |
+| `DB_MAX_CONNECTIONS` | `15` | No | Maximum pool connections |
+| `DB_MIN_CONNECTIONS` | `2` | No | Minimum pool connections |
+| `DB_ACQUIRE_TIMEOUT_SECS` | `30` | No | Connection acquire timeout |
+| `DB_IDLE_TIMEOUT_SECS` | `300` | No | Idle connection timeout |
+| `DB_MAX_LIFETIME_SECS` | `1800` | No | Maximum connection lifetime |
 
-### Build All Rust Crates
+</details>
+
+<details>
+<summary><strong>📨 NATS JetStream</strong></summary>
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `NATS_URL` | `nats://localhost:4222` | No | NATS server URL |
+| `NATS_REPLICAS` | `3` | No | Stream replica count |
+
+</details>
+
+<details>
+<summary><strong>🔍 Qdrant Vector Database</strong></summary>
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `QDRANT_URL` | `http://localhost:6334` | No | Qdrant gRPC endpoint |
+| `QDRANT_API_KEY` | - | No | API key for authentication |
+| `QDRANT_TIMEOUT_SECS` | `30` | No | Request timeout |
+| `QDRANT_CONNECT_TIMEOUT_SECS` | `10` | No | Connection timeout |
+| `QDRANT_QUANTIZATION_TYPE` | `none` | No | `none`, `scalar`, or `product` |
+
+</details>
+
+<details>
+<summary><strong>☁️ S3-Compatible Storage</strong></summary>
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `AWS_REGION` | - | **Yes** | AWS region |
+| `AWS_ACCESS_KEY_ID` | - | No* | Access key (or use IAM roles) |
+| `AWS_SECRET_ACCESS_KEY` | - | No* | Secret key (or use IAM roles) |
+| `AWS_ENDPOINT_URL` | - | **Yes** | S3 endpoint (e.g., MinIO URL) |
+| `S3_BUCKET_NAME` | - | **Yes** | Bucket name for all storage |
+| `S3_MAX_DOWNLOAD_SIZE_BYTES` | `104857600` (100MB) | No | Max download size |
+| `S3_MAX_UPLOAD_SIZE_BYTES` | `1073741824` (1GB) | No | Max upload size |
+
+*Required unless using IAM roles/instance profiles
+
+</details>
+
+<details>
+<summary><strong>🔐 Authentication (OIDC)</strong></summary>
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `OIDC_CLIENT_ID` | - | **Yes** | OIDC client identifier |
+| `OIDC_CLIENT_SECRET` | - | **Yes** | OIDC client secret |
+| `OIDC_ISSUER_URL` | - | **Yes** | OIDC issuer URL |
+| `OIDC_USE_PKCE` | `false` | No | Enable PKCE flow |
+| `OIDC_SESSION_MANAGEMENT_ENABLED` | `true` | No | Enable session management |
+| `OIDC_SESSION_TIMEOUT_SECS` | `3600` | No | Session timeout (1 hour) |
+| `OIDC_INACTIVITY_TIMEOUT_SECS` | `1800` | No | Inactivity timeout (30 min) |
+| `OIDC_MAX_CONCURRENT_SESSIONS` | `5` | No | Max sessions per user |
+| `OIDC_REFRESH_TOKEN_ROTATION_ENABLED` | `true` | No | Enable token rotation |
+
+</details>
+
+<details>
+<summary><strong>🔒 Encryption & TLS</strong></summary>
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `ENCRYPTION_MASTER_KEY` | - | **Yes** | 32-byte hex key for AES-256-GCM |
+| `SERVER_SSL_ENABLED` | `false` | No | Enable HTTPS |
+| `TLS_SERVER_CERT_PATH` | - | If SSL | Path to server certificate |
+| `TLS_SERVER_KEY_PATH` | - | If SSL | Path to server private key |
+| `CLIENT_MTLS_ENABLED` | `false` | No | Enable mutual TLS for clients |
+| `TLS_CLIENT_CERT_PATH` | - | If mTLS | Path to client certificate |
+| `TLS_CLIENT_KEY_PATH` | - | If mTLS | Path to client private key |
+| `TLS_CA_CERT_PATH` | - | No | CA bundle path (uses system if unset) |
+
+</details>
+
+<details>
+<summary><strong>📊 Observability</strong></summary>
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `SERVICE_NAME` | `semantic-explorer` | No | Service name for telemetry |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` | No | OTLP collector endpoint |
+| `LOG_FORMAT` | `json` | No | `json` or `pretty` |
+| `RUST_LOG` | - | No | Rust log filter (e.g., `info,semantic_explorer=debug`) |
+| `LOG_LEVEL` | `INFO` | No | Python log level |
+
+</details>
+
+<details>
+<summary><strong>🧠 Inference APIs</strong></summary>
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `EMBEDDING_INFERENCE_API_URL` | `http://localhost:8090` | No | Local embedding API URL |
+| `EMBEDDING_INFERENCE_API_TIMEOUT_SECS` | `120` | No | Request timeout |
+| `LLM_INFERENCE_API_URL` | `http://localhost:8091` | No | Local LLM API URL |
+| `LLM_INFERENCE_API_TIMEOUT_SECS` | `120` | No | Request timeout |
+
+**Embedding Inference API specific:**
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `INFERENCE_HOSTNAME` | `0.0.0.0` | No | Server bind address |
+| `INFERENCE_PORT` | `8090` | No | Server port |
+| `INFERENCE_ALLOWED_EMBEDDING_MODELS` | - | **Yes** | Comma-separated model list |
+| `INFERENCE_ALLOWED_RERANK_MODELS` | - | No | Comma-separated reranker list |
+| `INFERENCE_MAX_BATCH_SIZE` | `256` | No | Max batch size |
+| `INFERENCE_MAX_CONCURRENT_REQUESTS` | `2` | No | Concurrent request limit |
+| `HF_HOME` | `/models` | No | HuggingFace cache directory |
+
+**LLM Inference API specific:**
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `LLM_INFERENCE_HOSTNAME` | `0.0.0.0` | No | Server bind address |
+| `LLM_INFERENCE_PORT` | `8091` | No | Server port |
+| `LLM_ALLOWED_MODELS` | - | **Yes** | Comma-separated model list |
+| `LLM_MAX_CONCURRENT_REQUESTS` | `2` | No | Concurrent request limit |
+| `LLM_DEFAULT_TEMPERATURE` | `0.7` | No | Default sampling temperature |
+| `LLM_DEFAULT_TOP_P` | `0.9` | No | Default top-p sampling |
+| `LLM_DEFAULT_MAX_TOKENS` | `512` | No | Default max tokens |
+| `LLM_MAX_TOKENS_LIMIT` | `4096` | No | Maximum allowed tokens |
+
+</details>
+
+<details>
+<summary><strong>👷 Worker Configuration</strong></summary>
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `MAX_CONCURRENT_JOBS` | `10` | No | Concurrent jobs per worker |
+| `PROCESSING_TIMEOUT_SECS` | `3600` | No | Job timeout |
+| `WORKER_ID` | UUID | No | Unique worker identifier |
+| `NATS_STREAM_RETRY_ATTEMPTS` | `30` | No | Stream connection retries |
+| `NATS_STREAM_RETRY_DELAY` | `2.0` | No | Retry delay in seconds |
+| `NATS_BATCH_SIZE` | `1` | No | Messages per fetch |
+| `NATS_FETCH_TIMEOUT` | `5.0` | No | Fetch timeout in seconds |
+| `PROMETHEUS_METRICS_PORT` | `9090` | No | Metrics endpoint port |
+
+</details>
+
+---
+
+## 🔧 Building from Source
+
+### Rust Crates
 
 ```bash
 # Debug build
@@ -275,7 +443,7 @@ cargo build -p semantic-explorer
 cargo build -p worker-collections
 ```
 
-### Build UI
+### UI
 
 ```bash
 cd semantic-explorer-ui
@@ -283,180 +451,120 @@ npm install
 npm run build
 ```
 
-### Build Docker Images
+### Docker Images
 
 ```bash
-# Build API server
+# API server
 docker build -f crates/api/Dockerfile -t semantic-explorer:latest .
 
-# Build workers
+# Workers
 docker build -f crates/worker-collections/Dockerfile -t worker-collections:latest .
 docker build -f crates/worker-datasets/Dockerfile -t worker-datasets:latest .
 docker build -f crates/worker-visualizations-py/Dockerfile -t worker-visualizations-py:latest .
 
-# Build inference APIs
+# Inference APIs (requires CUDA)
 docker build -f crates/embedding-inference-api/Dockerfile -t embedding-inference-api:latest .
 docker build -f crates/llm-inference-api/Dockerfile -t llm-inference-api:latest .
 ```
 
-## Configuration
+---
 
-All services are configured via environment variables. Key configuration options:
-
-### API Server
+## 🧪 Testing
 
 ```bash
-# Server
-API_HOST=0.0.0.0
-API_PORT=8080
-API_WORKERS=4
-
-# Database
-DATABASE_URL=postgresql://user:pass@localhost:5432/semantic_explorer
-
-# NATS
-NATS_URL=nats://localhost:4222
-
-# Qdrant
-QDRANT_URL=http://localhost:6333
-
-# S3/MinIO
-S3_ENDPOINT=http://localhost:9000
-S3_BUCKET=semantic-explorer
-S3_ACCESS_KEY=minioadmin
-S3_SECRET_KEY=minioadmin
-
-# Observability
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
-RUST_LOG=info,semantic_explorer=debug
-```
-
-### Workers
-
-```bash
-# Collections Worker
-WORKER_CONCURRENCY=4
-MAX_FILE_SIZE_MB=100
-
-# Datasets Worker
-EMBEDDING_BATCH_SIZE=100
-MAX_RETRIES=3
-
-# Visualizations Worker (Python)
-UMAP_N_NEIGHBORS=15
-HDBSCAN_MIN_CLUSTER_SIZE=10
-```
-
-See individual component READMEs for complete configuration reference.
-
-## Running Tests
-
-### Rust Tests
-
-```bash
-# Run all tests
+# Run all Rust tests
 cargo test
 
 # Run tests for specific crate
 cargo test -p semantic-explorer-core
 
-# Run with logging
+# With logging
 RUST_LOG=debug cargo test -- --nocapture
-```
 
-### Python Tests
-
-```bash
+# Python tests
 cd crates/worker-visualizations-py
 python -m pytest tests/
-```
 
-### UI Tests
-
-```bash
+# UI tests
 cd semantic-explorer-ui
 npm test
 ```
 
-## Observability
+---
 
-### Metrics
+## 📈 Observability
 
-Prometheus metrics exposed on `/metrics` endpoint for each service:
+### Endpoints
 
-- **HTTP Metrics**: Request count, duration, status codes
-- **Database Metrics**: Query duration, connection pool stats
-- **Worker Metrics**: Job count, duration, success/failure rates
-- **Search Metrics**: Query latency, embedder performance
-- **NATS Metrics**: Message backlog, consumer lag
+| Service | Metrics | Health |
+|---------|---------|--------|
+| API Server | `:8080/metrics` | `:8080/health/live`, `:8080/health/ready` |
+| Embedding API | `:8090/metrics` | `:8090/health/live`, `:8090/health/ready` |
+| LLM API | `:8091/metrics` | `:8091/health/live`, `:8091/health/ready` |
+| Viz Worker | `:9093/metrics` | - |
 
-Access Prometheus: http://localhost:9090
+### Dashboards (Dev Stack)
 
-### Dashboards
+| Service | URL |
+|---------|-----|
+| **Grafana** | http://localhost:3000 (admin/admin) |
+| **Prometheus** | http://localhost:9090 |
+| **Jaeger** | http://localhost:16686 |
+| **Quickwit** | http://localhost:7280 |
 
-Pre-configured Grafana dashboards:
+### Metrics Categories
 
-1. **Service Operations** - API/worker throughput and latency
-2. **Infrastructure** - Database, NATS, storage health
-3. **Audit Events** - User activity and security events
-4. **Logs & Traces** - Quickwit log aggregation and trace analysis
+- **HTTP**: Request count, duration, status codes (`http_requests_total`, `http_request_duration_seconds`)
+- **Database**: Query duration, connection pool stats
+- **Workers**: Job count, duration, success/failure rates
+- **Search**: Query latency, embedder performance
+- **NATS**: Message backlog, consumer lag
 
-Access Grafana: http://localhost:3000 (admin/admin)
+---
 
-### Tracing
+## 📚 API Documentation
 
-Distributed traces available in:
-- **Jaeger UI**: http://localhost:16686
-- **Quickwit**: http://localhost:7280
-
-### Logging
-
-Structured JSON logs aggregated in Quickwit:
-- Query logs by service, level, request ID
-- Full-text search across all logs
-- Integrated with traces via trace/span IDs
-
-## API Documentation
-
-Interactive OpenAPI/Swagger documentation available at:
+Interactive OpenAPI/Swagger UI available at:
 
 ```
 http://localhost:8080/swagger-ui
 ```
 
-Key endpoints:
+### Key Endpoints
 
-- `POST /collections` - Create collection
-- `POST /collections/{id}/files` - Upload files
-- `POST /collection_transforms` - Start extraction job
-- `POST /dataset_transforms` - Start embedding job
-- `POST /visualization_transforms` - Create visualization
-- `POST /search` - Hybrid search
-- `POST /chat` - RAG chat (SSE streaming)
-- `GET /health/ready` - Readiness probe
-- `GET /health/live` - Liveness probe
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/collections` | Create collection |
+| `POST` | `/api/collections/{id}/files` | Upload files |
+| `POST` | `/api/collection_transforms` | Start extraction job |
+| `POST` | `/api/dataset_transforms` | Start embedding job |
+| `POST` | `/api/visualization_transforms` | Create visualization |
+| `POST` | `/api/search` | Vector search |
+| `POST` | `/api/chat` | Chat with context (SSE streaming) |
+| `GET` | `/health/ready` | Readiness probe |
+| `GET` | `/health/live` | Liveness probe |
 
-## Security
+---
+
+## 🔐 Security
 
 ### Authentication
 
-Optional OIDC (OpenID Connect) authentication:
+OIDC (OpenID Connect) authentication with any compliant provider:
 
 ```bash
-# Enable OIDC
-OIDC_ENABLED=true
-OIDC_ISSUER_URL=https://dex.example.com
+OIDC_ISSUER_URL=https://your-idp.example.com
 OIDC_CLIENT_ID=semantic-explorer
-OIDC_REDIRECT_URL=http://localhost:8080/auth/callback
+OIDC_CLIENT_SECRET=your-secret
 ```
 
-Development includes Dex OIDC provider in Docker Compose.
+Development includes Dex OIDC provider for testing.
 
 ### Encryption
 
-- **Secrets Encryption**: AES-256-GCM encryption for sensitive configuration values
+- **Secrets**: AES-256-GCM encryption for API keys stored in database
 - **TLS**: HTTPS support with custom certificates
-- **API Keys**: Secure storage of embedder and LLM API keys
+- **mTLS**: Mutual TLS for service-to-service communication
 
 ### Audit Logging
 
@@ -466,83 +574,54 @@ All API actions logged to PostgreSQL `audit_events` table:
 - Resource type and ID
 - Timestamp and IP address
 
-## Performance
+---
 
-### Benchmarks
+## 🐛 Troubleshooting
 
-Typical performance on 8-core CPU, 16GB RAM:
+<details>
+<summary><strong>Worker not processing jobs</strong></summary>
 
-- **File Processing**: 100-500 files/minute (varies by format)
-- **Embedding Generation**: 1000-5000 chunks/minute (batch size 100)
-- **Search Latency**: <100ms p95 (10K vectors)
-- **API Throughput**: 1000+ req/s (simple GET endpoints)
-
-### Scaling
-
-**Horizontal Scaling** (Kubernetes):
-```yaml
-# Scale workers
-kubectl scale statefulset worker-datasets --replicas=5
-
-# Auto-scaling
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: worker-datasets
-spec:
-  minReplicas: 2
-  maxReplicas: 10
-  metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: 70
-```
-
-**Vertical Scaling**:
-- Increase worker concurrency via `WORKER_CONCURRENCY`
-- Tune batch sizes for embedding workers
-- Adjust database connection pool size
-
-## Troubleshooting
-
-### Common Issues
-
-**Worker not processing jobs:**
 ```bash
 # Check NATS stream status
-docker exec -it nats nats stream ls
-docker exec -it nats nats consumer ls COLLECTION_TRANSFORMS
+docker exec -it nats-1 nats stream ls
+docker exec -it nats-1 nats consumer ls COLLECTION_TRANSFORMS
 
 # Check worker logs
 docker logs worker-collections -f
 ```
 
-**Embedding failures:**
+</details>
+
+<details>
+<summary><strong>Embedding failures</strong></summary>
+
 ```bash
 # Check embedder configuration
 curl http://localhost:8080/api/embedders
 
-# Test embedder directly
-curl -X POST http://localhost:8090/embed \
+# Test embedding API directly
+curl -X POST http://localhost:8090/api/embed \
   -H "Content-Type: application/json" \
-  -d '{"input": "test"}'
+  -d '{"input": ["test text"], "model": "sentence-transformers/all-MiniLM-L6-v2"}'
 ```
 
-**Search returning no results:**
+</details>
+
+<details>
+<summary><strong>Search returning no results</strong></summary>
+
 ```bash
-# Check Qdrant collection
+# Check Qdrant collections
 curl http://localhost:6333/collections
 
 # Check embedded dataset status
 curl http://localhost:8080/api/embedded_datasets
 ```
 
-### Debug Mode
+</details>
 
-Enable detailed logging:
+<details>
+<summary><strong>Debug logging</strong></summary>
 
 ```bash
 # Rust services
@@ -552,33 +631,31 @@ RUST_LOG=debug,semantic_explorer=trace
 LOG_LEVEL=DEBUG
 ```
 
-## Contributing
+</details>
+
+---
+
+## 🤝 Contributing
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+3. Run formatting and linting:
+   ```bash
+   cargo fmt && cargo clippy
+   cd semantic-explorer-ui && npm run format && npm run lint
+   ```
+4. Commit your changes
+5. Push and open a Pull Request
 
-### Development Guidelines
+---
 
-- Run `cargo fmt` and `cargo clippy` before committing Rust code
-- Run `black` and `ruff` for Python code
-- Run `npm run format` for UI code
-- Add tests for new features
-- Update documentation
-
-## License
+## 📄 License
 
 Apache License 2.0 - See [LICENSE](LICENSE) for details.
 
-## Support
+---
 
-- **Issues**: https://github.com/yourusername/semantic-explorer/issues
-- **Discussions**: https://github.com/yourusername/semantic-explorer/discussions
-- **Documentation**: https://docs.example.com (if applicable)
-
-## Acknowledgments
+## 🙏 Acknowledgments
 
 Built with:
 - [Actix-web](https://actix.rs/) - Rust web framework

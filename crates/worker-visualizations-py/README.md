@@ -190,21 +190,24 @@ sequenceDiagram
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `NATS_URL` | string | `nats://localhost:4222` | NATS server URL |
-| `AWS_REGION` | string | **required** | S3 region |
+| `AWS_REGION` | string | `us-east-1` | S3 region |
 | `AWS_ACCESS_KEY_ID` | string | **required** | S3 access key |
 | `AWS_SECRET_ACCESS_KEY` | string | **required** | S3 secret key |
 | `AWS_ENDPOINT_URL` | string | **required** | S3 endpoint URL |
-| `S3_BUCKET_NAME` | string | **required** | S3 bucket name for storing visualization HTML files |
-| `PROCESSING_TIMEOUT_SECS` | integer | `3600` | Job timeout (1 hour default) |
+| `S3_BUCKET_NAME` | string | **required** | S3 bucket name for visualization HTML files |
+| `PROCESSING_TIMEOUT_SECS` | integer | `3600` | Job timeout (1 hour) |
 | `WORKER_ID` | string | UUID | Unique worker identifier |
-| `LOG_LEVEL` | string | `INFO` | Python logging level (DEBUG, INFO, WARNING, ERROR) |
-| `LOG_FORMAT` | string | `json` | Log format (json for structured logging) |
-| `MAX_CONCURRENT_JOBS` | integer | `3` | Maximum concurrent jobs |
-| `HEALTH_CHECK_PORT` | integer | `8081` | Port for health check HTTP server |
-| `NATS_STREAM_RETRY_ATTEMPTS` | integer | `30` | Number of attempts to subscribe to stream (handles startup race) |
-| `NATS_STREAM_RETRY_DELAY` | float | `2.0` | Delay between retry attempts in seconds |
-| `NATS_BATCH_SIZE` | integer | `1` | Number of messages to fetch per batch |
-| `NATS_FETCH_TIMEOUT` | float | `5.0` | Timeout for message fetch in seconds |
+| `LOG_LEVEL` | string | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR) |
+| `LOG_FORMAT` | string | `json` | Log format (`json` or `text`) |
+| `HEALTH_CHECK_PORT` | integer | `8081` | Health check HTTP server port |
+| `NATS_STREAM_RETRY_ATTEMPTS` | integer | `30` | Stream subscription retry attempts |
+| `NATS_STREAM_RETRY_DELAY` | float | `2.0` | Retry delay in seconds |
+| `NATS_BATCH_SIZE` | integer | `1` | Messages to fetch per batch |
+| `NATS_FETCH_TIMEOUT` | float | `5.0` | Message fetch timeout in seconds |
+| `MAX_VISUALIZATION_POINTS` | integer | `100000000` | Maximum points to visualize |
+| `LLM_INFERENCE_API_URL` | string | `http://localhost:8091` | Internal LLM API URL |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | string | `http://localhost:4317` | OTLP collector endpoint |
+| `PROMETHEUS_METRICS_PORT` | integer | `9090` | Prometheus metrics port |
 
 ## Job Message Format
 
@@ -603,7 +606,7 @@ Typical processing times (CPU):
 
 ### Scaling Recommendations
 
-- **Horizontal Scaling**: Run multiple workers with `MAX_CONCURRENT_JOBS=1-3`
+- **Horizontal Scaling**: Run multiple worker pods
 - **Memory**: Size pods based on expected dataset size
 - **Timeout**: Adjust `PROCESSING_TIMEOUT_SECS` for large datasets
 - **Sampling**: For very large datasets (>100K), implement random sampling

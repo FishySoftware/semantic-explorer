@@ -608,6 +608,8 @@ llmInferenceApi:
     LLM_MAX_TOKENS_LIMIT: "4096"
     # HuggingFace cache directory - mounted from PVC
     HF_HOME: "/models"
+    # Home directory for appuser (used by mistral.rs for ~/.cache/huggingface)
+    HOME: "/home/appuser"
     # For airgapped deployments, set HF_ENDPOINT to your Artifactory proxy
     # HF_ENDPOINT: "https://artifactory.company.com/huggingface"
     SERVICE_NAME: "llm-inference-api"

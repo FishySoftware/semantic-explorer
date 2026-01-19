@@ -8,28 +8,44 @@ services:
   semantic-explorer:
     image: jofish89/semantic-explorer:latest
     depends_on:
-      - minio-1
-      - minio-2
-      - minio-3
-      - minio-4
-      - minio-init
-      - qdrant
-      - dex
-      - postgres
-      - nats-1
-      - nats-2
-      - nats-3
-      - otel-collector
+      minio-1:
+        condition: service_healthy
+      minio-2:
+        condition: service_healthy
+      minio-3:
+        condition: service_healthy
+      minio-4:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      qdrant:
+        condition: service_healthy
+      dex:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      nats-1:
+        condition: service_healthy
+      nats-2:
+        condition: service_healthy
+      nats-3:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+      embedding-inference-api:
+        condition: service_healthy
+      llm-inference-api:
+        condition: service_healthy
     restart: unless-stopped
     environment:
+      - RUST_LOG=info,actix_web_prom=error
       - HOSTNAME=0.0.0.0
       - PORT=8080
       - PUBLIC_URL=http://localhost:8080
-      - RUST_LOG=warn,actix_web_prom=error,semantic_explorer=info
-      - LOG_FORMAT=json
+      - LOG_FORMAT=pretty
+      - AWS_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=test_access_key
       - AWS_SECRET_ACCESS_KEY=test_secret_key
-      - AWS_REGION=us-east-1
       - AWS_ENDPOINT_URL=http://minio-1:9000
       - S3_BUCKET_NAME=semantic-explorer-local
       - S3_FORCE_PATH_STYLE=true
@@ -51,13 +67,11 @@ services:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
       - SERVICE_NAME=semantic-explorer
       - SHUTDOWN_TIMEOUT_SECS=30
-      # Embedding and LLM inference API URLs
+      - OIDC_USE_PKCE=false
       - EMBEDDING_INFERENCE_API_URL=http://embedding-inference-api:8090
       - EMBEDDING_INFERENCE_API_TIMEOUT_SECS=120
       - LLM_INFERENCE_API_URL=http://llm-inference-api:8091
       - LLM_INFERENCE_API_TIMEOUT_SECS=120
-      # API Key Encryption - IMPORTANT: Generate a unique key for production!
-      # Generate with: openssl rand -hex 32
       - ENCRYPTION_MASTER_KEY=${ENCRYPTION_MASTER_KEY:-e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4}
     ports:
       - "8080:8080"
@@ -81,8 +95,8 @@ services:
       - otel-collector
     restart: unless-stopped
     environment:
-      - RUST_LOG=warn,actix_web_prom=error,worker_collections=info
-      - LOG_FORMAT=json
+      - RUST_LOG=info
+      - LOG_FORMAT=pretty
       - NATS_URL=nats://nats-1:4222
       - AWS_ACCESS_KEY_ID=test_access_key
       - AWS_SECRET_ACCESS_KEY=test_secret_key
@@ -110,8 +124,8 @@ services:
       - otel-collector
     restart: unless-stopped
     environment:
-      - RUST_LOG=warn,actix_web_prom=error,worker_datasets=info
-      - LOG_FORMAT=json
+      - RUST_LOG=info
+      - LOG_FORMAT=pretty
       - NATS_URL=nats://nats-1:4222
       - AWS_ACCESS_KEY_ID=test_access_key
       - AWS_SECRET_ACCESS_KEY=test_secret_key
@@ -122,8 +136,13 @@ services:
       - S3_MAX_DOWNLOAD_SIZE_BYTES=104857600
       - S3_MAX_UPLOAD_SIZE_BYTES=1073741824
       - QDRANT_URL=http://qdrant:6334
+      - QDRANT_TIMEOUT_SECS=30
+      - QDRANT_CONNECT_TIMEOUT_SECS=10
+      - EMBEDDING_INFERENCE_API_URL=http://embedding-inference-api:8090
+      - EMBEDDING_INFERENCE_API_TIMEOUT_SECS=120
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
       - SERVICE_NAME=worker-datasets
+      - MAX_CONCURRENT_JOBS=10
       - ENCRYPTION_MASTER_KEY=${ENCRYPTION_MASTER_KEY:-e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4}
     networks:
       - semantic-explorer-net
@@ -168,6 +187,9 @@ services:
   # Embedding inference service for embeddings and reranking (CUDA GPU accelerated)
   embedding-inference-api:
     image: jofish89/embedding-inference-api:cuda
+    depends_on:
+      otel-collector:
+        condition: service_started
     restart: unless-stopped
     deploy:
       resources:
@@ -183,12 +205,12 @@ services:
       - INFERENCE_PORT=8090
       # GPU Configuration: Set CUDA_VISIBLE_DEVICES to control which GPU(s) to use
       # Examples: CUDA_VISIBLE_DEVICES=0 (first GPU), CUDA_VISIBLE_DEVICES=0,1 (multiple GPUs)
-      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
-      # Preload embedding and reranker models at startup
-      - INFERENCE_PRELOAD_MODELS=BAAI/bge-small-en-v1.5,BAAI/bge-reranker-base
-      - INFERENCE_DEFAULT_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
-      - INFERENCE_DEFAULT_RERANKER_MODEL=BAAI/bge-reranker-base
+      - INFERENCE_ALLOWED_EMBEDDING_MODELS=sentence-transformers/all-MiniLM-L6-v2
+      - INFERENCE_ALLOWED_RERANK_MODELS=jinaai/jina-reranker-v2-base-multilingual
       - INFERENCE_MAX_BATCH_SIZE=256
+      # Maximum concurrent embedding requests (for backpressure control)
+      # When at capacity, the API returns 503 with Retry-After header
+      - INFERENCE_MAX_CONCURRENT_REQUESTS=2
       # HuggingFace cache for models (mount a volume for persistence)
       - HF_HOME=/models
       # For airgapped deployments: pre-download models and mount at HF_HOME
@@ -214,6 +236,9 @@ services:
   # LLM inference service for text generation (CUDA GPU accelerated)
   llm-inference-api:
     image: jofish89/llm-inference-api:cuda
+    depends_on:
+      otel-collector:
+        condition: service_started
     restart: unless-stopped
     deploy:
       resources:
@@ -231,9 +256,8 @@ services:
       # GPU Configuration: Set CUDA_VISIBLE_DEVICES to control which GPU(s) to use
       - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
       # Model configuration
-      - LLM_ALLOWED_MODELS=mistralai/Mistral-7B-Instruct-v0.2
-      - LLM_DEFAULT_MODEL=mistralai/Mistral-7B-Instruct-v0.2
-      - LLM_MAX_CONCURRENT_REQUESTS=10
+      - LLM_ALLOWED_MODELS=TinyLlama/TinyLlama-1.1B-Chat-v1.0
+      - LLM_MAX_CONCURRENT_REQUESTS=2
       - LLM_DEFAULT_TEMPERATURE=0.7
       - LLM_DEFAULT_TOP_P=0.9
       - LLM_DEFAULT_MAX_TOKENS=512
@@ -248,6 +272,7 @@ services:
       - ENCRYPTION_MASTER_KEY=${ENCRYPTION_MASTER_KEY:-e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4}
     volumes:
       - llm_models:/models:rw
+      - llm_hf_cache:/home/appuser/.cache:rw
     ports:
       - "8091:8091"
     healthcheck:
@@ -415,6 +440,12 @@ services:
       - postgres_data:/var/lib/postgresql/data:rw
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d explorer"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     networks:
       - semantic-explorer-net
 
@@ -640,3 +671,4 @@ volumes:
   inference_models:
   tensorrt_cache:
   llm_models:
+  llm_hf_cache:

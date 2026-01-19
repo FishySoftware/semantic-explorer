@@ -1,23 +1,35 @@
-FROM ubuntu:26.04 AS builder
+FROM ubuntu:26.04 AS chef
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# Install dependencies
-RUN apt-get update && apt-get upgrade -yq && apt-get install curl build-essential cmake musl-tools musl-dev -yq && apt-get clean
+# Install dependencies (including ca-certificates for TLS)
+RUN apt-get update && apt-get upgrade -yq && apt-get install curl build-essential cmake musl-tools musl-dev ca-certificates -yq && apt-get clean
 RUN ln -s "/usr/bin/g++" "/usr/bin/musl-g++"
 
-# Install Rust
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-RUN rustup target add x86_64-unknown-linux-musl
+# Install Rust and cargo-chef for dependency caching
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
+    rustup target add x86_64-unknown-linux-musl && \
+    cargo install cargo-chef
 
 WORKDIR /usr/src/app
 
-# Copy workspace
+##### Planner stage - analyze dependencies
+FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+RUN cargo chef prepare --recipe-path recipe.json
 
-# Build API
+##### Builder stage - build dependencies first, then app
+FROM chef AS builder
+
+# Copy recipe and build dependencies (cached if Cargo.toml/Cargo.lock unchanged)
+COPY --from=planner /usr/src/app/recipe.json recipe.json
+RUN cargo chef cook --release --target x86_64-unknown-linux-musl --recipe-path recipe.json -p semantic-explorer
+
+# Now copy source and build (only rebuilds if source changed)
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
 RUN cargo build --target x86_64-unknown-linux-musl --release -p semantic-explorer
 
 # Define a user
@@ -51,6 +63,9 @@ COPY --from=builder /etc/ssl/certs/ca-certificates.crt /app/certs/ca-bundle.crt
 
 # Copy UI assets
 COPY --from=node_builder /usr/src/dist /semantic-explorer-ui
+
+# Create tmp directory for multipart uploads
+COPY --from=builder --chown=10001:10001 /tmp /tmp
 
 USER appuser
 ENTRYPOINT ["/semantic-explorer"]

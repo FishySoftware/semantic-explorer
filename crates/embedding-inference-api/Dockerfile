@@ -13,12 +13,13 @@
 
 # Use NVIDIA's official CUDA development image for building
 # nvidia/cuda:12.9.1-cudnn-devel-ubuntu24.04 includes cuDNN 9.x
-FROM nvidia/cuda:12.9.1-cudnn-devel-ubuntu24.04 AS builder
+FROM nvidia/cuda:12.9.1-cudnn-devel-ubuntu24.04 AS chef
 
 # Build argument for CUDA compute capability
 # Defaults to 89 (Ada Lovelace: RTX 40xx, L40/L40S)
 # Supported values: 75, 80, 86, 89, 90
 ARG CUDA_COMPUTE_CAP=89
+ARG ORT_VERSION=1.23.0
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH="/root/.cargo/bin:${PATH}"
@@ -40,12 +41,12 @@ RUN apt-get update && apt-get upgrade -yq && \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Rust
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+# Install Rust and cargo-chef for dependency caching
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
+    cargo install cargo-chef
 
 # Download ONNX Runtime GPU version manually
 # The ort crate's download strategy only supports CPU binaries
-ARG ORT_VERSION=1.23.0
 RUN mkdir -p /opt/onnxruntime && cd /opt/onnxruntime \
     && wget -q https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-gpu-${ORT_VERSION}.tgz \
     && tar -xzf onnxruntime-linux-x64-gpu-${ORT_VERSION}.tgz \
@@ -62,11 +63,24 @@ ENV LD_LIBRARY_PATH=/opt/onnxruntime:${LD_LIBRARY_PATH}
 
 WORKDIR /usr/src/app
 
-# Copy workspace
+##### Planner stage - analyze dependencies
+FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+RUN cargo chef prepare --recipe-path recipe.json
 
-# Build embedding-inference-api
+##### Builder stage - build dependencies first, then app
+FROM chef AS builder
+ARG CUDA_COMPUTE_CAP=89
+ENV CUDA_COMPUTE_CAP=${CUDA_COMPUTE_CAP}
+
+# Copy recipe and build dependencies (cached if Cargo.toml/Cargo.lock unchanged)
+COPY --from=planner /usr/src/app/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json -p embedding-inference-api
+
+# Now copy source and build (only rebuilds if source changed)
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
 RUN cargo build --release -p embedding-inference-api
 
 # Define a non-root user
@@ -83,8 +97,8 @@ RUN apt-get update && apt-get install -yq \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy ONNX Runtime libraries from builder
-COPY --from=builder /opt/onnxruntime /opt/onnxruntime
+# Copy ONNX Runtime libraries from chef stage (where it was downloaded)
+COPY --from=chef /opt/onnxruntime /opt/onnxruntime
 
 # Set library path for ONNX Runtime (matching build environment)
 ENV LD_LIBRARY_PATH=/opt/onnxruntime:${LD_LIBRARY_PATH}

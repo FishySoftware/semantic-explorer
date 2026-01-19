@@ -316,18 +316,16 @@ npm run build-watch
 semantic-explorer-ui/
 ├── src/
 │   ├── lib/
-│   │   ├── api/           # API client functions
 │   │   ├── components/    # Reusable UI components
 │   │   ├── pages/         # Page components (routes)
-│   │   └── stores/        # Svelte stores
+│   │   └── utils/         # Utility functions
 │   ├── App.svelte         # Root application component
 │   ├── main.ts            # Application entry point
-│   └── app.css            # Global styles
+│   └── app.css            # Global styles (Tailwind)
 ├── public/                # Static assets
 ├── index.html             # HTML template
 ├── vite.config.ts         # Vite configuration
 ├── svelte.config.js       # Svelte configuration
-├── tailwind.config.js     # Tailwind configuration
 ├── tsconfig.json          # TypeScript configuration
 └── package.json           # Dependencies and scripts
 ```
@@ -336,39 +334,39 @@ semantic-explorer-ui/
 
 ### Vite Configuration
 
+The application is served at `/ui/` path by the API server:
+
 ```typescript
 // vite.config.ts
 export default defineConfig({
-	plugins: [svelte()],
-	server: {
-		proxy: {
-			'/api': 'http://localhost:8080',
-			'/auth': 'http://localhost:8080',
+	base: '/ui/',
+	resolve: {
+		alias: {
+			$lib: path.resolve('./src/lib'),
 		},
 	},
 	build: {
-		outDir: 'dist',
-		sourcemap: true,
-	},
-});
-```
-
-### Tailwind Configuration
-
-```javascript
-// tailwind.config.js
-export default {
-	content: ['./src/**/*.{svelte,ts}'],
-	darkMode: 'class',
-	theme: {
-		extend: {
-			colors: {
-				// Custom color palette
+		chunkSizeWarningLimit: 1024,
+		rollupOptions: {
+			output: {
+				// Manual chunks for deck.gl, flowbite, highlight.js, marked
+				manualChunks(id: string) { /* ... */ },
 			},
 		},
 	},
-	plugins: [require('@tailwindcss/forms'), require('@tailwindcss/typography')],
-};
+	plugins: [tailwindcss(), svelte()],
+});
+```
+
+### Tailwind CSS
+
+Tailwind 4.x uses CSS-based configuration:
+
+```css
+/* app.css */
+@import "tailwindcss";
+@plugin "@tailwindcss/forms";
+@plugin "@tailwindcss/typography";
 ```
 
 ## Deployment
