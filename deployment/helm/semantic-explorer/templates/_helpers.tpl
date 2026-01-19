@@ -805,3 +805,129 @@ LLM Inference API image
 {{- printf "%s:%s" $repository $tag }}
 {{- end }}
 {{- end }}
+
+{{/*
+==================================================================================
+Dex (OIDC Provider) Helpers
+==================================================================================
+*/}}
+
+{{/*
+Dex labels
+*/}}
+{{- define "semantic-explorer.dex.labels" -}}
+helm.sh/chart: {{ include "semantic-explorer.chart" . }}
+{{ include "semantic-explorer.dex.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+app.kubernetes.io/component: dex
+{{- with .Values.commonLabels }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{/*
+Dex selector labels
+*/}}
+{{- define "semantic-explorer.dex.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "semantic-explorer.name" . }}-dex
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: dex
+{{- end }}
+
+{{/*
+Dex service account name
+*/}}
+{{- define "semantic-explorer.dex.serviceAccountName" -}}
+{{- default (printf "%s-dex" (include "semantic-explorer.fullname" .)) .Values.dex.serviceAccount.name | default "default" }}
+{{- end }}
+
+{{/*
+Dex image
+*/}}
+{{- define "semantic-explorer.dex.image" -}}
+{{- $registry := .Values.dex.image.registry | default .Values.global.imageRegistry }}
+{{- $repository := .Values.dex.image.repository }}
+{{- $tag := .Values.dex.image.tag }}
+{{- if $registry }}
+{{- printf "%s/%s:%s" $registry $repository $tag }}
+{{- else }}
+{{- printf "%s:%s" $repository $tag }}
+{{- end }}
+{{- end }}
+
+{{/*
+Dex host (for init container dependencies)
+*/}}
+{{- define "semantic-explorer.dex.host" -}}
+{{- if .Values.dex.external.enabled }}
+{{- .Values.dex.external.issuerUrl | trimPrefix "http://" | trimPrefix "https://" | regexFind "^[^:/]+" }}
+{{- else }}
+{{- printf "%s-dex" (include "semantic-explorer.fullname" .) }}
+{{- end }}
+{{- end }}
+
+{{/*
+Dex port (for init container dependencies)
+*/}}
+{{- define "semantic-explorer.dex.port" -}}
+{{- .Values.dex.service.port | default 5556 }}
+{{- end }}
+
+{{/*
+==================================================================================
+Inference API URL Helpers
+==================================================================================
+*/}}
+
+{{/*
+Embedding Inference API URL
+*/}}
+{{- define "semantic-explorer.embeddingInferenceApi.url" -}}
+{{- if .Values.embeddingInferenceApi.enabled }}
+{{- printf "http://%s-embedding-inference-api:%d" (include "semantic-explorer.fullname" .) (int .Values.embeddingInferenceApi.service.port) }}
+{{- else }}
+{{- "" }}
+{{- end }}
+{{- end }}
+
+{{/*
+Embedding Inference API host (for init container)
+*/}}
+{{- define "semantic-explorer.embeddingInferenceApi.host" -}}
+{{- printf "%s-embedding-inference-api" (include "semantic-explorer.fullname" .) }}
+{{- end }}
+
+{{/*
+Embedding Inference API port (for init container)
+*/}}
+{{- define "semantic-explorer.embeddingInferenceApi.port" -}}
+{{- .Values.embeddingInferenceApi.service.port | default 8090 }}
+{{- end }}
+
+{{/*
+LLM Inference API URL
+*/}}
+{{- define "semantic-explorer.llmInferenceApi.url" -}}
+{{- if .Values.llmInferenceApi.enabled }}
+{{- printf "http://%s-llm-inference-api:%d" (include "semantic-explorer.fullname" .) (int .Values.llmInferenceApi.service.port) }}
+{{- else }}
+{{- "" }}
+{{- end }}
+{{- end }}
+
+{{/*
+LLM Inference API host (for init container)
+*/}}
+{{- define "semantic-explorer.llmInferenceApi.host" -}}
+{{- printf "%s-llm-inference-api" (include "semantic-explorer.fullname" .) }}
+{{- end }}
+
+{{/*
+LLM Inference API port (for init container)
+*/}}
+{{- define "semantic-explorer.llmInferenceApi.port" -}}
+{{- .Values.llmInferenceApi.service.port | default 8091 }}
+{{- end }}

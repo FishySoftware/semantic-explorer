@@ -112,6 +112,52 @@ spec:
             cpu: 100m
             memory: 64Mi
       {{- end }}
+      {{- if .Values.embeddingInferenceApi.enabled }}
+      - name: wait-for-embedding-api
+        image: {{ include "semantic-explorer.initContainer.image" . }}
+        securityContext:
+          {{- include "semantic-explorer.initContainer.securityContext" . | nindent 10 }}
+        command:
+          - sh
+          - -c
+          - |
+            echo "Waiting for Embedding Inference API at {{ include "semantic-explorer.embeddingInferenceApi.host" . }}:{{ include "semantic-explorer.embeddingInferenceApi.port" . }}..."
+            until nc -z {{ include "semantic-explorer.embeddingInferenceApi.host" . }} {{ include "semantic-explorer.embeddingInferenceApi.port" . }}; do
+              echo "Embedding Inference API not ready, waiting..."
+              sleep 5
+            done
+            echo "Embedding Inference API is ready!"
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+      {{- end }}
+      {{- if .Values.llmInferenceApi.enabled }}
+      - name: wait-for-llm-api
+        image: {{ include "semantic-explorer.initContainer.image" . }}
+        securityContext:
+          {{- include "semantic-explorer.initContainer.securityContext" . | nindent 10 }}
+        command:
+          - sh
+          - -c
+          - |
+            echo "Waiting for LLM Inference API at {{ include "semantic-explorer.llmInferenceApi.host" . }}:{{ include "semantic-explorer.llmInferenceApi.port" . }}..."
+            until nc -z {{ include "semantic-explorer.llmInferenceApi.host" . }} {{ include "semantic-explorer.llmInferenceApi.port" . }}; do
+              echo "LLM Inference API not ready, waiting..."
+              sleep 5
+            done
+            echo "LLM Inference API is ready!"
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+      {{- end }}
       containers:
       - name: api
         image: {{ include "semantic-explorer.api.image" . }}
@@ -185,6 +231,18 @@ spec:
             secretKeyRef:
               name: {{ include "semantic-explorer.fullname" . }}-secrets
               key: encryption-master-key
+        {{- if .Values.embeddingInferenceApi.enabled }}
+        - name: EMBEDDING_INFERENCE_API_URL
+          value: {{ include "semantic-explorer.embeddingInferenceApi.url" . }}
+        - name: EMBEDDING_INFERENCE_API_TIMEOUT_SECS
+          value: {{ .Values.api.env.EMBEDDING_INFERENCE_API_TIMEOUT_SECS | default "120" | quote }}
+        {{- end }}
+        {{- if .Values.llmInferenceApi.enabled }}
+        - name: LLM_INFERENCE_API_URL
+          value: {{ include "semantic-explorer.llmInferenceApi.url" . }}
+        - name: LLM_INFERENCE_API_TIMEOUT_SECS
+          value: {{ .Values.api.env.LLM_INFERENCE_API_TIMEOUT_SECS | default "120" | quote }}
+        {{- end }}
         {{- if .Values.observability.otelCollector.enabled }}
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: {{ include "semantic-explorer.otel.endpoint" . }}

@@ -1,0 +1,50 @@
+{{- if and .Values.dex.enabled (not .Values.dex.external.enabled) .Values.dex.ingress.enabled }}
+{{- $fullName := printf "%s-dex" (include "semantic-explorer.fullname" .) -}}
+{{- $svcPort := .Values.dex.service.port -}}
+apiVersion: {{ include "semantic-explorer.ingress.apiVersion" . }}
+kind: Ingress
+metadata:
+  name: {{ $fullName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.dex.labels" . | nindent 4 }}
+  {{- with .Values.dex.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.dex.ingress.className }}
+  ingressClassName: {{ .Values.dex.ingress.className }}
+  {{- end }}
+  {{- if .Values.dex.ingress.tls }}
+  tls:
+    {{- range .Values.dex.ingress.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range .Values.dex.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            {{- if eq (include "semantic-explorer.ingress.apiVersion" $) "networking.k8s.io/v1" }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ $fullName }}
+                port:
+                  number: {{ $svcPort }}
+            {{- else }}
+            backend:
+              serviceName: {{ $fullName }}
+              servicePort: {{ $svcPort }}
+            {{- end }}
+          {{- end }}
+    {{- end }}
+{{- end }}

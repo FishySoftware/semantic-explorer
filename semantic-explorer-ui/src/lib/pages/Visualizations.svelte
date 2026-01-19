@@ -263,9 +263,24 @@
 
 	let processingTransforms = $derived(
 		transforms.filter((t) => {
-			const hasCompleted = completedVisualizations.has(t.visualization_transform_id);
+			const completedViz = completedVisualizations.get(t.visualization_transform_id);
+			if (!completedViz) return false;
+
 			const isProcessing = t.last_run_status === 'pending' || t.last_run_status === 'processing';
-			return hasCompleted && isProcessing;
+			if (!isProcessing) return false;
+
+			// Check if the completed visualization is from the current run
+			// If completed_at is after last_run_at, the job is done (status may be stale)
+			if (completedViz.completed_at && t.last_run_at) {
+				const completedAt = new Date(completedViz.completed_at).getTime();
+				const lastRunAt = new Date(t.last_run_at).getTime();
+				// If the visualization completed after the run started, it's done
+				if (completedAt >= lastRunAt) {
+					return false;
+				}
+			}
+
+			return true;
 		})
 	);
 </script>

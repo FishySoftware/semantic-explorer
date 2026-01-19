@@ -409,6 +409,12 @@ embeddingInferenceApi:
     repository: jofish89/embedding-inference-api
     tag: "latest"
     pullPolicy: Always
+  # Security context for running as non-root with GPU access
+  # Note: Container image must be built to run as non-root user
+  securityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
   statefulset:
     podManagementPolicy: Parallel
     updateStrategy:
@@ -540,6 +546,12 @@ llmInferenceApi:
     repository: jofish89/llm-inference-api
     tag: "latest"
     pullPolicy: Always
+  # Security context for running as non-root with GPU access
+  # Note: Container image must be built to run as non-root user
+  securityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
   statefulset:
     podManagementPolicy: Parallel
     updateStrategy:
@@ -794,24 +806,32 @@ qdrant:
   # Internal Qdrant deployment
   image:
     repository: qdrant/qdrant
+    # Use "gpu-nvidia-latest" for GPU-accelerated indexing, or "v1.16.3" for CPU-only
     tag: "v1.16.3"
     pullPolicy: IfNotPresent
   replicaCount: 3
   cluster:
     enabled: true
-  # GPU support
+  # GPU support for accelerated indexing
+  # When enabled, set image.tag to "gpu-nvidia-latest" and configure resources
   gpu:
     enabled: false
     nvidia:
       enabled: false
       count: 1
+    # Environment variable for GPU indexing (QDRANT__GPU__INDEXING=1)
+    indexing: true
   resources:
     requests:
       cpu: 1000m
       memory: 2Gi
+      # Uncomment for GPU mode:
+      # nvidia.com/gpu: 1
     limits:
       cpu: 4000m
       memory: 8Gi
+      # Uncomment for GPU mode:
+      # nvidia.com/gpu: 1
   persistence:
     enabled: true
     storageClass: ""  # Defaults to global.storageClass
@@ -825,9 +845,13 @@ qdrant:
       port: 6334
   updateVolumeFsOwnership: false
   podSecurityContext:
-    runAsNonRoot: false
+    runAsNonRoot: true
     runAsUser: 1000
+    runAsGroup: 1000
     fsGroup: 1000
+    fsGroupChangePolicy: "OnRootMismatch"
+    seccompProfile:
+      type: RuntimeDefault
   containerSecurityContext:
     allowPrivilegeEscalation: false
     capabilities:
@@ -862,10 +886,13 @@ dex:
     pullPolicy: IfNotPresent
   config:
     issuer: ""  # e.g., "https://dex.example.com"
+    # Storage backend - use sqlite3 for namespace-only deployments
+    # Note: kubernetes storage backend requires CRDs (cluster-wide resources)
+    # For production with multi-replica HA, use external DB (postgres/mysql/etcd)
     storage:
-      type: kubernetes
+      type: sqlite3
       config:
-        inCluster: true
+        file: /data/dex.db
     web:
       http: 0.0.0.0:5556
     oauth2:
@@ -916,6 +943,15 @@ dex:
       drop:
         - ALL
     readOnlyRootFilesystem: true
+  env: {}
+  envFrom: []
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: ""
 
 # MinIO (S3-compatible storage) Configuration (Optional Infrastructure)
 # Disabled by default - use S3-compatible storage or enable for development
@@ -983,6 +1019,8 @@ minio:
         - ALL
     readOnlyRootFilesystem: false
   # Auto-create buckets on startup
+  # Note: MinIO subchart has built-in bucket provisioning via 'buckets' config
+  # The initJob below is an optional alternative for custom configurations
   buckets:
     - name: semantic-explorer-files
       policy: none
@@ -990,6 +1028,10 @@ minio:
     - name: quickwit
       policy: none
       purge: false
+  # Optional: Custom init job for bucket creation (alternative to subchart's built-in)
+  # Enable this if you need custom bucket policies or the subchart provisioning fails
+  initJob:
+    enabled: false  # Set to true to use custom init job instead of subchart's bucket provisioning
 
 # Storage Configuration (S3-compatible)
 # Configure external S3-compatible storage or use MinIO
@@ -1192,6 +1234,19 @@ observability:
 # Prometheus subchart configuration (prometheus-community/prometheus)
 prometheus:
   enabled: true  # Deploy Prometheus for metrics storage
+  # RBAC configuration - disable subchart RBAC, we use our own namespace-scoped Role
+  # See templates/prometheus-rbac.yaml for the namespaced Role/RoleBinding
+  rbac:
+    create: false  # Don't create ClusterRole/ClusterRoleBinding from subchart
+  # Disable service account creation from subchart - we create our own
+  serviceAccounts:
+    server:
+      create: true
+      name: ""  # Uses fullname from subchart
+    pushgateway:
+      create: false
+    alertmanager:
+      create: false
   # Disable unused components
   alertmanager:
     enabled: false
@@ -1309,7 +1364,9 @@ grafana:
       label: grafana_dashboard
       labelValue: "1"
       folder: /tmp/dashboards
-      searchNamespace: ALL
+      # Use null to search only the release namespace (namespace-scoped RBAC only)
+      # Setting to ALL requires ClusterRole for cross-namespace access
+      searchNamespace: null
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001

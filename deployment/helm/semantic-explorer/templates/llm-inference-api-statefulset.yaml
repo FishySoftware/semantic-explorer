@@ -57,10 +57,14 @@ spec:
       {{- end }}
       serviceAccountName: {{ include "semantic-explorer.llmInferenceApi.serviceAccountName" . }}
       securityContext:
-        # GPU pods require more permissive security context
-        runAsNonRoot: false
-        runAsUser: 0
-        fsGroup: 0
+        # Non-root GPU configuration
+        runAsNonRoot: true
+        runAsUser: {{ .Values.llmInferenceApi.securityContext.runAsUser | default 1000 }}
+        runAsGroup: {{ .Values.llmInferenceApi.securityContext.runAsGroup | default 1000 }}
+        fsGroup: {{ .Values.llmInferenceApi.securityContext.fsGroup | default 1000 }}
+        fsGroupChangePolicy: "OnRootMismatch"
+        seccompProfile:
+          type: RuntimeDefault
       {{- with .Values.llmInferenceApi.priorityClassName }}
       priorityClassName: {{ . }}
       {{- end }}
@@ -69,11 +73,11 @@ spec:
         image: {{ include "semantic-explorer.llmInferenceApi.image" . }}
         imagePullPolicy: {{ .Values.llmInferenceApi.image.pullPolicy }}
         securityContext:
-          # GPU access requires privileged mode
-          allowPrivilegeEscalation: true
+          # Non-root container security
+          allowPrivilegeEscalation: false
           capabilities:
-            add:
-              - SYS_ADMIN
+            drop:
+              - ALL
         ports:
         - name: http
           containerPort: 8091

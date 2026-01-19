@@ -350,7 +350,9 @@ export default defineConfig({
 		rollupOptions: {
 			output: {
 				// Manual chunks for deck.gl, flowbite, highlight.js, marked
-				manualChunks(id: string) { /* ... */ },
+				manualChunks(id: string) {
+					/* ... */
+				},
 			},
 		},
 	},
@@ -364,7 +366,7 @@ Tailwind 4.x uses CSS-based configuration:
 
 ```css
 /* app.css */
-@import "tailwindcss";
+@import 'tailwindcss';
 @plugin "@tailwindcss/forms";
 @plugin "@tailwindcss/typography";
 ```

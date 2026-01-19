@@ -1,0 +1,30 @@
+{{- if and .Values.dex.enabled (not .Values.dex.external.enabled) }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-dex
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.dex.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.dex.service.type }}
+  ports:
+  - name: http
+    port: {{ .Values.dex.service.port }}
+    targetPort: 5556
+    protocol: TCP
+  - name: grpc
+    port: 5557
+    targetPort: 5557
+    protocol: TCP
+  - name: telemetry
+    port: 5558
+    targetPort: 5558
+    protocol: TCP
+  selector:
+    {{- include "semantic-explorer.dex.selectorLabels" . | nindent 4 }}
+{{- end }}
