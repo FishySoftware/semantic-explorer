@@ -128,6 +128,52 @@ const GET_DATASET_TRANSFORM_STATS_QUERY: &str = r#"
     GROUP BY dt.dataset_transform_id, dt.embedder_ids
 "#;
 
+const GET_BATCH_DATASET_TRANSFORM_STATS_QUERY: &str = r#"
+    WITH unique_batches AS (
+        SELECT
+            ed.dataset_transform_id,
+            ed.embedded_dataset_id,
+            tpf.file_key,
+            MAX(tpf.item_count) as item_count,
+            MAX(tpf.process_status) as process_status,
+            MAX(tpf.processed_at) as processed_at,
+            MIN(tpf.processed_at) as first_processed_at
+        FROM transform_processed_files tpf
+        INNER JOIN embedded_datasets ed ON ed.embedded_dataset_id = tpf.transform_id
+        WHERE tpf.transform_type = 'dataset'
+          AND ed.dataset_transform_id = ANY($1)
+        GROUP BY ed.dataset_transform_id, ed.embedded_dataset_id, tpf.file_key
+    ),
+    source_chunks AS (
+        SELECT
+            dt.dataset_transform_id,
+            COALESCE(SUM(jsonb_array_length(di.chunks)), 0)::BIGINT as chunk_count
+        FROM dataset_transforms dt
+        INNER JOIN dataset_items di ON di.dataset_id = dt.source_dataset_id
+        WHERE dt.dataset_transform_id = ANY($1)
+        GROUP BY dt.dataset_transform_id
+    )
+    SELECT
+        dt.dataset_transform_id,
+        COALESCE(array_length(dt.embedder_ids, 1), 0)::INTEGER as embedder_count,
+        COALESCE(COUNT(DISTINCT (ub.embedded_dataset_id, ub.file_key)), 0)::BIGINT as total_batches_processed,
+        COALESCE(COUNT(DISTINCT CASE WHEN ub.process_status = 'completed' THEN (ub.embedded_dataset_id, ub.file_key) END), 0)::BIGINT as successful_batches,
+        COALESCE(COUNT(DISTINCT CASE WHEN ub.process_status = 'failed' THEN (ub.embedded_dataset_id, ub.file_key) END), 0)::BIGINT as failed_batches,
+        COALESCE(COUNT(DISTINCT CASE WHEN ub.process_status = 'processing' THEN (ub.embedded_dataset_id, ub.file_key) END), 0)::BIGINT as processing_batches,
+        COALESCE(SUM(CASE WHEN ub.process_status = 'completed' THEN ub.item_count ELSE 0 END), 0)::BIGINT as total_chunks_embedded,
+        COALESCE(SUM(CASE WHEN ub.process_status = 'processing' THEN ub.item_count ELSE 0 END), 0)::BIGINT as total_chunks_processing,
+        COALESCE(SUM(CASE WHEN ub.process_status = 'failed' THEN ub.item_count ELSE 0 END), 0)::BIGINT as total_chunks_failed,
+        COALESCE(sc.chunk_count * array_length(dt.embedder_ids, 1), 0) as total_chunks_to_process,
+        MAX(ub.processed_at) as last_run_at,
+        MIN(CASE WHEN ub.process_status = 'processing' THEN ub.first_processed_at END) as first_processing_at
+    FROM dataset_transforms dt
+    LEFT JOIN unique_batches ub ON ub.dataset_transform_id = dt.dataset_transform_id
+    LEFT JOIN source_chunks sc ON sc.dataset_transform_id = dt.dataset_transform_id
+    WHERE dt.dataset_transform_id = ANY($1)
+    GROUP BY dt.dataset_transform_id, dt.embedder_ids, sc.chunk_count
+    ORDER BY dt.dataset_transform_id
+"#;
+
 pub async fn get_dataset_transform(
     pool: &Pool<Postgres>,
     owner: &str,
@@ -379,18 +425,23 @@ pub async fn get_batch_dataset_transform_stats(
     dataset_transform_ids: &[i32],
 ) -> Result<std::collections::HashMap<i32, DatasetTransformStats>> {
     use std::collections::HashMap;
-    let mut stats_map = HashMap::new();
 
-    for &id in dataset_transform_ids {
-        match get_dataset_transform_stats(pool, id).await {
-            Ok(stats) => {
-                stats_map.insert(id, stats);
-            }
-            Err(e) => {
-                tracing::warn!("Failed to get stats for dataset transform {}: {:?}", id, e);
-            }
-        }
+    if dataset_transform_ids.is_empty() {
+        return Ok(HashMap::new());
     }
+
+    // Execute single batched query
+    let stats_list =
+        sqlx::query_as::<_, DatasetTransformStats>(GET_BATCH_DATASET_TRANSFORM_STATS_QUERY)
+            .bind(dataset_transform_ids)
+            .fetch_all(pool)
+            .await?;
+
+    // Convert Vec to HashMap
+    let stats_map = stats_list
+        .into_iter()
+        .map(|stats| (stats.dataset_transform_id, stats))
+        .collect();
 
     Ok(stats_map)
 }

@@ -5,10 +5,13 @@ Supports multiple LLM providers (Cohere, OpenAI, Local) for topic naming.
 Requires API key to be passed via LLMConfig from the job message (except for Local provider).
 """
 
+import asyncio
 import logging
 import os
+import random
 import time
-from typing import List, cast
+from dataclasses import dataclass
+from typing import Any, List, Optional, cast
 
 import httpx
 
@@ -24,6 +27,52 @@ except ImportError:
     from models import LLMConfig
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class InternalLLMResponse:
+    """Response structure from internal LLM API."""
+    message: "InternalLLMMessage"
+    
+    @classmethod
+    def from_dict(cls, data: Any) -> "InternalLLMResponse":
+        """Parse response from API JSON."""
+        if not isinstance(data, dict):
+            raise ValueError(f"Expected dict, got {type(data)}")
+        if "message" not in data:
+            raise ValueError("Missing 'message' field in response")
+        
+        message_data = data["message"]
+        message = InternalLLMMessage.from_dict(message_data)
+        return cls(message=message)
+    
+    def get_content(self) -> str:
+        """Extract text content from response."""
+        return self.message.get_content()
+
+
+@dataclass
+class InternalLLMMessage:
+    """Message structure from internal LLM API."""
+    content: str
+    
+    @classmethod
+    def from_dict(cls, data: Any) -> "InternalLLMMessage":
+        """Parse message from API JSON."""
+        if not isinstance(data, dict):
+            raise ValueError(f"Expected dict, got {type(data)}")
+        if "content" not in data:
+            raise ValueError("Missing 'content' field in message")
+        
+        content = data["content"]
+        if not isinstance(content, str):
+            raise ValueError(f"Expected content to be string, got {type(content)}")
+        
+        return cls(content=content)
+    
+    def get_content(self) -> str:
+        """Get text content."""
+        return self.content.strip()
 
 
 class LLMProvider:
@@ -155,10 +204,15 @@ class LLMProvider:
                 raise ValueError("Cohere returned empty response content")
 
             # Get the text content from the first content item
-            content_item = response.message.content[0]
+            content_list = response.message.content
+            if not content_list or len(content_list) == 0:
+                logger.error("Cohere returned empty content list")
+                raise ValueError("Cohere returned empty content list")
+            
+            content_item = content_list[0]
             # Cast to TextAssistantMessageResponseContentItem to access text attribute
             text_item = cast(TextAssistantMessageResponseContentItem, content_item)
-            topic_name = text_item.text.strip()
+            topic_name: str = text_item.text.strip()
 
             cohere_elapsed = time.time() - cohere_start
             logger.info(
@@ -221,11 +275,11 @@ class LLMProvider:
             api_elapsed = time.time() - api_call_start
             logger.debug(f"OpenAI API call completed in {api_elapsed:.3f}s")
 
-            message_content = response.choices[0].message.content
+            message_content: Optional[str] = response.choices[0].message.content
             if message_content is None:
                 logger.error("OpenAI returned empty response content")
                 raise ValueError("OpenAI returned empty response content")
-            topic_name = message_content.strip()
+            topic_name: str = message_content.strip()
             openai_elapsed = time.time() - openai_start
             logger.info(
                 f"OpenAI {llm_config.model} generated topic '{topic_name}' "
@@ -276,31 +330,69 @@ class LLMProvider:
                 f"Calling local LLM {llm_config.model} API (prompt length: {len(prompt)})"
             )
 
-            # Call local LLM inference API
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    f"{api_url}/api/chat",
-                    json={
-                        "model": llm_config.model or "mistralai/Mistral-7B-Instruct-v0.2",
-                        "messages": [
-                            {"role": "user", "content": prompt}
-                        ],
-                        "max_tokens": max_tokens,
-                        "temperature": temperature,
-                    },
-                )
-                response.raise_for_status()
-                result = response.json()
+            # Call local LLM inference API with retry/backoff for 503 errors
+            max_retries: int = 5
+            base_delay: float = 1.0  # Start with 1 second
+            result: Any = None
+            
+            for attempt in range(max_retries):
+                try:
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        response = await client.post(
+                            f"{api_url}/api/chat",
+                            json={
+                                "model": llm_config.model or "mistralai/Mistral-7B-Instruct-v0.2",
+                                "messages": [
+                                    {"role": "user", "content": prompt}
+                                ],
+                                "max_tokens": max_tokens,
+                                "temperature": temperature,
+                            },
+                        )
+                        
+                        # Handle 503 Service Unavailable with exponential backoff
+                        if response.status_code == 503:
+                            if attempt < max_retries - 1:
+                                # Exponential backoff with jitter: 1s, 2s, 4s, 8s, 16s (+/- 10%)
+                                delay: float = base_delay * (2 ** attempt)
+                                jitter: float = delay * 0.1 * (random.random() - 0.5)
+                                total_delay: float = delay + jitter
+                                logger.warning(
+                                    f"LLM API returned 503, retrying in {total_delay:.2f}s "
+                                    f"(attempt {attempt + 1}/{max_retries})"
+                                )
+                                await asyncio.sleep(total_delay)
+                                continue
+                            else:
+                                logger.error(
+                                    f"LLM API returned 503 after {max_retries} attempts, giving up"
+                                )
+                                response.raise_for_status()
+                        
+                        response.raise_for_status()
+                        result = response.json()
+                        break
+                        
+                except httpx.HTTPStatusError as http_error:
+                    if attempt < max_retries - 1 and http_error.response.status_code == 503:
+                        # Already handled above, continue to next attempt
+                        continue
+                    raise
+                except httpx.HTTPError:
+                    # Other HTTP errors (not status errors) - don't retry
+                    raise
 
             api_elapsed = time.time() - api_call_start
             logger.info(f"Internal LLM API call completed in {api_elapsed:.3f}s")
 
-            # Extract text from response
-            if "message" not in result or "content" not in result["message"]:
-                logger.error("Internal LLM returned invalid response format")
-                raise ValueError("Internal LLM returned invalid response format")
+            # Parse and extract text from response
+            try:
+                response_obj = InternalLLMResponse.from_dict(result)
+                topic_name: str = response_obj.get_content()
+            except ValueError as e:
+                logger.error(f"Failed to parse Internal LLM response: {e}")
+                raise
 
-            topic_name = result["message"]["content"].strip()
             internal_elapsed = time.time() - internal_start
             logger.info(
                 f"Internal LLM {llm_config.model} generated topic '{topic_name}' "

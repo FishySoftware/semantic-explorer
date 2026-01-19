@@ -195,7 +195,7 @@
 		if (transformIds.length === 0) return;
 
 		try {
-			const response = await fetch('/api/dataset-transforms/batch-stats', {
+			const response = await fetch('/api/dataset-transforms-batch-stats', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ dataset_transform_ids: transformIds }),
@@ -351,7 +351,7 @@
 		}
 
 		try {
-			eventSource = new EventSource('/api/dataset-transforms/stream');
+			eventSource = new EventSource('/api/dataset-transforms/stream', { withCredentials: true });
 
 			eventSource.addEventListener('connected', () => {
 				reconnectAttempts = 0;

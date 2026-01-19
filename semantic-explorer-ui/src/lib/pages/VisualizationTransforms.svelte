@@ -515,7 +515,9 @@
 		}
 
 		try {
-			eventSource = new EventSource('/api/visualization-transforms/stream');
+			eventSource = new EventSource('/api/visualization-transforms/stream', {
+				withCredentials: true,
+			});
 
 			eventSource.addEventListener('connected', () => {
 				reconnectAttempts = 0;

@@ -25,14 +25,6 @@ from nats.js.api import ConsumerConfig
 from pydantic import ValidationError
 from dotenv import load_dotenv
 
-# Try to import aiohttp for health check server
-try:
-    from aiohttp import web
-
-    HAS_AIOHTTP = True
-except ImportError:
-    HAS_AIOHTTP = False
-
 # Load environment variables from .env file
 # Look for .env in the parent directory (crates/worker-visualizations-py/)
 env_path = Path(__file__).parent.parent / ".env"
@@ -45,6 +37,7 @@ else:
 
 try:
     # Try relative imports (for package execution)
+    from .font_initializer import init_fonts_for_offline_mode
     from .processor import process_visualization_job
     from .models import (
         VisualizationTransformJob,
@@ -55,6 +48,7 @@ try:
     from .observability import init_metrics
 except ImportError:
     # Fallback to absolute imports (for direct script execution)
+    from font_initializer import init_fonts_for_offline_mode
     from processor import process_visualization_job
     from models import (
         VisualizationTransformJob,
@@ -63,6 +57,10 @@ except ImportError:
     from storage import S3Storage
     from llm_namer import LLMProvider
     from observability import init_metrics
+
+# Initialize fonts for offline-only mode BEFORE any datamapplot usage
+# This must be done early to prevent any runtime font requests
+init_fonts_for_offline_mode()
 
 # Initialize worker configuration first
 WORKER_ID = os.getenv("WORKER_ID", str(uuid.uuid4()))
@@ -146,40 +144,19 @@ shutdown_event: asyncio.Event = asyncio.Event()
 active_jobs = 0
 
 
-# Health check state
-class HealthCheckState:
-    """Maintains health check state for Kubernetes probes."""
-
-    is_ready = False
-    last_job_time = time.time()
-    error_message: Optional[str] = None
-
-
-health_state = HealthCheckState()
-
-
-async def health_check_handler(request):
+async def health_check_handler(_request):
     """Handle liveness probe request."""
     return web.Response(text="OK", status=200)
 
 
-async def readiness_check_handler(request):
+async def readiness_check_handler(_request):
     """Handle readiness probe request."""
-    if not health_state.is_ready:
-        return web.Response(text="Not ready: worker not initialized", status=503)
-
-    if health_state.error_message:
-        return web.Response(text=f"Not ready: {health_state.error_message}", status=503)
 
     return web.Response(text="Ready", status=200)
 
 
 async def start_health_check_server():
     """Start health check HTTP server for Kubernetes probes."""
-    if not HAS_AIOHTTP:
-        logger.warning("aiohttp not installed; health check server will not start")
-        return None
-
     app = web.Application()
     app.router.add_get("/health/live", health_check_handler)
     app.router.add_get("/health/ready", readiness_check_handler)
@@ -227,8 +204,7 @@ async def initialize():
 
     elapsed = time.time() - start_time
     logger.info(f"Worker initialization complete in {elapsed:.3f}s")
-    health_state.is_ready = True
-    health_state.last_job_time = time.time()
+
     metrics.worker_ready.set(1)
 
 
@@ -406,7 +382,6 @@ async def handle_job(
         # Update health state and decrement active jobs
         active_jobs -= 1
         metrics.active_jobs_gauge.set(active_jobs)
-        health_state.last_job_time = time.time()
         logger.debug(f"Job {job.job_id} completed, active jobs: {active_jobs}")
 
 

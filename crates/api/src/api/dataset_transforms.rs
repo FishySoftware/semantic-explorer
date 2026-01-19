@@ -506,7 +506,7 @@ pub struct BatchDatasetTransformStatsRequest {
 
 #[utoipa::path(
     post,
-    path = "/api/dataset-transforms/batch-stats",
+    path = "/api/dataset-transforms-batch-stats",
     tag = "Dataset Transforms",
     request_body = BatchDatasetTransformStatsRequest,
     responses(
@@ -515,7 +515,7 @@ pub struct BatchDatasetTransformStatsRequest {
         (status = 404, description = "Dataset transform not found"),
     ),
 )]
-#[post("/api/dataset-transforms/batch-stats")]
+#[post("/api/dataset-transforms-batch-stats")]
 #[tracing::instrument(name = "get_batch_dataset_transform_stats", skip(user, pool))]
 pub async fn get_batch_dataset_transform_stats(
     user: AuthenticatedUser,

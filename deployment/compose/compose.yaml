@@ -37,12 +37,14 @@ services:
       llm-inference-api:
         condition: service_healthy
     restart: unless-stopped
+    extra_hosts:
+      - "localhost:host-gateway"
     environment:
       - RUST_LOG=info,actix_web_prom=error
       - HOSTNAME=0.0.0.0
       - PORT=8080
       - PUBLIC_URL=http://localhost:8080
-      - LOG_FORMAT=pretty
+      - LOG_FORMAT=json
       - AWS_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=test_access_key
       - AWS_SECRET_ACCESS_KEY=test_secret_key
@@ -60,7 +62,7 @@ services:
       - DB_ACQUIRE_TIMEOUT_SECS=30
       - DB_IDLE_TIMEOUT_SECS=300
       - DB_MAX_LIFETIME_SECS=1800
-      - OIDC_ISSUER_URL=http://dex:5556/dex
+      - OIDC_ISSUER_URL=http://localhost:5556/dex
       - OIDC_CLIENT_ID=semantic-explorer
       - OIDC_CLIENT_SECRET=ZXhhbXBsZS1hcHAtc2VjcmV0
       - NATS_URL=nats://nats-1:4222
@@ -75,8 +77,10 @@ services:
       - ENCRYPTION_MASTER_KEY=${ENCRYPTION_MASTER_KEY:-e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4}
     ports:
       - "8080:8080"
+    volumes:
+      - api_tmp:/tmp:rw
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health/live"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health/live"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -96,7 +100,7 @@ services:
     restart: unless-stopped
     environment:
       - RUST_LOG=info
-      - LOG_FORMAT=pretty
+      - LOG_FORMAT=json
       - NATS_URL=nats://nats-1:4222
       - AWS_ACCESS_KEY_ID=test_access_key
       - AWS_SECRET_ACCESS_KEY=test_secret_key
@@ -115,17 +119,24 @@ services:
   worker-datasets:
     image: jofish89/worker-datasets:latest
     depends_on:
-      - nats-1
-      - nats-2
-      - nats-3
-      - minio-1
-      - minio-init
-      - qdrant
-      - otel-collector
+      nats-1:
+        condition: service_healthy
+      nats-2:
+        condition: service_healthy
+      nats-3:
+        condition: service_healthy
+      minio-1:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      qdrant:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
     restart: unless-stopped
     environment:
       - RUST_LOG=info
-      - LOG_FORMAT=pretty
+      - LOG_FORMAT=json
       - NATS_URL=nats://nats-1:4222
       - AWS_ACCESS_KEY_ID=test_access_key
       - AWS_SECRET_ACCESS_KEY=test_secret_key
@@ -150,13 +161,20 @@ services:
   worker-visualizations-py:
     image: jofish89/worker-visualizations-py:latest
     depends_on:
-      - nats-1
-      - nats-2
-      - nats-3
-      - qdrant
-      - minio-1
-      - minio-init
-      - otel-collector
+      nats-1:
+        condition: service_healthy
+      nats-2:
+        condition: service_healthy
+      nats-3:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      minio-1:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      otel-collector:
+        condition: service_started
     restart: unless-stopped
     environment:
       - NATS_URL=nats://nats-1:4222
@@ -180,13 +198,14 @@ services:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
       - PROMETHEUS_METRICS_PORT=9093
       - SERVICE_NAME=worker-visualizations-py
+      - LLM_INFERENCE_API_URL=http://llm-inference-api:8091
       - ENCRYPTION_MASTER_KEY=${ENCRYPTION_MASTER_KEY:-e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4}
     networks:
       - semantic-explorer-net
 
   # Embedding inference service for embeddings and reranking (CUDA GPU accelerated)
   embedding-inference-api:
-    image: jofish89/embedding-inference-api:cuda
+    image: jofish89/embedding-inference-api:0.4.1-cuda12-sm89
     depends_on:
       otel-collector:
         condition: service_started
@@ -199,18 +218,18 @@ services:
               count: 1
               capabilities: [gpu]
     environment:
-      - RUST_LOG=warn,embedding_inference_api=info
+      - RUST_LOG=info,actix_web_prom=error
       - LOG_FORMAT=json
       - INFERENCE_HOSTNAME=0.0.0.0
       - INFERENCE_PORT=8090
-      # GPU Configuration: Set CUDA_VISIBLE_DEVICES to control which GPU(s) to use
-      # Examples: CUDA_VISIBLE_DEVICES=0 (first GPU), CUDA_VISIBLE_DEVICES=0,1 (multiple GPUs)
+      - CORS_ALLOWED_ORIGINS=*
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
       - INFERENCE_ALLOWED_EMBEDDING_MODELS=sentence-transformers/all-MiniLM-L6-v2
       - INFERENCE_ALLOWED_RERANK_MODELS=jinaai/jina-reranker-v2-base-multilingual
       - INFERENCE_MAX_BATCH_SIZE=256
       # Maximum concurrent embedding requests (for backpressure control)
       # When at capacity, the API returns 503 with Retry-After header
-      - INFERENCE_MAX_CONCURRENT_REQUESTS=2
+      - INFERENCE_MAX_CONCURRENT_REQUESTS=5
       # HuggingFace cache for models (mount a volume for persistence)
       - HF_HOME=/models
       # For airgapped deployments: pre-download models and mount at HF_HOME
@@ -225,17 +244,17 @@ services:
     ports:
       - "8090:8090"
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8090/health/live"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8090/health/live"]
       interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 120s  # Allow time for model downloads on first run
+      start_period: 120s
     networks:
       - semantic-explorer-net
 
   # LLM inference service for text generation (CUDA GPU accelerated)
   llm-inference-api:
-    image: jofish89/llm-inference-api:cuda
+    image: jofish89/llm-inference-api:0.4.1-cuda12-sm89
     depends_on:
       otel-collector:
         condition: service_started
@@ -248,14 +267,12 @@ services:
               count: 1
               capabilities: [gpu]
     environment:
-      - RUST_LOG=warn,llm_inference_api=info
+      - RUST_LOG=info,actix_web_prom=error
       - LOG_FORMAT=json
       - LLM_INFERENCE_HOSTNAME=0.0.0.0
       - LLM_INFERENCE_PORT=8091
       - CORS_ALLOWED_ORIGINS=*
-      # GPU Configuration: Set CUDA_VISIBLE_DEVICES to control which GPU(s) to use
       - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
-      # Model configuration
       - LLM_ALLOWED_MODELS=TinyLlama/TinyLlama-1.1B-Chat-v1.0
       - LLM_MAX_CONCURRENT_REQUESTS=2
       - LLM_DEFAULT_TEMPERATURE=0.7
@@ -276,14 +293,16 @@ services:
     ports:
       - "8091:8091"
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8091/health/live"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8091/health/live"]
       interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 120s  # Allow time for model downloads on first run
+      start_period: 120s
     networks:
       - semantic-explorer-net
 
+
+  # MinIO distributed cluster - 4 nodes for production-like erasure coding
   # Console: http://localhost:9001
   minio-1:
     image: minio/minio:latest
@@ -388,26 +407,26 @@ services:
       /bin/sh -c '
       echo "Waiting for cluster to stabilize...";
       sleep 5;
-
+      
       echo "Configuring MinIO client...";
       mc alias set myminio http://minio-1:9000 test_access_key test_secret_key;
-
+      
       echo "Creating bucket: semantic-explorer-local";
       mc mb myminio/semantic-explorer-local --ignore-existing;
-
+      
       echo "Setting bucket policy to allow read/write";
       mc anonymous set download myminio/semantic-explorer-local;
-
+      
       echo "MinIO cluster status:";
       mc admin info myminio;
-
+      
       echo "MinIO initialization complete!";
       '
     networks:
       - semantic-explorer-net
     restart: "no"
 
-  qdrant:
+  qdrant:  
     image: qdrant/qdrant:gpu-nvidia-latest
     hostname: qdrant
     restart: unless-stopped
@@ -419,6 +438,13 @@ services:
     environment:
       - QDRANT__GPU__INDEXING=1
       - NVIDIA_VISIBLE_DEVICES=all
+    healthcheck:
+      # GPU image has no curl/wget, use bash TCP check
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     deploy:
       resources:
         reservations:
@@ -428,7 +454,7 @@ services:
               capabilities: [gpu]
     networks:
       - semantic-explorer-net
-
+    
   postgres:
     image: postgres:16.3-alpine
     restart: unless-stopped
@@ -609,6 +635,8 @@ services:
       - '--web.enable-remote-write-receiver'
     ports:
       - "9090:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./prometheus.prod.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus:rw
@@ -653,7 +681,7 @@ services:
     restart: unless-stopped
     networks:
       - semantic-explorer-net
-
+      
 volumes:
   qdrant_storage:
   minio_data_1:
@@ -669,6 +697,7 @@ volumes:
   prometheus_data:
   grafana_data:
   inference_models:
-  tensorrt_cache:
   llm_models:
   llm_hf_cache:
+  tensorrt_cache:
+  api_tmp:

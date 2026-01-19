@@ -370,8 +370,8 @@
 	{/if}
 
 	{#if !loading}
-		<div class="mb-4">
-			<div class="relative">
+		<div class="mb-4 flex gap-3 items-center">
+			<div class="relative flex-1">
 				<input
 					type="text"
 					bind:value={searchQuery}
@@ -392,6 +392,14 @@
 					/>
 				</svg>
 			</div>
+			<button
+				onclick={() => {
+					window.location.hash = '/visualization-transforms?create=true';
+				}}
+				class="btn-primary whitespace-nowrap"
+			>
+				Create Visualization
+			</button>
 		</div>
 	{/if}
 

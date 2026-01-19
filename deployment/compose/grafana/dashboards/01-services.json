@@ -30,7 +30,7 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(up{job=~\"semantic-explorer-api|embedding-inference-api|llm-inference-api|worker-visualizations-py\"}, job)",
+        "definition": "label_values(up{job=~\"semantic-explorer-api|embedding-inference-api|llm-inference-api|worker-visualizations-py|worker-collections|worker-datasets\"}, job)",
         "hide": 0,
         "includeAll": true,
         "label": "Service",
@@ -38,7 +38,7 @@
         "name": "service",
         "options": [],
         "query": {
-          "query": "label_values(up{job=~\"semantic-explorer-api|embedding-inference-api|llm-inference-api|worker-visualizations-py\"}, job)",
+          "query": "label_values(up{job=~\"semantic-explorer-api|embedding-inference-api|llm-inference-api|worker-visualizations-py|worker-collections|worker-datasets\"}, job)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 2,
@@ -140,8 +140,48 @@
       "type": "stat"
     },
     {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "options": { "0": { "color": "red", "index": 1, "text": "Down" }, "1": { "color": "green", "index": 0, "text": "Up" } }, "type": "value" }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 5 },
+      "id": 6,
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "up{job=\"worker-collections\"}", "legendFormat": "Collections Worker", "refId": "A" }
+      ],
+      "title": "Collections Worker Status",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "options": { "0": { "color": "red", "index": 1, "text": "Down" }, "1": { "color": "green", "index": 0, "text": "Up" } }, "type": "value" }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 5 },
+      "id": 7,
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "up{job=\"worker-datasets\"}", "legendFormat": "Datasets Worker", "refId": "A" }
+      ],
+      "title": "Datasets Worker Status",
+      "type": "stat"
+    },
+    {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
       "id": 10,
       "panels": [],
       "title": "HTTP Request Metrics",
