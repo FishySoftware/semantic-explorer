@@ -25,9 +25,14 @@ jobs:
       - name: Get last successful tag
         id: last-tag
         run: |
-          # Get all tags sorted by version
-          LAST_TAG=$(git tag -l 'v*.*.*' --sort=-version:refname | head -n 2 | tail -n 1)
-          if [ -z "$LAST_TAG" ]; then
+          # Get current tag (the one that triggered this workflow)
+          CURRENT_TAG=${GITHUB_REF#refs/tags/}
+          
+          # Get previous tag before current one
+          LAST_TAG=$(git tag -l 'v*.*.*' --sort=-version:refname | grep -A1 "^${CURRENT_TAG}$" | tail -n 1)
+          
+          # If LAST_TAG equals CURRENT_TAG or is empty, there's no previous tag
+          if [ -z "$LAST_TAG" ] || [ "$LAST_TAG" = "$CURRENT_TAG" ]; then
             echo "No previous tag found, will build all"
             echo "last_tag=" >> $GITHUB_OUTPUT
           else
