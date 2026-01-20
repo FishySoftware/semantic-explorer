@@ -22,16 +22,23 @@ RUN pip install --user --no-cache-dir \
     --trusted-host files.pythonhosted.org \
     -r requirements.txt
 
-# Download Google Fonts for offline use
+# Download Google Fonts for offline use (our own font files)
 COPY download_fonts.sh .
 RUN chmod +x download_fonts.sh && ./download_fonts.sh
 
-# Pre-cache fonts in datamapplot's offline cache to prevent runtime web requests
-# Set HOME to /build so datamapplot caches in /build/.cache
+# Pre-cache fonts and JS in datamapplot's offline cache format
+# CRITICAL: datamapplot uses platformdirs.user_data_dir() which resolves to ~/.local/share/datamapplot
+# We need to set HOME and ensure fonts are cached there
 ENV HOME=/build
-RUN mkdir -p /build/.cache && \
-    python3 -c "from datamapplot.offline_mode_caching import cache_fonts; cache_fonts()" \
-    2>&1 || echo "Note: Font caching completed or was not needed"
+ENV XDG_DATA_HOME=/build/.local/share
+
+# Create the datamapplot data directory and cache fonts/JS
+RUN mkdir -p /build/.local/share/datamapplot && \
+    python3 -c "import sys; sys.path.insert(0, '/root/.local/lib/python3.12/site-packages'); from datamapplot.offline_mode_caching import cache_fonts, cache_js_files; print('Caching datamapplot fonts...'); cache_fonts(); print('Caching datamapplot JS files...'); cache_js_files(); print('Cache complete!')" && \
+    echo "=== Datamapplot cache contents ===" && \
+    ls -la /build/.local/share/datamapplot/ && \
+    echo "=== Font cache size ===" && \
+    du -h /build/.local/share/datamapplot/
 
 # Runtime stage
 FROM python:3.12-slim
@@ -54,19 +61,30 @@ COPY --from=builder /root/.local/lib/python3.12/site-packages/ /usr/local/lib/py
 COPY --from=builder /root/.local/bin/ /usr/local/bin/
 COPY --from=builder --chown=appuser:appgroup /build/fonts/ /app/fonts/
 
-# Copy datamapplot cache from builder for offline font support
-# First, ensure the cache directory exists and has correct permissions
-RUN mkdir -p /home/appuser/.cache/datamapplot && \
-    chown -R appuser:appgroup /home/appuser/.cache
+# Copy datamapplot cache from builder for offline font/JS support
+# CRITICAL: datamapplot uses platformdirs.user_data_dir() which resolves to ~/.local/share/datamapplot
+# We need to copy the cache to the appuser's home directory
+RUN mkdir -p /home/appuser/.local/share/datamapplot && \
+    chown -R appuser:appgroup /home/appuser/.local
 
-# Copy cache files
-COPY --from=builder --chown=appuser:appgroup /build/.cache/ /home/appuser/.cache/
+# Copy the pre-built datamapplot cache files
+COPY --from=builder --chown=appuser:appgroup /build/.local/share/datamapplot/ /home/appuser/.local/share/datamapplot/
+
+# Verify cache was copied correctly
+RUN echo "=== Verifying datamapplot cache in runtime image ===" && \
+    ls -la /home/appuser/.local/share/datamapplot/ && \
+    echo "=== Font cache file size ===" && \
+    du -h /home/appuser/.local/share/datamapplot/datamapplot_fonts_encoded.json 2>/dev/null || echo "WARNING: Font cache not found!" && \
+    echo "=== JS cache file size ===" && \
+    du -h /home/appuser/.local/share/datamapplot/datamapplot_js_encoded.json 2>/dev/null || echo "WARNING: JS cache not found!"
 
 RUN mkdir -p /tmp/matplotlib /tmp/numba_cache && chown -R appuser:appgroup /tmp
 
 ENV TMPDIR=/tmp
 ENV MPLCONFIGDIR=/tmp/matplotlib
-# Ensure datamapplot uses the pre-cached fonts
+# Set XDG_DATA_HOME so datamapplot finds the pre-cached fonts using platformdirs
+ENV XDG_DATA_HOME=/home/appuser/.local/share
+# Also set XDG_CACHE_HOME for any cache-based lookups
 ENV XDG_CACHE_HOME=/home/appuser/.cache
 
 # Copy application code

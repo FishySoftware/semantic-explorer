@@ -27,14 +27,79 @@ try:
     # Try relative imports (for package execution)
     from .models import VisualizationTransformJob, VisualizationConfig
     from .llm_namer import LLMProvider
-    from .font_patcher import patch_html_fonts
+    from .font_patcher import patch_html_fonts, verify_no_external_requests
 except ImportError:
     # Fallback to absolute imports (for direct script execution)
     from models import VisualizationTransformJob, VisualizationConfig
     from llm_namer import LLMProvider
-    from font_patcher import patch_html_fonts
+    from font_patcher import patch_html_fonts, verify_no_external_requests
 
 logger = logging.getLogger(__name__)
+
+# Datamapplot cache file names
+DATAMAPPLOT_FONTS_CACHE = "datamapplot_fonts_encoded.json"
+DATAMAPPLOT_JS_CACHE = "datamapplot_js_encoded.json"
+
+
+def _find_cache_file(filename: str) -> Optional[str]:
+    """
+    Find datamapplot cache file in known locations.
+    
+    datamapplot uses platformdirs.user_data_dir() which resolves to:
+    - Linux: ~/.local/share/datamapplot
+    - macOS: ~/Library/Application Support/datamapplot
+    - Windows: C:\\Users\\<user>\\AppData\\Local\\datamapplot
+    
+    Searches in order of preference:
+    1. XDG_DATA_HOME/datamapplot (Linux standard, set in Docker)
+    2. HOME/.local/share/datamapplot (Linux default)
+    3. /home/appuser/.local/share/datamapplot (Docker appuser)
+    4. platformdirs user_data_dir (datamapplot's actual default)
+    
+    Returns:
+        Path to cache file if found, None otherwise
+    """
+    import platformdirs
+    from pathlib import Path
+    
+    search_paths = []
+    
+    # 1. XDG_DATA_HOME (set in Dockerfile) - this is what platformdirs uses on Linux
+    xdg_data = os.environ.get("XDG_DATA_HOME")
+    if xdg_data:
+        search_paths.append(Path(xdg_data) / "datamapplot" / filename)
+    
+    # 2. HOME/.local/share/datamapplot (Linux default)
+    home = os.environ.get("HOME")
+    if home:
+        search_paths.append(Path(home) / ".local" / "share" / "datamapplot" / filename)
+    
+    # 3. Hard-coded Docker appuser path
+    search_paths.append(Path("/home/appuser/.local/share/datamapplot") / filename)
+    
+    # 4. platformdirs default (what datamapplot uses internally)
+    try:
+        data_dir = platformdirs.user_data_dir("datamapplot")
+        search_paths.append(Path(data_dir) / filename)
+    except Exception:
+        pass
+    
+    # 5. Also check XDG_CACHE_HOME for backwards compatibility
+    xdg_cache = os.environ.get("XDG_CACHE_HOME")
+    if xdg_cache:
+        search_paths.append(Path(xdg_cache) / "datamapplot" / filename)
+    
+    # 6. HOME/.cache/datamapplot for backwards compatibility
+    if home:
+        search_paths.append(Path(home) / ".cache" / "datamapplot" / filename)
+    
+    for path in search_paths:
+        if path.exists() and path.is_file():
+            logger.debug(f"Found cache file at: {path}")
+            return str(path)
+    
+    logger.warning(f"Cache file {filename} not found in any of: {[str(p) for p in search_paths]}")
+    return None
 
 
 class VisualizationProcessor:
@@ -51,6 +116,76 @@ class VisualizationProcessor:
         logger.info(
             f"Initialized Async Qdrant client in {init_elapsed:.3f}s: {grpc_url}"
         )
+        
+        # Pre-locate cache files for offline mode
+        self._font_cache_path = _find_cache_file(DATAMAPPLOT_FONTS_CACHE)
+        self._js_cache_path = _find_cache_file(DATAMAPPLOT_JS_CACHE)
+        
+        if self._font_cache_path:
+            logger.info(f"Datamapplot font cache: {self._font_cache_path}")
+        else:
+            logger.warning("Datamapplot font cache not found - will attempt to use fallback fonts")
+            
+        if self._js_cache_path:
+            logger.info(f"Datamapplot JS cache: {self._js_cache_path}")
+        else:
+            logger.warning("Datamapplot JS cache not found - offline mode may fail")
+        
+        # Track if we've already patched requests
+        self._requests_patched = False
+
+    def _get_font_cache_path(self) -> Optional[str]:
+        """Get path to datamapplot font cache file."""
+        return self._font_cache_path
+    
+    def _get_js_cache_path(self) -> Optional[str]:
+        """Get path to datamapplot JS cache file."""
+        return self._js_cache_path
+    
+    def _block_external_font_requests(self):
+        """
+        Monkey-patch requests.get to block external font service requests.
+        
+        datamapplot has a bug where it calls requests.get() to validate tooltip fonts
+        even when offline_mode=True. This patch intercepts those calls and returns
+        a mock response to prevent network access in air-gapped environments.
+        """
+        if self._requests_patched:
+            return  # Already patched
+            
+        import requests
+        from unittest.mock import MagicMock
+        
+        original_get = requests.get
+        
+        # Domains to block
+        blocked_domains = [
+            'fonts.googleapis.com',
+            'fonts.gstatic.com',
+            'maxcdn.bootstrapcdn.com',
+            'cdnjs.cloudflare.com',
+            'unpkg.com',  # Also block JS CDN calls
+        ]
+        
+        def patched_get(url, *args, **kwargs):
+            """Intercept requests.get and block font/CDN requests."""
+            url_lower = str(url).lower()
+            for domain in blocked_domains:
+                if domain in url_lower:
+                    logger.debug(f"Blocked external request to: {url}")
+                    # Return a mock failed response
+                    mock_response = MagicMock()
+                    mock_response.ok = False
+                    mock_response.status_code = 503
+                    mock_response.text = "Blocked by offline mode"
+                    mock_response.content = b"Blocked by offline mode"
+                    return mock_response
+            # Allow other requests through
+            return original_get(url, *args, **kwargs)
+        
+        requests.get = patched_get
+        self._requests_patched = True
+        logger.info("Patched requests.get to block external font/CDN requests")
 
     async def process_job(
         self,
@@ -596,6 +731,12 @@ class VisualizationProcessor:
         """
         viz_start = time.time()
         try:
+            # CRITICAL: Block all external font requests at the network level
+            # datamapplot has a bug where it still makes requests.get() calls
+            # even in offline_mode=True (for tooltip font validation)
+            # We monkey-patch requests.get to prevent this
+            self._block_external_font_requests()
+            
             # Create data for visualization
             logger.debug(f"Preparing label names for {len(labels)} points")
             label_names = [
@@ -666,9 +807,28 @@ class VisualizationProcessor:
             if config.background_image is not None:
                 plot_kwargs["background_image"] = config.background_image
 
+            # CRITICAL: Enable offline mode to prevent ANY external font/JS fetching
+            # This is essential for air-gapped/production environments
+            plot_kwargs["offline_mode"] = True
+            
+            # Set the path to the pre-cached font data file
+            # datamapplot expects fonts in JSON format at this location
+            font_cache_file = self._get_font_cache_path()
+            if font_cache_file:
+                plot_kwargs["offline_mode_font_data_file"] = font_cache_file
+                logger.debug(f"Using offline font cache: {font_cache_file}")
+            else:
+                logger.warning("No offline font cache found - fonts may not render correctly")
+            
+            # Set the path to the pre-cached JS data file
+            js_cache_file = self._get_js_cache_path()
+            if js_cache_file:
+                plot_kwargs["offline_mode_js_data_file"] = js_cache_file
+                logger.debug(f"Using offline JS cache: {js_cache_file}")
+
             # Generate interactive HTML map with all configurable parameters
             plot_start = time.time()
-            logger.debug("Calling datamapplot.create_interactive_plot...")
+            logger.debug("Calling datamapplot.create_interactive_plot with offline_mode=True...")
             fig = datamapplot.create_interactive_plot(
                 vectors,
                 np.array(label_names),
@@ -707,8 +867,17 @@ class VisualizationProcessor:
                 raise RuntimeError("Failed to generate HTML from interactive figure")
 
             # Patch HTML to use local embedded fonts instead of Google Fonts
-            logger.debug("Patching HTML to use local embedded fonts...")
+            # This is a defense-in-depth measure even with offline_mode=True
+            logger.debug("Patching HTML to remove any remaining external resource references...")
             html_content = patch_html_fonts(html_content)
+            
+            # Verify no external requests remain (logs warning if any found)
+            remaining_external = verify_no_external_requests(html_content)
+            if remaining_external:
+                logger.warning(
+                    f"WARNING: {len(remaining_external)} external URLs still found in HTML after patching: "
+                    f"{remaining_external[:5]}{'...' if len(remaining_external) > 5 else ''}"
+                )
 
             viz_elapsed = time.time() - viz_start
             logger.info(
