@@ -1,0 +1,164 @@
+{{- if .Values.embeddingInferenceApi.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-embedding-inference-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.embeddingInferenceApi.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  serviceName: {{ include "semantic-explorer.fullname" . }}-embedding-inference-api
+  {{- if not .Values.embeddingInferenceApi.autoscaling.enabled }}
+  replicas: {{ .Values.embeddingInferenceApi.replicaCount }}
+  {{- end }}
+  podManagementPolicy: {{ .Values.embeddingInferenceApi.statefulset.podManagementPolicy }}
+  updateStrategy:
+    {{- toYaml .Values.embeddingInferenceApi.statefulset.updateStrategy | nindent 4 }}
+  selector:
+    matchLabels:
+      {{- include "semantic-explorer.embeddingInferenceApi.selectorLabels" . | nindent 6 }}
+  {{- if .Values.embeddingInferenceApi.persistence.enabled }}
+  volumeClaimTemplates:
+  - metadata:
+      name: models
+    spec:
+      accessModes:
+        - {{ .Values.embeddingInferenceApi.persistence.accessMode }}
+      {{- if .Values.embeddingInferenceApi.persistence.storageClass }}
+      {{- if (eq "-" .Values.embeddingInferenceApi.persistence.storageClass) }}
+      storageClassName: ""
+      {{- else }}
+      storageClassName: {{ .Values.embeddingInferenceApi.persistence.storageClass | quote }}
+      {{- end }}
+      {{- end }}
+      resources:
+        requests:
+          storage: {{ .Values.embeddingInferenceApi.persistence.size | quote }}
+  {{- if .Values.embeddingInferenceApi.tensorrtCache.enabled }}
+  - metadata:
+      name: tensorrt-cache
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      {{- if .Values.embeddingInferenceApi.persistence.storageClass }}
+      {{- if (eq "-" .Values.embeddingInferenceApi.persistence.storageClass) }}
+      storageClassName: ""
+      {{- else }}
+      storageClassName: {{ .Values.embeddingInferenceApi.persistence.storageClass | quote }}
+      {{- end }}
+      {{- end }}
+      resources:
+        requests:
+          storage: {{ .Values.embeddingInferenceApi.tensorrtCache.size | quote }}
+  {{- end }}
+  {{- end }}
+  template:
+    metadata:
+      annotations:
+        {{- with .Values.embeddingInferenceApi.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "semantic-explorer.embeddingInferenceApi.selectorLabels" . | nindent 8 }}
+        {{- with .Values.embeddingInferenceApi.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "semantic-explorer.embeddingInferenceApi.serviceAccountName" . }}
+      securityContext:
+        # Non-root GPU configuration
+        runAsNonRoot: true
+        runAsUser: {{ .Values.embeddingInferenceApi.securityContext.runAsUser | default 1000 }}
+        runAsGroup: {{ .Values.embeddingInferenceApi.securityContext.runAsGroup | default 1000 }}
+        fsGroup: {{ .Values.embeddingInferenceApi.securityContext.fsGroup | default 1000 }}
+        fsGroupChangePolicy: "OnRootMismatch"
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.embeddingInferenceApi.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      containers:
+      - name: embedding-inference-api
+        image: {{ include "semantic-explorer.embeddingInferenceApi.image" . }}
+        imagePullPolicy: {{ .Values.embeddingInferenceApi.image.pullPolicy }}
+        securityContext:
+          # Non-root container security
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+        ports:
+        - name: http
+          containerPort: 8090
+          protocol: TCP
+        - name: metrics
+          containerPort: 8090
+          protocol: TCP
+        env:
+        {{- range $key, $value := .Values.embeddingInferenceApi.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        {{- if .Values.observability.otelCollector.enabled }}
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: {{ include "semantic-explorer.otel.endpoint" . }}
+        - name: SERVICE_NAME
+          value: "embedding-inference-api"
+        {{- end }}
+        {{- with .Values.embeddingInferenceApi.envFrom }}
+        envFrom:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- if .Values.embeddingInferenceApi.livenessProbe }}
+        livenessProbe:
+          {{- toYaml .Values.embeddingInferenceApi.livenessProbe | nindent 10 }}
+        {{- end }}
+        {{- if .Values.embeddingInferenceApi.readinessProbe }}
+        readinessProbe:
+          {{- toYaml .Values.embeddingInferenceApi.readinessProbe | nindent 10 }}
+        {{- end }}
+        {{- if .Values.embeddingInferenceApi.startupProbe }}
+        startupProbe:
+          {{- toYaml .Values.embeddingInferenceApi.startupProbe | nindent 10 }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.embeddingInferenceApi.resources | nindent 10 }}
+        volumeMounts:
+        {{- if .Values.embeddingInferenceApi.persistence.enabled }}
+        - name: models
+          mountPath: {{ .Values.embeddingInferenceApi.persistence.mountPath }}
+        {{- end }}
+        {{- if .Values.embeddingInferenceApi.tensorrtCache.enabled }}
+        - name: tensorrt-cache
+          mountPath: {{ .Values.embeddingInferenceApi.tensorrtCache.mountPath }}
+        {{- end }}
+        - name: tmp
+          mountPath: /tmp
+        - name: cache
+          mountPath: /root/.cache
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: cache
+        emptyDir: {}
+      {{- with .Values.embeddingInferenceApi.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.embeddingInferenceApi.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.embeddingInferenceApi.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

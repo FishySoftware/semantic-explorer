@@ -1,3 +1,3 @@
 pub(crate) mod postgres;
 pub(crate) mod qdrant;
-pub(crate) mod rustfs;
+pub(crate) mod s3;

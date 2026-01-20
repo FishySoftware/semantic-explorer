@@ -1,9 +1,22 @@
 use crate::observability::record_storage_operation;
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use aws_config::{BehaviorVersion, Region};
-use aws_sdk_s3::{config::Credentials, Client};
+use aws_sdk_s3::{Client, config::Credentials};
+use once_cell::sync::Lazy;
 use serde::Serialize;
 use std::{env, time::Instant};
+use tracing::warn;
+
+// Maximum file size for in-memory processing
+// Files larger than this should be rejected to prevent OOM
+// Configurable via MAX_FILE_SIZE_MB environment variable (default: 100MB)
+static MAX_FILE_SIZE_BYTES: Lazy<i64> = Lazy::new(|| {
+    let mb = env::var("MAX_FILE_SIZE_MB")
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(100);
+    mb * 1024 * 1024
+});
 
 #[derive(Debug, Clone)]
 pub struct DocumentUpload {
@@ -31,19 +44,35 @@ pub struct PaginatedFiles {
 }
 
 pub async fn initialize_client() -> Result<aws_sdk_s3::Client> {
-    let shard_config = aws_config::defaults(BehaviorVersion::latest())
-        .region(Region::new(env::var("AWS_REGION")?))
-        .credentials_provider(Credentials::new(
-            env::var("AWS_ACCESS_KEY_ID")?,
-            env::var("AWS_SECRET_ACCESS_KEY")?,
-            None,
-            None,
-            "rustfs",
-        ))
-        .endpoint_url(env::var("AWS_ENDPOINT_URL")?)
-        .load()
-        .await;
-    Ok(Client::new(&shard_config))
+    let region = env::var("AWS_REGION")?;
+    let endpoint_url = env::var("AWS_ENDPOINT_URL")?;
+
+    let mut config_loader = aws_config::defaults(BehaviorVersion::latest())
+        .region(Region::new(region))
+        .endpoint_url(endpoint_url);
+
+    if let (Ok(access_key), Ok(secret_key)) = (
+        env::var("AWS_ACCESS_KEY_ID"),
+        env::var("AWS_SECRET_ACCESS_KEY"),
+    ) {
+        config_loader = config_loader
+            .credentials_provider(Credentials::new(access_key, secret_key, None, None, "s3"));
+    }
+
+    let shard_config = config_loader.load().await;
+
+    // Use path-style addressing for MinIO/S3-compatible storage when enabled
+    // Virtual-host style (default) tries to resolve bucket.endpoint as DNS
+    // Path-style uses endpoint/bucket instead
+    // Enable with S3_FORCE_PATH_STYLE=true for MinIO, disable for AWS S3
+    let force_path_style = env::var("S3_FORCE_PATH_STYLE")
+        .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+        .unwrap_or(false);
+
+    let s3_config = aws_sdk_s3::config::Builder::from(&shard_config)
+        .force_path_style(force_path_style)
+        .build();
+    Ok(Client::from_conf(s3_config))
 }
 
 #[tracing::instrument(name = "s3.upload_document", skip(client, document), fields(storage.system = "s3", bucket = %document.collection_id, key = %document.name, size = document.content.len()))]
@@ -178,6 +207,57 @@ pub async fn ensure_bucket_exists(client: &Client, bucket: &str) -> Result<()> {
 pub async fn get_file(client: &Client, bucket: &str, key: &str) -> Result<Vec<u8>> {
     let start = Instant::now();
 
+    let result = client.get_object().bucket(bucket).key(key).send().await;
+
+    match result {
+        Ok(output) => {
+            let data = output.body.collect().await?.into_bytes();
+            let duration = start.elapsed().as_secs_f64();
+            record_storage_operation("download", duration, Some(data.len() as u64), true);
+            Ok(data.to_vec())
+        }
+        Err(e) => {
+            let duration = start.elapsed().as_secs_f64();
+            record_storage_operation("download", duration, None, false);
+            Err(e.into())
+        }
+    }
+}
+
+/// Get file with size validation to prevent OOM on large files
+/// Returns error if file exceeds MAX_FILE_SIZE_BYTES (configurable via MAX_FILE_SIZE_MB env var)
+#[tracing::instrument(name = "s3.get_file_with_size_check", skip(client), fields(storage.system = "s3", bucket = %bucket, key = %key))]
+pub async fn get_file_with_size_check(client: &Client, bucket: &str, key: &str) -> Result<Vec<u8>> {
+    let start = Instant::now();
+    let max_size = *MAX_FILE_SIZE_BYTES;
+
+    // First, check file size using head_object
+    let head_result = client
+        .head_object()
+        .bucket(bucket)
+        .key(key)
+        .send()
+        .await
+        .context("Failed to get file metadata")?;
+
+    let file_size = head_result.content_length().unwrap_or(0);
+
+    if file_size > max_size {
+        let duration = start.elapsed().as_secs_f64();
+        record_storage_operation("download", duration, None, false);
+        warn!(
+            file_size_mb = file_size / (1024 * 1024),
+            max_size_mb = max_size / (1024 * 1024),
+            "File exceeds maximum size limit"
+        );
+        bail!(
+            "File size ({} MB) exceeds maximum limit of {} MB. Large file processing is not supported.",
+            file_size / (1024 * 1024),
+            max_size / (1024 * 1024)
+        );
+    }
+
+    // Size is acceptable, proceed with download
     let result = client.get_object().bucket(bucket).key(key).send().await;
 
     match result {

@@ -1,0 +1,113 @@
+### Embedding Inference API Tests
+### Base URL
+@baseUrl = http://localhost:8090
+
+###############################################################################
+# Health Checks
+###############################################################################
+
+### Health - Liveness probe
+GET {{baseUrl}}/health/live
+
+### Health - Readiness probe
+GET {{baseUrl}}/health/ready
+
+###############################################################################
+# Model Discovery
+###############################################################################
+
+### List all available embedding models
+GET {{baseUrl}}/api/embedders
+
+### List all available reranker models
+GET {{baseUrl}}/api/rerankers
+
+###############################################################################
+# Embedding Generation
+###############################################################################
+
+### Generate embedding for a single text (salmon description)
+POST {{baseUrl}}/api/embed
+Content-Type: application/json
+
+{
+  "model": "sentence-transformers/all-MiniLM-L6-v2",
+  "text": "The salmon is an anadromous fish that migrates upstream to spawn in freshwater rivers after spending most of its life in the ocean."
+}
+
+### Generate embeddings for multiple texts (various fish species)
+POST {{baseUrl}}/api/embed/batch
+Content-Type: application/json
+
+{
+  "model": "sentence-transformers/all-MiniLM-L6-v2",
+  "texts": [
+    "The majestic marlin can swim up to 80 mph, making it one of the fastest fish in the ocean.",
+    "Seahorses are unique fish where the male carries and gives birth to the young.",
+    "The anglerfish uses a bioluminescent lure to attract prey in the dark depths of the ocean.",
+    "Tuna fish are warm-blooded and can maintain body temperatures higher than surrounding water.",
+    "The pufferfish inflates itself with water or air when threatened, becoming nearly impossible to eat."
+  ]
+}
+
+
+###############################################################################
+# Reranking
+###############################################################################
+
+### Rerank documents about fish care by relevance to query
+POST {{baseUrl}}/api/rerank
+Content-Type: application/json
+
+{
+  "query": "How to feed tropical fish properly",
+  "model": "jinaai/jina-reranker-v2-base-multilingual",
+  "documents": [
+    {
+      "id": "doc1",
+      "text": "Goldfish prefer cooler water temperatures between 65-72°F and should be kept in spacious tanks."
+    },
+    {
+      "id": "doc2",
+      "text": "Tropical fish require water temperatures between 75-80°F and should be fed small amounts 2-3 times daily with high-quality flake or pellet food."
+    },
+    {
+      "id": "doc3",
+      "text": "Saltwater fish need regular water changes and careful monitoring of salinity levels."
+    },
+    {
+      "id": "doc4",
+      "text": "Most tropical species thrive on a varied diet including frozen brine shrimp, bloodworms, and quality commercial foods."
+    },
+    {
+      "id": "doc5",
+      "text": "Bettas are labyrinth fish that can breathe air from the surface and prefer warm, still water."
+    }
+  ],
+  "top_k": 3,
+  "return_scores": true
+}
+
+### Rerank without scores and IDs
+POST {{baseUrl}}/api/rerank
+Content-Type: application/json
+
+{
+  "query": "colorful tropical aquarium fish",
+  "model": "jinaai/jina-reranker-v2-base-multilingual",
+  "documents": [
+    {
+      "text": "Neon tetras display electric blue and red stripes that shimmer under aquarium lighting."
+    },
+    {
+      "text": "Discus fish come in a stunning variety of colors including red, blue, and orange."
+    },
+    {
+      "text": "Catfish are bottom-dwelling scavengers that help keep the tank clean."
+    },
+    {
+      "text": "Guppies breed rapidly and males feature elaborate tails in rainbow colors."
+    }
+  ],
+  "return_scores": false
+}

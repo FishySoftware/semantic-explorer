@@ -7,6 +7,9 @@ import globals from 'globals';
 import svelteParser from 'svelte-eslint-parser';
 
 export default [
+	{
+		ignores: ['vite.config.d.ts'],
+	},
 	js.configs.recommended,
 	{
 		languageOptions: {
@@ -50,6 +53,24 @@ export default [
 			'no-empty': 'warn',
 			'no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
 			'svelte/require-each-key': 'warn',
+		},
+	},
+	{
+		files: ['**/CollectionTransforms.svelte'],
+		rules: {
+			'svelte/no-at-html-tags': 'off',
+		},
+	},
+	{
+		files: ['**/VisualizationTransforms.svelte'],
+		rules: {
+			'svelte/no-at-html-tags': 'off',
+		},
+	},
+	{
+		files: ['**/Chat.svelte'],
+		rules: {
+			'svelte/no-at-html-tags': 'off',
 		},
 	},
 	prettier,

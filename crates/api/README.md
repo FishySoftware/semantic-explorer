@@ -1,314 +1,434 @@
-# Semantic Explorer
+# Semantic Explorer API Server
 
-A high-performance document processing and semantic search platform built with Rust.
+![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)
+![Actix-web](https://img.shields.io/badge/actix--web-4.x-blue.svg)
+
+The main REST API server for Semantic Explorer. Provides endpoints for collection management, dataset processing, embedding generation, search, chat and visualizations.
+
+---
 
 ## Overview
 
-Semantic Explorer provides a complete system for:
-- **Document Management**: Upload and organize documents in collections
-- **Dataset Creation**: Build datasets from processed documents
-- **Transform Pipelines**: Automatically extract, chunk, and index documents
-- **Background Processing**: Scalable job processing with NATS and Apalis
+The API server orchestrates all system operations:
+
+- **Collection & Dataset Management**: CRUD operations for data organization
+- **Transform Orchestration**: Publish jobs to NATS for workers to process
+- **Embedding Visualizations**: 2D visualizations of vector embeddings using UMAP dimensionality reduction and HDBSCAN clustering
+- **Search**: Vector search across embedded datasets
+- **Chat**: Context-aware conversations with LLM integration
+- **Real-time Updates**: Server-Sent Events (SSE) for transform progress
+- **Authentication**: OIDC integration
+- **Observability**: Prometheus metrics, OpenTelemetry tracing, structured logging
+
+---
 
 ## Architecture
 
+```mermaid
+graph TD
+    subgraph "HTTP Layer"
+        API[API Endpoints]
+        AUTH[OIDC Auth Middleware]
+        CORS[CORS Middleware]
+    end
+
+    subgraph "Services"
+        COLL[Collections]
+        DS[Datasets]
+        EMB[Embedders]
+        TRANS[Transforms]
+        SEARCH[Search]
+        CHAT[Chat]
+    end
+
+    subgraph "Background Tasks"
+        SCANNER[Transform Scanners]
+        LISTENER[Result Listeners]
+        AUDIT[Audit Consumer]
+    end
+
+    subgraph "External"
+        PG[(PostgreSQL)]
+        NATS[NATS JetStream]
+        QD[(Qdrant)]
+        S3[(S3/MinIO)]
+    end
+
+    API --> AUTH --> CORS
+    CORS --> COLL & DS & EMB & TRANS & SEARCH & CHAT
+
+    COLL --> PG & S3
+    DS --> PG
+    EMB --> PG
+    TRANS --> NATS & PG
+    SEARCH --> QD & PG
+    CHAT --> QD & EMB
+
+    SCANNER --> NATS & PG
+    LISTENER --> NATS & PG
+    AUDIT --> NATS & PG
 ```
-┌─────────────────┐
-│   REST API      │  Actix-web with OpenAPI docs
-├─────────────────┤
-│  Auth (OIDC)    │  OpenID Connect authentication
-├─────────────────┤
-│  Business Logic │  Collections, Datasets, Transforms
-├─────────────────┤
-│  Storage Layer  │
-│  ├─ PostgreSQL  │  Metadata storage
-│  ├─ S3/MinIO    │  Document storage
-│  └─ Qdrant      │  Vector storage (future)
-├─────────────────┤
-│  Job Queue      │  NATS + Apalis workers
-├─────────────────┤
-│  Observability  │  OpenTelemetry + Prometheus
-└─────────────────┘
-```
 
-## Features
+---
 
-### Document Processing
-- **Multi-format Support**: PDF, Word, Excel, PowerPoint, OpenDocument, HTML, XML, Text
-- **Intelligent Chunking**: Unicode-aware sentence boundary detection
-- **Text Cleaning**: Normalization, whitespace handling, control character removal
-- **Error Recovery**: Panic handling for problematic PDFs
+## API Endpoints
 
-### API Features
-- **RESTful Design**: Standard HTTP methods and status codes
-- **OpenAPI/Swagger**: Interactive API documentation at `/swagger-ui`
-- **Authentication**: OIDC-based with JWT tokens
-- **Authorization**: Row-level security (users can only access their own data)
-- **Pagination**: Efficient cursor-based pagination
-- **File Upload**: Multipart upload with 1GB limit
+<details>
+<summary><strong>Health</strong></summary>
 
-### Performance
-- **Async Rust**: Non-blocking I/O with Tokio
-- **Connection Pooling**: PostgreSQL pool (5-50 connections)
-- **Batch Processing**: Parallel document processing
-- **Efficient Allocator**: mimalloc on musl targets
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/health/live` | Liveness probe |
+| `GET` | `/health/ready` | Readiness probe (checks DB) |
 
-### Observability
-- **Distributed Tracing**: OpenTelemetry spans with W3C trace context
-- **Metrics**: Prometheus metrics at `/metrics`
-- **Structured Logging**: JSON logs with correlation IDs
-- **Health Checks**: `/health` endpoint
+</details>
 
-## Quick Start
+<details>
+<summary><strong>Collections</strong></summary>
 
-### Prerequisites
-- Rust 1.75+ (edition 2024)
-- PostgreSQL 14+
-- MinIO or S3-compatible storage
-- NATS server
-- Qdrant (optional)
-- OIDC provider (e.g., Dex, Keycloak)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/collections` | List collections |
+| `GET` | `/api/collections/{id}` | Get collection |
+| `POST` | `/api/collections` | Create collection |
+| `PUT` | `/api/collections/{id}` | Update collection |
+| `DELETE` | `/api/collections/{id}` | Delete collection |
+| `POST` | `/api/collections/{id}/files` | Upload files |
+| `GET` | `/api/collections/{id}/files` | List files |
+| `GET` | `/api/collections/{id}/files/{path}` | Download file |
+| `DELETE` | `/api/collections/{id}/files/{path}` | Delete file |
+| `GET` | `/api/collections/search` | Search collections |
+| `GET` | `/api/collections/allowed-file-types` | List allowed file types |
 
-### Environment Variables
+</details>
+
+<details>
+<summary><strong>Datasets</strong></summary>
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/datasets` | List datasets |
+| `GET` | `/api/datasets/{id}` | Get dataset |
+| `POST` | `/api/datasets` | Create dataset |
+| `PUT` | `/api/datasets/{id}` | Update dataset |
+| `DELETE` | `/api/datasets/{id}` | Delete dataset |
+| `GET` | `/api/datasets/{id}/items` | List dataset items |
+| `GET` | `/api/datasets/{id}/items/summary` | Get items summary |
+| `GET` | `/api/datasets/{id}/items/{item_id}/chunks` | Get item chunks |
+| `DELETE` | `/api/datasets/{id}/items/{item_id}` | Delete item |
+| `POST` | `/api/datasets/{id}/upload` | Upload to dataset |
+
+</details>
+
+<details>
+<summary><strong>Embedded Datasets</strong></summary>
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/embedded_datasets` | List embedded datasets |
+| `GET` | `/api/embedded_datasets/{id}` | Get embedded dataset |
+| `PUT` | `/api/embedded_datasets/{id}` | Update embedded dataset |
+| `DELETE` | `/api/embedded_datasets/{id}` | Delete embedded dataset |
+| `GET` | `/api/embedded_datasets/{id}/stats` | Get statistics |
+| `GET` | `/api/embedded_datasets/{id}/points` | List vector points |
+| `GET` | `/api/embedded_datasets/{id}/points/{point_id}/vector` | Get point vector |
+| `GET` | `/api/embedded_datasets/{id}/batches` | Get processed batches |
+| `GET` | `/api/embedded_datasets/batch-stats` | Batch stats for multiple |
+| `GET` | `/api/embedded_datasets/by-dataset/{dataset_id}` | Get by source dataset |
+
+</details>
+
+<details>
+<summary><strong>Embedders</strong></summary>
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/embedders` | List embedders |
+| `GET` | `/api/embedders/{id}` | Get embedder |
+| `POST` | `/api/embedders` | Create embedder |
+| `PUT` | `/api/embedders/{id}` | Update embedder |
+| `DELETE` | `/api/embedders/{id}` | Delete embedder |
+| `POST` | `/api/embedders/{id}/test` | Test embedder connection |
+
+</details>
+
+<details>
+<summary><strong>LLMs</strong></summary>
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/llms` | List LLMs |
+| `GET` | `/api/llms/{id}` | Get LLM |
+| `POST` | `/api/llms` | Create LLM |
+| `PUT` | `/api/llms/{id}` | Update LLM |
+| `DELETE` | `/api/llms/{id}` | Delete LLM |
+
+</details>
+
+<details>
+<summary><strong>Inference APIs</strong></summary>
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/embedding-inference/models` | List available embedding models |
+| `GET` | `/api/llm-inference/models` | List available LLM models (supports quantized GGUF) |
+
+> 💡 **Note**: The LLM inference API supports pre-quantized GGUF models for faster loading and reduced memory usage. See [crates/llm-inference-api/QUANTIZATION.md](../llm-inference-api/QUANTIZATION.md).
+
+</details>
+
+<details>
+<summary><strong>Collection Transforms</strong></summary>
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/collection_transforms` | List transforms |
+| `GET` | `/api/collection_transforms/{id}` | Get transform |
+| `POST` | `/api/collection_transforms` | Create transform |
+| `PUT` | `/api/collection_transforms/{id}` | Update transform |
+| `DELETE` | `/api/collection_transforms/{id}` | Delete transform |
+| `POST` | `/api/collection_transforms/{id}/trigger` | Trigger execution |
+| `GET` | `/api/collection_transforms/{id}/stats` | Get statistics |
+| `GET` | `/api/collection_transforms/{id}/files` | List processed files |
+| `GET` | `/api/collection_transforms/stream` | SSE status stream |
+| `GET` | `/api/collection_transforms/batch-stats` | Batch stats |
+| `GET` | `/api/collection_transforms/by-collection/{id}` | Get by collection |
+| `GET` | `/api/collection_transforms/by-dataset/{id}` | Get by dataset |
+
+</details>
+
+<details>
+<summary><strong>Dataset Transforms</strong></summary>
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/dataset_transforms` | List transforms |
+| `GET` | `/api/dataset_transforms/{id}` | Get transform |
+| `POST` | `/api/dataset_transforms` | Create transform |
+| `PUT` | `/api/dataset_transforms/{id}` | Update transform |
+| `DELETE` | `/api/dataset_transforms/{id}` | Delete transform |
+| `POST` | `/api/dataset_transforms/{id}/trigger` | Trigger execution |
+| `GET` | `/api/dataset_transforms/{id}/stats` | Get statistics |
+| `GET` | `/api/dataset_transforms/{id}/detailed-stats` | Get detailed stats |
+| `GET` | `/api/dataset_transforms/{id}/batches` | List batches |
+| `GET` | `/api/dataset_transforms/{id}/batches/{batch_id}` | Get batch |
+| `GET` | `/api/dataset_transforms/{id}/batches/{batch_id}/stats` | Batch stats |
+| `GET` | `/api/dataset_transforms/stream` | SSE status stream |
+| `GET` | `/api/dataset_transforms/batch-stats` | Batch stats |
+| `GET` | `/api/dataset_transforms/by-dataset/{id}` | Get by dataset |
+
+</details>
+
+<details>
+<summary><strong>Visualization Transforms</strong></summary>
+
+Visualization transforms generate interactive 2D scatter plots from high-dimensional vector embeddings using:
+- **UMAP**: Dimensionality reduction (N-d → 2D)
+- **HDBSCAN**: Automatic cluster detection
+- **LLM Naming**: Optional AI-generated cluster labels
+- **datamapplot**: Interactive HTML visualization output
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/visualization_transforms` | List transforms |
+| `GET` | `/api/visualization_transforms/{id}` | Get transform |
+| `POST` | `/api/visualization_transforms` | Create transform |
+| `PUT` | `/api/visualization_transforms/{id}` | Update transform |
+| `DELETE` | `/api/visualization_transforms/{id}` | Delete transform |
+| `POST` | `/api/visualization_transforms/{id}/trigger` | Trigger execution |
+| `GET` | `/api/visualization_transforms/{id}/stats` | Get statistics |
+| `GET` | `/api/visualization_transforms/stream` | SSE status stream |
+| `GET` | `/api/visualizations` | List visualizations |
+| `GET` | `/api/visualizations/{id}` | Get visualization |
+| `GET` | `/api/visualizations/{id}/html` | Download HTML |
+| `GET` | `/api/visualizations/by-dataset/{id}` | Get by dataset |
+| `GET` | `/api/visualizations/recent` | Get recent |
+
+</details>
+
+<details>
+<summary><strong>Search</strong></summary>
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/search` | Vector search across embedded datasets |
+
+</details>
+
+<details>
+<summary><strong>Chat</strong></summary>
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/chat/sessions` | Create chat session |
+| `GET` | `/api/chat/sessions` | List sessions |
+| `GET` | `/api/chat/sessions/{id}` | Get session |
+| `DELETE` | `/api/chat/sessions/{id}` | Delete session |
+| `GET` | `/api/chat/sessions/{id}/messages` | List messages |
+| `POST` | `/api/chat/sessions/{id}/messages` | Send message |
+| `GET` | `/api/chat/sessions/{id}/messages/stream` | Stream message (SSE) |
+| `POST` | `/api/chat/sessions/{id}/messages/{msg_id}/regenerate` | Regenerate message |
+
+</details>
+
+<details>
+<summary><strong>Marketplace</strong></summary>
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/marketplace/collections` | List public collections |
+| `GET` | `/api/marketplace/collections/recent` | Recent public collections |
+| `GET` | `/api/marketplace/datasets` | List public datasets |
+| `GET` | `/api/marketplace/datasets/recent` | Recent public datasets |
+| `GET` | `/api/marketplace/embedders` | List public embedders |
+| `GET` | `/api/marketplace/embedders/recent` | Recent public embedders |
+| `GET` | `/api/marketplace/llms` | List public LLMs |
+| `GET` | `/api/marketplace/llms/recent` | Recent public LLMs |
+| `POST` | `/api/marketplace/collections/{id}/grab` | Clone collection |
+| `POST` | `/api/marketplace/datasets/{id}/grab` | Clone dataset |
+| `POST` | `/api/marketplace/embedders/{id}/grab` | Clone embedder |
+| `POST` | `/api/marketplace/llms/{id}/grab` | Clone LLM |
+
+</details>
+
+<details>
+<summary><strong>Other</strong></summary>
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/swagger-ui` | Interactive API documentation |
+| `GET` | `/api/users/@me` | Get current user info |
+
+</details>
+
+---
+
+## Environment Variables
+
+This service uses shared configuration from `semantic-explorer-core`. See the [root README](../../README.md) for the complete environment variable reference.
+
+### Required Variables
+
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `AWS_REGION` | S3 region |
+| `AWS_ENDPOINT_URL` | S3 endpoint URL |
+| `S3_BUCKET_NAME` | S3 bucket name |
+| `ENCRYPTION_MASTER_KEY` | 32-byte hex key for AES-256-GCM encryption |
+| `OIDC_CLIENT_ID` | OIDC client identifier |
+| `OIDC_CLIENT_SECRET` | OIDC client secret |
+| `OIDC_ISSUER_URL` | OIDC issuer URL |
+
+### Optional Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HOSTNAME` | `localhost` | Server bind address |
+| `PORT` | `8080` | Server port |
+| `PUBLIC_URL` | - | External URL for OIDC callbacks |
+| `NATS_URL` | `nats://localhost:4222` | NATS server URL |
+| `QDRANT_URL` | `http://localhost:6334` | Qdrant gRPC endpoint |
+| `EMBEDDING_INFERENCE_API_URL` | `http://localhost:8090` | Local embedding API |
+| `LLM_INFERENCE_API_URL` | `http://localhost:8091` | Local LLM API |
+| `CORS_ALLOWED_ORIGINS` | - | Comma-separated allowed origins |
+| `LOG_FORMAT` | `json` | `json` or `pretty` |
+
+---
+
+## Building
 
 ```bash
-# Database
-DATABASE_URL=postgresql://user:pass@localhost/semantic_explorer
+# Debug build
+cargo build -p semantic-explorer
 
-# S3/MinIO
-AWS_ENDPOINT_URL=http://localhost:9000
-AWS_ACCESS_KEY_ID=minioadmin
-AWS_SECRET_ACCESS_KEY=minioadmin
-AWS_REGION=us-east-1
-
-# NATS
-NATS_URL=nats://localhost:4222
-
-# Qdrant
-QDRANT_URL=http://localhost:6334
-
-# OIDC
-OIDC_CLIENT_ID=semantic-explorer
-OIDC_CLIENT_SECRET=your-secret
-OIDC_ISSUER_URL=http://localhost:5556/dex
-
-# Server
-HOSTNAME=localhost
-PORT=8080
-STATIC_FILES_DIR=./semantic-explorer-ui/
-
-# Observability
-SERVICE_NAME=semantic-explorer
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
-LOG_FORMAT=json  # or omit for compact format
-RUST_LOG=info,semantic_explorer=debug
+# Release build
+cargo build -p semantic-explorer --release
 ```
 
-### Build and Run
+The binary will be at `target/release/semantic-explorer`.
+
+### Docker
 
 ```bash
-# Development
-cargo run
-
-# Production build
-cargo build --release
-
-# Run with Docker Compose
-docker compose -f deployment/compose/compose.yaml up
+# From repository root
+docker build -f crates/api/Dockerfile -t semantic-explorer:latest .
 ```
 
-### API Documentation
+---
 
-Once running, visit:
-- Swagger UI: `http://localhost:8080/swagger-ui/`
-- OpenAPI spec: `http://localhost:8080/api/openapi.json`
-- Metrics: `http://localhost:8080/metrics`
-- Health: `http://localhost:8080/health`
-
-## Development
-
-### Running Tests
+## Running
 
 ```bash
-# Unit tests
-cargo test
+# Set required environment variables
+export DATABASE_URL=postgresql://user:pass@localhost:5432/semantic_explorer
+export ENCRYPTION_MASTER_KEY=$(openssl rand -hex 32)
+# ... set other required variables
 
-# Integration tests (requires test database)
-DATABASE_URL=postgresql://localhost/test cargo test -- --ignored
-
-# With coverage
-cargo tarpaulin --out Html
+# Run
+cargo run -p semantic-explorer
 ```
 
-### Code Quality
+---
+
+## Health Checks
 
 ```bash
-# Format code
-cargo fmt
+# Liveness (process running)
+curl http://localhost:8080/health/live
 
-# Lint
-cargo clippy -- -D warnings
-
-# Security audit
-cargo audit
-
-# Check for outdated dependencies
-cargo outdated
+# Readiness (database connected)
+curl http://localhost:8080/health/ready
 ```
 
-### Database Migrations
+---
 
-Migrations are automatically run on startup. Located in:
-```
-src/storage/postgres/migrations/
-```
+## Metrics
 
-## API Usage Examples
+Prometheus metrics available at `/metrics`.
 
-### Create a Collection
+### HTTP Metrics
 
-```bash
-curl -X POST http://localhost:8080/api/collections \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "title": "Research Papers",
-    "details": "Academic papers collection",
-    "tags": ["research", "ai"]
-  }'
-```
+| Metric | Type | Description |
+|--------|------|-------------|
+| `http_requests_total` | Counter | Request count by method, path, status |
+| `http_request_duration_seconds` | Histogram | Request duration |
+| `http_requests_in_flight` | Gauge | Active requests |
 
-### Upload Files
+### SSE Metrics
 
-```bash
-curl -X POST http://localhost:8080/api/collections/1/files \
-  -H "Authorization: Bearer $TOKEN" \
-  -F "files=@document1.pdf" \
-  -F "files=@document2.pdf"
-```
+| Metric | Type | Description |
+|--------|------|-------------|
+| `sse_connections_active` | Gauge | Active SSE connections |
+| `sse_messages_sent` | Counter | SSE messages sent |
 
-### Create a Transform
-
-```bash
-curl -X POST http://localhost:8080/api/transforms \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "title": "Research to Dataset",
-    "collection_id": 1,
-    "dataset_id": 1,
-    "chunk_size": 200
-  }'
-```
-
-## Project Structure
-
-```
-semantic-explorer/
-├── src/
-│   ├── main.rs              # Application entry point
-│   ├── api/                 # REST API endpoints
-│   ├── auth/                # Authentication & authorization
-│   ├── collections/         # Collection domain models
-│   ├── datasets/            # Dataset domain models
-│   ├── transforms/          # Transform domain models
-│   ├── storage/             # Storage layer
-│   │   ├── postgres/        # PostgreSQL operations
-│   │   ├── qdrant/          # Vector database
-│   │   └── rustfs/          # S3 operations
-│   ├── observability/       # Tracing, metrics, logging
-│   └── transforms/          # Document processing
-│       ├── apalis/          # Background job workers
-│       ├── chunk/           # Text chunking
-│       ├── extract/         # Text extraction
-│       └── cleanup.rs       # Text cleaning
-├── Cargo.toml
-└── README.md
-```
-
-## Performance Considerations
-
-### Database
-- Connection pooling configured (5-50 connections)
-- Prepared statements used throughout
-- Indexes on foreign keys and frequently queried columns
-- Consider adding read replicas for high traffic
-
-### Storage
-- S3 multipart upload for large files
-- Lazy loading of file contents
-- Consider CDN for frequently accessed files
-
-### Job Processing
-- NATS for durable message delivery
-- Configurable worker concurrency
-- Automatic retry with exponential backoff
-- Dead letter queue for failed jobs
+---
 
 ## Security
 
 ### Authentication
-- OIDC/OAuth2 with JWT tokens
-- Token validation on every request
-- Automatic token refresh
 
-### Authorization
-- Row-level security (RLS) pattern
-- Users can only access their own resources
-- SQL queries include user ownership checks
+OIDC authentication required for all `/api/*` endpoints. Health endpoints are unauthenticated.
 
-### Input Validation
-- Request payload validation with serde
-- File type validation based on MIME type
-- Size limits on uploads (1GB default)
+### Encryption
 
-### Best Practices
-- No unsafe code (`#[forbid(unsafe_code)]`)
-- SQL injection prevention via parameterized queries
-- XSS prevention in API responses
-- CORS configuration
+API keys for embedders and LLMs are encrypted with AES-256-GCM before storage.
 
-## Troubleshooting
-
-### Database Connection Issues
+Generate a master key:
 ```bash
-# Test connection
-psql $DATABASE_URL -c "SELECT 1"
-
-# Check migrations
-sqlx migrate info
+openssl rand -hex 32
 ```
 
-### OIDC Issues
-```bash
-# Verify issuer URL is accessible
-curl $OIDC_ISSUER_URL/.well-known/openid-configuration
-```
+### Audit Logging
 
-### Worker Not Processing Jobs
-```bash
-# Check NATS connection
-nats-cli server ping
+All API actions logged to PostgreSQL `audit_events` table with:
+- User identity (OIDC subject)
+- Action type
+- Resource type and ID
+- Timestamp and IP address
 
-# Monitor job queue
-nats-cli stream ls
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Run `cargo fmt` and `cargo clippy`
-6. Submit a pull request
+---
 
 ## License
 
-See LICENSE file for details.
-
-## Support
-
-For issues and questions:
-- GitHub Issues: [Report a bug](https://github.com/jpoisso/embedding-evaluation-system/issues)
-- Documentation: See `/docs` directory
+Apache License 2.0

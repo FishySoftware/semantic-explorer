@@ -1,0 +1,133 @@
+{{- if and .Values.minio.enabled .Values.minio.initJob.enabled }}
+{{- /*
+This job is an optional alternative to the MinIO subchart's built-in bucket provisioning.
+Enable it if you need custom bucket configuration or if the subchart provisioning is insufficient.
+The MinIO subchart already supports bucket creation via the `buckets` configuration.
+*/ -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-minio-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio-init
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    {{- with .Values.commonAnnotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  backoffLimit: 5
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "semantic-explorer.labels" . | nindent 8 }}
+        app.kubernetes.io/component: minio-init
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+      - name: wait-for-minio
+        image: {{ include "semantic-explorer.initContainer.image" . }}
+        securityContext:
+          {{- include "semantic-explorer.initContainer.securityContext" . | nindent 10 }}
+        command:
+          - sh
+          - -c
+          - |
+            echo "Waiting for MinIO at {{ include "semantic-explorer.minio.host" . }}:{{ include "semantic-explorer.minio.port" . }}..."
+            until nc -z {{ include "semantic-explorer.minio.host" . }} {{ include "semantic-explorer.minio.port" . }}; do
+              echo "MinIO not ready, waiting..."
+              sleep 5
+            done
+            echo "MinIO is ready!"
+            # Additional delay for cluster stabilization
+            sleep 10
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+      containers:
+      - name: minio-init
+        image: minio/mc:latest
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+              - ALL
+        env:
+        - name: MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Release.Name }}-minio
+              key: rootUser
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Release.Name }}-minio
+              key: rootPassword
+        command:
+          - /bin/sh
+          - -c
+          - |
+            set -e
+            
+            echo "Configuring MinIO client..."
+            mc alias set myminio http://{{ include "semantic-explorer.minio.host" . }}:{{ include "semantic-explorer.minio.port" . }} "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY"
+            
+            echo "Checking MinIO cluster status..."
+            mc admin info myminio || echo "Warning: Could not get admin info"
+            
+            {{- range .Values.minio.buckets }}
+            echo "Creating bucket: {{ .name }}"
+            mc mb myminio/{{ .name }} --ignore-existing
+            {{- if .policy }}
+            {{- if eq .policy "download" }}
+            echo "Setting policy for {{ .name }}: download (public read)"
+            mc anonymous set download myminio/{{ .name }}
+            {{- else if eq .policy "upload" }}
+            echo "Setting policy for {{ .name }}: upload (public write)"
+            mc anonymous set upload myminio/{{ .name }}
+            {{- else if eq .policy "public" }}
+            echo "Setting policy for {{ .name }}: public (full access)"
+            mc anonymous set public myminio/{{ .name }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            
+            echo "Listing buckets:"
+            mc ls myminio
+            
+            echo "MinIO initialization complete!"
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        volumeMounts:
+        - name: mc-config
+          mountPath: /.mc
+      volumes:
+      - name: mc-config
+        emptyDir: {}
+{{- end }}

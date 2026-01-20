@@ -4,7 +4,7 @@ datasources:
   - name: Prometheus
     type: prometheus
     access: proxy
-    url: http://localhost:9090
+    url: http://prometheus:9090
     isDefault: true
     jsonData:
       timeInterval: 10s
@@ -17,7 +17,7 @@ datasources:
   - name: Quickwit-Traces
     type: jaeger
     access: proxy
-    url: http://localhost:7280
+    url: http://quickwit:7280
     jsonData:
       nodeGraph:
         enabled: true
@@ -27,9 +27,24 @@ datasources:
   - name: Quickwit-Logs
     type: loki
     access: proxy
-    url: http://localhost:7280/api/v1/otel-logs-v0_7
+    url: http://quickwit:7280/api/v1/otel-logs-v0_7
     jsonData:
       maxLines: 5000
       timeout: 60
     editable: true
     uid: quickwit-logs
+
+  - name: Postgres-Audit
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    user: user
+    database: explorer
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: false
+    secureJsonData:
+      password: password
+    editable: true
+    uid: postgres-audit

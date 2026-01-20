@@ -2,17 +2,114 @@ name: Release
 
 on:
   push:
-    branches:
-      - '[0-9]+.[0-9]+.[0-9]+'
+    tags:
+      - 'v*.*.*'
 
 jobs:
-  release-semantic-explorer:
+  # Detect changes from last successful tag
+  detect-changes:
     runs-on: ubuntu-latest
+    outputs:
+      api-changed: ${{ steps.changes.outputs.api }}
+      worker-collections-changed: ${{ steps.changes.outputs.worker-collections }}
+      worker-datasets-changed: ${{ steps.changes.outputs.worker-datasets }}
+      worker-visualizations-py-changed: ${{ steps.changes.outputs.worker-visualizations-py }}
+      llm-inference-api-changed: ${{ steps.changes.outputs.llm-inference-api }}
+      embedding-inference-api-changed: ${{ steps.changes.outputs.embedding-inference-api }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Set up Docker Build
+      - name: Get last successful tag
+        id: last-tag
+        run: |
+          # Get all tags sorted by version
+          LAST_TAG=$(git tag -l 'v*.*.*' --sort=-version:refname | head -n 2 | tail -n 1)
+          if [ -z "$LAST_TAG" ]; then
+            echo "No previous tag found, will build all"
+            echo "last_tag=" >> $GITHUB_OUTPUT
+          else
+            echo "last_tag=$LAST_TAG" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Detect changed files
+        id: changes
+        run: |
+          if [ -z "${{ steps.last-tag.outputs.last_tag }}" ]; then
+            # No previous tag, build everything
+            echo "api=true" >> $GITHUB_OUTPUT
+            echo "worker-collections=true" >> $GITHUB_OUTPUT
+            echo "worker-datasets=true" >> $GITHUB_OUTPUT
+            echo "worker-visualizations-py=true" >> $GITHUB_OUTPUT
+            echo "llm-inference-api=true" >> $GITHUB_OUTPUT
+            echo "embedding-inference-api=true" >> $GITHUB_OUTPUT
+          else
+            # Check which directories changed since last tag
+            LAST_TAG="${{ steps.last-tag.outputs.last_tag }}"
+            
+            if git diff --name-only $LAST_TAG HEAD | grep -q "^crates/api/\|^Cargo."; then
+              echo "api=true" >> $GITHUB_OUTPUT
+            else
+              echo "api=false" >> $GITHUB_OUTPUT
+            fi
+            
+            if git diff --name-only $LAST_TAG HEAD | grep -q "^crates/worker-collections/\|^Cargo."; then
+              echo "worker-collections=true" >> $GITHUB_OUTPUT
+            else
+              echo "worker-collections=false" >> $GITHUB_OUTPUT
+            fi
+            
+            if git diff --name-only $LAST_TAG HEAD | grep -q "^crates/worker-datasets/\|^Cargo."; then
+              echo "worker-datasets=true" >> $GITHUB_OUTPUT
+            else
+              echo "worker-datasets=false" >> $GITHUB_OUTPUT
+            fi
+            
+            if git diff --name-only $LAST_TAG HEAD | grep -q "^crates/worker-visualizations-py/"; then
+              echo "worker-visualizations-py=true" >> $GITHUB_OUTPUT
+            else
+              echo "worker-visualizations-py=false" >> $GITHUB_OUTPUT
+            fi
+            
+            if git diff --name-only $LAST_TAG HEAD | grep -q "^crates/llm-inference-api/\|^Cargo."; then
+              echo "llm-inference-api=true" >> $GITHUB_OUTPUT
+            else
+              echo "llm-inference-api=false" >> $GITHUB_OUTPUT
+            fi
+            
+            if git diff --name-only $LAST_TAG HEAD | grep -q "^crates/embedding-inference-api/\|^Cargo."; then
+              echo "embedding-inference-api=true" >> $GITHUB_OUTPUT
+            else
+              echo "embedding-inference-api=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+  
+  # Build API image
+  build-api:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.api-changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Login to DockerHub
@@ -20,36 +117,625 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          
-      - name: build-push-semantic-explorer
-        id: docker_build_api
-        uses: docker/build-push-action@v5
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/semantic-explorer
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        id: docker_build
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./crates/api/Dockerfile
           push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/semantic-explorer:${{ github.ref_name }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/semantic-explorer:latest
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
 
-      - name: build-push-worker-collections
-        id: docker_build_worker_collections
-        uses: docker/build-push-action@v5
+      - name: Output digest
+        run: echo "API_DIGEST=${{ steps.docker_build.outputs.digest }}" >> $GITHUB_ENV
+
+  # Tag existing API image if no changes
+  tag-api:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.api-changed == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/semantic-explorer
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - name: Tag existing image
+        run: |
+          echo "${{ steps.meta.outputs.tags }}" | while IFS= read -r tag; do
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/semantic-explorer:latest
+            docker tag ${{ secrets.DOCKERHUB_USERNAME }}/semantic-explorer:latest "$tag"
+            docker push "$tag"
+          done
+
+
+  # Build Worker Collections image
+  build-worker-collections:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.worker-collections-changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/worker-collections
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        id: docker_build
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./crates/worker-collections/Dockerfile
           push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/worker-collections:${{ github.ref_name }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/worker-collections:latest
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=worker-collections
+          cache-to: type=gha,mode=max,scope=worker-collections
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
 
-      - name: build-push-worker-datasets
-        id: docker_build_worker_datasets
-        uses: docker/build-push-action@v5
+  # Tag existing Worker Collections image if no changes
+  tag-worker-collections:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.worker-collections-changed == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/worker-collections
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - name: Tag existing image
+        run: |
+          echo "${{ steps.meta.outputs.tags }}" | while IFS= read -r tag; do
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/worker-collections:latest
+            docker tag ${{ secrets.DOCKERHUB_USERNAME }}/worker-collections:latest "$tag"
+            docker push "$tag"
+          done
+
+
+  # Build Worker Datasets image
+  build-worker-datasets:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.worker-datasets-changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/worker-datasets
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        id: docker_build
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./crates/worker-datasets/Dockerfile
           push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=worker-datasets
+          cache-to: type=gha,mode=max,scope=worker-datasets
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+
+  # Tag existing Worker Datasets image if no changes
+  tag-worker-datasets:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.worker-datasets-changed == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/worker-datasets
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/worker-datasets:${{ github.ref_name }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/worker-datasets:latest
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - name: Tag existing image
+        run: |
+          echo "${{ steps.meta.outputs.tags }}" | while IFS= read -r tag; do
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/worker-datasets:latest
+            docker tag ${{ secrets.DOCKERHUB_USERNAME }}/worker-datasets:latest "$tag"
+            docker push "$tag"
+          done
+
+
+  # Build Worker Visualizations Python image
+  build-worker-visualizations-py:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.worker-visualizations-py-changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/worker-visualizations-py
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        id: docker_build
+        uses: docker/build-push-action@v6
+        with:
+          context: ./crates/worker-visualizations-py
+          file: ./crates/worker-visualizations-py/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=worker-visualizations-py
+          cache-to: type=gha,mode=max,scope=worker-visualizations-py
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+
+  # Tag existing Worker Visualizations Python image if no changes
+  tag-worker-visualizations-py:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.worker-visualizations-py-changed == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/worker-visualizations-py
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - name: Tag existing image
+        run: |
+          echo "${{ steps.meta.outputs.tags }}" | while IFS= read -r tag; do
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/worker-visualizations-py:latest
+            docker tag ${{ secrets.DOCKERHUB_USERNAME }}/worker-visualizations-py:latest "$tag"
+            docker push "$tag"
+          done
+
+
+  # Build LLM Inference API CUDA images (matrix build for different GPU architectures)
+  build-llm-inference-api-cuda:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.llm-inference-api-changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        # Build separate optimized images for each CUDA compute capability
+        # 75: Turing (RTX 20xx, T4)
+        # 80: Ampere (RTX 30xx, A100, A10)
+        # 86: Ampere (A40, A100 80GB)
+        # 89: Ada Lovelace (RTX 40xx, L40/L40S)
+        # 90: Hopper (H100, H200)
+        cuda_compute_cap: ['86', '89', '90']
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/llm-inference-api
+          flavor: |
+            suffix=-cuda12-sm${{ matrix.cuda_compute_cap }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest-sm${{ matrix.cuda_compute_cap }},enable={{is_default_branch}}
+
+      - name: Build and push
+        id: docker_build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./crates/llm-inference-api/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=llm-inference-api-cuda-sm${{ matrix.cuda_compute_cap }}
+          cache-to: type=gha,mode=max,scope=llm-inference-api-cuda-sm${{ matrix.cuda_compute_cap }}
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+            CUDA_COMPUTE_CAP=${{ matrix.cuda_compute_cap }}
+
+  # Tag existing LLM Inference API images if no changes
+  tag-llm-inference-api-cuda:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.llm-inference-api-changed == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        cuda_compute_cap: ['86', '89', '90']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Get previous version tag
+        id: prev-version
+        run: |
+          # Get the previous version tag (second most recent)
+          PREV_TAG=$(git tag -l 'v*.*.*' --sort=-version:refname | head -n 2 | tail -n 1)
+          if [ -z "$PREV_TAG" ]; then
+            echo "No previous tag found, cannot tag"
+            exit 1
+          fi
+          # Strip the 'v' prefix to get just the version number
+          echo "version=${PREV_TAG#v}" >> $GITHUB_OUTPUT
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/llm-inference-api
+          flavor: |
+            suffix=-cuda12-sm${{ matrix.cuda_compute_cap }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - name: Tag existing image
+        run: |
+          echo "${{ steps.meta.outputs.tags }}" | while IFS= read -r tag; do
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/llm-inference-api:${{ steps.prev-version.outputs.version }}-cuda12-sm${{ matrix.cuda_compute_cap }}
+            docker tag ${{ secrets.DOCKERHUB_USERNAME }}/llm-inference-api:${{ steps.prev-version.outputs.version }}-cuda12-sm${{ matrix.cuda_compute_cap }} "$tag"
+            docker push "$tag"
+          done
+
+
+  # Build Embedding Inference API CUDA images (matrix build for different GPU architectures)
+  build-embedding-inference-api-cuda:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.embedding-inference-api-changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        # Build separate optimized images for each CUDA compute capability
+        # 75: Turing (RTX 20xx, T4)
+        # 80: Ampere (RTX 30xx, A100, A10)
+        # 86: Ampere (A40, A100 80GB)
+        # 89: Ada Lovelace (RTX 40xx, L40/L40S)
+        # 90: Hopper (H100, H200)
+        cuda_compute_cap: ['86', '89', '90']
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/embedding-inference-api
+          flavor: |
+            suffix=-cuda12-sm${{ matrix.cuda_compute_cap }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest-sm${{ matrix.cuda_compute_cap }},enable={{is_default_branch}}
+
+      - name: Build and push
+        id: docker_build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./crates/embedding-inference-api/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=embedding-inference-api-cuda-sm${{ matrix.cuda_compute_cap }}
+          cache-to: type=gha,mode=max,scope=embedding-inference-api-cuda-sm${{ matrix.cuda_compute_cap }}
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+            CUDA_COMPUTE_CAP=${{ matrix.cuda_compute_cap }}
+
+  # Tag existing Embedding Inference API images if no changes
+  tag-embedding-inference-api-cuda:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.embedding-inference-api-changed == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        cuda_compute_cap: ['86', '89', '90']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Get previous version tag
+        id: prev-version
+        run: |
+          # Get the previous version tag (second most recent)
+          PREV_TAG=$(git tag -l 'v*.*.*' --sort=-version:refname | head -n 2 | tail -n 1)
+          if [ -z "$PREV_TAG" ]; then
+            echo "No previous tag found, cannot tag"
+            exit 1
+          fi
+          # Strip the 'v' prefix to get just the version number
+          echo "version=${PREV_TAG#v}" >> $GITHUB_OUTPUT
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/embedding-inference-api
+          flavor: |
+            suffix=-cuda12-sm${{ matrix.cuda_compute_cap }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - name: Tag existing image
+        run: |
+          echo "${{ steps.meta.outputs.tags }}" | while IFS= read -r tag; do
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/embedding-inference-api:${{ steps.prev-version.outputs.version }}-cuda12-sm${{ matrix.cuda_compute_cap }}
+            docker tag ${{ secrets.DOCKERHUB_USERNAME }}/embedding-inference-api:${{ steps.prev-version.outputs.version }}-cuda12-sm${{ matrix.cuda_compute_cap }} "$tag"
+            docker push "$tag"
+          done
+
+
+  # Summary job
+  summary:
+    needs: [build-api, tag-api, build-worker-collections, tag-worker-collections, build-worker-datasets, tag-worker-datasets, build-worker-visualizations-py, tag-worker-visualizations-py, build-embedding-inference-api-cuda, tag-embedding-inference-api-cuda, build-llm-inference-api-cuda, tag-llm-inference-api-cuda]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate build summary
+        run: |
+          echo "# Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Build Results" >> $GITHUB_STEP_SUMMARY
+          echo "- **API:** ${{ needs.build-api.result != 'skipped' && needs.build-api.result || needs.tag-api.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Worker Collections:** ${{ needs.build-worker-collections.result != 'skipped' && needs.build-worker-collections.result || needs.tag-worker-collections.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Worker Datasets:** ${{ needs.build-worker-datasets.result != 'skipped' && needs.build-worker-datasets.result || needs.tag-worker-datasets.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Worker Visualizations Python:** ${{ needs.build-worker-visualizations-py.result != 'skipped' && needs.build-worker-visualizations-py.result || needs.tag-worker-visualizations-py.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Embedding Inference API (CUDA):** ${{ needs.build-embedding-inference-api-cuda.result != 'skipped' && needs.build-embedding-inference-api-cuda.result || needs.tag-embedding-inference-api-cuda.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **LLM Inference API (CUDA):** ${{ needs.build-llm-inference-api-cuda.result != 'skipped' && needs.build-llm-inference-api-cuda.result || needs.tag-llm-inference-api-cuda.result }}" >> $GITHUB_STEP_SUMMARY
+

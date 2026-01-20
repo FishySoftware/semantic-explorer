@@ -1,0 +1,447 @@
+{{- if and .Values.grafana.enabled (not .Values.grafana.external.enabled) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-dashboard-infrastructure
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+  annotations:
+    grafana_folder: "Semantic Explorer"
+data:
+  infrastructure.json: |-
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": "-- Grafana --",
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "editable": true,
+      "gnetId": null,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "templating": { "list": [] },
+      "panels": [
+        {
+          "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+          "id": 1,
+          "panels": [],
+          "title": "Infrastructure Health",
+          "type": "row"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                { "options": { "0": { "color": "red", "index": 1, "text": "Down" }, "1": { "color": "green", "index": 0, "text": "Up" } }, "type": "value" }
+              ],
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 3, "w": 4, "x": 0, "y": 1 },
+          "id": 2,
+          "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "up{job=~\".*postgres.*\"}", "legendFormat": "Postgres", "refId": "A" }
+          ],
+          "title": "PostgreSQL",
+          "type": "stat"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                { "options": { "0": { "color": "red", "index": 1, "text": "Down" }, "1": { "color": "green", "index": 0, "text": "Up" } }, "type": "value" }
+              ],
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 3, "w": 4, "x": 4, "y": 1 },
+          "id": 3,
+          "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "up{job=~\".*quickwit.*\"}", "legendFormat": "Quickwit", "refId": "A" }
+          ],
+          "title": "Quickwit",
+          "type": "stat"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                { "options": { "0": { "color": "red", "index": 1, "text": "Down" }, "1": { "color": "green", "index": 0, "text": "Up" } }, "type": "value" }
+              ],
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 3, "w": 4, "x": 8, "y": 1 },
+          "id": 4,
+          "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "up{job=~\".*otel-collector.*\"}", "legendFormat": "OTEL", "refId": "A" }
+          ],
+          "title": "OTEL Collector",
+          "type": "stat"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                { "options": { "0": { "color": "red", "index": 1, "text": "Down" }, "1": { "color": "green", "index": 0, "text": "Up" } }, "type": "value" }
+              ],
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 3, "w": 4, "x": 12, "y": 1 },
+          "id": 5,
+          "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "up{job=\"prometheus\"}", "legendFormat": "Prometheus", "refId": "A" }
+          ],
+          "title": "Prometheus",
+          "type": "stat"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                { "options": { "0": { "color": "red", "index": 1, "text": "Down" }, "1": { "color": "green", "index": 0, "text": "Up" } }, "type": "value" }
+              ],
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 3, "w": 4, "x": 16, "y": 1 },
+          "id": 6,
+          "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "up{job=~\".*grafana.*\"}", "legendFormat": "Grafana", "refId": "A" }
+          ],
+          "title": "Grafana",
+          "type": "stat"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                { "options": { "0": { "color": "red", "index": 1, "text": "Down" }, "1": { "color": "green", "index": 0, "text": "Up" } }, "type": "value" }
+              ],
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 3, "w": 4, "x": 20, "y": 1 },
+          "id": 7,
+          "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "count(up{job=~\".*api.*|.*inference.*\"} == 1)", "legendFormat": "Apps Up", "refId": "A" }
+          ],
+          "title": "Apps Up",
+          "type": "stat"
+        },
+        {
+          "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 4 },
+          "id": 10,
+          "panels": [],
+          "title": "PostgreSQL",
+          "type": "row"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "description": "Database connection pool utilization",
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "mappings": [],
+              "max": 100,
+              "min": 0,
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 60 }, { "color": "orange", "value": 80 }, { "color": "red", "value": 90 }] },
+              "unit": "percent"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 6, "w": 6, "x": 0, "y": 5 },
+          "id": 11,
+          "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "center", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "100 * sum(database_connection_pool_active) / clamp_min(sum(database_connection_pool_size), 1)", "legendFormat": "Pool Usage", "refId": "A" }
+          ],
+          "title": "Connection Pool Usage",
+          "type": "stat"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": { "axisCenteredZero": false, "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } },
+              "mappings": [],
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 6, "w": 9, "x": 6, "y": 5 },
+          "id": 12,
+          "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "database_connection_pool_size", "legendFormat": "Pool Size", "refId": "A" },
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "database_connection_pool_active", "legendFormat": "Active", "refId": "B" },
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "database_connection_pool_idle", "legendFormat": "Idle", "refId": "C" }
+          ],
+          "title": "Connection Pool",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": { "axisCenteredZero": false, "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } },
+              "mappings": [],
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 6, "w": 9, "x": 15, "y": 5 },
+          "id": 13,
+          "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.50, sum(rate(database_query_duration_seconds_bucket[$__rate_interval])) by (le))", "legendFormat": "p50", "refId": "A" },
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.95, sum(rate(database_query_duration_seconds_bucket[$__rate_interval])) by (le))", "legendFormat": "p95", "refId": "B" },
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.99, sum(rate(database_query_duration_seconds_bucket[$__rate_interval])) by (le))", "legendFormat": "p99", "refId": "C" }
+          ],
+          "title": "Query Latency",
+          "type": "timeseries"
+        },
+        {
+          "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 11 },
+          "id": 20,
+          "panels": [],
+          "title": "NATS JetStream",
+          "type": "row"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": { "axisCenteredZero": false, "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } },
+              "mappings": [],
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 6, "w": 8, "x": 0, "y": 12 },
+          "id": 21,
+          "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "nats_stream_messages", "legendFormat": "{{ `{{stream}}` }}", "refId": "A" }
+          ],
+          "title": "Stream Message Count",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": { "axisCenteredZero": false, "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } },
+              "mappings": [],
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 50 }, { "color": "red", "value": 100 }] },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 6, "w": 8, "x": 8, "y": 12 },
+          "id": 22,
+          "options": { "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "nats_consumer_pending", "legendFormat": "{{ `{{stream}}` }}/{{ `{{consumer}}` }}", "refId": "A" }
+          ],
+          "title": "Consumer Pending Messages",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": { "axisCenteredZero": false, "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } },
+              "mappings": [],
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+              "unit": "decbytes"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 6, "w": 8, "x": 16, "y": 12 },
+          "id": 23,
+          "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "nats_stream_bytes", "legendFormat": "{{ `{{stream}}` }}", "refId": "A" }
+          ],
+          "title": "Stream Size",
+          "type": "timeseries"
+        },
+        {
+          "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 },
+          "id": 30,
+          "panels": [],
+          "title": "S3 / MinIO Storage",
+          "type": "row"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": { "axisCenteredZero": false, "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } },
+              "mappings": [],
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+              "unit": "ops"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 6, "w": 8, "x": 0, "y": 19 },
+          "id": 31,
+          "options": { "legend": { "calcs": ["mean", "sum"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (operation) (rate(storage_operations_total[$__rate_interval]))", "legendFormat": "{{ `{{operation}}` }}", "refId": "A" }
+          ],
+          "title": "Storage Operations by Type",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": { "axisCenteredZero": false, "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } },
+              "mappings": [],
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 6, "w": 8, "x": 8, "y": 19 },
+          "id": 32,
+          "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.50, sum(rate(storage_operation_duration_seconds_bucket[$__rate_interval])) by (le, operation))", "legendFormat": "{{ `{{operation}}` }} p50", "refId": "A" },
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.95, sum(rate(storage_operation_duration_seconds_bucket[$__rate_interval])) by (le, operation))", "legendFormat": "{{ `{{operation}}` }} p95", "refId": "B" }
+          ],
+          "title": "Storage Latency",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": { "axisCenteredZero": false, "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } },
+              "mappings": [],
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+              "unit": "ops"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 6, "w": 8, "x": 16, "y": 19 },
+          "id": 33,
+          "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(storage_operations_total{status=\"error\"}[$__rate_interval]))", "legendFormat": "Errors/s", "refId": "A" }
+          ],
+          "title": "Storage Errors",
+          "type": "timeseries"
+        },
+        {
+          "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 25 },
+          "id": 40,
+          "panels": [],
+          "title": "OTEL Collector Pipeline",
+          "type": "row"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": { "axisCenteredZero": false, "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } },
+              "mappings": [],
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 6, "w": 12, "x": 0, "y": 26 },
+          "id": 41,
+          "options": { "legend": { "calcs": ["mean", "sum"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "rate(otelcol_receiver_accepted_spans[$__rate_interval])", "legendFormat": "Spans Received", "refId": "A" },
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "rate(otelcol_exporter_sent_spans[$__rate_interval])", "legendFormat": "Spans Exported", "refId": "B" }
+          ],
+          "title": "Traces Pipeline",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": { "axisCenteredZero": false, "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": false, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } },
+              "mappings": [],
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 6, "w": 12, "x": 12, "y": 26 },
+          "id": 42,
+          "options": { "legend": { "calcs": ["mean", "sum"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "rate(otelcol_receiver_accepted_log_records[$__rate_interval])", "legendFormat": "Logs Received", "refId": "A" },
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "rate(otelcol_exporter_sent_log_records[$__rate_interval])", "legendFormat": "Logs Exported", "refId": "B" }
+          ],
+          "title": "Logs Pipeline",
+          "type": "timeseries"
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 39,
+      "style": "dark",
+      "tags": ["semantic-explorer", "infrastructure"],
+      "time": { "from": "now-1h", "to": "now" },
+      "timepicker": {},
+      "timezone": "",
+      "title": "Infrastructure",
+      "uid": "infrastructure",
+      "version": 1
+    }
+{{- end }}

@@ -11,3 +11,12 @@ target
 **/mutants.out*/
 
 node_modules/
+
+deployment/helm/semantic-explorer/values-custom.yaml
+.fastembed_cache
+
+# Local ONNX Runtime installation for CUDA development
+# Created by crates/embedding-inference-api/setup_cuda_local.sh
+**/.onnxruntime-cuda
+
+crates/worker-visualizations-py/fonts

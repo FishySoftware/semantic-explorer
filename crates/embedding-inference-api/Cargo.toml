@@ -1,0 +1,38 @@
+[package]
+name = "embedding-inference-api"
+version = "0.1.0"
+edition = "2024"
+authors = ["Jonathan Poisson"]
+readme = "README.md"
+license-file = "LICENSE"
+
+[[bin]]
+name = "embedding-inference-api"
+
+[features]
+default = []
+
+[dependencies]
+semantic-explorer-core = { path = "../core" }
+actix-web = { workspace = true }
+actix-cors = { workspace = true }
+actix-web-prom = { workspace = true }
+utoipa = { workspace = true }
+utoipa-actix-web = { workspace = true }
+utoipa-swagger-ui = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+dotenvy = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+once_cell = { workspace = true }
+fastembed = { version = "5.8.1", features = ["hf-hub-rustls-tls", "cudnn", "cuda"], default-features = false }
+ort = { version = "2.0.0-rc.11", features = ["cuda"], default-features = false }
+futures = "0.3.31"
+
+[lints.clippy]
+enum_glob_use = "deny"
+
+[lints.rust]
+unsafe_code = "forbid"

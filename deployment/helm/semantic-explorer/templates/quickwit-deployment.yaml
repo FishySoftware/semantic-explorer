@@ -1,6 +1,6 @@
 {{- if .Values.observability.quickwit.enabled }}
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: {{ include "semantic-explorer.fullname" . }}-quickwit
   namespace: {{ .Release.Namespace }}
@@ -11,7 +11,9 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  replicas: {{ .Values.observability.quickwit.replicaCount }}
+  serviceName: {{ include "semantic-explorer.quickwit.headlessService" . }}
+  replicas: {{ .Values.observability.quickwit.replicaCount | default 2 }}
+  podManagementPolicy: Parallel
   selector:
     matchLabels:
       {{- include "semantic-explorer.quickwit.selectorLabels" . | nindent 6 }}
@@ -31,13 +33,107 @@ spec:
       {{- end }}
       securityContext:
         {{- toYaml .Values.observability.quickwit.podSecurityContext | nindent 8 }}
+      initContainers:
+      {{- if .Values.minio.enabled }}
+      - name: wait-for-minio
+        image: {{ include "semantic-explorer.initContainer.image" . }}
+        securityContext:
+          {{- include "semantic-explorer.initContainer.securityContext" . | nindent 10 }}
+        command:
+          - sh
+          - -c
+          - |
+            MINIO_HOST="{{ include "semantic-explorer.minio.host" . }}"
+            MINIO_PORT="{{ include "semantic-explorer.minio.port" . }}"
+            echo "Waiting for MinIO cluster at ${MINIO_HOST}:${MINIO_PORT} to be fully initialized..."
+            
+            # First wait for port to be open
+            until nc -z ${MINIO_HOST} ${MINIO_PORT}; do
+              echo "MinIO port not ready, waiting..."
+              sleep 2
+            done
+            echo "MinIO port is open, checking cluster health..."
+            
+            # Check cluster readiness (for distributed mode)
+            # /minio/health/cluster returns 200 only when cluster has write quorum
+            MAX_RETRIES=60
+            RETRY_COUNT=0
+            while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+              # Try the cluster endpoint first (distributed mode)
+              HTTP_CODE=$(wget -q -O /dev/null -S --timeout=5 "http://${MINIO_HOST}:${MINIO_PORT}/minio/health/cluster" 2>&1 | grep "HTTP/" | tail -1 | awk '{print $2}')
+              if [ "$HTTP_CODE" = "200" ]; then
+                echo "MinIO cluster is healthy and has write quorum!"
+                break
+              fi
+              
+              # Fallback: check ready endpoint
+              HTTP_CODE=$(wget -q -O /dev/null -S --timeout=5 "http://${MINIO_HOST}:${MINIO_PORT}/minio/health/ready" 2>&1 | grep "HTTP/" | tail -1 | awk '{print $2}')
+              if [ "$HTTP_CODE" = "200" ]; then
+                echo "MinIO ready endpoint returned 200, checking if truly initialized..."
+                # Extra wait for distributed mode cluster sync
+                sleep 5
+                # Double-check cluster endpoint after ready
+                HTTP_CODE=$(wget -q -O /dev/null -S --timeout=5 "http://${MINIO_HOST}:${MINIO_PORT}/minio/health/cluster" 2>&1 | grep "HTTP/" | tail -1 | awk '{print $2}')
+                if [ "$HTTP_CODE" = "200" ]; then
+                  echo "MinIO cluster confirmed ready!"
+                  break
+                fi
+              fi
+              
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              echo "MinIO not fully initialized (attempt ${RETRY_COUNT}/${MAX_RETRIES}), waiting 5s..."
+              sleep 5
+            done
+            
+            if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+              echo "WARNING: MinIO may not be fully initialized after ${MAX_RETRIES} retries"
+              echo "Proceeding anyway - Quickwit will retry on its own..."
+            fi
+            
+            echo "MinIO initialization check complete!"
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+      {{- end }}
       containers:
       - name: quickwit
         image: {{ include "semantic-explorer.quickwit.image" . }}
         imagePullPolicy: {{ .Values.observability.quickwit.image.pullPolicy }}
         securityContext:
           {{- toYaml .Values.observability.quickwit.containerSecurityContext | nindent 10 }}
-        command: ["run"]
+        command:
+          - /bin/sh
+          - -c
+          - |
+            # Retry wrapper for Quickwit startup
+            # MinIO distributed mode may take time to achieve write quorum
+            MAX_RETRIES=12
+            RETRY_DELAY=10
+            RETRY_COUNT=0
+            
+            while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+              echo "Starting Quickwit (attempt $((RETRY_COUNT + 1))/${MAX_RETRIES})..."
+              quickwit run --config /quickwit/config/quickwit.yaml
+              EXIT_CODE=$?
+              
+              if [ $EXIT_CODE -eq 0 ]; then
+                echo "Quickwit exited normally"
+                exit 0
+              fi
+              
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                echo "Quickwit failed with exit code ${EXIT_CODE}, retrying in ${RETRY_DELAY}s..."
+                sleep $RETRY_DELAY
+              fi
+            done
+            
+            echo "Quickwit failed after ${MAX_RETRIES} attempts"
+            exit 1
         ports:
         - name: rest
           containerPort: {{ .Values.observability.quickwit.service.rest.port }}
@@ -46,14 +142,52 @@ spec:
           containerPort: {{ .Values.observability.quickwit.service.grpc.port }}
           protocol: TCP
         env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: QW_CLUSTER_ID
+          value: {{ include "semantic-explorer.fullname" . }}
+        - name: QW_NODE_ID
+          value: "$(POD_NAME)"
+        - name: QW_PEER_SEEDS
+          value: {{ include "semantic-explorer.quickwit.peerSeeds" . | quote }}
+        - name: QW_ADVERTISE_ADDRESS
+          value: "$(POD_NAME).{{ include "semantic-explorer.quickwit.headlessService" . }}"
         - name: QW_ENABLE_OTLP_ENDPOINT
           value: {{ .Values.observability.quickwit.config.enableOtlpEndpoint | quote }}
-        - name: QW_ENABLE_JAEGER_ENDPOINT
-          value: {{ .Values.observability.quickwit.config.enableJaegerEndpoint | quote }}
         - name: RUST_LOG
           value: {{ .Values.observability.quickwit.config.logLevel }}
         - name: QW_DATA_DIR
           value: /quickwit/qwdata
+        {{- if .Values.minio.enabled }}
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Release.Name }}-minio
+              key: rootUser
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Release.Name }}-minio
+              key: rootPassword
+        - name: AWS_REGION
+          value: {{ include "semantic-explorer.storage.s3.region" . }}
+        - name: QW_S3_ENDPOINT
+          value: {{ include "semantic-explorer.storage.s3.endpoint" . }}
+        {{- end }}
+        startupProbe:
+          httpGet:
+            path: /health/livez
+            port: rest
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 60
         livenessProbe:
           httpGet:
             path: /health/livez
@@ -76,7 +210,7 @@ spec:
         - name: data
           mountPath: /quickwit/qwdata
         - name: config
-          mountPath: /quickwit/node.yaml
+          mountPath: /quickwit/config/quickwit.yaml
           subPath: node.yaml
       {{- with .Values.observability.quickwit.nodeSelector }}
       nodeSelector:
@@ -87,14 +221,23 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       volumes:
-      - name: data
-        {{- if .Values.observability.quickwit.persistence.enabled }}
-        persistentVolumeClaim:
-          claimName: {{ include "semantic-explorer.fullname" . }}-quickwit
-        {{- else }}
-        emptyDir: {}
-        {{- end }}
       - name: config
         configMap:
           name: {{ include "semantic-explorer.fullname" . }}-quickwit-config
+  {{- if .Values.observability.quickwit.persistence.enabled }}
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "{{ .Values.observability.quickwit.persistence.accessMode }}" ]
+      {{- if .Values.observability.quickwit.persistence.storageClass }}
+      storageClassName: {{ .Values.observability.quickwit.persistence.storageClass }}
+      {{- end }}
+      resources:
+        requests:
+          storage: {{ .Values.observability.quickwit.persistence.size }}
+  {{- else }}
+      - name: data
+        emptyDir: {}
+  {{- end }}
 {{- end }}

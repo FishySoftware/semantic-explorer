@@ -1,0 +1,144 @@
+### LLM Inference API Tests
+### Configuration
+@baseUrl = http://localhost:8091
+# @model = TheBloke/Mistral-7B-Instruct-v0.2-GGUF
+@model = microsoft/Phi-3-mini-4k-instruct-gguf:Phi-3-mini-4k-instruct-q4.gguf@microsoft/Phi-3-mini-4k-instruct
+
+### LLM Namer Prompt Configuration
+@promptHeader = These are representative texts from a document cluster:
+@promptInstruction = Provide a short and concise cluster name that captures the main topic. Respond with ONLY the cluster name, no notes or explanation.
+
+###############################################################################
+# Health Checks
+###############################################################################
+
+### Health - Liveness probe
+GET {{baseUrl}}/health/live
+
+### Health - Readiness probe
+GET {{baseUrl}}/health/ready
+
+###############################################################################
+# Model Discovery
+###############################################################################
+
+### List all available LLM models
+GET {{baseUrl}}/api/llms
+
+###############################################################################
+# Text Generation
+###############################################################################
+
+### Generate text from a prompt (non-streaming)
+POST {{baseUrl}}/api/generate
+Content-Type: application/json
+
+{
+  "model": "{{model}}",
+  "prompt": "Explain what a salmon is in one sentence.",
+  "temperature": 0.7,
+  "max_tokens": 100
+}
+
+### Generate text with streaming response
+POST {{baseUrl}}/api/generate/stream
+Content-Type: application/json
+
+{
+  "model": "{{model}}",
+  "prompt": "Write a short paragraph about marine biology.",
+  "temperature": 0.8,
+  "max_tokens": 150
+}
+
+###############################################################################
+# Chat Completion
+###############################################################################
+
+### Chat completion (non-streaming)
+POST {{baseUrl}}/api/chat
+Content-Type: application/json
+
+{
+  "model": "{{model}}",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a helpful assistant specializing in marine biology."
+    },
+    {
+      "role": "user",
+      "content": "What are the key characteristics of salmon?"
+    }
+  ],
+  "temperature": 0.7,
+  "max_tokens": 200
+}
+
+### Chat completion with streaming response
+POST {{baseUrl}}/api/chat/stream
+Content-Type: application/json
+
+{
+  "model": "{{model}}",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a knowledgeable marine biologist."
+    },
+    {
+      "role": "user",
+      "content": "Tell me about the life cycle of Pacific salmon."
+    }
+  ],
+  "temperature": 0.8,
+  "max_tokens": 300
+}
+
+###############################################################################
+# LLM Namer - Topic Generation (Simulating RAG with Document Chunks)
+###############################################################################
+
+### Generate topic name from marine biology documents (simulating cluster 1)
+POST {{baseUrl}}/api/generate
+Content-Type: application/json
+
+{
+  "model": "{{model}}",
+  "prompt": "{{promptHeader}}\n\nThe salmon is an anadromous fish that migrates upstream to spawn in freshwater rivers after spending most of its life in the ocean.\nSalmon species include Chinook, Coho, Sockeye, Pink, and Chum, each with distinct migration patterns and spawning behaviors.\nPacific salmon die after spawning, providing crucial nutrients to river ecosystems through their decomposing bodies.\nAtlantic salmon, unlike Pacific species, can spawn multiple times throughout their lifetime.\nSalmon use their keen sense of smell to navigate back to their natal streams, sometimes traveling thousands of miles.\n\n{{promptInstruction}}",
+  "temperature": 0.3,
+  "max_tokens": 50
+}
+
+### Generate topic name from deep sea creatures (simulating cluster 2)
+POST {{baseUrl}}/api/generate
+Content-Type: application/json
+
+{
+  "model": "{{model}}",
+  "prompt": "{{promptHeader}}\n\nThe anglerfish uses a bioluminescent lure to attract prey in the dark depths of the ocean, where sunlight cannot penetrate.\nDeep-sea creatures have evolved unique adaptations to survive extreme pressure, near-freezing temperatures, and complete darkness.\nGiant squid can reach lengths of up to 43 feet and have the largest eyes in the animal kingdom to capture faint light.\nDeep-sea vents support entire ecosystems based on chemosynthesis rather than photosynthesis, with bacteria converting chemicals into energy.\nViperfish possess long, needle-like teeth and hinged jaws that allow them to swallow prey larger than themselves.\n\n{{promptInstruction}}",
+  "temperature": 0.3,
+  "max_tokens": 50
+}
+
+### Generate topic name from coral reef ecosystems (simulating cluster 3)
+POST {{baseUrl}}/api/generate
+Content-Type: application/json
+
+{
+  "model": "{{model}}",
+  "prompt": "{{promptHeader}}\n\nCoral reefs are among the most diverse ecosystems on Earth, supporting approximately 25% of all marine species.\nSymbiotic relationships between coral polyps and zooxanthellae algae provide the foundation for reef ecosystems through photosynthesis.\nClownfish live in symbiosis with sea anemones, gaining protection from predators while providing food scraps to their hosts.\nCoral bleaching occurs when stress causes corals to expel their symbiotic algae, leaving white calcium carbonate skeletons exposed.\nParrotfish graze on algae and dead coral, producing sand through their digestive process and helping maintain reef health.\n\n{{promptInstruction}}",
+  "temperature": 0.3,
+  "max_tokens": 50
+}
+
+### Generate topic name from whale behavior (simulating cluster 4)  
+POST {{baseUrl}}/api/generate
+Content-Type: application/json
+
+{
+  "model": "{{model}}",
+  "prompt": "{{promptHeader}}\n\nHumpback whales travel up to 16,000 miles annually during their migration between feeding and breeding grounds.\nWhale songs are complex vocalizations that can travel hundreds of miles underwater, used for communication and possibly navigation.\nBlue whales are the largest animals ever known to exist, reaching lengths over 100 feet and weighing up to 200 tons.\nWhales play a crucial role in ocean nutrient cycling by transporting nutrients from deep waters to the surface through feeding and defecation.\nBaleen whales filter-feed on krill and small fish using comb-like baleen plates instead of teeth, consuming up to 4 tons of food per day.\n\n{{promptInstruction}}",
+  "temperature": 0.3,
+  "max_tokens": 50
+}

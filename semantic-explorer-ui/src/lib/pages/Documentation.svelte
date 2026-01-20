@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { BookOpenSolid, ArrowRightOutline } from 'flowbite-svelte-icons';
+	import { ArrowRightOutline, BookOpenSolid } from 'flowbite-svelte-icons';
 </script>
 
 <div class="p-6 max-w-6xl mx-auto">
@@ -9,19 +9,58 @@
 			<h1 class="text-3xl font-bold text-gray-900 dark:text-white">User Documentation</h1>
 		</div>
 		<p class="text-lg text-gray-600 dark:text-gray-400">
-			Learn how to use Semantic Explorer to build, test, and compare embedding-based search systems.
+			Learn how to use Semantic Explorer to build, test, and compare embedding-based search systems,
+			perform RAG-based chat, and visualize embedding spaces.
 		</p>
 	</div>
+
+	<!-- Quick Start with Marketplace -->
+	<section class="mb-8 rounded-lg border-l-4 border-green-500 bg-green-50 p-6 dark:bg-gray-800">
+		<h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-3">
+			Quick Start: Marketplace
+		</h3>
+		<p class="text-sm text-gray-700 dark:text-gray-300">
+			Want to get started quickly? Visit the <strong>Marketplace</strong> to browse and grab public collections,
+			datasets, embedders, and LLMs shared by other users. This is a great way to explore the platform
+			without setting up everything from scratch.
+		</p>
+	</section>
+
+	<!-- API-First Design -->
+	<section class="mb-8 rounded-lg border-l-4 border-purple-500 bg-purple-50 p-6 dark:bg-gray-800">
+		<h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-3">API-First Design</h3>
+		<p class="text-sm text-gray-700 dark:text-gray-300 mb-3">
+			While the UI provides a convenient interface, Semantic Explorer is <strong>API-first</strong>.
+			You can programmatically push data directly via the REST API, bypassing the UI entirely:
+		</p>
+		<ul class="space-y-2 text-sm text-gray-700 dark:text-gray-300 list-inside list-disc">
+			<li>
+				<strong>Collections</strong> - Upload files directly to collections via multipart form-data
+			</li>
+			<li>
+				<strong>Datasets</strong> - Push pre-processed chunks as JSON, bringing your own chunking strategy
+			</li>
+			<li>
+				<strong>Embedders & LLMs</strong> - Configure providers programmatically for automation
+			</li>
+		</ul>
+		<p class="text-sm text-gray-700 dark:text-gray-300 mt-3">
+			This flexibility allows you to integrate Semantic Explorer into existing pipelines, use custom
+			preprocessing, or build automated workflows. API documentation is available at <code
+				class="px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs">/api/openapi.json</code
+			>
+		</p>
+	</section>
 
 	<!-- Workflow Overview -->
 	<section class="mb-12">
 		<h2 class="text-2xl font-bold text-gray-900 dark:text-white mb-4">Workflow Overview</h2>
 		<p class="text-gray-700 dark:text-gray-300 mb-6">
-			Semantic Explorer provides a complete pipeline for evaluating embedding models and search
-			quality. Follow this typical workflow:
+			Semantic Explorer provides a complete pipeline for evaluating embedding models, search
+			quality, and RAG-based chat. Follow this typical workflow:
 		</p>
 
-		<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+		<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
 			<!-- Step 1 -->
 			<div
 				class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800"
@@ -65,13 +104,10 @@
 						class="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-sm font-bold text-blue-600 dark:bg-blue-900 dark:text-blue-300"
 						>3</span
 					>
-					<h3 class="text-lg font-semibold text-gray-900 dark:text-white">
-						Transform (Collection)
-					</h3>
+					<h3 class="text-lg font-semibold text-gray-900 dark:text-white">Collection Transform</h3>
 				</div>
 				<p class="text-sm text-gray-600 dark:text-gray-400">
-					Create a collection transform to extract text and generate chunks, populating a dataset
-					for embedding.
+					Extract text from documents and generate chunks to populate a dataset.
 				</p>
 			</div>
 
@@ -100,10 +136,11 @@
 						class="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-sm font-bold text-blue-600 dark:bg-blue-900 dark:text-blue-300"
 						>5</span
 					>
-					<h3 class="text-lg font-semibold text-gray-900 dark:text-white">Transform (Dataset)</h3>
+					<h3 class="text-lg font-semibold text-gray-900 dark:text-white">Dataset Transform</h3>
 				</div>
 				<p class="text-sm text-gray-600 dark:text-gray-400">
-					Create dataset transforms to generate embeddings using your configured embedders.
+					Generate embeddings using configured embedders (creates one Embedded Dataset per
+					embedder).
 				</p>
 			</div>
 
@@ -116,10 +153,75 @@
 						class="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-sm font-bold text-blue-600 dark:bg-blue-900 dark:text-blue-300"
 						>6</span
 					>
+					<h3 class="text-lg font-semibold text-gray-900 dark:text-white">Embedded Datasets</h3>
+				</div>
+				<p class="text-sm text-gray-600 dark:text-gray-400">
+					Track embedding progress and view vector statistics of the generated embedded datasets.
+				</p>
+			</div>
+
+			<!-- Step 7 -->
+			<div
+				class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800"
+			>
+				<div class="flex items-center gap-2 mb-3">
+					<span
+						class="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-sm font-bold text-blue-600 dark:bg-blue-900 dark:text-blue-300"
+						>7</span
+					>
+					<h3 class="text-lg font-semibold text-gray-900 dark:text-white">Visualization</h3>
+				</div>
+				<p class="text-sm text-gray-600 dark:text-gray-400">
+					Create visualizations with UMAP dimensionality reduction and HDBSCAN clustering.
+				</p>
+			</div>
+
+			<!-- Step 8 -->
+			<div
+				class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800"
+			>
+				<div class="flex items-center gap-2 mb-3">
+					<span
+						class="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-sm font-bold text-blue-600 dark:bg-blue-900 dark:text-blue-300"
+						>8</span
+					>
 					<h3 class="text-lg font-semibold text-gray-900 dark:text-white">Search</h3>
 				</div>
 				<p class="text-sm text-gray-600 dark:text-gray-400">
-					Execute searches across multiple embedded datasets to compare embedding model performance.
+					Execute semantic searches and compare results across embedded datasets.
+				</p>
+			</div>
+
+			<!-- Step 9 -->
+			<div
+				class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800"
+			>
+				<div class="flex items-center gap-2 mb-3">
+					<span
+						class="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-sm font-bold text-blue-600 dark:bg-blue-900 dark:text-blue-300"
+						>9</span
+					>
+					<h3 class="text-lg font-semibold text-gray-900 dark:text-white">LLMs</h3>
+				</div>
+				<p class="text-sm text-gray-600 dark:text-gray-400">
+					Configure your language model providers (OpenAI, Cohere and Internal LLM inference API)
+					for RAG-based chat.
+				</p>
+			</div>
+
+			<!-- Step 10 -->
+			<div
+				class="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800"
+			>
+				<div class="flex items-center gap-2 mb-3">
+					<span
+						class="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-sm font-bold text-blue-600 dark:bg-blue-900 dark:text-blue-300"
+						>10</span
+					>
+					<h3 class="text-lg font-semibold text-gray-900 dark:text-white">Chat</h3>
+				</div>
+				<p class="text-sm text-gray-600 dark:text-gray-400">
+					Interact with your embedded datasets using RAG-based chat powered by your configured LLMs.
 				</p>
 			</div>
 		</div>
@@ -141,18 +243,139 @@
 			</h3>
 			<p class="text-gray-700 dark:text-gray-300 mb-4">
 				Organize collections of documents of interest. You can add as many files as you want, up to
-				1GB per file. Most common content types are supported including Office documents (Word,
-				Excel, PowerPoint), HTML, XML, and raw text files.
+				100MB per file with a total upload limit of 1GB per request. Most common content types are
+				supported including Office documents (Word, Excel, PowerPoint), HTML, XML, and raw text
+				files.
 			</p>
-			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
+			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900 mb-3">
 				<h4 class="font-semibold text-gray-900 dark:text-white mb-2">Key Features:</h4>
 				<ul class="list-inside list-disc space-y-1 text-sm text-gray-600 dark:text-gray-400">
 					<li>Create and manage document collections</li>
-					<li>Upload files via web interface or S3 integration</li>
+					<li>Upload files via web interface</li>
+					<li>S3 integration for bulk imports</li>
 					<li>Support for multiple document formats</li>
-					<li>Individual file size limit: 1GB</li>
+					<li>Individual file size limit: 100MB (configurable), 1GB per upload request</li>
 					<li>Organize related documents together for processing</li>
 				</ul>
+			</div>
+			<div
+				class="rounded bg-purple-50 dark:bg-purple-900/20 p-3 border border-purple-200 dark:border-purple-800"
+			>
+				<p class="text-xs text-gray-700 dark:text-gray-300">
+					<strong>💡 API Usage:</strong> Push files directly to collections via
+					<code class="px-1 py-0.5 bg-white dark:bg-gray-800 rounded text-xs"
+						>POST /api/collections/&#123;id&#125;/upload</code
+					>
+					with multipart form-data. Great for automation and CI/CD pipelines.
+				</p>
+			</div>
+		</div>
+
+		<!-- Supported File Types -->
+		<div
+			class="rounded-lg border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-800"
+		>
+			<h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
+				<span
+					class="rounded bg-indigo-100 px-2 py-1 text-sm font-medium text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300"
+					>Supported File Types</span
+				>
+			</h3>
+			<p class="text-gray-700 dark:text-gray-300 mb-4">
+				Semantic Explorer supports a comprehensive range of document formats for upload to
+				collections. All files are validated using magic byte detection to ensure security and
+				proper type identification.
+			</p>
+
+			<div class="space-y-4">
+				<!-- Text Formats -->
+				<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
+					<h4 class="font-semibold text-gray-900 dark:text-white mb-2">📝 Text Formats</h4>
+					<div
+						class="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-gray-600 dark:text-gray-400"
+					>
+						<div><strong>Plain Text:</strong> .txt</div>
+						<div><strong>CSV:</strong> .csv</div>
+						<div><strong>Markdown:</strong> .md</div>
+						<div><strong>HTML:</strong> .html, .htm</div>
+						<div><strong>XML:</strong> .xml</div>
+						<div><strong>RTF:</strong> .rtf (Rich Text Format)</div>
+						<div><strong>Log Files:</strong> .log</div>
+					</div>
+				</div>
+
+				<!-- Documents -->
+				<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
+					<h4 class="font-semibold text-gray-900 dark:text-white mb-2">📄 Documents</h4>
+					<div class="space-y-2 text-sm text-gray-600 dark:text-gray-400">
+						<div><strong>PDF:</strong> .pdf (Portable Document Format)</div>
+						<div>
+							<strong>Microsoft Word:</strong> .doc, .docx, .docm (macro-enabled), .dotx (template), .dotm
+							(macro template)
+						</div>
+						<div>
+							<strong>Microsoft Excel:</strong> .xls, .xlsx, .xlsm (macro-enabled), .xltx (template),
+							.xltm (macro template), .xlam (add-in), .xlsb (binary)
+						</div>
+						<div><strong>Microsoft PowerPoint:</strong> .ppt, .pptx</div>
+						<div>
+							<strong>OpenDocument:</strong> .odt (text), .ods (spreadsheet), .odp (presentation)
+						</div>
+					</div>
+				</div>
+
+				<!-- Data Formats -->
+				<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
+					<h4 class="font-semibold text-gray-900 dark:text-white mb-2">📊 Data Formats</h4>
+					<div class="text-sm text-gray-600 dark:text-gray-400">
+						<div><strong>JSON:</strong> .json (JavaScript Object Notation)</div>
+						<div><strong>NDJSON:</strong> .ndjson, .jsonl (Newline Delimited JSON)</div>
+					</div>
+				</div>
+
+				<!-- E-books & Email -->
+				<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
+					<h4 class="font-semibold text-gray-900 dark:text-white mb-2">📚 E-books & Email</h4>
+					<div class="text-sm text-gray-600 dark:text-gray-400">
+						<div><strong>E-books:</strong> .epub</div>
+						<div><strong>Email:</strong> .eml (RFC 822 email messages)</div>
+					</div>
+				</div>
+
+				<!-- Archives -->
+				<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
+					<h4 class="font-semibold text-gray-900 dark:text-white mb-2">🗜️ Archives</h4>
+					<div class="text-sm text-gray-600 dark:text-gray-400">
+						<div><strong>ZIP:</strong> .zip</div>
+						<div><strong>GZIP:</strong> .gz, .tar.gz</div>
+						<div><strong>7-Zip:</strong> .7z</div>
+						<p class="mt-2 text-xs italic">
+							Archives are scanned for ZIP bomb protection and nested content is extracted.
+						</p>
+					</div>
+				</div>
+			</div>
+
+			<div
+				class="rounded bg-blue-50 dark:bg-blue-900/20 p-3 border border-blue-200 dark:border-blue-800 mt-4"
+			>
+				<p class="text-xs text-gray-700 dark:text-gray-300">
+					<strong>🔒 Security:</strong> All uploads are validated using magic byte detection (not just
+					file extensions) to prevent type mismatch attacks. Archives are scanned for compression ratio
+					to detect ZIP bombs. Maximum file size: 100MB per file, 1GB per upload request.
+				</p>
+			</div>
+
+			<div
+				class="rounded bg-purple-50 dark:bg-purple-900/20 p-3 border border-purple-200 dark:border-purple-800 mt-2"
+			>
+				<p class="text-xs text-gray-700 dark:text-gray-300">
+					<strong>💡 API Usage:</strong> Programmatically query supported types via
+					<code class="px-1 py-0.5 bg-white dark:bg-gray-800 rounded text-xs"
+						>GET /api/collections-allowed-file-types</code
+					>
+					to get the current list of allowed MIME types in JSON format.
+				</p>
 			</div>
 		</div>
 
@@ -168,18 +391,32 @@
 			</h3>
 			<p class="text-gray-700 dark:text-gray-300 mb-4">
 				Contains processed texts as JSON with name and chunks, to be used for embedding transforms.
-				Datasets can be generated from collections using transforms, or exported to the dataset
-				endpoints directly via API.
+				Datasets can be generated automatically from collections using Collection Transforms, or you
+				can push pre-processed chunks directly via the API. This flexibility allows you to bring
+				your own chunking strategies or integrate with external processing pipelines.
 			</p>
-			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
+			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900 mb-3">
 				<h4 class="font-semibold text-gray-900 dark:text-white mb-2">Key Features:</h4>
 				<ul class="list-inside list-disc space-y-1 text-sm text-gray-600 dark:text-gray-400">
 					<li>View processed text chunks with metadata</li>
 					<li>JSON format with structured data</li>
-					<li>Generated from collection transforms or API imports</li>
+					<li>Generated from Collection Transforms automatically</li>
 					<li>Can be embedded using multiple embedders for comparison</li>
 					<li>Browse and search dataset items</li>
 				</ul>
+			</div>
+			<div
+				class="rounded bg-purple-50 dark:bg-purple-900/20 p-3 border border-purple-200 dark:border-purple-800"
+			>
+				<p class="text-xs text-gray-700 dark:text-gray-300">
+					<strong>💡 API Usage:</strong> Skip Collection Transforms entirely! Push pre-processed
+					chunks directly via
+					<code class="px-1 py-0.5 bg-white dark:bg-gray-800 rounded text-xs"
+						>POST /api/datasets/&#123;id&#125;/items</code
+					>
+					as JSON. Bring your own chunking strategy from external tools like LangChain, LlamaIndex, or
+					custom pipelines.
+				</p>
 			</div>
 		</div>
 
@@ -221,10 +458,10 @@
 				>
 			</h3>
 			<p class="text-gray-700 dark:text-gray-300 mb-4">
-				Provides configurable pipelines to accomplish various operations. Collection transforms
-				extract text from documents and generate chunks to populate a dataset. Dataset transforms
-				populate embedded datasets—one dataset can have multiple embedders configured to populate
-				multiple vector stores for comparison purposes.
+				Provides configurable pipelines for each stage of data processing. Collection transforms
+				extract text from documents and generate chunks. Dataset transforms generate embeddings
+				using configured embedders, creating one Embedded Dataset per embedder for comparison.
+				Visualization transforms reduce embeddings with UMAP and identify topics with HDBSCAN.
 			</p>
 			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
 				<h4 class="font-semibold text-gray-900 dark:text-white mb-2">Transform Types:</h4>
@@ -238,7 +475,14 @@
 					<div>
 						<div class="font-semibold text-gray-900 dark:text-white">Dataset Transforms</div>
 						<p class="text-gray-600 dark:text-gray-400">
-							Generate embeddings for dataset chunks using configured embedders
+							Generate embeddings for dataset chunks using configured embedders (creates one
+							Embedded Dataset per embedder)
+						</p>
+					</div>
+					<div>
+						<div class="font-semibold text-gray-900 dark:text-white">Visualization Transforms</div>
+						<p class="text-gray-600 dark:text-gray-400">
+							Reduce embeddings using UMAP and identify topic clusters with HDBSCAN (requires GPU)
 						</p>
 					</div>
 				</div>
@@ -249,6 +493,37 @@
 					<li>Trigger transforms manually or via API</li>
 					<li>Configure chunking strategies and parameters</li>
 					<li>Support for multiple embedders per dataset</li>
+					<li>GPU-accelerated visualization generation (CUDA 12.4)</li>
+				</ul>
+			</div>
+		</div>
+
+		<!-- Embedded Datasets -->
+		<div
+			class="rounded-lg border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-800"
+		>
+			<h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
+				<span
+					class="rounded bg-amber-100 px-2 py-1 text-sm font-medium text-amber-800 dark:bg-amber-900 dark:text-amber-300"
+					>Embedded Datasets</span
+				>
+			</h3>
+			<p class="text-gray-700 dark:text-gray-300 mb-4">
+				Result entities created automatically when you create a Dataset Transform with multiple
+				embedders. Each Embedded Dataset represents embeddings from one embedder model, allowing you
+				to compare results side-by-side. Track embedding progress, view vector statistics, and
+				trigger visualizations for each model independently.
+			</p>
+			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
+				<h4 class="font-semibold text-gray-900 dark:text-white mb-2">Key Features:</h4>
+				<ul class="list-inside list-disc space-y-1 text-sm text-gray-600 dark:text-gray-400">
+					<li>Automatically created when Dataset Transform runs</li>
+					<li>One per configured embedder model</li>
+					<li>Track embedding generation progress per model</li>
+					<li>View vector statistics and embedding metadata</li>
+					<li>Search across each embedded dataset independently</li>
+					<li>Trigger visualization transforms for visualization</li>
+					<li>Compare embedding quality across models</li>
 				</ul>
 			</div>
 		</div>
@@ -280,24 +555,119 @@
 			</div>
 		</div>
 
-		<!-- Visualizations (Coming Soon) -->
+		<!-- Visualizations -->
 		<div
-			class="rounded-lg border border-gray-200 bg-white p-6 opacity-60 dark:border-gray-700 dark:bg-gray-800"
+			class="rounded-lg border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-800"
 		>
 			<h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
 				<span
 					class="rounded bg-indigo-100 px-2 py-1 text-sm font-medium text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300"
 					>Visualizations</span
 				>
+			</h3>
+			<p class="text-gray-700 dark:text-gray-300 mb-4">
+				View and interact with 2D/3D visualizations of your embedding spaces. After running
+				Visualization Transforms, explore how your documents cluster together in visual space.
+				Compare different embedding models side-by-side to understand how each organizes your data
+				and identify distinct topic clusters.
+			</p>
+			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
+				<h4 class="font-semibold text-gray-900 dark:text-white mb-2">Key Features:</h4>
+				<ul class="list-inside list-disc space-y-1 text-sm text-gray-600 dark:text-gray-400">
+					<li>Interactive 2D scatter plots of embedding spaces</li>
+					<li>Color-coded clusters identified by HDBSCAN</li>
+					<li>Hover to view document text and metadata</li>
+					<li>Compare visualizations across different embedding models</li>
+					<li>Explore topic distributions and cluster quality</li>
+					<li>Pan, zoom, and interact with visualization data</li>
+				</ul>
+			</div>
+		</div>
+
+		<!-- LLMs -->
+		<div
+			class="rounded-lg border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-800"
+		>
+			<h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
 				<span
-					class="rounded bg-yellow-100 px-2 py-1 text-xs font-medium text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300"
-					>Coming Soon</span
+					class="rounded bg-cyan-100 px-2 py-1 text-sm font-medium text-cyan-800 dark:bg-cyan-900 dark:text-cyan-300"
+					>LLMs</span
 				>
 			</h3>
-			<p class="text-gray-700 dark:text-gray-300">
-				Advanced visualization capabilities for embedding spaces, search results, and quality
-				metrics are currently under development.
+			<p class="text-gray-700 dark:text-gray-300 mb-4">
+				Configure and manage Large Language Model (LLM) providers for RAG-based chat functionality.
+				Similar to embedders, LLMs are user-managed configurations that connect to chat completion
+				APIs from providers like OpenAI, Cohere and Internal LLM inference API.
 			</p>
+			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
+				<h4 class="font-semibold text-gray-900 dark:text-white mb-2">Key Features:</h4>
+				<ul class="list-inside list-disc space-y-1 text-sm text-gray-600 dark:text-gray-400">
+					<li>Support for OpenAI, Cohere and Internal LLM inference API</li>
+					<li>Test connection and validate credentials</li>
+					<li>Store API keys securely with encryption</li>
+					<li>Configure model parameters (temperature, max tokens, etc.)</li>
+					<li>Make LLMs public to share with other users via marketplace</li>
+				</ul>
+			</div>
+		</div>
+
+		<!-- Chat -->
+		<div
+			class="rounded-lg border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-800"
+		>
+			<h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
+				<span
+					class="rounded bg-teal-100 px-2 py-1 text-sm font-medium text-teal-800 dark:bg-teal-900 dark:text-teal-300"
+					>Chat (RAG)</span
+				>
+			</h3>
+			<p class="text-gray-700 dark:text-gray-300 mb-4">
+				Interact with your embedded datasets using Retrieval-Augmented Generation (RAG). Create chat
+				sessions that combine semantic search with LLM-powered responses. The system automatically
+				retrieves relevant chunks from your embedded datasets and uses them to provide contextual,
+				grounded answers to your questions.
+			</p>
+			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
+				<h4 class="font-semibold text-gray-900 dark:text-white mb-2">Key Features:</h4>
+				<ul class="list-inside list-disc space-y-1 text-sm text-gray-600 dark:text-gray-400">
+					<li>RAG-based chat with automatic context retrieval</li>
+					<li>Create and manage multiple chat sessions</li>
+					<li>Select from configured embedded datasets and LLMs</li>
+					<li>View retrieved documents and similarity scores</li>
+					<li>Streaming responses with markdown rendering</li>
+					<li>Code syntax highlighting for technical content</li>
+					<li>Session history and persistence</li>
+				</ul>
+			</div>
+		</div>
+
+		<!-- Marketplace -->
+		<div
+			class="rounded-lg border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-800"
+		>
+			<h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
+				<span
+					class="rounded bg-pink-100 px-2 py-1 text-sm font-medium text-pink-800 dark:bg-pink-900 dark:text-pink-300"
+					>Marketplace</span
+				>
+			</h3>
+			<p class="text-gray-700 dark:text-gray-300 mb-4">
+				Browse and grab public resources shared by other users. The marketplace allows you to
+				discover collections, datasets, embedders, and LLMs that others have made public. This is a
+				great way to get started quickly without setting up everything from scratch, or to explore
+				example configurations and datasets.
+			</p>
+			<div class="rounded bg-gray-50 p-4 dark:bg-gray-900">
+				<h4 class="font-semibold text-gray-900 dark:text-white mb-2">Key Features:</h4>
+				<ul class="list-inside list-disc space-y-1 text-sm text-gray-600 dark:text-gray-400">
+					<li>Browse public collections from other users</li>
+					<li>Discover pre-configured embedders and LLMs</li>
+					<li>Grab (copy) public datasets to your account</li>
+					<li>Search and filter marketplace resources</li>
+					<li>View resource details before grabbing</li>
+					<li>Share your own resources by marking them as public</li>
+				</ul>
+			</div>
 		</div>
 	</section>
 
@@ -307,16 +677,23 @@
 		<ul class="space-y-2 text-sm text-gray-700 dark:text-gray-300">
 			<li class="flex items-start gap-2">
 				<ArrowRightOutline class="w-4 h-4 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
+				<span>Check the Marketplace first - grab public resources to get started quickly</span>
+			</li>
+			<li class="flex items-start gap-2">
+				<ArrowRightOutline class="w-4 h-4 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
 				<span>Start with a small collection to test your pipeline before scaling up</span>
 			</li>
 			<li class="flex items-start gap-2">
 				<ArrowRightOutline class="w-4 h-4 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
-				<span>Configure multiple embedders to compare performance across different models</span>
+				<span
+					>Configure multiple embedders to compare performance across different models using
+					Embedded Datasets</span
+				>
 			</li>
 			<li class="flex items-start gap-2">
 				<ArrowRightOutline class="w-4 h-4 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
 				<span
-					>Use meaningful names for collections, datasets, and embedders to track experiments</span
+					>Use meaningful names for collections, datasets, embedders, and LLMs to track experiments</span
 				>
 			</li>
 			<li class="flex items-start gap-2">
@@ -326,6 +703,26 @@
 			<li class="flex items-start gap-2">
 				<ArrowRightOutline class="w-4 h-4 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
 				<span>Experiment with different chunking strategies to optimize search quality</span>
+			</li>
+			<li class="flex items-start gap-2">
+				<ArrowRightOutline class="w-4 h-4 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
+				<span
+					>Generate visualizations to visually compare how different embedding models organize your
+					data</span
+				>
+			</li>
+			<li class="flex items-start gap-2">
+				<ArrowRightOutline class="w-4 h-4 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
+				<span
+					>Use Chat to interact with your embedded datasets - great for exploring and validating
+					search quality</span
+				>
+			</li>
+			<li class="flex items-start gap-2">
+				<ArrowRightOutline class="w-4 h-4 mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" />
+				<span
+					>Make your best resources public to share them with the community via the Marketplace</span
+				>
 			</li>
 		</ul>
 	</section>

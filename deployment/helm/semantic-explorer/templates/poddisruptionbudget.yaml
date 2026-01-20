@@ -57,3 +57,53 @@ spec:
     matchLabels:
       {{- include "semantic-explorer.workerDatasets.selectorLabels" . | nindent 6 }}
 {{- end }}
+---
+{{- if .Values.workerVisualizationsPy.podDisruptionBudget.enabled }}
+apiVersion: {{ include "semantic-explorer.pdb.apiVersion" . }}
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-worker-visualizations-py
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.workerVisualizationsPy.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.workerVisualizationsPy.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.workerVisualizationsPy.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  {{- if .Values.workerVisualizationsPy.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.workerVisualizationsPy.podDisruptionBudget.maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "semantic-explorer.workerVisualizationsPy.selectorLabels" . | nindent 6 }}
+{{- end }}
+---
+{{- if and .Values.embeddingInferenceApi.enabled .Values.embeddingInferenceApi.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-embedding-inference-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.embeddingInferenceApi.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.embeddingInferenceApi.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "semantic-explorer.embeddingInferenceApi.selectorLabels" . | nindent 6 }}
+{{- end }}
+---
+{{- if and .Values.llmInferenceApi.enabled .Values.llmInferenceApi.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-llm-inference-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.llmInferenceApi.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.llmInferenceApi.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "semantic-explorer.llmInferenceApi.selectorLabels" . | nindent 6 }}
+{{- end }}

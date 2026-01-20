@@ -1,0 +1,144 @@
+{{- if .Values.llmInferenceApi.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-llm-inference-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.llmInferenceApi.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  serviceName: {{ include "semantic-explorer.fullname" . }}-llm-inference-api
+  {{- if not .Values.llmInferenceApi.autoscaling.enabled }}
+  replicas: {{ .Values.llmInferenceApi.replicaCount }}
+  {{- end }}
+  podManagementPolicy: {{ .Values.llmInferenceApi.statefulset.podManagementPolicy }}
+  updateStrategy:
+    {{- toYaml .Values.llmInferenceApi.statefulset.updateStrategy | nindent 4 }}
+  selector:
+    matchLabels:
+      {{- include "semantic-explorer.llmInferenceApi.selectorLabels" . | nindent 6 }}
+  {{- if .Values.llmInferenceApi.persistence.enabled }}
+  volumeClaimTemplates:
+  - metadata:
+      name: models
+    spec:
+      accessModes:
+        - {{ .Values.llmInferenceApi.persistence.accessMode }}
+      {{- if .Values.llmInferenceApi.persistence.storageClass }}
+      {{- if (eq "-" .Values.llmInferenceApi.persistence.storageClass) }}
+      storageClassName: ""
+      {{- else }}
+      storageClassName: {{ .Values.llmInferenceApi.persistence.storageClass | quote }}
+      {{- end }}
+      {{- end }}
+      resources:
+        requests:
+          storage: {{ .Values.llmInferenceApi.persistence.size | quote }}
+  {{- end }}
+  template:
+    metadata:
+      annotations:
+        {{- with .Values.llmInferenceApi.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "semantic-explorer.llmInferenceApi.selectorLabels" . | nindent 8 }}
+        {{- with .Values.llmInferenceApi.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "semantic-explorer.llmInferenceApi.serviceAccountName" . }}
+      securityContext:
+        # Non-root GPU configuration
+        runAsNonRoot: true
+        runAsUser: {{ .Values.llmInferenceApi.securityContext.runAsUser | default 1000 }}
+        runAsGroup: {{ .Values.llmInferenceApi.securityContext.runAsGroup | default 1000 }}
+        fsGroup: {{ .Values.llmInferenceApi.securityContext.fsGroup | default 1000 }}
+        fsGroupChangePolicy: "OnRootMismatch"
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.llmInferenceApi.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      containers:
+      - name: llm-inference-api
+        image: {{ include "semantic-explorer.llmInferenceApi.image" . }}
+        imagePullPolicy: {{ .Values.llmInferenceApi.image.pullPolicy }}
+        securityContext:
+          # Non-root container security
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+        ports:
+        - name: http
+          containerPort: 8091
+          protocol: TCP
+        - name: metrics
+          containerPort: 8091
+          protocol: TCP
+        env:
+        {{- range $key, $value := .Values.llmInferenceApi.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        {{- if .Values.observability.otelCollector.enabled }}
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: {{ include "semantic-explorer.otel.endpoint" . }}
+        - name: SERVICE_NAME
+          value: "llm-inference-api"
+        {{- end }}
+        {{- with .Values.llmInferenceApi.envFrom }}
+        envFrom:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- if .Values.llmInferenceApi.livenessProbe }}
+        livenessProbe:
+          {{- toYaml .Values.llmInferenceApi.livenessProbe | nindent 10 }}
+        {{- end }}
+        {{- if .Values.llmInferenceApi.readinessProbe }}
+        readinessProbe:
+          {{- toYaml .Values.llmInferenceApi.readinessProbe | nindent 10 }}
+        {{- end }}
+        {{- if .Values.llmInferenceApi.startupProbe }}
+        startupProbe:
+          {{- toYaml .Values.llmInferenceApi.startupProbe | nindent 10 }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.llmInferenceApi.resources | nindent 10 }}
+        volumeMounts:
+        {{- if .Values.llmInferenceApi.persistence.enabled }}
+        - name: models
+          mountPath: {{ .Values.llmInferenceApi.persistence.mountPath }}
+        {{- end }}
+        - name: tmp
+          mountPath: /tmp
+        - name: hf-cache
+          mountPath: /home/appuser/.cache
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: hf-cache
+        emptyDir:
+          sizeLimit: 1Gi
+      {{- with .Values.llmInferenceApi.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.llmInferenceApi.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.llmInferenceApi.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

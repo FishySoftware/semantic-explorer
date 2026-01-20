@@ -54,3 +54,41 @@ spec:
     interval: {{ .Values.workerDatasets.metrics.serviceMonitor.interval }}
     scrapeTimeout: {{ .Values.workerDatasets.metrics.serviceMonitor.scrapeTimeout }}
 {{- end }}
+---
+{{- if and .Values.embeddingInferenceApi.enabled .Values.embeddingInferenceApi.metrics.enabled .Values.embeddingInferenceApi.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-embedding-inference-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.embeddingInferenceApi.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "semantic-explorer.embeddingInferenceApi.selectorLabels" . | nindent 6 }}
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: {{ .Values.embeddingInferenceApi.metrics.serviceMonitor.interval }}
+    scrapeTimeout: {{ .Values.embeddingInferenceApi.metrics.serviceMonitor.scrapeTimeout }}
+{{- end }}
+---
+{{- if and .Values.llmInferenceApi.enabled .Values.llmInferenceApi.metrics.enabled .Values.llmInferenceApi.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-llm-inference-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.llmInferenceApi.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "semantic-explorer.llmInferenceApi.selectorLabels" . | nindent 6 }}
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: {{ .Values.llmInferenceApi.metrics.serviceMonitor.interval }}
+    scrapeTimeout: {{ .Values.llmInferenceApi.metrics.serviceMonitor.scrapeTimeout }}
+{{- end }}

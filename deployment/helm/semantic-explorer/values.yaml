@@ -7,6 +7,9 @@ global:
   imageRegistry: "docker.io"
   imagePullSecrets: []
   storageClass: ""
+  # Init container image for startup ordering (secure, non-root)
+  initContainer:
+    image: "busybox:1.36"
   securityContext:
     runAsNonRoot: true
     runAsUser: 10001
@@ -60,7 +63,7 @@ api:
   image:
     repository: jofish89/semantic-explorer
     tag: "latest"
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   statefulset:
     podManagementPolicy: Parallel
     updateStrategy:
@@ -73,7 +76,7 @@ api:
     targetPort: 8080
     annotations: {}
   ingress:
-    enabled: false
+    enabled: true
     className: "nginx"
     annotations: {}
     hosts:
@@ -93,14 +96,14 @@ api:
       cpu: 4000m
       memory: 8Gi
   autoscaling:
-    enabled: false
+    enabled: true
     minReplicas: 3
     maxReplicas: 10
     targetCPUUtilizationPercentage: 70
     targetMemoryUtilizationPercentage: 80
   livenessProbe:
     httpGet:
-      path: /health
+      path: /health/live
       port: 8080
     initialDelaySeconds: 30
     periodSeconds: 10
@@ -109,7 +112,7 @@ api:
     successThreshold: 1
   readinessProbe:
     httpGet:
-      path: /health
+      path: /health/ready
       port: 8080
     initialDelaySeconds: 10
     periodSeconds: 5
@@ -118,7 +121,7 @@ api:
     successThreshold: 1
   startupProbe:
     httpGet:
-      path: /health
+      path: /health/live
       port: 8080
     initialDelaySeconds: 0
     periodSeconds: 5
@@ -128,6 +131,19 @@ api:
   env:
     RUST_LOG: "warn,actix_web_prom=error,semantic_explorer=info"
     HOSTNAME: "0.0.0.0"
+    SHUTDOWN_TIMEOUT_SECS: "30"
+    LOG_FORMAT: "json"
+    # PUBLIC_URL is used for external-facing URLs like OIDC callbacks
+    # Set this to your ingress URL (e.g., https://semantic-explorer.example.com)
+    # PUBLIC_URL: ""
+    DB_MIN_CONNECTIONS: "2"
+    DB_MAX_CONNECTIONS: "20"
+    DB_ACQUIRE_TIMEOUT_SECS: "30"
+    DB_IDLE_TIMEOUT_SECS: "300"
+    DB_MAX_LIFETIME_SECS: "1800"
+    QDRANT_TIMEOUT_SECS: "30"
+    QDRANT_CONNECT_TIMEOUT_SECS: "10"
+    NATS_REPLICAS: "3"
   envFrom: []
   nodeSelector: {}
   tolerations: []
@@ -167,7 +183,7 @@ workerCollections:
   image:
     repository: jofish89/worker-collections
     tag: "latest"
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   statefulset:
     podManagementPolicy: Parallel
     updateStrategy:
@@ -182,7 +198,7 @@ workerCollections:
       cpu: 4000m
       memory: 2Gi
   autoscaling:
-    enabled: false
+    enabled: true
     minReplicas: 2
     maxReplicas: 10
     targetCPUUtilizationPercentage: 70
@@ -191,6 +207,9 @@ workerCollections:
   readinessProbe: {}
   env:
     RUST_LOG: "warn,actix_web_prom=error,worker_collections=info"
+    LOG_FORMAT: "json"
+    NATS_REPLICAS: "3"
+    MAX_CONCURRENT_JOBS: "10"
   envFrom: []
   nodeSelector: {}
   tolerations: []
@@ -217,7 +236,11 @@ workerCollections:
   podAnnotations: {}
   podLabels: {}
   metrics:
-    enabled: false
+    enabled: true
+    serviceMonitor:
+      enabled: false
+      interval: 15s
+      scrapeTimeout: 5s
 
 # Worker Datasets Configuration
 workerDatasets:
@@ -226,7 +249,7 @@ workerDatasets:
   image:
     repository: jofish89/worker-datasets
     tag: "latest"
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   statefulset:
     podManagementPolicy: Parallel
     updateStrategy:
@@ -241,7 +264,7 @@ workerDatasets:
       cpu: 4000m
       memory: 8Gi
   autoscaling:
-    enabled: false
+    enabled: true
     minReplicas: 2
     maxReplicas: 8
     targetCPUUtilizationPercentage: 70
@@ -250,6 +273,9 @@ workerDatasets:
   readinessProbe: {}
   env:
     RUST_LOG: "warn,actix_web_prom=error,worker_datasets=info"
+    LOG_FORMAT: "json"
+    NATS_REPLICAS: "3"
+    MAX_CONCURRENT_JOBS: "10"
   envFrom: []
   nodeSelector: {}
   tolerations: []
@@ -276,7 +302,374 @@ workerDatasets:
   podAnnotations: {}
   podLabels: {}
   metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: false
+      interval: 15s
+      scrapeTimeout: 5s
+
+# Worker Visualizations Configuration (Python)
+workerVisualizationsPy:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: jofish89/worker-visualizations-py
+    tag: "latest"
+    pullPolicy: Always
+  statefulset:
+    podManagementPolicy: Parallel
+    updateStrategy:
+      type: RollingUpdate
+      rollingUpdate:
+        partition: 0
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 4Gi
+    limits:
+      cpu: 4000m
+      memory: 8Gi
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  livenessProbe:
+    httpGet:
+      path: /health/live
+      port: 8081
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+  readinessProbe:
+    httpGet:
+      path: /health/ready
+      port: 8081
+    initialDelaySeconds: 15
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 2
+    successThreshold: 1
+  terminationGracePeriodSeconds: 300  # 5 minutes for in-flight jobs
+  env:
+    LOG_LEVEL: "INFO"
+    LOG_FORMAT: "json"
+    PROCESSING_TIMEOUT_SECS: "3600"
+    MAX_CONCURRENT_JOBS: "3"
+    MAX_ACK_PENDING: "10"
+    HEALTH_CHECK_PORT: "8081"
+    NATS_REPLICAS: "3"
+    # Retry settings for stream subscription during startup race conditions
+    NATS_STREAM_RETRY_ATTEMPTS: "30"
+    NATS_STREAM_RETRY_DELAY: "2.0"
+    # Disable numba caching to avoid file locator issues in containers
+    NUMBA_DISABLE_CACHING: "1"
+    NUMBA_CACHE_DIR: "/tmp/numba_cache"
+    # Additional numba settings to prevent caching issues
+    NUMBA_DEBUGINFO: "0"
+    # Pull subscription settings for horizontal scaling
+    NATS_BATCH_SIZE: "1"
+    NATS_FETCH_TIMEOUT: "5.0"
+  envFrom: []
+  nodeSelector: {}
+  tolerations: []
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values:
+                    - worker-visualizations-py
+            topologyKey: kubernetes.io/hostname
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  priorityClassName: ""
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: "sa-semantic-explorer-worker-visualizations-py"
+  podAnnotations: {}
+  podLabels: {}
+  metrics:
     enabled: false
+
+# Embedding Inference API Configuration (GPU-accelerated embeddings and reranking)
+embeddingInferenceApi:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: jofish89/embedding-inference-api
+    tag: "latest"
+    pullPolicy: Always
+  # Security context for running as non-root with GPU access
+  # Note: Container image must be built to run as non-root user
+  securityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+  statefulset:
+    podManagementPolicy: Parallel
+    updateStrategy:
+      type: RollingUpdate
+      rollingUpdate:
+        partition: 0
+  service:
+    type: ClusterIP
+    port: 8090
+    targetPort: 8090
+    annotations: {}
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 8Gi
+      nvidia.com/gpu: 1
+    limits:
+      cpu: 4000m
+      memory: 16Gi
+      nvidia.com/gpu: 1
+  autoscaling:
+    enabled: false  # GPU nodes typically don't benefit from autoscaling
+    minReplicas: 2
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 70
+  livenessProbe:
+    httpGet:
+      path: /health/live
+      port: 8090
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+  readinessProbe:
+    httpGet:
+      path: /health/ready
+      port: 8090
+    initialDelaySeconds: 30
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+    successThreshold: 1
+  startupProbe:
+    httpGet:
+      path: /health/live
+      port: 8090
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 30  # Allow 5 minutes for model loading
+    successThreshold: 1
+  env:
+    RUST_LOG: "warn,inference_api=info"
+    LOG_FORMAT: "json"
+    INFERENCE_HOSTNAME: "0.0.0.0"
+    INFERENCE_PORT: "8090"
+    # GPU/CUDA configuration - let Kubernetes manage device allocation
+    INFERENCE_CUDA_ENABLED: "true"
+    # INFERENCE_CUDA_DEVICE_ID is not set - use CUDA_VISIBLE_DEVICES from k8s
+    INFERENCE_CUDA_MEMORY_LIMIT: "0"  # 0 = no limit
+    INFERENCE_CUDA_GRAPH: "false"
+    # Model configuration
+    INFERENCE_PRELOAD_MODELS: "BAAI/bge-small-en-v1.5,BAAI/bge-reranker-base"
+    INFERENCE_DEFAULT_EMBEDDING_MODEL: "BAAI/bge-small-en-v1.5"
+    INFERENCE_DEFAULT_RERANKER_MODEL: "BAAI/bge-reranker-base"
+    INFERENCE_MAX_BATCH_SIZE: "256"
+    # HuggingFace cache directory - mounted from PVC
+    HF_HOME: "/models"
+    # For airgapped deployments, set HF_ENDPOINT to your Artifactory proxy
+    # HF_ENDPOINT: "https://artifactory.company.com/huggingface"
+  envFrom: []
+  # GPU node selector - adjust labels based on your cluster
+  nodeSelector:
+    nvidia.com/gpu: "true"
+  # Tolerations for GPU nodes if they're tainted
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values:
+                    - embedding-inference-api
+            topologyKey: kubernetes.io/hostname
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  priorityClassName: ""
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: "sa-semantic-explorer-embedding-inference-api"
+  podAnnotations: {}
+  podLabels: {}
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 15s
+      scrapeTimeout: 5s
+  # Persistent volume for model cache
+  persistence:
+    enabled: true
+    storageClass: ""  # Use default storage class or specify
+    accessMode: ReadWriteOnce
+    size: 50Gi  # Adjust based on models you plan to cache
+    mountPath: /models
+    # For ReadWriteMany, models can be shared across pods
+    # For ReadWriteOnce, each pod gets its own cache
+  # Optional: TensorRT cache for optimization
+  tensorrtCache:
+    enabled: false
+    size: 10Gi
+    mountPath: /tensorrt-cache
+
+# LLM Inference API Configuration (GPU-accelerated text generation)
+llmInferenceApi:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: jofish89/llm-inference-api
+    tag: "latest"
+    pullPolicy: Always
+  # Security context for running as non-root with GPU access
+  # Note: Container image must be built to run as non-root user
+  securityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+  statefulset:
+    podManagementPolicy: Parallel
+    updateStrategy:
+      type: RollingUpdate
+      rollingUpdate:
+        partition: 0
+  service:
+    type: ClusterIP
+    port: 8091
+    targetPort: 8091
+    annotations: {}
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 8Gi
+      nvidia.com/gpu: 1
+    limits:
+      cpu: 4000m
+      memory: 16Gi
+      nvidia.com/gpu: 1
+  autoscaling:
+    enabled: false  # GPU nodes typically don't benefit from autoscaling
+    minReplicas: 2
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 70
+  livenessProbe:
+    httpGet:
+      path: /health/live
+      port: 8091
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+  readinessProbe:
+    httpGet:
+      path: /health/ready
+      port: 8091
+    initialDelaySeconds: 30
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+    successThreshold: 1
+  startupProbe:
+    httpGet:
+      path: /health/live
+      port: 8091
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 30  # Allow 5 minutes for model loading
+    successThreshold: 1
+  env:
+    RUST_LOG: "warn,llm_inference_api=info"
+    LOG_FORMAT: "json"
+    LLM_INFERENCE_HOSTNAME: "0.0.0.0"
+    LLM_INFERENCE_PORT: "8091"
+    CORS_ALLOWED_ORIGINS: "*"
+    # Model configuration
+    LLM_ALLOWED_MODELS: "microsoft/Phi-3-mini-4k-instruct-gguf:Phi-3-mini-4k-instruct-q4.gguf@microsoft/Phi-3-mini-4k-instruct"
+    LLM_MAX_CONCURRENT_REQUESTS: "10"
+    LLM_DEFAULT_TEMPERATURE: "0.5"
+    LLM_DEFAULT_TOP_P: "0.9"
+    LLM_DEFAULT_MAX_TOKENS: "512"
+    LLM_MAX_TOKENS_LIMIT: "4096"
+    # HuggingFace cache directory - mounted from PVC
+    HF_HOME: "/models"
+    # Home directory for appuser (used by mistral.rs for ~/.cache/huggingface)
+    HOME: "/home/appuser"
+    # For airgapped deployments, set HF_ENDPOINT to your Artifactory proxy
+    # HF_ENDPOINT: "https://artifactory.company.com/huggingface"
+    SERVICE_NAME: "llm-inference-api"
+  envFrom: []
+  # GPU node selector - adjust labels based on your cluster
+  nodeSelector:
+    nvidia.com/gpu: "true"
+  # Tolerations for GPU nodes if they're tainted
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values:
+                    - llm-inference-api
+            topologyKey: kubernetes.io/hostname
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  priorityClassName: ""
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: "sa-semantic-explorer-llm-inference-api"
+  podAnnotations: {}
+  podLabels: {}
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 15s
+      scrapeTimeout: 5s
+  # Persistent volume for model cache
+  persistence:
+    enabled: true
+    storageClass: ""  # Use default storage class or specify
+    accessMode: ReadWriteOnce
+    size: 100Gi  # LLM models are larger than embedding models
+    mountPath: /models
+    # For ReadWriteMany, models can be shared across pods
+    # For ReadWriteOnce, each pod gets its own cache
 
 # PostgreSQL Configuration (Optional Infrastructure)
 # Disabled by default - configure external.* for production use
@@ -308,20 +701,20 @@ postgresql:
     password: ""  # Generate random if empty
     existingSecret: ""
     secretKeys:
-      userPasswordKey: "password"
+      userPasswordKey: "database-password"
   primary:
     resources:
       requests:
-        cpu: 500m
-        memory: 512Mi
-      limits:
         cpu: 2000m
-        memory: 2Gi
+        memory: 4Gi
+      limits:
+        cpu: 4000m
+        memory: 8Gi
     persistence:
       enabled: true
       storageClass: ""  # Defaults to global.storageClass
       accessMode: ReadWriteOnce
-      size: 20Gi
+      size: 100Gi
     podSecurityContext:
       runAsNonRoot: true
       runAsUser: 999
@@ -352,8 +745,16 @@ postgresql:
         cpu: 500m
         memory: 256Mi
     serviceMonitor:
-      enabled: true
+      enabled: false
       interval: 30s
+  podTemplate:
+    merge:
+      spec:
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          fsGroup: 1000
+          fsGroupChangePolicy: "OnRootMismatch"
 
 # NATS Configuration (Optional Infrastructure)
 # Disabled by default - configure external.* for production use
@@ -364,61 +765,39 @@ nats:
   external:
     enabled: false
     url: ""  # e.g., "nats://nats.example.com:4222"
-    credentials:
-      existingSecret: ""
-      userKey: "username"
-      passwordKey: "password"
-  # Internal NATS deployment
-  image:
-    registry: ""  # Defaults to global.imageRegistry
-    repository: nats
-    tag: "2.10-alpine"
-    pullPolicy: IfNotPresent
-  # Internal NATS configuration
+    existingSecret: ""
+    credentialsKey: "credentials"
+  # Internal NATS deployment (subchart configuration)
   config:
-    jetstream:
-      enabled: true
-      fileStore:
-        maxSize: 10Gi
     cluster:
       enabled: true
       replicas: 3
+    jetstream:
+      enabled: true
+      fileStore:
+        enabled: true
+        dir: /data
+        pvc:
+          enabled: true
+          size: 10Gi
+          storageClassName: ""  # Defaults to global.storageClass
+        maxSize: 10Gi  # Match PVC size
+      memoryStore:
+        enabled: true
+        maxSize: 2Gi
+  container:
+    image:
+      registry: ""  # Defaults to global.imageRegistry
+      repository: nats
+      tag: 2.10-alpine
+      pullPolicy: IfNotPresent
   resources:
     requests:
-      cpu: 1000m
-      memory: 512Mi
+      cpu: 100m
+      memory: 2Gi
     limits:
       cpu: 2000m
-      memory: 2Gi
-  persistence:
-    enabled: true
-    storageClass: ""  # Defaults to global.storageClass
-    accessMode: ReadWriteOnce
-    size: 10Gi
-  service:
-    type: ClusterIP
-    client:
-      port: 4222
-    monitoring:
-      port: 8222
-    cluster:
-      port: 6222
-  podSecurityContext:
-    runAsNonRoot: true
-    runAsUser: 1000
-    fsGroup: 1000
-    fsGroupChangePolicy: "OnRootMismatch"
-  containerSecurityContext:
-    allowPrivilegeEscalation: false
-    capabilities:
-      drop:
-        - ALL
-    readOnlyRootFilesystem: false  # NATS needs writable filesystem for JetStream
-  metrics:
-    enabled: true
-    serviceMonitor:
-      enabled: true
-      interval: 30s
+      memory: 4Gi
 
 # Qdrant Configuration (Optional Infrastructure)
 # Disabled by default - configure external.* for production use
@@ -434,26 +813,33 @@ qdrant:
     apiKeyKey: "api-key"
   # Internal Qdrant deployment
   image:
-    registry: ""  # Defaults to global.imageRegistry
     repository: qdrant/qdrant
-    tag: "latest"
+    # Use "gpu-nvidia-latest" for GPU-accelerated indexing, or "v1.16.3" for CPU-only
+    tag: "v1.16.3"
     pullPolicy: IfNotPresent
   replicaCount: 3
   cluster:
     enabled: true
-  # GPU support
+  # GPU support for accelerated indexing
+  # When enabled, set image.tag to "gpu-nvidia-latest" and configure resources
   gpu:
     enabled: false
     nvidia:
       enabled: false
       count: 1
+    # Environment variable for GPU indexing (QDRANT__GPU__INDEXING=1)
+    indexing: true
   resources:
     requests:
       cpu: 1000m
       memory: 2Gi
+      # Uncomment for GPU mode:
+      # nvidia.com/gpu: 1
     limits:
       cpu: 4000m
       memory: 8Gi
+      # Uncomment for GPU mode:
+      # nvidia.com/gpu: 1
   persistence:
     enabled: true
     storageClass: ""  # Defaults to global.storageClass
@@ -465,11 +851,15 @@ qdrant:
       port: 6333
     grpc:
       port: 6334
+  updateVolumeFsOwnership: false
   podSecurityContext:
     runAsNonRoot: true
     runAsUser: 1000
+    runAsGroup: 1000
     fsGroup: 1000
     fsGroupChangePolicy: "OnRootMismatch"
+    seccompProfile:
+      type: RuntimeDefault
   containerSecurityContext:
     allowPrivilegeEscalation: false
     capabilities:
@@ -479,7 +869,7 @@ qdrant:
   metrics:
     enabled: true
     serviceMonitor:
-      enabled: true
+      enabled: false
       interval: 30s
   nodeSelector: {}
   tolerations: []
@@ -504,10 +894,13 @@ dex:
     pullPolicy: IfNotPresent
   config:
     issuer: ""  # e.g., "https://dex.example.com"
+    # Storage backend - use sqlite3 for namespace-only deployments
+    # Note: kubernetes storage backend requires CRDs (cluster-wide resources)
+    # For production with multi-replica HA, use external DB (postgres/mysql/etcd)
     storage:
-      type: kubernetes
+      type: sqlite3
       config:
-        inCluster: true
+        file: /data/dex.db
     web:
       http: 0.0.0.0:5556
     oauth2:
@@ -558,6 +951,15 @@ dex:
       drop:
         - ALL
     readOnlyRootFilesystem: true
+  env: {}
+  envFrom: []
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: ""
 
 # MinIO (S3-compatible storage) Configuration (Optional Infrastructure)
 # Disabled by default - use S3-compatible storage or enable for development
@@ -624,19 +1026,52 @@ minio:
       drop:
         - ALL
     readOnlyRootFilesystem: false
+  # Auto-create buckets on startup
+  # Note: MinIO subchart has built-in bucket provisioning via 'buckets' config
+  # The initJob below is an optional alternative for custom configurations
+  buckets:
+    - name: semantic-explorer-files
+      policy: none
+      purge: false
+    - name: quickwit
+      policy: none
+      purge: false
+  # Optional: Custom init job for bucket creation (alternative to subchart's built-in)
+  # Enable this if you need custom bucket policies or the subchart provisioning fails
+  initJob:
+    enabled: false  # Set to true to use custom init job instead of subchart's bucket provisioning
 
 # Storage Configuration (S3-compatible)
 # Configure external S3-compatible storage or use MinIO
 storage:
   s3:
-    # Use external S3 or S3-compatible storage (RustFS, MinIO, AWS S3, etc.)
-    endpoint: ""  # e.g., "http://rustfs:9000", "https://s3.amazonaws.com"
+    # Use external S3 or S3-compatible storage (MinIO, AWS S3, etc.)
+    endpoint: ""  # e.g., "http://minio:9000", "https://s3.amazonaws.com"
     region: "us-east-1"
+    bucketName: "semantic-explorer-files"  # S3 bucket name for all collections and files
+    # Force path-style addressing (bucket in URL path instead of subdomain)
+    # Set to true for MinIO, Ceph, and other S3-compatible storage
+    # Set to false for AWS S3 (uses virtual-host style: bucket.s3.region.amazonaws.com)
+    forcePathStyle: false
     accessKeyId: ""
     secretAccessKey: ""
     existingSecret: ""
     accessKeyIdKey: "aws-access-key-id"
     secretAccessKeyKey: "aws-secret-access-key"
+    # File Size Limits (in bytes)
+    # Prevents memory exhaustion and DoS attacks
+    maxDownloadSizeBytes: 104857600   # 100MB default - max file size for API downloads
+    maxUploadSizeBytes: 1073741824    # 1GB default - max file size for uploads
+
+# Encryption Configuration
+# IMPORTANT: Configure master key for production deployments
+encryption:
+  # Master encryption key for API keys at rest (AES-256-GCM)
+  # MUST be a 64-character hex string (256-bit key)
+  # Generate with: openssl rand -hex 32
+  # Example: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a"
+  # Set to empty string to disable (development only, will log warning)
+  masterKey: ""  # Leave empty for development, set for production
 
 # Observability Configuration (Optional Infrastructure)
 observability:
@@ -650,47 +1085,66 @@ observability:
       pullPolicy: IfNotPresent
     resources:
       requests:
-        cpu: 200m
-        memory: 256Mi
+        cpu: 500m
+        memory: 512Mi
       limits:
-        cpu: 1000m
-        memory: 1Gi
+        cpu: 2000m
+        memory: 2Gi
     config:
+      extensions:
+        health_check:
+          endpoint: 0.0.0.0:13133
       receivers:
         otlp:
           protocols:
             grpc:
               endpoint: 0.0.0.0:4317
+              max_recv_msg_size_mib: 100
             http:
               endpoint: 0.0.0.0:4318
       processors:
         batch:
           timeout: 10s
-          send_batch_size: 1024
+          send_batch_size: 128
+          send_batch_max_size: 256
+        memory_limiter:
+          check_interval: 1s
+          limit_mib: 1024
+          spike_limit_mib: 256
       exporters:
         prometheus:
           endpoint: "0.0.0.0:8889"
-        logging:
-          loglevel: info
+        debug:
+          verbosity: detailed
         # Quickwit exporter for traces and logs (when enabled)
         otlp/quickwit:
-          endpoint: "{{ include \"semantic-explorer.quickwit.url\" . }}:7281"
+          endpoint: "{{ include \"semantic-explorer.fullname\" . }}-quickwit:7281"
           tls:
             insecure: true
+          retry_on_failure:
+            enabled: true
+            initial_interval: 5s
+            max_interval: 30s
+            max_elapsed_time: 300s
+          sending_queue:
+            enabled: true
+            num_consumers: 10
+            queue_size: 5000
       service:
+        extensions: [health_check]
         pipelines:
           traces:
             receivers: [otlp]
-            processors: [batch]
-            exporters: [logging, otlp/quickwit]
+            processors: [memory_limiter, batch]
+            exporters: [otlp/quickwit, debug]
           metrics:
             receivers: [otlp]
-            processors: [batch]
-            exporters: [prometheus, logging]
+            processors: [memory_limiter, batch]
+            exporters: [prometheus, debug]
           logs:
             receivers: [otlp]
-            processors: [batch]
-            exporters: [logging, otlp/quickwit]
+            processors: [memory_limiter, batch]
+            exporters: [otlp/quickwit, debug]
     service:
       type: ClusterIP
       ports:
@@ -709,87 +1163,16 @@ observability:
           - ALL
       readOnlyRootFilesystem: true
   
-  # Prometheus
+  # Prometheus configuration
+  # See: https://github.com/prometheus-community/helm-charts/tree/main/charts/prometheus
   prometheus:
-    enabled: false  # Use Prometheus Operator instead
-    # Use existing Prometheus instance
+    enabled: true  # Deploy Prometheus for metrics storage
+    # Use existing Prometheus instance instead
     external:
       enabled: false
       url: ""  # e.g., "http://prometheus.monitoring:9090"
-  
-  # Grafana
-  grafana:
-    enabled: true  # Deploy Grafana for metrics visualization
-    # Use existing Grafana instance
-    external:
-      enabled: false
-      url: ""  # e.g., "http://grafana.monitoring:3000"
-    image:
-      registry: ""  # Defaults to global.imageRegistry
-      repository: grafana/grafana
-      tag: "latest"
-      pullPolicy: IfNotPresent
-    admin:
-      existingSecret: ""
-      userKey: "admin-user"
-      passwordKey: "admin-password"
-      user: "admin"
-      password: ""  # Generate random if empty
-    config:
-      securityAdminUser: "admin"
-      securityAdminPassword: ""  # Use admin.password if empty
-      usersAllowSignUp: false
-      installPlugins: "grafana-clock-panel"
-    datasources:
-      prometheus:
-        enabled: true
-        url: "http://prometheus:9090"
-        isDefault: true
-      quickwitTraces:
-        enabled: true
-      quickwitLogs:
-        enabled: true
-    dashboards:
-      enabled: true
-      # Dashboard files will be mounted from configmaps
-    resources:
-      requests:
-        cpu: 250m
-        memory: 256Mi
-      limits:
-        cpu: 1000m
-        memory: 1Gi
-    persistence:
-      enabled: true
-      storageClass: ""  # Defaults to global.storageClass
-      accessMode: ReadWriteOnce
-      size: 5Gi
-    service:
-      type: ClusterIP
-      port: 3000
-    ingress:
-      enabled: false
-      className: "nginx"
-      annotations: {}
-      hosts:
-        - host: grafana.example.com
-          paths:
-            - path: /
-              pathType: Prefix
-      tls: []
-    podSecurityContext:
-      runAsNonRoot: true
-      runAsUser: 472
-      fsGroup: 472
-      fsGroupChangePolicy: "OnRootMismatch"
-    containerSecurityContext:
-      allowPrivilegeEscalation: false
-      capabilities:
-        drop:
-          - ALL
-      readOnlyRootFilesystem: false
-  
-  # Quickwit (Log aggregation and tracing)
+
+  # Quickwit (Log aggregation and tracing) - our own template, not a subchart
   quickwit:
     enabled: true  # Enable Quickwit for logs and traces
     # Use external Quickwit instance
@@ -802,11 +1185,13 @@ observability:
       repository: quickwit/quickwit
       tag: "latest"
       pullPolicy: IfNotPresent
-    replicaCount: 1
+    replicaCount: 2  # 2 replicas for HA with shared S3 storage
     config:
       enableOtlpEndpoint: true
-      enableJaegerEndpoint: true
       logLevel: "info"
+    # S3 storage configuration (used when minio.enabled=true)
+    storage:
+      bucketName: "quickwit"  # Dedicated bucket for Quickwit metastore and indexes
     resources:
       requests:
         cpu: 500m
@@ -849,7 +1234,209 @@ observability:
     metrics:
       enabled: true
       serviceMonitor:
-        enabled: true
+        enabled: false
         interval: 30s
     nodeSelector: {}
     tolerations: []
+
+# Prometheus subchart configuration (prometheus-community/prometheus)
+prometheus:
+  enabled: true  # Deploy Prometheus for metrics storage
+  # RBAC configuration - disable subchart RBAC, we use our own namespace-scoped Role
+  # See templates/prometheus-rbac.yaml for the namespaced Role/RoleBinding
+  rbac:
+    create: false  # Don't create ClusterRole/ClusterRoleBinding from subchart
+  # Disable service account creation from subchart - we create our own
+  serviceAccounts:
+    server:
+      create: true
+      name: ""  # Uses fullname from subchart
+    pushgateway:
+      create: false
+    alertmanager:
+      create: false
+  # Disable unused components
+  alertmanager:
+    enabled: false
+  prometheus-pushgateway:
+    enabled: false
+  kube-state-metrics:
+    enabled: false
+  prometheus-node-exporter:
+    enabled: false
+  # Server configuration
+  server:
+    retention: "15d"
+    extraArgs:
+      web.enable-remote-write-receiver: ""
+    persistentVolume:
+      enabled: true
+      size: 50Gi
+      storageClass: ""
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 65534
+      runAsGroup: 65534
+      fsGroup: 65534
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+  # Scrape configs using Kubernetes service discovery
+  serverFiles:
+    prometheus.yml:
+      scrape_configs:
+        # Prometheus self-scrape
+        - job_name: prometheus
+          static_configs:
+            - targets:
+                - localhost:9090
+        # OTEL Collector metrics (exports app metrics in Prometheus format)
+        - job_name: otel-collector
+          scrape_interval: 15s
+          kubernetes_sd_configs:
+            - role: endpoints
+              namespaces:
+                own_namespace: true
+          relabel_configs:
+            - source_labels: [__meta_kubernetes_service_name]
+              regex: .*-otel-collector
+              action: keep
+            - source_labels: [__meta_kubernetes_endpoint_port_name]
+              regex: metrics
+              action: keep
+        # API service metrics
+        - job_name: api
+          scrape_interval: 15s
+          kubernetes_sd_configs:
+            - role: endpoints
+              namespaces:
+                own_namespace: true
+          relabel_configs:
+            - source_labels: [__meta_kubernetes_service_name]
+              regex: .*-api
+              action: keep
+            - source_labels: [__meta_kubernetes_endpoint_port_name]
+              regex: http
+              action: keep
+          metrics_path: /metrics
+        # Worker services metrics
+        - job_name: workers
+          scrape_interval: 15s
+          kubernetes_sd_configs:
+            - role: endpoints
+              namespaces:
+                own_namespace: true
+          relabel_configs:
+            - source_labels: [__meta_kubernetes_service_name]
+              regex: .*-worker-.*
+              action: keep
+            - source_labels: [__meta_kubernetes_endpoint_port_name]
+              regex: http
+              action: keep
+          metrics_path: /metrics
+  service:
+    type: ClusterIP
+
+# Grafana subchart configuration (grafana/grafana)
+# See: https://github.com/grafana/helm-charts/tree/main/charts/grafana
+grafana:
+  enabled: true  # Deploy Grafana for metrics visualization
+  # Use existing Grafana instance
+  external:
+    enabled: false
+    url: ""  # e.g., "http://grafana.monitoring:3000"
+  # Grafana subchart configuration
+  image:
+    tag: "11.6.1"
+  adminUser: admin
+  adminPassword: ""  # Generate random if empty
+  # RBAC configuration - use namespaced permissions only
+  rbac:
+    namespaced: true
+  # Disable init container - not needed without persistence
+  initChownData:
+    enabled: false
+  # Sidecar for auto-discovering dashboards from ConfigMaps
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      folder: /tmp/dashboards
+      # Use null to search only the release namespace (namespace-scoped RBAC only)
+      # Setting to ALL requires ClusterRole for cross-namespace access
+      searchNamespace: null
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+    datasources:
+      enabled: true
+      label: grafana_datasource
+      labelValue: "1"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+  # Datasources are provided via ConfigMap with grafana_datasource label
+  # See templates/grafana-datasources-configmap.yaml
+  # Install Quickwit datasource plugin
+  plugins:
+    - quickwit-quickwit-datasource
+  # Dashboards are auto-discovered by the sidecar from ConfigMaps with grafana_dashboard label
+  # No need to configure dashboards here - they're loaded dynamically
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  persistence:
+    enabled: true
+    storageClassName: ""  # Defaults to global.storageClass
+    accessModes:
+      - ReadWriteOnce
+    size: 5Gi
+  service:
+    type: ClusterIP
+    port: 3000
+  ingress:
+    enabled: false
+    ingressClassName: "nginx"
+    annotations: {}
+    hosts:
+      - grafana.example.com
+    tls: []
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 472
+    runAsGroup: 472
+    fsGroup: 472
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: false

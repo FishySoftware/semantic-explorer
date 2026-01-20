@@ -1,41 +1,42 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import ActionMenu from '$lib/components/ActionMenu.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
+	import type { Embedder, PaginatedResponse, ProviderDefaultConfig } from '$lib/types/models';
+	import { toastStore } from '$lib/utils/notifications';
+	import { Table, TableBody, TableBodyCell, TableHead, TableHeadCell } from 'flowbite-svelte';
+	import { onMount } from 'svelte';
+	import { SvelteURLSearchParams } from 'svelte/reactivity';
 
-	interface Embedder {
-		embedder_id: number;
-		name: string;
-		owner: string;
-		provider: string;
-		base_url: string;
-		api_key: string | null;
-		config: Record<string, any>;
-		collection_name: string;
-		created_at: string;
-		updated_at: string;
-	}
+	let { onViewEmbedder: handleViewEmbedder } = $props<{
+		onViewEmbedder?: (_: number) => void;
+	}>();
 
-	type ProviderDefaultConfig = {
-		url: string;
-		models: string[];
-		inputTypes?: string[];
-		embeddingTypes?: string[];
-		truncate?: string[];
-		config: Record<string, any>;
+	const onViewEmbedder = (id: number) => {
+		handleViewEmbedder?.(id);
 	};
 
 	let embedders = $state<Embedder[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+	let totalCount = $state(0);
+	let currentOffset = $state(0);
+	const pageSize = 20;
 	let showCreateForm = $state(false);
 	let editingEmbedder = $state<Embedder | null>(null);
+
+	let searchQuery = $state('');
 
 	let formName = $state('');
 	let formProvider = $state('openai');
 	let formBaseUrl = $state('https://api.openai.com/v1');
 	let formApiKey = $state('');
 	let formConfig = $state('{}');
+	let formBatchSize = $state(100);
+	let formDimensions = $state(1536);
+	let formMaxInputTokens = $state(8191);
+	let formTruncateStrategy = $state('NONE');
+	let formIsPublic = $state(false);
 
 	let testStatus = $state<'idle' | 'testing' | 'success' | 'error'>('idle');
 	let testMessage = $state('');
@@ -49,61 +50,77 @@
 	let customInputType = $state('');
 	let customEmbeddingTypes = $state('');
 	let customTruncate = $state('');
+	let userEditedName = $state(false);
+	let inferenceModels = $state<string[]>([]);
+	let inferenceModelDimensions = $state<Record<string, number>>({});
+	let localModelsForDisplay = $derived([...inferenceModels].sort((a, b) => a.localeCompare(b)));
 
-	const modelDimensions: Record<string, number> = {
-		'text-embedding-3-small': 1536,
-		'text-embedding-3-large': 3072,
-		'text-embedding-ada-002': 1536,
-		'embed-v4.0': 1024,
-		'embed-english-v3.0': 1024,
-		'embed-multilingual-v3.0': 1024,
-		'embed-english-light-v3.0': 384,
-		'embed-multilingual-light-v3.0': 384,
-		'embed-english-v2.0': 4096,
-		'embed-english-light-v2.0': 1024,
-		'embed-multilingual-v2.0': 768,
-		'sentence-transformers/all-MiniLM-L6-v2': 384,
-		'sentence-transformers/all-mpnet-base-v2': 768,
-		'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2': 384,
-		'sentence-transformers/distiluse-base-multilingual-cased-v2': 512,
-		'BAAI/bge-small-en-v1.5': 384,
-		'BAAI/bge-base-en-v1.5': 768,
-		'BAAI/bge-large-en-v1.5': 1024,
-		'thenlper/gte-small': 384,
-		'thenlper/gte-base': 768,
-		'thenlper/gte-large': 1024,
-	};
+	function getProviderDefaults(): Record<string, ProviderDefaultConfig> {
+		const localDefaultModel = localModelsForDisplay[0] || '';
+		const localDefaultDimensions = inferenceModelDimensions[localDefaultModel] || 384;
 
-	const providerDefaults: Record<string, ProviderDefaultConfig> = {
-		openai: {
-			url: 'https://api.openai.com/v1',
-			models: ['text-embedding-3-small', 'text-embedding-3-large', 'text-embedding-ada-002'],
-			config: { model: 'text-embedding-3-small', dimensions: 1536 },
-		},
-		cohere: {
-			url: 'https://api.cohere.com/v2/embed',
-			models: [
-				'embed-v4.0',
-				'embed-english-v3.0',
-				'embed-multilingual-v3.0',
-				'embed-english-light-v3.0',
-				'embed-multilingual-light-v3.0',
-				'embed-english-v2.0',
-				'embed-english-light-v2.0',
-				'embed-multilingual-v2.0',
-			],
-			inputTypes: ['clustering', 'search_document', 'search_query', 'classification', 'image'],
-			embeddingTypes: ['float', 'int8', 'uint8', 'binary', 'ubinary'],
-			truncate: ['NONE', 'START', 'END'],
-			config: {
-				model: 'embed-v4.0',
-				input_type: 'clustering',
-				embedding_types: ['float'],
-				truncate: 'NONE',
-				dimensions: 1024,
+		return {
+			openai: {
+				url: 'https://api.openai.com/v1',
+				models: ['text-embedding-3-small', 'text-embedding-3-large', 'text-embedding-ada-002'],
+				config: { model: 'text-embedding-3-small', dimensions: 1536 },
 			},
-		},
-	};
+			cohere: {
+				url: 'https://api.cohere.com/v2/embed',
+				models: [
+					'embed-v4.0',
+					'embed-english-v3.0',
+					'embed-multilingual-v3.0',
+					'embed-english-light-v3.0',
+					'embed-multilingual-light-v3.0',
+					'embed-english-v2.0',
+					'embed-english-light-v2.0',
+					'embed-multilingual-v2.0',
+				],
+				inputTypes: ['clustering', 'search_document', 'search_query', 'classification', 'image'],
+				embeddingTypes: ['float', 'int8', 'uint8', 'binary', 'ubinary'],
+				truncate: ['NONE', 'START', 'END'],
+				config: {
+					model: 'embed-v4.0',
+					input_type: 'clustering',
+					embedding_types: ['float'],
+					truncate: 'NONE',
+					dimensions: 1024,
+				},
+			},
+			internal: {
+				url: '', // URL is configured on the backend
+				models: localModelsForDisplay,
+				config: { model: localDefaultModel, dimensions: localDefaultDimensions },
+			},
+		};
+	}
+
+	let providerDefaults = $derived(getProviderDefaults());
+
+	async function fetchInferenceModels() {
+		try {
+			const response = await fetch('/api/embedding-inference/models');
+			if (!response.ok) {
+				console.error('Failed to fetch inference models:', response.statusText);
+				return;
+			}
+			const embedderModels: any[] = await response.json();
+
+			// Clear previous models and set new ones
+			inferenceModels = [...new Set(embedderModels.map((m: any) => m.id))].sort();
+			// Build dimensions map
+			const dimMap: Record<string, number> = {};
+			for (const model of embedderModels) {
+				if (model.dimensions) {
+					dimMap[model.id] = model.dimensions;
+				}
+			}
+			inferenceModelDimensions = dimMap;
+		} catch (e) {
+			console.error('Error fetching inference models:', e);
+		}
+	}
 
 	async function testEmbedderConnection() {
 		testMessage = '';
@@ -141,18 +158,8 @@
 						...(config.truncate && { truncate: config.truncate }),
 					}),
 				});
-			} else if (formProvider === 'huggingface') {
-				const model = config.model || 'sentence-transformers/all-MiniLM-L6-v2';
-				response = await fetch(`${formBaseUrl}/pipeline/feature-extraction/${model}`, {
-					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json',
-						...(formApiKey && { Authorization: `Bearer ${formApiKey}` }),
-					},
-					body: JSON.stringify({
-						inputs: testText,
-					}),
-				});
+			} else if (formProvider === 'internal') {
+				return; // Testing internal embedders is not needed
 			} else {
 				testStatus = 'error';
 				testMessage = 'Testing custom providers is not supported. Please save and test manually.';
@@ -184,6 +191,8 @@
 				}
 			} else if (formProvider === 'openai') {
 				embeddingCount = result.data?.length || 0;
+			} else if (formProvider === 'internal') {
+				return; // Testing internal embedders is not needed
 			}
 
 			testMessage = `Connection successful! Generated ${embeddingCount} embedding(s).`;
@@ -193,21 +202,60 @@
 		}
 	}
 
+	function extractSearchParamFromHash() {
+		const hashParts = window.location.hash.split('?');
+		if (hashParts.length > 1) {
+			const urlParams = new SvelteURLSearchParams(hashParts[1]);
+			const nameParam = urlParams.get('name');
+
+			if (nameParam) {
+				searchQuery = nameParam;
+				// Clean up URL after setting search
+				const basePath = hashParts[0];
+				window.history.replaceState(
+					null,
+					'',
+					window.location.pathname + window.location.search + basePath
+				);
+			}
+		}
+	}
+
+	let hasMount = false;
+
 	onMount(() => {
 		fetchEmbedders();
+		fetchInferenceModels();
+		extractSearchParamFromHash();
+		hasMount = true;
+	});
+
+	$effect(() => {
+		// Re-check for search param when hash changes (e.g., after redirect from create)
+		window.location.hash;
+		extractSearchParamFromHash();
 	});
 
 	async function fetchEmbedders() {
 		loading = true;
 		error = null;
 		try {
-			const response = await fetch('/api/embedders');
+			const params = new SvelteURLSearchParams();
+			if (searchQuery.trim()) {
+				params.append('search', searchQuery.trim());
+			}
+			params.append('limit', pageSize.toString());
+			params.append('offset', currentOffset.toString());
+			const url = params.toString() ? `/api/embedders?${params.toString()}` : '/api/embedders';
+			const response = await fetch(url);
 			if (!response.ok) {
 				const errorText = await response.text();
 				console.error('Failed to fetch embedders:', errorText);
 				throw new Error(`Failed to fetch embedders: ${response.status}`);
 			}
-			embedders = await response.json();
+			const data: PaginatedResponse<Embedder> = await response.json();
+			embedders = data.items;
+			totalCount = data.total_count;
 		} catch (e: any) {
 			console.error('Error fetching embedders:', e);
 			error = e.message || 'Failed to load embedders';
@@ -219,27 +267,20 @@
 	function openCreateForm() {
 		editingEmbedder = null;
 		formName = '';
-		formProvider = 'cohere';
+		formProvider = 'internal';
 		formApiKey = '';
+		formIsPublic = false;
 		updateProviderDefaults();
 
 		testStatus = 'idle';
 		testMessage = '';
+		userEditedName = false; // Reset the flag
 		showCreateForm = true;
 	}
 
 	$effect(() => {
-		if (showCreateForm && !editingEmbedder && !formName) {
-			const model = localModel === '__custom__' ? customModel : localModel;
-			if (model) {
-				const cleanModel = model.split('/').pop()?.toLowerCase() || model.toLowerCase();
-				formName = `embedders-${formProvider}-${cleanModel}`;
-			}
-		}
-	});
-
-	$effect(() => {
-		if (showCreateForm && !editingEmbedder && formName.startsWith('embedders-')) {
+		// Only auto-generate name on initial load when creating (not editing)
+		if (showCreateForm && !editingEmbedder && !userEditedName && !formName) {
 			const model = localModel === '__custom__' ? customModel : localModel;
 			if (model) {
 				const cleanModel = model.split('/').pop()?.toLowerCase() || model.toLowerCase();
@@ -255,6 +296,11 @@
 		formBaseUrl = embedder.base_url;
 		formApiKey = embedder.api_key || '';
 		formConfig = JSON.stringify(embedder.config, null, 2);
+		formBatchSize = embedder.batch_size ?? 100;
+		formDimensions = embedder.dimensions ?? 1536;
+		formMaxInputTokens = (embedder as any).max_input_tokens ?? 8191;
+		formTruncateStrategy = (embedder as any).truncate_strategy ?? 'NONE';
+		formIsPublic = embedder.is_public ?? false;
 		try {
 			const cfg = embedder.config || {};
 			const defaults = providerDefaults[formProvider] || {};
@@ -291,7 +337,8 @@
 			} else {
 				customTruncate = '';
 			}
-		} catch {
+		} catch (e) {
+			console.error('Failed to parse embedder config:', e);
 			localModel = '';
 			localInputType = '';
 			localDimensions = null;
@@ -308,11 +355,46 @@
 		if (defaults) {
 			formBaseUrl = defaults.url;
 			formConfig = JSON.stringify(defaults.config, null, 2);
-			localModel = defaults.models?.[0] || '';
+
+			// Reset model selection when switching providers to avoid accumulation
+			if (formProvider === 'internal') {
+				// For internal provider, use the first available inference model
+				localModel = defaults.models?.[0] || '';
+				customModel = '';
+			} else {
+				// For external providers, reset local model and use provider's default model
+				localModel = '';
+				customModel = '';
+				// Update the config with the provider's default model
+				let config: Record<string, any> = {};
+				try {
+					config = JSON.parse(formConfig);
+				} catch {
+					// Ignore parsing errors, use defaults
+					config = { ...defaults.config };
+				}
+				if (defaults.models?.[0]) {
+					config['model'] = defaults.models[0];
+					formConfig = JSON.stringify(config, null, 2);
+				}
+			}
+
 			localInputType = defaults.inputTypes?.[0] || '';
 			localDimensions =
-				defaults.config.dimensions || (localModel && modelDimensions[localModel]) || null;
-			customModel = '';
+				defaults.config.dimensions || (localModel && inferenceModelDimensions[localModel]) || null;
+
+			// Set batch size based on provider
+			if (formProvider === 'openai') {
+				formBatchSize = 2048;
+			} else if (formProvider === 'cohere') {
+				formBatchSize = 96;
+			} else if (formProvider === 'internal') {
+				formBatchSize = 256;
+			} else {
+				formBatchSize = 100;
+			}
+
+			formDimensions = localDimensions ?? 1536;
 			customInputType = '';
 			customEmbeddingTypes = defaults.config.embedding_types
 				? defaults.config.embedding_types.join(', ')
@@ -331,6 +413,11 @@
 				base_url: formBaseUrl,
 				api_key: formApiKey || null,
 				config,
+				batch_size: formBatchSize,
+				dimensions: formDimensions,
+				max_input_tokens: formMaxInputTokens,
+				truncate_strategy: formTruncateStrategy,
+				is_public: formIsPublic,
 			};
 
 			const url = editingEmbedder
@@ -351,6 +438,7 @@
 			}
 
 			showCreateForm = false;
+			toastStore.success(`Embedder ${editingEmbedder ? 'updated' : 'created'} successfully!`);
 			await fetchEmbedders();
 		} catch (e: any) {
 			console.error('Error saving embedder:', e);
@@ -382,6 +470,42 @@
 			error = e.message || 'Failed to delete embedder';
 		}
 	}
+
+	// Refetch when search query changes
+	// Debounce search to avoid spamming API on every keystroke
+	let searchDebounceTimeout: ReturnType<typeof setTimeout> | null = null;
+	let previousSearchQuery = '';
+
+	$effect(() => {
+		// Only trigger fetch if we've mounted and search query actually changed
+		if (hasMount && searchQuery !== previousSearchQuery) {
+			previousSearchQuery = searchQuery;
+			currentOffset = 0; // Reset to first page when searching
+			if (searchDebounceTimeout) {
+				clearTimeout(searchDebounceTimeout);
+			}
+			searchDebounceTimeout = setTimeout(() => {
+				fetchEmbedders();
+			}, 300); // 300ms debounce
+		}
+		return () => {
+			if (searchDebounceTimeout) {
+				clearTimeout(searchDebounceTimeout);
+			}
+		};
+	});
+
+	function goToPreviousPage() {
+		currentOffset = Math.max(0, currentOffset - pageSize);
+		fetchEmbedders();
+	}
+
+	function goToNextPage() {
+		if (currentOffset + pageSize < totalCount) {
+			currentOffset += pageSize;
+			fetchEmbedders();
+		}
+	}
 </script>
 
 <div class="max-w-7xl mx-auto">
@@ -390,13 +514,8 @@
 		description="Provides embedding provider instances that are user-managed. Define OpenAI or Cohere compatible embedders that can be used on dataset transforms to produce vector embeddings for semantic search."
 	/>
 
-	<div class="mb-8 flex justify-between items-center">
-		<div>
-			<h1 class="text-3xl font-bold text-gray-900 dark:text-white">Embedders</h1>
-			<p class="mt-2 text-gray-600 dark:text-gray-400">
-				Manage embedding providers (OpenAI, Cohere, etc.)
-			</p>
-		</div>
+	<div class="flex justify-between items-center mb-4">
+		<h1 class="text-3xl font-bold text-gray-900 dark:text-white">Embedders</h1>
 		<button
 			onclick={() => {
 				if (showCreateForm) {
@@ -408,20 +527,14 @@
 					openCreateForm();
 				}
 			}}
-			class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+			class="btn-primary"
 		>
 			{showCreateForm ? 'Cancel' : 'Create Embedder'}
 		</button>
 	</div>
 
-	{#if error}
-		<div class="mb-4 p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg">
-			{error}
-		</div>
-	{/if}
-
 	{#if showCreateForm}
-		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-4">
 			<h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-4">
 				{editingEmbedder ? 'Edit Embedder' : 'Create New Embedder'}
 			</h2>
@@ -443,6 +556,9 @@
 							id="embedder-name"
 							type="text"
 							bind:value={formName}
+							oninput={() => {
+								userEditedName = true;
+							}}
 							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 							placeholder="My Embedder"
 						/>
@@ -462,28 +578,38 @@
 								disabled={!!editingEmbedder}
 								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white disabled:opacity-50"
 							>
+								<option value="internal">Embedding Inference API</option>
 								<option value="openai">OpenAI</option>
 								<option value="cohere">Cohere</option>
-
-								<option value="custom">Custom</option>
 							</select>
 						</div>
 
-						<div>
-							<label
-								for="embedder-base-url"
-								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+						{#if formProvider === 'internal'}
+							<div
+								class="pt-3 pb-3 mt-2 mb-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg"
 							>
-								Base URL
-							</label>
-							<input
-								id="embedder-base-url"
-								type="text"
-								bind:value={formBaseUrl}
-								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-								placeholder={providerDefaults[formProvider]?.url || ''}
-							/>
-						</div>
+								<p class=" p-2 text-sm text-blue-700 dark:text-blue-300">
+									<strong>Internal Embedding Inference API:</strong>
+									The embedding inference API URL is configured on the server. No API key is required.
+								</p>
+							</div>
+						{:else}
+							<div>
+								<label
+									for="embedder-base-url"
+									class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+								>
+									Base URL
+								</label>
+								<input
+									id="embedder-base-url"
+									type="text"
+									bind:value={formBaseUrl}
+									class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									placeholder={providerDefaults[formProvider]?.url || ''}
+								/>
+							</div>
+						{/if}
 
 						<div>
 							<label
@@ -507,9 +633,11 @@
 									}
 									if (value !== '__custom__') {
 										config['model'] = value;
-										if (modelDimensions[value]) {
-											config['dimensions'] = modelDimensions[value];
-											localDimensions = modelDimensions[value];
+										const dimensions = inferenceModelDimensions[value];
+										if (dimensions) {
+											config['dimensions'] = dimensions;
+											localDimensions = dimensions;
+											formDimensions = dimensions;
 										}
 										formConfig = JSON.stringify(config, null, 2);
 									}
@@ -548,38 +676,80 @@
 
 						<div>
 							<label
+								for="embedder-batch-size"
+								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+							>
+								Batch Size
+							</label>
+							<input
+								id="embedder-batch-size"
+								type="number"
+								bind:value={formBatchSize}
+								min="1"
+								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+								placeholder="e.g., 100"
+							/>
+							<div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+								Number of texts to embed per API call
+							</div>
+						</div>
+						<div>
+							<label
 								for="embedder-dimensions"
 								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
 							>
 								Dimensions
 							</label>
+							<div class="flex gap-2">
+								<input
+									id="embedder-dimensions"
+									type="number"
+									bind:value={formDimensions}
+									min="1"
+									class="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									placeholder="e.g., 384, 768, 1536"
+								/>
+							</div>
+						</div>
+
+						<div>
+							<label
+								for="embedder-max-input-tokens"
+								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+							>
+								Max Input Tokens
+							</label>
 							<input
-								id="embedder-dimensions"
+								id="embedder-max-input-tokens"
 								type="number"
-								bind:value={localDimensions}
-								oninput={(e) => {
-									const value = parseInt((e.target as HTMLInputElement).value);
-									if (!isNaN(value) && value > 0) {
-										localDimensions = value;
-										let config: Record<string, any> = {};
-										try {
-											config = JSON.parse(formConfig);
-										} catch {
-											// Ignore parsing errors, use empty config
-										}
-										config['dimensions'] = value;
-										formConfig = JSON.stringify(config, null, 2);
-									}
-								}}
+								bind:value={formMaxInputTokens}
+								min="1"
 								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-								placeholder="e.g., 384, 768, 1536"
+								placeholder="e.g., 8191"
 							/>
 							<div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-								{#if localModel && localModel !== '__custom__' && modelDimensions[localModel]}
-									Default for {localModel}: {modelDimensions[localModel]}
-								{:else}
-									Enter embedding vector dimensions for this model
-								{/if}
+								Maximum tokens accepted by this embedder model
+							</div>
+						</div>
+
+						<div>
+							<label
+								for="embedder-truncate-strategy"
+								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+							>
+								Truncate Strategy
+							</label>
+							<select
+								id="embedder-truncate-strategy"
+								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+								bind:value={formTruncateStrategy}
+							>
+								<option value="NONE">NONE - Return error if text exceeds max_input_tokens</option>
+								<option value="START">START - Truncate from beginning, keep end</option>
+								<option value="END">END - Truncate from end, keep beginning</option>
+							</select>
+							<div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+								How to handle text longer than max_input_tokens
 							</div>
 						</div>
 
@@ -733,14 +903,18 @@
 								for="embedder-api-key"
 								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
 							>
-								API Key (optional)
+								API Key {formProvider === 'internal'
+									? '(not required for internal embedding inference API)'
+									: '(optional)'}
 							</label>
 							<input
 								id="embedder-api-key"
 								type="password"
+								autocomplete="off"
 								bind:value={formApiKey}
-								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-								placeholder="Optional"
+								disabled={formProvider === 'internal'}
+								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed"
+								placeholder={formProvider === 'internal' ? 'Not required' : 'Optional'}
 							/>
 						</div>
 
@@ -761,9 +935,22 @@
 								})}
 							></textarea>
 						</div>
+
+						<div>
+							<label class="flex items-center gap-2 cursor-pointer">
+								<input
+									type="checkbox"
+									bind:checked={formIsPublic}
+									class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+								/>
+								<span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+									Make this embedder public (visible in marketplace)
+								</span>
+							</label>
+						</div>
 					</div>
 
-					<div class="mt-6 flex flex-col gap-2">
+					<div class="mt-4 flex flex-col gap-2">
 						{#if testStatus === 'success'}
 							<div
 								class="p-2 bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300 rounded text-sm"
@@ -784,16 +971,13 @@
 							</div>
 						{/if}
 						<div class="flex gap-3">
-							<button
-								type="submit"
-								class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-							>
+							<button type="submit" class="btn-primary">
 								{editingEmbedder ? 'Update' : 'Create'}
 							</button>
 							<button
 								type="button"
 								onclick={testEmbedderConnection}
-								class="px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 transition-colors"
+								class="px-4 py-2 bg-yellow-500 hover:bg-yellow-600 text-white font-semibold rounded-lg shadow-md transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:ring-offset-2 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed"
 								disabled={testStatus === 'testing'}
 							>
 								Test Connection
@@ -806,7 +990,7 @@
 									testStatus = 'idle';
 									testMessage = '';
 								}}
-								class="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+								class="btn-secondary"
 							>
 								Cancel
 							</button>
@@ -817,104 +1001,164 @@
 		</div>
 	{/if}
 
+	{#if !showCreateForm && embedders.length > 0}
+		<div class="mb-4">
+			<div class="relative">
+				<input
+					type="text"
+					bind:value={searchQuery}
+					placeholder="Search embedders by name, provider, owner, or URL..."
+					class="w-full px-4 py-2 pl-10 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+				/>
+				<svg
+					class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400"
+					fill="none"
+					stroke="currentColor"
+					viewBox="0 0 24 24"
+				>
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width="2"
+						d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+					/>
+				</svg>
+			</div>
+		</div>
+	{/if}
+
 	{#if loading}
-		<div class="text-center py-12">
-			<div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-			<p class="mt-2 text-gray-600 dark:text-gray-400">Loading embedders...</p>
+		<div class="flex items-center justify-center py-12">
+			<div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+		</div>
+	{:else if error}
+		<div
+			class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4"
+		>
+			<p class="text-red-700 dark:text-red-400">{error}</p>
+			<button
+				onclick={fetchEmbedders}
+				class="mt-2 text-sm text-red-600 dark:text-red-400 hover:underline"
+			>
+				Try again
+			</button>
 		</div>
 	{:else if embedders.length === 0}
-		<div
-			class="text-center py-12 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700"
-		>
-			<p class="text-gray-600 dark:text-gray-400">No embedders configured yet.</p>
-			<p class="text-sm text-gray-500 dark:text-gray-500 mt-1">
-				Create an embedder to start embedding datasets.
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-12 text-center">
+			<p class="text-gray-500 dark:text-gray-400 mb-4">
+				{#if searchQuery.trim()}
+					No embedders match your search
+				{:else}
+					No embedders yet
+				{/if}
 			</p>
+			{#if searchQuery.trim()}
+				<button
+					onclick={() => (searchQuery = '')}
+					class="text-blue-600 dark:text-blue-400 hover:underline"
+				>
+					Clear search
+				</button>
+			{:else}
+				<button
+					onclick={() => openCreateForm()}
+					class="text-blue-600 dark:text-blue-400 hover:underline"
+				>
+					Create your first embedder
+				</button>
+			{/if}
 		</div>
 	{:else}
-		<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-			{#each embedders as embedder (embedder.embedder_id)}
-				<div
-					class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6"
-				>
-					<div class="flex justify-between items-start mb-4">
-						<div class="flex-1">
-							<div class="flex items-center gap-2 mb-1">
-								<h3 class="text-lg font-semibold text-gray-900 dark:text-white">
-									{embedder.name}
-								</h3>
-								<span
-									class="px-2 py-0.5 text-xs font-mono bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300 rounded"
-									title="Embedder ID"
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
+			<Table hoverable striped>
+				<TableHead>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Name</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Provider</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Model</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center"
+						>Dimensions</TableHeadCell
+					>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Owner</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Actions</TableHeadCell>
+				</TableHead>
+				<TableBody>
+					{#each embedders as embedder (embedder.embedder_id)}
+						<tr class="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50">
+							<TableBodyCell class="px-4 py-3">
+								<button
+									onclick={() => onViewEmbedder(embedder.embedder_id)}
+									class="font-semibold text-blue-600 dark:text-blue-400 hover:underline"
 								>
-									#{embedder.embedder_id}
-								</span>
-							</div>
-							<div class="flex gap-2">
+									{embedder.name}
+								</button>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3">
 								<span
-									class="inline-block px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 rounded"
+									class="inline-block px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-sm font-medium"
 								>
 									{embedder.provider}
 								</span>
-							</div>
-						</div>
-						<div class="flex gap-2">
-							<button
-								onclick={() => openEditForm(embedder)}
-								class="p-2 text-gray-600 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400"
-								title="Edit"
-							>
-								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width="2"
-										d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-									/>
-								</svg>
-							</button>
-							<button
-								onclick={() => requestDeleteEmbedder(embedder)}
-								class="p-2 text-gray-600 hover:text-red-600 dark:text-gray-400 dark:hover:text-red-400"
-								title="Delete"
-							>
-								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width="2"
-										d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-									/>
-								</svg>
-							</button>
-						</div>
-					</div>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3">
+								<span class="text-gray-700 dark:text-gray-300 text-sm">
+									{embedder.config?.model ?? 'N/A'}
+								</span>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3 text-center">
+								<span class="text-gray-700 dark:text-gray-300 text-sm font-medium">
+									{embedder.dimensions ?? embedder.config?.dimensions ?? 1536}
+								</span>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3">
+								<span class="text-gray-700 dark:text-gray-300">{embedder.owner}</span>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3 text-center">
+								<ActionMenu
+									actions={[
+										{
+											label: 'View',
+											handler: () => onViewEmbedder(embedder.embedder_id),
+										},
+										{
+											label: 'Edit',
+											handler: () => openEditForm(embedder),
+										},
+										{
+											label: 'Delete',
+											handler: () => requestDeleteEmbedder(embedder),
+											isDangerous: true,
+										},
+									]}
+								/>
+							</TableBodyCell>
+						</tr>
+					{/each}
+				</TableBody>
+			</Table>
 
-					<div class="space-y-2 text-sm">
-						<div>
-							<span class="text-gray-500 dark:text-gray-400">URL:</span>
-							<span class="ml-2 text-gray-900 dark:text-gray-100 break-all"
-								>{embedder.base_url}</span
-							>
-						</div>
-						<div>
-							<span class="text-gray-500 dark:text-gray-400">API Key:</span>
-							<span class="ml-2 text-gray-900 dark:text-gray-100">
-								{embedder.api_key ? '••••••••' : 'Not set'}
-							</span>
-						</div>
-						<div>
-							<span class="text-gray-500 dark:text-gray-400">Config:</span>
-							<pre
-								class="mt-1 p-2 bg-gray-100 dark:bg-gray-900 rounded text-xs overflow-auto">{JSON.stringify(
-									embedder.config,
-									null,
-									2
-								)}</pre>
-						</div>
-					</div>
+			<!-- Pagination Controls -->
+			<div class="mt-6 px-4 pb-4 flex items-center justify-between">
+				<div class="text-sm text-gray-600 dark:text-gray-400">
+					Showing {currentOffset + 1}-{Math.min(currentOffset + pageSize, totalCount)} of {totalCount}
+					embedders
 				</div>
-			{/each}
+				<div class="flex gap-2">
+					<button
+						onclick={goToPreviousPage}
+						disabled={currentOffset === 0}
+						class="px-4 py-2 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100 dark:hover:bg-gray-700"
+					>
+						Previous
+					</button>
+					<button
+						onclick={goToNextPage}
+						disabled={currentOffset + pageSize >= totalCount}
+						class="px-4 py-2 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100 dark:hover:bg-gray-700"
+					>
+						Next
+					</button>
+				</div>
+			</div>
 		</div>
 	{/if}
 </div>

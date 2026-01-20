@@ -21,9 +21,9 @@ spec:
       {{- if semverCompare ">=1.23-0" .Capabilities.KubeVersion.GitVersion }}
       target:
         type: Utilization
-        averageUtilization: {{ .Values.api.autoscaling.targetCPUUtilizationPercentage }}
+        averageUtilization: {{ .Values.api.autoscaling.targetCPUUtilizationPercentage | int }}
       {{- else }}
-      targetAverageUtilization: {{ .Values.api.autoscaling.targetCPUUtilizationPercentage }}
+      targetAverageUtilization: {{ .Values.api.autoscaling.targetCPUUtilizationPercentage | int }}
       {{- end }}
   {{- end }}
   {{- if .Values.api.autoscaling.targetMemoryUtilizationPercentage }}
@@ -33,14 +33,14 @@ spec:
       {{- if semverCompare ">=1.23-0" .Capabilities.KubeVersion.GitVersion }}
       target:
         type: Utilization
-        averageUtilization: {{ .Values.api.autoscaling.targetMemoryUtilizationPercentage }}
+        averageUtilization: {{ .Values.api.autoscaling.targetMemoryUtilizationPercentage | int }}
       {{- else }}
-      targetAverageUtilization: {{ .Values.api.autoscaling.targetMemoryUtilizationPercentage }}
+      targetAverageUtilization: {{ .Values.api.autoscaling.targetMemoryUtilizationPercentage | int }}
       {{- end }}
   {{- end }}
 {{- end }}
----
 {{- if .Values.workerCollections.autoscaling.enabled }}
+---
 apiVersion: {{ include "semantic-explorer.hpa.apiVersion" . }}
 kind: HorizontalPodAutoscaler
 metadata:
@@ -63,9 +63,9 @@ spec:
       {{- if semverCompare ">=1.23-0" .Capabilities.KubeVersion.GitVersion }}
       target:
         type: Utilization
-        averageUtilization: {{ .Values.workerCollections.autoscaling.targetCPUUtilizationPercentage }}
+        averageUtilization: {{ .Values.workerCollections.autoscaling.targetCPUUtilizationPercentage | int }}
       {{- else }}
-      targetAverageUtilization: {{ .Values.workerCollections.autoscaling.targetCPUUtilizationPercentage }}
+      targetAverageUtilization: {{ .Values.workerCollections.autoscaling.targetCPUUtilizationPercentage | int }}
       {{- end }}
   {{- end }}
   {{- if .Values.workerCollections.autoscaling.targetMemoryUtilizationPercentage }}
@@ -75,14 +75,14 @@ spec:
       {{- if semverCompare ">=1.23-0" .Capabilities.KubeVersion.GitVersion }}
       target:
         type: Utilization
-        averageUtilization: {{ .Values.workerCollections.autoscaling.targetMemoryUtilizationPercentage }}
+        averageUtilization: {{ .Values.workerCollections.autoscaling.targetMemoryUtilizationPercentage | int }}
       {{- else }}
-      targetAverageUtilization: {{ .Values.workerCollections.autoscaling.targetMemoryUtilizationPercentage }}
+      targetAverageUtilization: {{ .Values.workerCollections.autoscaling.targetMemoryUtilizationPercentage | int }}
       {{- end }}
   {{- end }}
 {{- end }}
----
 {{- if .Values.workerDatasets.autoscaling.enabled }}
+---
 apiVersion: {{ include "semantic-explorer.hpa.apiVersion" . }}
 kind: HorizontalPodAutoscaler
 metadata:
@@ -105,9 +105,9 @@ spec:
       {{- if semverCompare ">=1.23-0" .Capabilities.KubeVersion.GitVersion }}
       target:
         type: Utilization
-        averageUtilization: {{ .Values.workerDatasets.autoscaling.targetCPUUtilizationPercentage }}
+        averageUtilization: {{ .Values.workerDatasets.autoscaling.targetCPUUtilizationPercentage | int }}
       {{- else }}
-      targetAverageUtilization: {{ .Values.workerDatasets.autoscaling.targetCPUUtilizationPercentage }}
+      targetAverageUtilization: {{ .Values.workerDatasets.autoscaling.targetCPUUtilizationPercentage | int }}
       {{- end }}
   {{- end }}
   {{- if .Values.workerDatasets.autoscaling.targetMemoryUtilizationPercentage }}
@@ -117,9 +117,111 @@ spec:
       {{- if semverCompare ">=1.23-0" .Capabilities.KubeVersion.GitVersion }}
       target:
         type: Utilization
-        averageUtilization: {{ .Values.workerDatasets.autoscaling.targetMemoryUtilizationPercentage }}
+        averageUtilization: {{ .Values.workerDatasets.autoscaling.targetMemoryUtilizationPercentage | int }}
       {{- else }}
-      targetAverageUtilization: {{ .Values.workerDatasets.autoscaling.targetMemoryUtilizationPercentage }}
+      targetAverageUtilization: {{ .Values.workerDatasets.autoscaling.targetMemoryUtilizationPercentage | int }}
+      {{- end }}
+  {{- end }}
+{{- end }}
+{{- if .Values.workerVisualizationsPy.autoscaling.enabled }}
+---
+apiVersion: {{ include "semantic-explorer.hpa.apiVersion" . }}
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-worker-visualizations-py
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.workerVisualizationsPy.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: {{ include "semantic-explorer.fullname" . }}-worker-visualizations-py
+  minReplicas: {{ .Values.workerVisualizationsPy.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.workerVisualizationsPy.autoscaling.maxReplicas }}
+  metrics:
+  {{- if .Values.workerVisualizationsPy.autoscaling.targetCPUUtilizationPercentage }}
+  - type: Resource
+    resource:
+      name: cpu
+      {{- if semverCompare ">=1.23-0" .Capabilities.KubeVersion.GitVersion }}
+      target:
+        type: Utilization
+        averageUtilization: {{ .Values.workerVisualizationsPy.autoscaling.targetCPUUtilizationPercentage | int }}
+      {{- else }}
+      targetAverageUtilization: {{ .Values.workerVisualizationsPy.autoscaling.targetCPUUtilizationPercentage | int }}
+      {{- end }}
+  {{- end }}
+  {{- if .Values.workerVisualizationsPy.autoscaling.targetMemoryUtilizationPercentage }}
+  - type: Resource
+    resource:
+      name: memory
+      {{- if semverCompare ">=1.23-0" .Capabilities.KubeVersion.GitVersion }}
+      target:
+        type: Utilization
+        averageUtilization: {{ .Values.workerVisualizationsPy.autoscaling.targetMemoryUtilizationPercentage | int }}
+      {{- else }}
+      targetAverageUtilization: {{ .Values.workerVisualizationsPy.autoscaling.targetMemoryUtilizationPercentage | int }}
+      {{- end }}
+  {{- end }}
+{{- end }}
+---
+{{- if .Values.embeddingInferenceApi.autoscaling.enabled }}
+apiVersion: {{ include "semantic-explorer.hpa.apiVersion" . }}
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-embedding-inference-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.embeddingInferenceApi.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: {{ include "semantic-explorer.fullname" . }}-embedding-inference-api
+  minReplicas: {{ .Values.embeddingInferenceApi.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.embeddingInferenceApi.autoscaling.maxReplicas }}
+  metrics:
+  {{- if .Values.embeddingInferenceApi.autoscaling.targetCPUUtilizationPercentage }}
+  - type: Resource
+    resource:
+      name: cpu
+      {{- if semverCompare ">=1.23-0" .Capabilities.KubeVersion.GitVersion }}
+      target:
+        type: Utilization
+        averageUtilization: {{ .Values.embeddingInferenceApi.autoscaling.targetCPUUtilizationPercentage | int }}
+      {{- else }}
+      targetAverageUtilization: {{ .Values.embeddingInferenceApi.autoscaling.targetCPUUtilizationPercentage | int }}
+      {{- end }}
+  {{- end }}
+{{- end }}
+---
+{{- if .Values.llmInferenceApi.autoscaling.enabled }}
+apiVersion: {{ include "semantic-explorer.hpa.apiVersion" . }}
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-llm-inference-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.llmInferenceApi.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: {{ include "semantic-explorer.fullname" . }}-llm-inference-api
+  minReplicas: {{ .Values.llmInferenceApi.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.llmInferenceApi.autoscaling.maxReplicas }}
+  metrics:
+  {{- if .Values.llmInferenceApi.autoscaling.targetCPUUtilizationPercentage }}
+  - type: Resource
+    resource:
+      name: cpu
+      {{- if semverCompare ">=1.23-0" .Capabilities.KubeVersion.GitVersion }}
+      target:
+        type: Utilization
+        averageUtilization: {{ .Values.llmInferenceApi.autoscaling.targetCPUUtilizationPercentage | int }}
+      {{- else }}
+      targetAverageUtilization: {{ .Values.llmInferenceApi.autoscaling.targetCPUUtilizationPercentage | int }}
       {{- end }}
   {{- end }}
 {{- end }}

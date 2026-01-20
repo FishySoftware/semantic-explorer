@@ -1,19 +1,13 @@
 <script lang="ts">
+	import { Table, TableBody, TableBodyCell, TableHead, TableHeadCell } from 'flowbite-svelte';
 	import { onMount } from 'svelte';
+	import { SvelteURLSearchParams } from 'svelte/reactivity';
+	import ActionMenu from '../components/ActionMenu.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
+	import CreateCollectionTransformModal from '../components/CreateCollectionTransformModal.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
+	import type { Collection, PaginatedCollectionList } from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
-
-	interface Collection {
-		collection_id: number;
-		title: string;
-		details: string | null;
-		owner: string;
-		bucket: string;
-		tags: string[];
-		created_at?: string;
-		updated_at?: string;
-	}
 
 	let { onViewCollection: handleViewCollection } = $props<{
 		onViewCollection: (_: number) => void;
@@ -23,11 +17,21 @@
 		handleViewCollection(id);
 	};
 
+	const onCreateTransform = (collectionId: number) => {
+		selectedCollectionForTransform = collectionId;
+		transformModalOpen = true;
+	};
+
 	let collections = $state<Collection[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+	let totalCount = $state(0);
+	let currentOffset = $state(0);
+	const pageSize = 20;
 
 	let searchQuery = $state('');
+
+	let filteredCollections = $derived(collections);
 
 	let showCreateForm = $state(false);
 	let newTitle = $state('');
@@ -36,8 +40,10 @@
 	let creating = $state(false);
 	let createError = $state<string | null>(null);
 
-	let deleting = $state<number | null>(null);
 	let collectionPendingDelete = $state<Collection | null>(null);
+
+	let transformModalOpen = $state(false);
+	let selectedCollectionForTransform = $state<number | null>(null);
 
 	$effect(() => {
 		if (showCreateForm && !newTitle) {
@@ -52,11 +58,20 @@
 		try {
 			loading = true;
 			error = null;
-			const response = await fetch('/api/collections');
+			const params = new SvelteURLSearchParams();
+			if (searchQuery.trim()) {
+				params.append('search', searchQuery.trim());
+			}
+			params.append('limit', pageSize.toString());
+			params.append('offset', currentOffset.toString());
+			const url = `/api/collections?${params.toString()}`;
+			const response = await fetch(url);
 			if (!response.ok) {
 				throw new Error(`Failed to fetch collections: ${response.statusText}`);
 			}
-			collections = await response.json();
+			const data: PaginatedCollectionList = await response.json();
+			collections = data.collections;
+			totalCount = data.total_count;
 		} catch (e) {
 			const message = formatError(e, 'Failed to fetch collections');
 			error = message;
@@ -104,6 +119,7 @@
 			newTags = '';
 			showCreateForm = false;
 			toastStore.success('Collection created successfully');
+			handleViewCollection(newCollection.collection_id);
 		} catch (e) {
 			const message = formatError(e, 'Failed to create collection');
 			createError = message;
@@ -126,7 +142,6 @@
 		collectionPendingDelete = null;
 
 		try {
-			deleting = target.collection_id;
 			const response = await fetch(`/api/collections/${target.collection_id}`, {
 				method: 'DELETE',
 			});
@@ -139,27 +154,44 @@
 			toastStore.success('Collection deleted');
 		} catch (e) {
 			toastStore.error(formatError(e, 'Failed to delete collection'));
-		} finally {
-			deleting = null;
 		}
 	}
+
+	// Refetch when search query changes
+	// Debounce search to avoid spamming API on every keystroke
+	let searchDebounceTimeout: ReturnType<typeof setTimeout> | null = null;
+	$effect(() => {
+		if (searchQuery !== undefined) {
+			currentOffset = 0; // Reset to first page when searching
+			if (searchDebounceTimeout) {
+				clearTimeout(searchDebounceTimeout);
+			}
+			searchDebounceTimeout = setTimeout(() => {
+				fetchCollections();
+			}, 300); // 300ms debounce
+		}
+		return () => {
+			if (searchDebounceTimeout) {
+				clearTimeout(searchDebounceTimeout);
+			}
+		};
+	});
 
 	onMount(() => {
 		fetchCollections();
 	});
 
-	let filteredCollections = $derived(
-		collections.filter((c) => {
-			if (!searchQuery.trim()) return true;
-			const query = searchQuery.toLowerCase();
-			return (
-				c.title.toLowerCase().includes(query) ||
-				c.details?.toLowerCase().includes(query) ||
-				c.tags.some((tag) => tag.toLowerCase().includes(query)) ||
-				c.owner.toLowerCase().includes(query)
-			);
-		})
-	);
+	function goToPreviousPage() {
+		currentOffset = Math.max(0, currentOffset - pageSize);
+		fetchCollections();
+	}
+
+	function goToNextPage() {
+		if (currentOffset + pageSize < totalCount) {
+			currentOffset += pageSize;
+			fetchCollections();
+		}
+	}
 </script>
 
 <div class="max-w-7xl mx-auto">
@@ -168,18 +200,15 @@
 		description="Organize collections of documents of interest. You can add as many files as you want, up to 1GB per file. Most common content types are supported including Office documents (Word, Excel, PowerPoint), HTML, XML, and raw text files."
 	/>
 
-	<div class="flex justify-between items-center mb-6">
+	<div class="flex justify-between items-center mb-4">
 		<h1 class="text-3xl font-bold text-gray-900 dark:text-white">Collections</h1>
-		<button
-			onclick={() => (showCreateForm = !showCreateForm)}
-			class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-		>
+		<button onclick={() => (showCreateForm = !showCreateForm)} class="btn-primary">
 			{showCreateForm ? 'Cancel' : 'Create Collection'}
 		</button>
 	</div>
 
 	{#if showCreateForm}
-		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-4">
 			<h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-4">
 				Create New Collection
 			</h2>
@@ -246,7 +275,7 @@
 					<button
 						type="submit"
 						disabled={creating}
-						class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+						class="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
 					>
 						{creating ? 'Creating...' : 'Create'}
 					</button>
@@ -259,7 +288,7 @@
 							newTags = '';
 							createError = null;
 						}}
-						class="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+						class="btn-secondary"
 					>
 						Cancel
 					</button>
@@ -268,7 +297,7 @@
 		</div>
 	{/if}
 
-	{#if !showCreateForm && collections.length > 0}
+	{#if !showCreateForm}
 		<div class="mb-4">
 			<div class="relative">
 				<input
@@ -311,7 +340,7 @@
 			</button>
 		</div>
 	{:else if collections.length === 0}
-		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-12 text-center">
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-8 text-center">
 			<p class="text-gray-500 dark:text-gray-400 mb-4">No collections yet</p>
 			<button
 				onclick={() => (showCreateForm = true)}
@@ -321,7 +350,7 @@
 			</button>
 		</div>
 	{:else if filteredCollections.length === 0}
-		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-12 text-center">
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-8 text-center">
 			<p class="text-gray-500 dark:text-gray-400 mb-4">No collections match your search</p>
 			<button
 				onclick={() => (searchQuery = '')}
@@ -331,99 +360,109 @@
 			</button>
 		</div>
 	{:else}
-		<div class="grid gap-4">
-			{#each filteredCollections as collection (collection.collection_id)}
-				<div
-					class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 hover:shadow-lg transition-shadow"
-				>
-					<div class="flex justify-between items-start">
-						<div class="flex-1">
-							<div class="flex items-baseline gap-3 mb-2">
-								<h3 class="text-xl font-semibold text-gray-900 dark:text-white">
-									{collection.title}
-								</h3>
-								<span class="text-sm text-gray-500 dark:text-gray-400">
-									#{collection.collection_id}
-								</span>
-							</div>
-							{#if collection.details}
-								<p class="text-gray-600 dark:text-gray-400 mb-3">
-									{collection.details}
-								</p>
-							{/if}
-							<div class="flex items-center gap-2 flex-wrap">
-								<span
-									class="inline-flex items-center gap-1.5 px-3 py-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full text-sm"
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
+			<Table hoverable striped>
+				<TableHead>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Title</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Files</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Owner</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Tags</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Actions</TableHeadCell>
+				</TableHead>
+				<TableBody>
+					{#each filteredCollections as collection (collection.collection_id)}
+						<tr class="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50">
+							<TableBodyCell class="px-4 py-3">
+								<button
+									onclick={() => onViewCollection(collection.collection_id)}
+									class="font-semibold text-blue-600 dark:text-blue-400 hover:underline"
 								>
-									<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width="2"
-											d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-										></path>
-									</svg>
-									{collection.owner}
-								</span>
-								{#if collection.tags && collection.tags.length > 0}
-									{#each collection.tags as tag (tag)}
-										<span
-											class="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs font-medium"
-										>
-											#{tag}
-										</span>
-									{/each}
-								{/if}
-							</div>
-						</div>
-						<div class="ml-4 flex gap-2">
-							<button
-								onclick={() => onViewCollection(collection.collection_id)}
-								class="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
-								title="Manage files"
-							>
-								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width="2"
-										d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-									></path>
-								</svg>
-								Manage Files
-							</button>
-							<button
-								onclick={() => requestDeleteCollection(collection)}
-								disabled={deleting === collection.collection_id}
-								class="px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-								title="Delete collection"
-							>
-								{#if deleting === collection.collection_id}
-									<span class="animate-spin" role="status" aria-label="Deleting collection">⏳</span
+									{collection.title}
+								</button>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3 text-center">
+								{#if collection.file_count !== undefined && collection.file_count !== null}
+									<span
+										class="inline-block px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded text-sm font-medium"
 									>
-									Deleting...
+										{collection.file_count}
+									</span>
 								{:else}
-									<svg
-										class="w-4 h-4"
-										fill="none"
-										stroke="currentColor"
-										viewBox="0 0 24 24"
-										aria-hidden="true"
-									>
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width="2"
-											d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-										/>
-									</svg>
-									Delete
+									<span class="text-gray-500 dark:text-gray-400">—</span>
 								{/if}
-							</button>
-						</div>
-					</div>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3">
+								<span class="text-gray-700 dark:text-gray-300">{collection.owner}</span>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3">
+								<div class="flex flex-wrap gap-1">
+									{#if collection.tags && collection.tags.length > 0}
+										{#each collection.tags.slice(0, 2) as tag (tag)}
+											<span
+												class="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs font-medium"
+											>
+												#{tag}
+											</span>
+										{/each}
+										{#if collection.tags.length > 2}
+											<span class="text-xs text-gray-500 dark:text-gray-400 px-2 py-1">
+												+{collection.tags.length - 2} more
+											</span>
+										{/if}
+									{/if}
+								</div>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3 text-center">
+								<ActionMenu
+									actions={[
+										{
+											label: 'View Files',
+											handler: () => onViewCollection(collection.collection_id),
+										},
+										...(collection.file_count && collection.file_count > 0
+											? [
+													{
+														label: 'Create Transform',
+														handler: () => onCreateTransform(collection.collection_id),
+													},
+												]
+											: []),
+										{
+											label: 'Delete',
+											handler: () => requestDeleteCollection(collection),
+											isDangerous: true,
+										},
+									]}
+								/>
+							</TableBodyCell>
+						</tr>
+					{/each}
+				</TableBody>
+			</Table>
+
+			<!-- Pagination Controls -->
+			<div class="mt-6 px-4 pb-4 flex items-center justify-between">
+				<div class="text-sm text-gray-600 dark:text-gray-400">
+					Showing {currentOffset + 1}-{Math.min(currentOffset + pageSize, totalCount)} of {totalCount}
+					collections
 				</div>
-			{/each}
+				<div class="flex gap-2">
+					<button
+						onclick={goToPreviousPage}
+						disabled={currentOffset === 0}
+						class="px-4 py-2 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100 dark:hover:bg-gray-700"
+					>
+						Previous
+					</button>
+					<button
+						onclick={goToNextPage}
+						disabled={currentOffset + pageSize >= totalCount}
+						class="px-4 py-2 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100 dark:hover:bg-gray-700"
+					>
+						Next
+					</button>
+				</div>
+			</div>
 		</div>
 	{/if}
 </div>
@@ -438,4 +477,15 @@
 	variant="danger"
 	on:confirm={confirmDeleteCollection}
 	on:cancel={() => (collectionPendingDelete = null)}
+/>
+
+<CreateCollectionTransformModal
+	open={transformModalOpen}
+	collectionId={selectedCollectionForTransform}
+	onSuccess={() => {
+		transformModalOpen = false;
+		selectedCollectionForTransform = null;
+		// Redirect to datasets page to monitor transform progress
+		window.location.hash = '#/datasets';
+	}}
 />

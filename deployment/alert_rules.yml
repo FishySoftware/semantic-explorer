@@ -1,0 +1,449 @@
+# Alert Rules for Semantic Explorer
+# Production-grade alerting for error rates, latency, resource exhaustion, and SLOs
+
+groups:
+  - name: semantic_explorer_alerts
+    interval: 30s
+    rules:
+      # ============================================================================
+      # HTTP REQUEST ALERTS
+      # ============================================================================
+
+      - alert: HighErrorRate
+        expr: |
+          (sum(rate(http_requests_total{status=~"5.."}[5m])) by (service) / 
+           sum(rate(http_requests_total[5m])) by (service)) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+          service: api
+        annotations:
+          summary: "High error rate on {{ $labels.service }}"
+          description: |
+            Error rate is {{ $value | humanizePercentage }} (threshold: 1%)
+            Service: {{ $labels.service }}
+            This indicates application-level errors. Check logs for details.
+
+      - alert: HighLatencyP95
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le, service)) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: "High API latency (p95) on {{ $labels.service }}"
+          description: |
+            P95 latency is {{ $value | humanizeDuration }} (threshold: 500ms)
+            This may indicate database slowness or resource constraints.
+
+      - alert: HighLatencyP99
+        expr: |
+          histogram_quantile(0.99, 
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le, service)) > 1.0
+        for: 5m
+        labels:
+          severity: critical
+          service: api
+        annotations:
+          summary: "Critical API latency (p99) on {{ $labels.service }}"
+          description: |
+            P99 latency is {{ $value | humanizeDuration }} (threshold: 1000ms)
+            Users are experiencing slow responses. Investigate immediately.
+
+      # ============================================================================
+      # DATABASE ALERTS
+      # ============================================================================
+
+      - alert: DatabaseConnectionPoolExhausted
+        expr: |
+          (database_connection_pool_active / database_connection_pool_size) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          service: postgresql
+        annotations:
+          summary: "Database connection pool nearly exhausted"
+          description: |
+            Currently using {{ $value | humanizePercentage }} of pool size.
+            This could indicate a connection leak or high load.
+
+      # NOTE: Replication lag monitoring requires postgres_exporter with replication stats enabled
+      # This alert is a placeholder - enable if using CloudNativePG with monitoring enabled
+      # - alert: DatabaseReplicationLag
+      #   expr: |
+      #     pg_replication_lag_seconds > 10
+      #   for: 2m
+      #   labels:
+      #     severity: warning
+      #     service: postgresql
+      #   annotations:
+      #     summary: "PostgreSQL replication lag detected"
+      #     description: |
+      #       Replica is {{ $value | humanizeDuration }} behind primary.
+      #       High lag may impact read replica availability.
+
+      # NOTE: Slow query monitoring requires log_min_duration_statement configured
+      # This alert monitors high database query duration instead
+      - alert: HighDatabaseQueryDuration
+        expr: |
+          histogram_quantile(0.95, sum(rate(database_query_duration_seconds_bucket[5m])) by (le)) > 1.0
+        for: 5m
+        labels:
+          severity: warning
+          service: postgresql
+        annotations:
+          summary: "High database query duration detected"
+          description: |
+            p95 query duration is {{ $value | humanizeDuration }}.
+            Check for slow queries or missing indexes.
+
+      # NOTE: WAL checkpoint monitoring requires postgres_exporter with wal metrics enabled
+      # This alert is a placeholder - enable if using CloudNativePG with monitoring enabled
+      # - alert: DatabaseCheckpointDelay
+      #   expr: |
+      #     pg_wal_records_pending > 1000000
+      #   for: 10m
+      #   labels:
+      #     severity: warning
+      #     service: postgresql
+      #   annotations:
+      #     summary: "Large number of WAL records pending checkpoint"
+      #     description: |
+      #       {{ $value }} WAL records pending checkpoint.
+      #       Consider tuning checkpoint_timeout or checkpoint_completion_target.
+
+      # ============================================================================
+      #       This reduces cache effectiveness.
+
+      #       Check for network latency or high load.
+
+      # ============================================================================
+      # VECTOR DATABASE (QDRANT) ALERTS
+      # ============================================================================
+
+      # NOTE: Qdrant metrics require Qdrant to expose Prometheus metrics
+      # These alerts are placeholders - enable if using Qdrant with metrics enabled
+      # - alert: QdrantErrorRate
+      #   expr: |
+      #     (sum(rate(qdrant_http_requests_total{status=~"5.."}[5m])) /
+      #      sum(rate(qdrant_http_requests_total[5m]))) > 0.01
+      #   for: 5m
+      #   labels:
+      #     severity: critical
+      #     service: qdrant
+      #   annotations:
+      #     summary: "High error rate in Qdrant"
+      #     description: |
+      #       Vector search operations may be failing.
+
+      # - alert: QdrantHighLatency
+      #   expr: |
+      #     histogram_quantile(0.95,
+      #       sum(rate(qdrant_search_latency_seconds_bucket[5m])) by (le)) > 1.0
+      #   for: 10m
+      #   labels:
+      #     severity: warning
+      #     service: qdrant
+      #   annotations:
+      #     summary: "Slow Qdrant search latency"
+      #     description: |
+      #       p95 search latency is {{ $value | humanizeDuration }}.
+      #       Consider scaling or optimizing indices.
+
+      # Monitor search performance via our custom metrics instead
+      - alert: SearchHighLatency
+        expr: |
+          histogram_quantile(0.95, sum(rate(search_qdrant_query_duration_seconds_bucket[5m])) by (le)) > 1.0
+        for: 10m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: "High Qdrant query latency detected"
+          description: |
+            p95 Qdrant query duration is {{ $value | humanizeDuration }}.
+            Consider scaling vector database or optimizing embeddings.
+
+      # NOTE: Qdrant disk monitoring requires Qdrant to expose disk metrics
+      # This alert is a placeholder - enable if using Qdrant with metrics enabled
+      # - alert: QdrantDiskSpaceWarning
+      #   expr: |
+      #     (qdrant_disk_used_bytes / qdrant_disk_total_bytes) > 0.85
+      #   for: 10m
+      #   labels:
+      #     severity: warning
+      #     service: qdrant
+      #   annotations:
+      #     summary: "Qdrant disk space usage is high"
+      #     description: |
+      #       Disk usage is {{ $value | humanizePercentage }}.
+      #       Vector index growth may be impacting performance.
+
+      # ============================================================================
+      # MESSAGE QUEUE (NATS) ALERTS
+      # ============================================================================
+
+      - alert: NatsQueueBacklog
+        expr: |
+          nats_consumer_pending > 10000
+        for: 5m
+        labels:
+          severity: warning
+          service: nats
+        annotations:
+          summary: "NATS JetStream queue backlog building up"
+          description: |
+            Queue has {{ $value }} pending messages.
+            Workers may be lagging. Check worker processes.
+
+      # NOTE: NATS connection error metrics require nats_exporter with connection stats enabled
+      # This alert is a placeholder - enable if using NATS with monitoring
+      # - alert: NatsConnectionFailures
+      #   expr: |
+      #     increase(nats_connection_errors_total[5m]) > 5
+      #   for: 2m
+      #   labels:
+      #     severity: critical
+      #     service: nats
+      #   annotations:
+      #     summary: "High NATS connection failure rate"
+      #     description: |
+      #       {{ $value }} connection failures in the last 5 minutes.
+      #       Check NATS server availability and network connectivity.
+
+      # NOTE: NATS memory monitoring requires nats_exporter with memory metrics enabled
+      # This alert is a placeholder - enable if using NATS with monitoring
+      # - alert: NatsHighMemory
+      #   expr: |
+      #     (nats_server_memory_bytes / nats_server_memory_max_bytes) > 0.80
+      #   for: 10m
+      #   labels:
+      #     severity: warning
+      #     service: nats
+      #   annotations:
+      #     summary: "NATS server memory usage is high"
+      #     description: |
+      #       Memory usage is {{ $value | humanizePercentage }}.
+      #       Consider increasing max_memory or pruning old messages.
+
+      # ============================================================================
+      # WORKER ALERTS
+      # ============================================================================
+
+      - alert: WorkerCrashed
+        expr: |
+          up{service=~"worker-.*"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: worker
+        annotations:
+          summary: "Worker process {{ $labels.service }} is down"
+          description: |
+            {{ $labels.service }} has not been responding for 2 minutes.
+            Check logs and restart the worker.
+
+      - alert: WorkerHighErrorRate
+        expr: |
+          (sum(rate(worker_job_failures_total[5m])) by (service) /
+           sum(rate(worker_jobs_total[5m])) by (service)) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: worker
+        annotations:
+          summary: "High error rate in {{ $labels.service }}"
+          description: |
+            Job error rate is {{ $value | humanizePercentage }}.
+            Check worker logs for failure reasons.
+
+      - alert: DatasetEmbeddingGenerationSlow
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(dataset_transform_duration_seconds_bucket[5m])) by (le)) > 30.0
+        for: 10m
+        labels:
+          severity: warning
+          service: worker-datasets
+        annotations:
+          summary: "Dataset embedding generation is slow"
+          description: |
+            p95 generation time is {{ $value | humanizeDuration }}.
+            Consider scaling worker instances or optimizing batch size.
+      - alert: CollectionTransformHighFailureRate
+        expr: |
+          (sum(increase(collection_transform_jobs_total{status="failed"}[5m])) /
+           sum(increase(collection_transform_jobs_total[5m]))) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: worker-collections
+        annotations:
+          summary: "High failure rate in collection transform jobs"
+          description: |
+            Failure rate is {{ $value | humanizePercentage }}.
+            Check worker logs for failure details.
+
+      - alert: DatasetTransformHighFailureRate
+        expr: |
+          (sum(increase(dataset_transform_jobs_total{status="failed"}[5m])) /
+           sum(increase(dataset_transform_jobs_total[5m]))) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: worker-datasets
+        annotations:
+          summary: "High failure rate in dataset transform jobs"
+          description: |
+            Failure rate is {{ $value | humanizePercentage }}.
+            Check worker logs for failure details.
+
+      - alert: VisualizationTransformHighFailureRate
+        expr: |
+          (sum(increase(visualization_transform_jobs_total{status="failed"}[5m])) /
+           sum(increase(visualization_transform_jobs_total[5m]))) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: worker-visualizations
+        annotations:
+          summary: "High failure rate in visualization transform jobs"
+          description: |
+            Failure rate is {{ $value | humanizePercentage }}.
+            Check worker logs for failure details.
+      # ============================================================================
+      # COST TRACKING ALERTS
+      # ============================================================================
+      # NOTE: Cost tracking metrics are not currently exposed by the observability module
+      # Enable these alerts if/when cost tracking metrics are added
+
+      # - alert: DailyAPICallCostHigh
+      #   expr: |
+      #     api_calls_cost_daily_usd > 1000
+      #   for: 1h
+      #   labels:
+      #     severity: warning
+      #     business: cost-control
+      #   annotations:
+      #     summary: "Daily API call costs are exceeding $1000"
+      #     description: |
+      #       Current daily cost: ${{ $value | humanize2 }}
+      #       This may indicate unexpected usage or misconfiguration.
+
+      # - alert: LLMCostThresholdExceeded
+      #   expr: |
+      #     (sum(api_calls_cost_by_model_usd) by (model)) > 500
+      #   for: 1h
+      #   labels:
+      #     severity: warning
+      #     business: cost-control
+      #   annotations:
+      #     summary: "LLM costs for {{ $labels.model }} exceed $500"
+      #     description: |
+      #       Current cost: ${{ $value | humanize2 }}
+      #       Consider using cheaper models or caching results.
+
+      # ============================================================================
+      # SLO ALERTS
+      # ============================================================================
+
+      - alert: SLOAvailabilityBreach
+        expr: |
+          (1 - (sum(rate(http_requests_total{status=~"5.."}[30m])) by (service) /
+                 sum(rate(http_requests_total[30m])) by (service))) < 0.999
+        for: 5m
+        labels:
+          severity: critical
+          slo: availability
+        annotations:
+          summary: "Availability SLO breach on {{ $labels.service }}"
+          description: |
+            Current availability: {{ $value | humanizePercentage }}
+            Target: 99.9% SLO
+
+      - alert: SLOLatencyBreach
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(http_request_duration_seconds_bucket[30m])) by (le, service)) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          slo: latency
+        annotations:
+          summary: "Latency SLO breach on {{ $labels.service }}"
+          description: |
+            p95 latency: {{ $value | humanizeDuration }}
+            Target: 500ms
+
+      - alert: SLOErrorRateBreach
+        expr: |
+          (sum(rate(http_requests_total{status=~"5.."}[30m])) by (service) /
+           sum(rate(http_requests_total[30m])) by (service)) > 0.001
+        for: 5m
+        labels:
+          severity: critical
+          slo: errors
+        annotations:
+          summary: "Error rate SLO breach on {{ $labels.service }}"
+          description: |
+            Error rate: {{ $value | humanizePercentage }}
+            Target: 0.1% SLO
+
+      # ============================================================================
+      # INFRASTRUCTURE ALERTS
+      # ============================================================================
+
+      - alert: HighCPUUsage
+        expr: |
+          (1 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])))) > 0.85
+        for: 10m
+        labels:
+          severity: warning
+          infrastructure: compute
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: |
+            CPU usage is {{ $value | humanizePercentage }}.
+            Consider scaling horizontally.
+
+      - alert: HighMemoryUsage
+        expr: |
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.85
+        for: 10m
+        labels:
+          severity: warning
+          infrastructure: memory
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: |
+            Memory usage is {{ $value | humanizePercentage }}.
+            Check for memory leaks or increase instance size.
+
+      - alert: DiskSpaceRunningOut
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.1
+        for: 10m
+        labels:
+          severity: critical
+          infrastructure: storage
+        annotations:
+          summary: "Disk space is running out on {{ $labels.instance }}"
+          description: |
+            Available disk: {{ $value | humanizePercentage }}
+            Free up space or expand disk urgently.
+
+      - alert: NetworkSaturation
+        expr: |
+          (sum(rate(node_network_transmit_bytes_total[5m])) by (instance) /
+           1000000000) > 800  # 800 Mbps threshold
+        for: 10m
+        labels:
+          severity: warning
+          infrastructure: network
+        annotations:
+          summary: "Network interface is becoming saturated on {{ $labels.instance }}"
+          description: |
+            Network throughput: {{ $value | humanize }}bps
+            Check for unexpected traffic or network issues.

@@ -82,6 +82,17 @@ spec:
     - protocol: TCP
       port: 4317
   {{- end }}
+  # Allow MinIO/S3 storage
+  {{- if .Values.minio.enabled }}
+  - to:
+    - podSelector:
+        matchLabels:
+          app: minio
+          release: {{ .Release.Name }}
+    ports:
+    - protocol: TCP
+      port: 9000
+  {{- end }}
   {{- if .Values.networkPolicy.egress.toInternet }}
   # Allow internet access
   - to:
@@ -135,6 +146,17 @@ spec:
     ports:
     - protocol: TCP
       port: 4317
+  {{- end }}
+  # Allow MinIO/S3 storage
+  {{- if .Values.minio.enabled }}
+  - to:
+    - podSelector:
+        matchLabels:
+          app: minio
+          release: {{ .Release.Name }}
+    ports:
+    - protocol: TCP
+      port: 9000
   {{- end }}
   {{- if .Values.networkPolicy.egress.toInternet }}
   # Allow internet access
@@ -199,6 +221,17 @@ spec:
     - protocol: TCP
       port: 4317
   {{- end }}
+  # Allow MinIO/S3 storage
+  {{- if .Values.minio.enabled }}
+  - to:
+    - podSelector:
+        matchLabels:
+          app: minio
+          release: {{ .Release.Name }}
+    ports:
+    - protocol: TCP
+      port: 9000
+  {{- end }}
   {{- if .Values.networkPolicy.egress.toInternet }}
   # Allow internet access
   - to:
@@ -206,5 +239,297 @@ spec:
         cidr: 0.0.0.0/0
         except:
         - 169.254.169.254/32
+  {{- end }}
+{{- if .Values.minio.enabled }}
+---
+# MinIO Network Policy - Allow distributed cluster communication
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-minio
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  podSelector:
+    matchLabels:
+      app: minio
+      release: {{ .Release.Name }}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow MinIO inter-pod communication (distributed mode)
+  - from:
+    - podSelector:
+        matchLabels:
+          app: minio
+          release: {{ .Release.Name }}
+    ports:
+    - protocol: TCP
+      port: 9000
+  # Allow ingress from same namespace (for API, workers, quickwit, etc.)
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ .Release.Namespace }}
+    ports:
+    - protocol: TCP
+      port: 9000
+    - protocol: TCP
+      port: 9001
+  egress:
+  # Allow DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow MinIO inter-pod communication (distributed mode)
+  - to:
+    - podSelector:
+        matchLabels:
+          app: minio
+          release: {{ .Release.Name }}
+    ports:
+    - protocol: TCP
+      port: 9000
+{{- end }}
+{{- if .Values.observability.quickwit.enabled }}
+---
+# Quickwit Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-quickwit
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.quickwit.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "semantic-explorer.quickwit.selectorLabels" . | nindent 6 }}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow ingress from OTEL collector
+  - from:
+    - podSelector:
+        matchLabels:
+          {{- include "semantic-explorer.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: otel-collector
+    ports:
+    - protocol: TCP
+      port: 7281
+  # Allow ingress from same namespace (Grafana, Prometheus)
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ .Release.Namespace }}
+    ports:
+    - protocol: TCP
+      port: 7280
+    - protocol: TCP
+      port: 7281
+  egress:
+  # Allow DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow Quickwit inter-pod communication (clustering)
+  - to:
+    - podSelector:
+        matchLabels:
+          {{- include "semantic-explorer.quickwit.selectorLabels" . | nindent 10 }}
+    ports:
+    - protocol: TCP
+      port: 7280
+    - protocol: TCP
+      port: 7281
+  # Allow MinIO/S3 storage
+  {{- if .Values.minio.enabled }}
+  - to:
+    - podSelector:
+        matchLabels:
+          app: minio
+          release: {{ .Release.Name }}
+    ports:
+    - protocol: TCP
+      port: 9000
+  {{- end }}
+{{- end }}
+{{- if .Values.observability.otelCollector.enabled }}
+---
+# OpenTelemetry Collector Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-otel-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "semantic-explorer.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: otel-collector
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow ingress from same namespace (API, workers send telemetry)
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ .Release.Namespace }}
+    ports:
+    - protocol: TCP
+      port: 4317
+    - protocol: TCP
+      port: 4318
+    - protocol: TCP
+      port: 8889
+  egress:
+  # Allow DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow Quickwit (for exporting traces/logs)
+  {{- if .Values.observability.quickwit.enabled }}
+  - to:
+    - podSelector:
+        matchLabels:
+          {{- include "semantic-explorer.quickwit.selectorLabels" . | nindent 10 }}
+    ports:
+    - protocol: TCP
+      port: 7281
+  {{- end }}
+{{- end }}
+{{- end }}
+---
+{{- if .Values.embeddingInferenceApi.enabled }}
+# Inference API Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-embedding-inference-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.embeddingInferenceApi.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "semantic-explorer.embeddingInferenceApi.selectorLabels" . | nindent 6 }}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow ingress from API and workers
+  - from:
+    - podSelector:
+        matchLabels:
+          {{- include "semantic-explorer.selectorLabels" . | nindent 10 }}
+    ports:
+    - protocol: TCP
+      port: {{ .Values.embeddingInferenceApi.service.targetPort }}
+  egress:
+  # Allow DNS
+  {{- if .Values.networkPolicy.egress.toDns }}
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+  {{- end }}
+  # Allow OpenTelemetry Collector
+  {{- if .Values.observability.otelCollector.enabled }}
+  - to:
+    - podSelector:
+        matchLabels:
+          {{- include "semantic-explorer.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: otel-collector
+    ports:
+    - protocol: TCP
+      port: 4317
+  {{- end }}
+  {{- if .Values.networkPolicy.egress.toInternet }}
+  # Allow internet access for HuggingFace model downloads
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 169.254.169.254/32  # Block AWS metadata
+  {{- end }}
+{{- end }}
+---
+{{- if .Values.llmInferenceApi.enabled }}
+# LLM Inference API Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-llm-inference-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.llmInferenceApi.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "semantic-explorer.llmInferenceApi.selectorLabels" . | nindent 6 }}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow ingress from API and workers
+  - from:
+    - podSelector:
+        matchLabels:
+          {{- include "semantic-explorer.selectorLabels" . | nindent 10 }}
+    ports:
+    - protocol: TCP
+      port: {{ .Values.llmInferenceApi.service.targetPort }}
+  egress:
+  # Allow DNS
+  {{- if .Values.networkPolicy.egress.toDns }}
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+  {{- end }}
+  # Allow OpenTelemetry Collector
+  {{- if .Values.observability.otelCollector.enabled }}
+  - to:
+    - podSelector:
+        matchLabels:
+          {{- include "semantic-explorer.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: otel-collector
+    ports:
+    - protocol: TCP
+      port: 4317
+  {{- end }}
+  {{- if .Values.networkPolicy.egress.toInternet }}
+  # Allow internet access for HuggingFace model downloads
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 169.254.169.254/32  # Block AWS metadata
   {{- end }}
 {{- end }}

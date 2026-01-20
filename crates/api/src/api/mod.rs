@@ -1,8 +1,17 @@
+pub(crate) mod chat;
+pub(crate) mod collection_transforms;
 pub(crate) mod collections;
+pub(crate) mod dataset_transforms;
 pub(crate) mod datasets;
+pub(crate) mod embedded_datasets;
 pub(crate) mod embedders;
+pub(crate) mod embedding_inference;
+pub(crate) mod health;
+pub(crate) mod llm_inference;
+pub(crate) mod llms;
+pub(crate) mod marketplace;
 pub(crate) mod search;
-pub(crate) mod transforms;
+pub(crate) mod visualization_transforms;
 
 use crate::auth::extract_user;
 use actix_files::NamedFile;
@@ -22,11 +31,6 @@ async fn get_current_user(auth: Authenticated) -> impl Responder {
         Ok(user) => HttpResponse::Ok().json(user),
         Err(e) => e,
     }
-}
-
-#[get("/health")]
-pub(crate) async fn health() -> impl Responder {
-    HttpResponse::Ok().body("up".to_string())
 }
 
 #[get("/")]

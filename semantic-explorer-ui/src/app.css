@@ -36,4 +36,166 @@
 	input[type='search']::-webkit-search-cancel-button {
 		display: none;
 	}
+
+	/* Improved focus states for all interactive elements */
+	button:focus-visible,
+	a:focus-visible,
+	input:focus-visible,
+	select:focus-visible,
+	textarea:focus-visible {
+		@apply outline-2 outline-offset-2 outline-blue-500 dark:outline-blue-400;
+	}
+
+	/* Smooth transitions for better UX */
+	button,
+	a,
+	input,
+	select,
+	textarea {
+		@apply transition-colors duration-200;
+	}
+}
+
+@layer utilities {
+	/* High contrast button utilities for CTAs */
+	.btn-primary {
+		@apply bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold py-2 px-4 rounded-lg shadow-md transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed;
+	}
+
+	.dark .btn-primary {
+		@apply bg-blue-500 hover:bg-blue-600 active:bg-blue-700 dark:focus:ring-offset-slate-950;
+	}
+
+	.btn-danger {
+		@apply bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-semibold py-2 px-4 rounded-lg shadow-md transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed;
+	}
+
+	.dark .btn-danger {
+		@apply bg-red-500 hover:bg-red-600 active:bg-red-700 dark:focus:ring-offset-slate-950;
+	}
+
+	.btn-secondary {
+		@apply bg-gray-200 hover:bg-gray-300 active:bg-gray-400 text-gray-900 font-semibold py-2 px-4 rounded-lg shadow-sm transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed;
+	}
+
+	.dark .btn-secondary {
+		@apply bg-gray-700 hover:bg-gray-600 active:bg-gray-500 text-gray-100 dark:focus:ring-offset-slate-950;
+	}
+
+	/* Loading state skeleton */
+	.skeleton {
+		@apply animate-pulse bg-gray-200 dark:bg-gray-700 rounded;
+	}
+
+	/* Card hover effects */
+	.card-hover {
+		@apply hover:shadow-lg dark:hover:shadow-xl transition-shadow duration-200;
+	}
+
+	/* Status indicators */
+	.status-pulse {
+		@apply animate-pulse;
+	}
+
+	.status-dot {
+		@apply inline-block w-2 h-2 rounded-full;
+	}
+
+	/* Better contrast for text */
+	.text-muted {
+		@apply text-gray-600 dark:text-gray-400;
+	}
+
+	.text-subtle {
+		@apply text-gray-500 dark:text-gray-500;
+	}
+
+	/* Improved table styles */
+	.table-striped tbody tr:nth-child(odd) {
+		@apply bg-gray-50 dark:bg-gray-800/50;
+	}
+
+	.table-hover tbody tr:hover {
+		@apply bg-gray-100 dark:bg-gray-700/50 transition-colors duration-150;
+	}
+
+	/* Badge improvements */
+	.badge {
+		@apply inline-block px-2.5 py-0.5 text-xs font-semibold rounded-full;
+	}
+
+	/* Scrollbar styling for webkit browsers */
+	.scrollbar-thin {
+		scrollbar-width: thin;
+		scrollbar-color: rgb(156, 163, 175) rgb(229, 231, 235);
+	}
+
+	.dark .scrollbar-thin {
+		scrollbar-color: rgb(75, 85, 99) rgb(31, 41, 55);
+	}
+
+	.scrollbar-thin::-webkit-scrollbar {
+		@apply w-2;
+	}
+
+	.scrollbar-thin::-webkit-scrollbar-track {
+		@apply bg-gray-100 dark:bg-gray-900;
+	}
+
+	.scrollbar-thin::-webkit-scrollbar-thumb {
+		@apply bg-gray-400 dark:bg-gray-700 rounded-full hover:bg-gray-500 dark:hover:bg-gray-600;
+	}
+
+	/* Improved form styling */
+	.form-input {
+		@apply w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 transition-colors duration-200;
+	}
+
+	.form-label {
+		@apply block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2;
+	}
+}
+
+/* Animations */
+@keyframes fadeIn {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+@keyframes slideInUp {
+	from {
+		transform: translateY(10px);
+		opacity: 0;
+	}
+	to {
+		transform: translateY(0);
+		opacity: 1;
+	}
+}
+
+@keyframes slideInDown {
+	from {
+		transform: translateY(-10px);
+		opacity: 0;
+	}
+	to {
+		transform: translateY(0);
+		opacity: 1;
+	}
+}
+
+.animate-fadeIn {
+	animation: fadeIn 150ms ease-in-out;
+}
+
+.animate-slideInUp {
+	animation: slideInUp 200ms ease-out;
+}
+
+.animate-slideInDown {
+	animation: slideInDown 200ms ease-out;
 }

@@ -1,0 +1,38 @@
+[package]
+name = "llm-inference-api"
+version = "0.1.0"
+edition = "2024"
+authors = ["Jonathan Poisson"]
+readme = "README.md"
+license-file = "LICENSE"
+
+[[bin]]
+name = "llm-inference-api"
+
+[features]
+default = []
+
+[dependencies]
+semantic-explorer-core = { path = "../core" }
+actix-web = { workspace = true }
+actix-cors = { workspace = true }
+actix-web-prom = { workspace = true }
+utoipa = { workspace = true }
+utoipa-actix-web = { workspace = true }
+utoipa-swagger-ui = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+dotenvy = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+once_cell = { workspace = true }
+futures = "0.3.31"
+async-stream = "0.3.6"
+mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs", features = ["cuda", "flash-attn", "cudnn"] }
+
+[lints.clippy]
+enum_glob_use = "deny"
+
+[lints.rust]
+unsafe_code = "forbid"

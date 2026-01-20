@@ -1,0 +1,22 @@
+{{- if .Values.llmInferenceApi.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "semantic-explorer.fullname" . }}-llm-inference-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "semantic-explorer.llmInferenceApi.labels" . | nindent 4 }}
+  {{- with .Values.llmInferenceApi.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.llmInferenceApi.service.type }}
+  ports:
+    - port: {{ .Values.llmInferenceApi.service.port }}
+      targetPort: {{ .Values.llmInferenceApi.service.targetPort }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "semantic-explorer.llmInferenceApi.selectorLabels" . | nindent 4 }}
+{{- end }}

@@ -127,6 +127,31 @@ app.kubernetes.io/component: worker-datasets
 {{- end }}
 
 {{/*
+Worker Visualizations labels
+*/}}
+{{- define "semantic-explorer.workerVisualizations.labels" -}}
+helm.sh/chart: {{ include "semantic-explorer.chart" . }}
+{{ include "semantic-explorer.workerVisualizations.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+app.kubernetes.io/component: worker-visualizations
+{{- with .Values.commonLabels }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{/*
+Worker Visualizations selector labels
+*/}}
+{{- define "semantic-explorer.workerVisualizations.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "semantic-explorer.name" . }}-worker-visualizations
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: worker-visualizations
+{{- end }}
+
+{{/*
 Create the name of the service account to use for API
 */}}
 {{- define "semantic-explorer.api.serviceAccountName" -}}
@@ -156,6 +181,17 @@ Create the name of the service account to use for Worker Datasets
 {{- default (printf "%s-worker-datasets" (include "semantic-explorer.fullname" .)) .Values.workerDatasets.serviceAccount.name }}
 {{- else }}
 {{- default "default" .Values.workerDatasets.serviceAccount.name }}
+{{- end }}
+{{- end }}
+
+{{/*
+Create the name of the service account to use for Worker Visualizations
+*/}}
+{{- define "semantic-explorer.workerVisualizations.serviceAccountName" -}}
+{{- if .Values.workerVisualizations.serviceAccount.create }}
+{{- default (printf "%s-worker-visualizations" (include "semantic-explorer.fullname" .)) .Values.workerVisualizations.serviceAccount.name }}
+{{- else }}
+{{- default "default" .Values.workerVisualizations.serviceAccount.name }}
 {{- end }}
 {{- end }}
 
@@ -205,6 +241,70 @@ Get the full image name for Worker Datasets
 {{- $registry := include "semantic-explorer.imageRegistry" (dict "registry" .Values.workerDatasets.image.registry "global" .Values.global) }}
 {{- $repository := .Values.workerDatasets.image.repository }}
 {{- $tag := .Values.workerDatasets.image.tag | default .Chart.AppVersion }}
+{{- if $registry }}
+{{- printf "%s/%s:%s" $registry $repository $tag }}
+{{- else }}
+{{- printf "%s:%s" $repository $tag }}
+{{- end }}
+{{- end }}
+
+{{/*
+Get the full image name for Worker Visualizations
+*/}}
+{{- define "semantic-explorer.workerVisualizations.image" -}}
+{{- $registry := include "semantic-explorer.imageRegistry" (dict "registry" .Values.workerVisualizations.image.registry "global" .Values.global) }}
+{{- $repository := .Values.workerVisualizations.image.repository }}
+{{- $tag := .Values.workerVisualizations.image.tag | default .Chart.AppVersion }}
+{{- if $registry }}
+{{- printf "%s/%s:%s" $registry $repository $tag }}
+{{- else }}
+{{- printf "%s:%s" $repository $tag }}
+{{- end }}
+{{- end }}
+
+{{/*
+Worker Visualizations Python labels
+*/}}
+{{- define "semantic-explorer.workerVisualizationsPy.labels" -}}
+helm.sh/chart: {{ include "semantic-explorer.chart" . }}
+{{ include "semantic-explorer.workerVisualizationsPy.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+app.kubernetes.io/component: worker-visualizations-py
+{{- with .Values.commonLabels }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{/*
+Worker Visualizations Python selector labels
+*/}}
+{{- define "semantic-explorer.workerVisualizationsPy.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "semantic-explorer.name" . }}-worker-visualizations-py
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: worker-visualizations-py
+{{- end }}
+
+{{/*
+Worker Visualizations Python service account name
+*/}}
+{{- define "semantic-explorer.workerVisualizationsPy.serviceAccountName" -}}
+{{- if .Values.workerVisualizationsPy.serviceAccount.create }}
+{{- default (printf "%s-worker-visualizations-py" (include "semantic-explorer.fullname" .)) .Values.workerVisualizationsPy.serviceAccount.name }}
+{{- else }}
+{{- default "default" .Values.workerVisualizationsPy.serviceAccount.name }}
+{{- end }}
+{{- end }}
+
+{{/*
+Get the full image name for Worker Visualizations Python
+*/}}
+{{- define "semantic-explorer.workerVisualizationsPy.image" -}}
+{{- $registry := include "semantic-explorer.imageRegistry" (dict "registry" .Values.workerVisualizationsPy.image.registry "global" .Values.global) }}
+{{- $repository := .Values.workerVisualizationsPy.image.repository }}
+{{- $tag := .Values.workerVisualizationsPy.image.tag | default .Chart.AppVersion }}
 {{- if $registry }}
 {{- printf "%s/%s:%s" $registry $repository $tag }}
 {{- else }}
@@ -268,13 +368,13 @@ PostgreSQL username
 {{- end }}
 
 {{/*
-NATS URL
+NATS URL (uses subchart naming convention)
 */}}
 {{- define "semantic-explorer.nats.url" -}}
 {{- if .Values.nats.external.enabled }}
 {{- .Values.nats.external.url }}
 {{- else }}
-{{- printf "nats://%s-nats:%d" (include "semantic-explorer.fullname" .) (int .Values.nats.service.client.port | default 4222) }}
+{{- printf "nats://%s-nats:%d" .Release.Name 4222 }}
 {{- end }}
 {{- end }}
 
@@ -362,6 +462,20 @@ OpenTelemetry Collector endpoint
 {{- end }}
 
 {{/*
+OpenTelemetry Collector host
+*/}}
+{{- define "semantic-explorer.otel.host" -}}
+{{- printf "%s-otel-collector" (include "semantic-explorer.fullname" .) }}
+{{- end }}
+
+{{/*
+OpenTelemetry Collector port
+*/}}
+{{- define "semantic-explorer.otel.port" -}}
+{{- .Values.observability.otelCollector.service.ports.otlpGrpc | int }}
+{{- end }}
+
+{{/*
 Return the appropriate apiVersion for HPA
 */}}
 {{- define "semantic-explorer.hpa.apiVersion" -}}
@@ -430,20 +544,6 @@ app.kubernetes.io/component: grafana
 {{- end }}
 
 {{/*
-Grafana image
-*/}}
-{{- define "semantic-explorer.grafana.image" -}}
-{{- $registry := .Values.observability.grafana.image.registry | default .Values.global.imageRegistry }}
-{{- $repository := .Values.observability.grafana.image.repository }}
-{{- $tag := .Values.observability.grafana.image.tag }}
-{{- if $registry }}
-{{- printf "%s/%s:%s" $registry $repository $tag }}
-{{- else }}
-{{- printf "%s:%s" $repository $tag }}
-{{- end }}
-{{- end }}
-
-{{/*
 Storage S3 endpoint
 */}}
 {{- define "semantic-explorer.storage.s3.endpoint" -}}
@@ -455,8 +555,393 @@ Storage S3 endpoint
 {{- end }}
 
 {{/*
+Storage S3 force path style
+Returns "true" if forcePathStyle is enabled or if using MinIO (which requires it)
+*/}}
+{{- define "semantic-explorer.storage.s3.forcePathStyle" -}}
+{{- if .Values.minio.enabled }}
+{{- "true" }}
+{{- else }}
+{{- .Values.storage.s3.forcePathStyle | default false | toString }}
+{{- end }}
+{{- end }}
+
+{{/*
 Storage S3 region
 */}}
 {{- define "semantic-explorer.storage.s3.region" -}}
 {{- .Values.storage.s3.region | default "us-east-1" }}
+{{- end }}
+
+{{/*
+Init container image (secure, non-root busybox)
+*/}}
+{{- define "semantic-explorer.initContainer.image" -}}
+{{- .Values.global.initContainer.image | default "busybox:1.36" }}
+{{- end }}
+
+{{/*
+Init container security context (non-root)
+*/}}
+{{- define "semantic-explorer.initContainer.securityContext" -}}
+runAsNonRoot: true
+runAsUser: 65534
+runAsGroup: 65534
+allowPrivilegeEscalation: false
+readOnlyRootFilesystem: true
+capabilities:
+  drop:
+    - ALL
+seccompProfile:
+  type: RuntimeDefault
+{{- end }}
+
+{{/*
+PostgreSQL host for init container
+*/}}
+{{- define "semantic-explorer.postgresql.hostOnly" -}}
+{{- if .Values.postgresql.external.enabled }}
+{{- .Values.postgresql.external.host }}
+{{- else }}
+{{- printf "%s-postgresql" (include "semantic-explorer.fullname" .) }}
+{{- end }}
+{{- end }}
+
+{{/*
+PostgreSQL port for init container
+*/}}
+{{- define "semantic-explorer.postgresql.portOnly" -}}
+{{- if .Values.postgresql.external.enabled }}
+{{- .Values.postgresql.external.port | default 5432 }}
+{{- else }}
+{{- 5432 }}
+{{- end }}
+{{- end }}
+
+{{/*
+NATS host for init container (subchart naming convention)
+*/}}
+{{- define "semantic-explorer.nats.host" -}}
+{{- if .Values.nats.external.enabled }}
+{{- .Values.nats.external.url | trimPrefix "nats://" | regexFind "^[^:]+" }}
+{{- else }}
+{{- printf "%s-nats" .Release.Name }}
+{{- end }}
+{{- end }}
+
+{{/*
+NATS port for init container
+*/}}
+{{- define "semantic-explorer.nats.port" -}}
+{{- 4222 }}
+{{- end }}
+
+{{/*
+Qdrant host for init container
+*/}}
+{{- define "semantic-explorer.qdrant.host" -}}
+{{- if .Values.qdrant.external.enabled }}
+{{- .Values.qdrant.external.url | trimPrefix "http://" | trimPrefix "https://" | regexFind "^[^:]+" }}
+{{- else }}
+{{- printf "%s-qdrant" .Release.Name }}
+{{- end }}
+{{- end }}
+
+{{/*
+Qdrant port for init container
+*/}}
+{{- define "semantic-explorer.qdrant.port" -}}
+{{- 6334 }}
+{{- end }}
+
+{{/*
+MinIO host for init container
+*/}}
+{{- define "semantic-explorer.minio.host" -}}
+{{- if .Values.minio.enabled }}
+{{- printf "%s-minio" .Release.Name }}
+{{- else }}
+{{- .Values.storage.s3.endpoint | trimPrefix "http://" | trimPrefix "https://" | regexFind "^[^:/]+" }}
+{{- end }}
+{{- end }}
+
+{{/*
+MinIO port for init container
+*/}}
+{{- define "semantic-explorer.minio.port" -}}
+{{- if .Values.minio.enabled }}
+{{- .Values.minio.service.port | default 9000 }}
+{{- else }}
+{{- 9000 }}
+{{- end }}
+{{- end }}
+
+{{/*
+Quickwit headless service name
+*/}}
+{{- define "semantic-explorer.quickwit.headlessService" -}}
+{{- printf "%s-quickwit-headless" (include "semantic-explorer.fullname" .) }}
+{{- end }}
+
+{{/*
+Quickwit peer seeds for clustering (generates comma-separated list of peer addresses)
+*/}}
+{{- define "semantic-explorer.quickwit.peerSeeds" -}}
+{{- $fullname := include "semantic-explorer.fullname" . -}}
+{{- $headless := include "semantic-explorer.quickwit.headlessService" . -}}
+{{- $replicas := int (.Values.observability.quickwit.replicaCount | default 2) -}}
+{{- $port := int (.Values.observability.quickwit.service.rest.port | default 7280) -}}
+{{- $seeds := list -}}
+{{- range $i := until $replicas -}}
+{{- $seeds = append $seeds (printf "%s-quickwit-%d.%s:%d" $fullname $i $headless $port) -}}
+{{- end -}}
+{{- join "," $seeds -}}
+{{- end }}
+
+{{/*
+Quickwit host for init container
+*/}}
+{{- define "semantic-explorer.quickwit.host" -}}
+{{- if .Values.observability.quickwit.external.enabled }}
+{{- .Values.observability.quickwit.external.url | trimPrefix "http://" | trimPrefix "https://" | regexFind "^[^:/]+" }}
+{{- else }}
+{{- printf "%s-quickwit" (include "semantic-explorer.fullname" .) }}
+{{- end }}
+{{- end }}
+
+{{/*
+Quickwit gRPC port for init container
+*/}}
+{{- define "semantic-explorer.quickwit.grpcPort" -}}
+{{- .Values.observability.quickwit.service.grpc.port | default 7281 }}
+{{- end }}
+{{/*
+Inference API labels
+*/}}
+{{- define "semantic-explorer.embeddingInferenceApi.labels" -}}
+helm.sh/chart: {{ include "semantic-explorer.chart" . }}
+{{ include "semantic-explorer.embeddingInferenceApi.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+app.kubernetes.io/component: embedding-inference-api
+{{- with .Values.commonLabels }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{/*
+Inference API selector labels
+*/}}
+{{- define "semantic-explorer.embeddingInferenceApi.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "semantic-explorer.name" . }}-embedding-inference-api
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: embedding-inference-api
+{{- end }}
+
+{{/*
+Inference API service account name
+*/}}
+{{- define "semantic-explorer.embeddingInferenceApi.serviceAccountName" -}}
+{{- if .Values.embeddingInferenceApi.serviceAccount.create }}
+{{- default (printf "%s-embedding-inference-api" (include "semantic-explorer.fullname" .)) .Values.embeddingInferenceApi.serviceAccount.name }}
+{{- else }}
+{{- default "default" .Values.embeddingInferenceApi.serviceAccount.name }}
+{{- end }}
+{{- end }}
+
+{{/*
+Inference API image
+*/}}
+{{- define "semantic-explorer.embeddingInferenceApi.image" -}}
+{{- $registry := include "semantic-explorer.imageRegistry" (dict "registry" .Values.embeddingInferenceApi.image.registry "global" .Values.global) }}
+{{- $repository := .Values.embeddingInferenceApi.image.repository }}
+{{- $tag := .Values.embeddingInferenceApi.image.tag | default .Chart.AppVersion }}
+{{- if $registry }}
+{{- printf "%s/%s:%s" $registry $repository $tag }}
+{{- else }}
+{{- printf "%s:%s" $repository $tag }}
+{{- end }}
+{{- end }}
+{{/*
+==================================================================================
+LLM Inference API Helpers
+==================================================================================
+*/}}
+
+{{/*
+LLM Inference API labels
+*/}}
+{{- define "semantic-explorer.llmInferenceApi.labels" -}}
+helm.sh/chart: {{ include "semantic-explorer.chart" . }}
+{{ include "semantic-explorer.llmInferenceApi.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+app.kubernetes.io/component: llm-inference-api
+{{- with .Values.commonLabels }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{/*
+LLM Inference API selector labels
+*/}}
+{{- define "semantic-explorer.llmInferenceApi.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "semantic-explorer.name" . }}-llm-inference-api
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: llm-inference-api
+{{- end }}
+
+{{/*
+LLM Inference API service account name
+*/}}
+{{- define "semantic-explorer.llmInferenceApi.serviceAccountName" -}}
+{{- if .Values.llmInferenceApi.serviceAccount.create }}
+{{- default (printf "%s-llm-inference-api" (include "semantic-explorer.fullname" .)) .Values.llmInferenceApi.serviceAccount.name }}
+{{- else }}
+{{- default "default" .Values.llmInferenceApi.serviceAccount.name }}
+{{- end }}
+{{- end }}
+
+{{/*
+LLM Inference API image
+*/}}
+{{- define "semantic-explorer.llmInferenceApi.image" -}}
+{{- $registry := include "semantic-explorer.imageRegistry" (dict "registry" .Values.llmInferenceApi.image.registry "global" .Values.global) }}
+{{- $repository := .Values.llmInferenceApi.image.repository }}
+{{- $tag := .Values.llmInferenceApi.image.tag | default .Chart.AppVersion }}
+{{- if $registry }}
+{{- printf "%s/%s:%s" $registry $repository $tag }}
+{{- else }}
+{{- printf "%s:%s" $repository $tag }}
+{{- end }}
+{{- end }}
+
+{{/*
+==================================================================================
+Dex (OIDC Provider) Helpers
+==================================================================================
+*/}}
+
+{{/*
+Dex labels
+*/}}
+{{- define "semantic-explorer.dex.labels" -}}
+helm.sh/chart: {{ include "semantic-explorer.chart" . }}
+{{ include "semantic-explorer.dex.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+app.kubernetes.io/component: dex
+{{- with .Values.commonLabels }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{/*
+Dex selector labels
+*/}}
+{{- define "semantic-explorer.dex.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "semantic-explorer.name" . }}-dex
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: dex
+{{- end }}
+
+{{/*
+Dex service account name
+*/}}
+{{- define "semantic-explorer.dex.serviceAccountName" -}}
+{{- default (printf "%s-dex" (include "semantic-explorer.fullname" .)) .Values.dex.serviceAccount.name | default "default" }}
+{{- end }}
+
+{{/*
+Dex image
+*/}}
+{{- define "semantic-explorer.dex.image" -}}
+{{- $registry := .Values.dex.image.registry | default .Values.global.imageRegistry }}
+{{- $repository := .Values.dex.image.repository }}
+{{- $tag := .Values.dex.image.tag }}
+{{- if $registry }}
+{{- printf "%s/%s:%s" $registry $repository $tag }}
+{{- else }}
+{{- printf "%s:%s" $repository $tag }}
+{{- end }}
+{{- end }}
+
+{{/*
+Dex host (for init container dependencies)
+*/}}
+{{- define "semantic-explorer.dex.host" -}}
+{{- if .Values.dex.external.enabled }}
+{{- .Values.dex.external.issuerUrl | trimPrefix "http://" | trimPrefix "https://" | regexFind "^[^:/]+" }}
+{{- else }}
+{{- printf "%s-dex" (include "semantic-explorer.fullname" .) }}
+{{- end }}
+{{- end }}
+
+{{/*
+Dex port (for init container dependencies)
+*/}}
+{{- define "semantic-explorer.dex.port" -}}
+{{- .Values.dex.service.port | default 5556 }}
+{{- end }}
+
+{{/*
+==================================================================================
+Inference API URL Helpers
+==================================================================================
+*/}}
+
+{{/*
+Embedding Inference API URL
+*/}}
+{{- define "semantic-explorer.embeddingInferenceApi.url" -}}
+{{- if .Values.embeddingInferenceApi.enabled }}
+{{- printf "http://%s-embedding-inference-api:%d" (include "semantic-explorer.fullname" .) (int .Values.embeddingInferenceApi.service.port) }}
+{{- else }}
+{{- "" }}
+{{- end }}
+{{- end }}
+
+{{/*
+Embedding Inference API host (for init container)
+*/}}
+{{- define "semantic-explorer.embeddingInferenceApi.host" -}}
+{{- printf "%s-embedding-inference-api" (include "semantic-explorer.fullname" .) }}
+{{- end }}
+
+{{/*
+Embedding Inference API port (for init container)
+*/}}
+{{- define "semantic-explorer.embeddingInferenceApi.port" -}}
+{{- .Values.embeddingInferenceApi.service.port | default 8090 }}
+{{- end }}
+
+{{/*
+LLM Inference API URL
+*/}}
+{{- define "semantic-explorer.llmInferenceApi.url" -}}
+{{- if .Values.llmInferenceApi.enabled }}
+{{- printf "http://%s-llm-inference-api:%d" (include "semantic-explorer.fullname" .) (int .Values.llmInferenceApi.service.port) }}
+{{- else }}
+{{- "" }}
+{{- end }}
+{{- end }}
+
+{{/*
+LLM Inference API host (for init container)
+*/}}
+{{- define "semantic-explorer.llmInferenceApi.host" -}}
+{{- printf "%s-llm-inference-api" (include "semantic-explorer.fullname" .) }}
+{{- end }}
+
+{{/*
+LLM Inference API port (for init container)
+*/}}
+{{- define "semantic-explorer.llmInferenceApi.port" -}}
+{{- .Values.llmInferenceApi.service.port | default 8091 }}
 {{- end }}

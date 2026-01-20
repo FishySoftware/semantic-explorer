@@ -1,0 +1,52 @@
+# Rust build artifacts
+target/
+**/target/
+**/*.rs.bk
+**/Cargo.lock.bk
+
+# Node.js / Svelte artifacts
+node_modules/
+**/node_modules/
+**/dist/
+**/build/
+**/.svelte-kit/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Docker
+**/Dockerfile
+**/.dockerignore
+
+# Environment and secrets
+.env
+.env.*
+**/.env
+**/.env.*
+
+# IDE and editor files
+.vscode/
+.idea/
+**/*.swp
+**/*.swo
+**/*~
+**/.DS_Store
+
+# Documentation and non-essential files
+*.md
+!README.md
+LICENSE
+
+# Deployment files (not needed in images)
+deployment/
+helm/
+
+# Test and coverage artifacts
+**/coverage/
+**/.pytest_cache/
+**/.coverage
+
+**/.fastembed_cache
+**/.onnxruntime-cuda

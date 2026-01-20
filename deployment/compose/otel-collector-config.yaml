@@ -3,6 +3,7 @@ receivers:
     protocols:
       grpc:
         endpoint: 0.0.0.0:4317
+        max_recv_msg_size_mib: 100  # Increase max message size to 10MB to handle large batches
       http:
         endpoint: 0.0.0.0:4318
 
@@ -54,12 +55,14 @@ receivers:
 
 processors:
   batch:
-    timeout: 10s
-    send_batch_size: 1024
+    timeout: 10s         # Increase timeout to batch more efficiently
+    send_batch_size: 128  # Reduce batch size to prevent memory buildup
+    send_batch_max_size: 256  # Lower max batch size
   
   memory_limiter:
     check_interval: 1s
-    limit_mib: 512
+    limit_mib: 1024      # Increase from 512 to 1024 MiB
+    spike_limit_mib: 256 # Allow 256 MiB temporary spikes
   
   resource:
     attributes:
@@ -77,24 +80,27 @@ processors:
 
 exporters:
   otlp/quickwit-logs:
-    endpoint: localhost:7281
+    endpoint: quickwit:7281
     tls:
       insecure: true
     
   otlp/quickwit-traces:
-    endpoint: localhost:7281
+    endpoint: quickwit:7281
     tls:
       insecure: true
 
   prometheusremotewrite:
-    endpoint: http://localhost:9090/api/v1/write
+    endpoint: http://prometheus:9090/api/v1/write
     tls:
       insecure: true
 
+  # Debug exporter - logs all telemetry data to stdout for troubleshooting.
+  # View with: docker compose logs -f otel-collector
+  # Increase sampling_initial for more visibility during debugging.
   debug:
     verbosity: detailed
-    sampling_initial: 5
-    sampling_thereafter: 200
+    sampling_initial: 100
+    sampling_thereafter: 500
 
   prometheus:
     endpoint: 0.0.0.0:8889
