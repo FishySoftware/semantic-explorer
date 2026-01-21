@@ -48,6 +48,12 @@ pub(crate) async fn upload_document(
     let duration = start.elapsed().as_secs_f64();
     let success = result.is_ok();
     record_storage_operation("upload", duration, Some(file_size), success);
+    semantic_explorer_core::observability::record_storage_upload(
+        bucket_name,
+        duration,
+        Some(file_size),
+        success,
+    );
 
     match &result {
         Ok(_) => {
@@ -172,6 +178,7 @@ pub(crate) async fn list_files(
 
     let duration = start.elapsed().as_secs_f64();
     record_storage_operation("list", duration, None, true);
+    semantic_explorer_core::observability::record_storage_list(bucket_name, duration, true);
 
     tracing::debug!(
         bucket = %bucket_name,
@@ -222,6 +229,12 @@ pub(crate) async fn get_file(
 
             let duration = start.elapsed().as_secs_f64();
             record_storage_operation("download", duration, Some(file_size), true);
+            semantic_explorer_core::observability::record_storage_download(
+                bucket_name,
+                duration,
+                Some(file_size),
+                true,
+            );
 
             tracing::debug!(
                 bucket = %bucket_name,
@@ -237,6 +250,12 @@ pub(crate) async fn get_file(
         Err(e) => {
             let duration = start.elapsed().as_secs_f64();
             record_storage_operation("download", duration, None, false);
+            semantic_explorer_core::observability::record_storage_download(
+                bucket_name,
+                duration,
+                None,
+                false,
+            );
 
             tracing::error!(
                 bucket = %bucket_name,
@@ -327,6 +346,7 @@ pub(crate) async fn delete_file(
     let duration = start.elapsed().as_secs_f64();
     let success = result.is_ok();
     record_storage_operation("delete", duration, None, success);
+    semantic_explorer_core::observability::record_storage_delete(bucket_name, duration, success);
 
     match &result {
         Ok(_) => {

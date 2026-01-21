@@ -44,61 +44,63 @@ DATAMAPPLOT_JS_CACHE = "datamapplot_js_encoded.json"
 def _find_cache_file(filename: str) -> Optional[str]:
     """
     Find datamapplot cache file in known locations.
-    
+
     datamapplot uses platformdirs.user_data_dir() which resolves to:
     - Linux: ~/.local/share/datamapplot
     - macOS: ~/Library/Application Support/datamapplot
     - Windows: C:\\Users\\<user>\\AppData\\Local\\datamapplot
-    
+
     Searches in order of preference:
     1. XDG_DATA_HOME/datamapplot (Linux standard, set in Docker)
     2. HOME/.local/share/datamapplot (Linux default)
     3. /home/appuser/.local/share/datamapplot (Docker appuser)
     4. platformdirs user_data_dir (datamapplot's actual default)
-    
+
     Returns:
         Path to cache file if found, None otherwise
     """
     import platformdirs
     from pathlib import Path
-    
+
     search_paths = []
-    
+
     # 1. XDG_DATA_HOME (set in Dockerfile) - this is what platformdirs uses on Linux
     xdg_data = os.environ.get("XDG_DATA_HOME")
     if xdg_data:
         search_paths.append(Path(xdg_data) / "datamapplot" / filename)
-    
+
     # 2. HOME/.local/share/datamapplot (Linux default)
     home = os.environ.get("HOME")
     if home:
         search_paths.append(Path(home) / ".local" / "share" / "datamapplot" / filename)
-    
+
     # 3. Hard-coded Docker appuser path
     search_paths.append(Path("/home/appuser/.local/share/datamapplot") / filename)
-    
+
     # 4. platformdirs default (what datamapplot uses internally)
     try:
         data_dir = platformdirs.user_data_dir("datamapplot")
         search_paths.append(Path(data_dir) / filename)
     except Exception:
         pass
-    
+
     # 5. Also check XDG_CACHE_HOME for backwards compatibility
     xdg_cache = os.environ.get("XDG_CACHE_HOME")
     if xdg_cache:
         search_paths.append(Path(xdg_cache) / "datamapplot" / filename)
-    
+
     # 6. HOME/.cache/datamapplot for backwards compatibility
     if home:
         search_paths.append(Path(home) / ".cache" / "datamapplot" / filename)
-    
+
     for path in search_paths:
         if path.exists() and path.is_file():
             logger.debug(f"Found cache file at: {path}")
             return str(path)
-    
-    logger.warning(f"Cache file {filename} not found in any of: {[str(p) for p in search_paths]}")
+
+    logger.warning(
+        f"Cache file {filename} not found in any of: {[str(p) for p in search_paths]}"
+    )
     return None
 
 
@@ -116,57 +118,59 @@ class VisualizationProcessor:
         logger.info(
             f"Initialized Async Qdrant client in {init_elapsed:.3f}s: {grpc_url}"
         )
-        
+
         # Pre-locate cache files for offline mode
         self._font_cache_path = _find_cache_file(DATAMAPPLOT_FONTS_CACHE)
         self._js_cache_path = _find_cache_file(DATAMAPPLOT_JS_CACHE)
-        
+
         if self._font_cache_path:
             logger.info(f"Datamapplot font cache: {self._font_cache_path}")
         else:
-            logger.warning("Datamapplot font cache not found - will attempt to use fallback fonts")
-            
+            logger.warning(
+                "Datamapplot font cache not found - will attempt to use fallback fonts"
+            )
+
         if self._js_cache_path:
             logger.info(f"Datamapplot JS cache: {self._js_cache_path}")
         else:
             logger.warning("Datamapplot JS cache not found - offline mode may fail")
-        
+
         # Track if we've already patched requests
         self._requests_patched = False
 
     def _get_font_cache_path(self) -> Optional[str]:
         """Get path to datamapplot font cache file."""
         return self._font_cache_path
-    
+
     def _get_js_cache_path(self) -> Optional[str]:
         """Get path to datamapplot JS cache file."""
         return self._js_cache_path
-    
+
     def _block_external_font_requests(self):
         """
         Monkey-patch requests.get to block external font service requests.
-        
+
         datamapplot has a bug where it calls requests.get() to validate tooltip fonts
         even when offline_mode=True. This patch intercepts those calls and returns
         a mock response to prevent network access in air-gapped environments.
         """
         if self._requests_patched:
             return  # Already patched
-            
+
         import requests
         from unittest.mock import MagicMock
-        
+
         original_get = requests.get
-        
+
         # Domains to block
         blocked_domains = [
-            'fonts.googleapis.com',
-            'fonts.gstatic.com',
-            'maxcdn.bootstrapcdn.com',
-            'cdnjs.cloudflare.com',
-            'unpkg.com',  # Also block JS CDN calls
+            "fonts.googleapis.com",
+            "fonts.gstatic.com",
+            "maxcdn.bootstrapcdn.com",
+            "cdnjs.cloudflare.com",
+            "unpkg.com",  # Also block JS CDN calls
         ]
-        
+
         def patched_get(url, *args, **kwargs):
             """Intercept requests.get and block font/CDN requests."""
             url_lower = str(url).lower()
@@ -182,7 +186,7 @@ class VisualizationProcessor:
                     return mock_response
             # Allow other requests through
             return original_get(url, *args, **kwargs)
-        
+
         requests.get = patched_get
         self._requests_patched = True
         logger.info("Patched requests.get to block external font/CDN requests")
@@ -221,9 +225,36 @@ class VisualizationProcessor:
         logger.info(
             f"Fetching vectors from Qdrant collection: {job.qdrant_collection_name}"
         )
-        vectors, _ids, texts = await self._fetch_vectors_from_qdrant(
-            job.qdrant_collection_name, job.owner_id
-        )
+        fetch_start = time.time()
+        try:
+            vectors, _ids, texts = await self._fetch_vectors_from_qdrant(
+                job.qdrant_collection_name, job.owner_id
+            )
+            fetch_duration = time.time() - fetch_start
+            # Record fetch vectors timing
+            try:
+                from .observability import get_metrics
+
+                metrics = get_metrics()
+                if metrics:
+                    metrics.visualization_fetch_vectors_duration.labels(
+                        status="success"
+                    ).observe(fetch_duration)
+            except Exception:
+                pass
+        except Exception as e:
+            fetch_duration = time.time() - fetch_start
+            try:
+                from .observability import get_metrics
+
+                metrics = get_metrics()
+                if metrics:
+                    metrics.visualization_fetch_vectors_duration.labels(
+                        status="error"
+                    ).observe(fetch_duration)
+            except Exception:
+                pass
+            raise e
         if progress_callback:
             await progress_callback("fetching_vectors", 20)
 
@@ -241,7 +272,35 @@ class VisualizationProcessor:
             f"metric={job.visualization_config.metric}"
         )
         # Run UMAP in executor to avoid blocking the event loop
-        umap_vectors = await loop.run_in_executor(None, self._run_umap, vectors, job)
+        umap_start = time.time()
+        try:
+            umap_vectors = await loop.run_in_executor(
+                None, self._run_umap, vectors, job
+            )
+            umap_duration = time.time() - umap_start
+            try:
+                from .observability import get_metrics
+
+                metrics = get_metrics()
+                if metrics:
+                    metrics.visualization_umap_duration.labels(
+                        status="success"
+                    ).observe(umap_duration)
+            except Exception:
+                pass
+        except Exception as e:
+            umap_duration = time.time() - umap_start
+            try:
+                from .observability import get_metrics
+
+                metrics = get_metrics()
+                if metrics:
+                    metrics.visualization_umap_duration.labels(status="error").observe(
+                        umap_duration
+                    )
+            except Exception:
+                pass
+            raise e
         if progress_callback:
             await progress_callback("applying_umap", 50)
 
@@ -253,7 +312,35 @@ class VisualizationProcessor:
             f"min_samples={job.visualization_config.min_samples}"
         )
         # Run HDBSCAN in executor
-        labels = await loop.run_in_executor(None, self._run_hdbscan, umap_vectors, job)
+        hdbscan_start = time.time()
+        try:
+            labels = await loop.run_in_executor(
+                None, self._run_hdbscan, umap_vectors, job
+            )
+            hdbscan_duration = time.time() - hdbscan_start
+            try:
+                from .observability import get_metrics
+
+                metrics = get_metrics()
+                if metrics:
+                    metrics.visualization_hdbscan_duration.labels(
+                        status="success"
+                    ).observe(hdbscan_duration)
+            except Exception:
+                pass
+        except Exception as e:
+            hdbscan_duration = time.time() - hdbscan_start
+            try:
+                from .observability import get_metrics
+
+                metrics = get_metrics()
+                if metrics:
+                    metrics.visualization_hdbscan_duration.labels(
+                        status="error"
+                    ).observe(hdbscan_duration)
+            except Exception:
+                pass
+            raise e
         if progress_callback:
             await progress_callback("clustering", 70)
 
@@ -271,15 +358,41 @@ class VisualizationProcessor:
             await progress_callback("generating_html", 88)
         logger.info("Generating interactive visualization with datamapplot")
         # datamapplot can be CPU intensive too, run in executor
-        html_content = await loop.run_in_executor(
-            None,
-            self._run_generate_visualization,
-            umap_vectors,
-            labels,
-            cluster_labels,
-            texts,
-            job.visualization_config,
-        )
+        plot_start = time.time()
+        try:
+            html_content = await loop.run_in_executor(
+                None,
+                self._run_generate_visualization,
+                umap_vectors,
+                labels,
+                cluster_labels,
+                texts,
+                job.visualization_config,
+            )
+            plot_duration = time.time() - plot_start
+            try:
+                from .observability import get_metrics
+
+                metrics = get_metrics()
+                if metrics:
+                    metrics.visualization_plot_duration.labels(
+                        status="success"
+                    ).observe(plot_duration)
+            except Exception:
+                pass
+        except Exception as e:
+            plot_duration = time.time() - plot_start
+            try:
+                from .observability import get_metrics
+
+                metrics = get_metrics()
+                if metrics:
+                    metrics.visualization_plot_duration.labels(status="error").observe(
+                        plot_duration
+                    )
+            except Exception:
+                pass
+            raise e
         if progress_callback:
             await progress_callback("generating_html", 100)
 
@@ -736,7 +849,7 @@ class VisualizationProcessor:
             # even in offline_mode=True (for tooltip font validation)
             # We monkey-patch requests.get to prevent this
             self._block_external_font_requests()
-            
+
             # Create data for visualization
             logger.debug(f"Preparing label names for {len(labels)} points")
             label_names = [
@@ -810,7 +923,7 @@ class VisualizationProcessor:
             # CRITICAL: Enable offline mode to prevent ANY external font/JS fetching
             # This is essential for air-gapped/production environments
             plot_kwargs["offline_mode"] = True
-            
+
             # Set the path to the pre-cached font data file
             # datamapplot expects fonts in JSON format at this location
             font_cache_file = self._get_font_cache_path()
@@ -818,8 +931,10 @@ class VisualizationProcessor:
                 plot_kwargs["offline_mode_font_data_file"] = font_cache_file
                 logger.debug(f"Using offline font cache: {font_cache_file}")
             else:
-                logger.warning("No offline font cache found - fonts may not render correctly")
-            
+                logger.warning(
+                    "No offline font cache found - fonts may not render correctly"
+                )
+
             # Set the path to the pre-cached JS data file
             js_cache_file = self._get_js_cache_path()
             if js_cache_file:
@@ -828,7 +943,9 @@ class VisualizationProcessor:
 
             # Generate interactive HTML map with all configurable parameters
             plot_start = time.time()
-            logger.debug("Calling datamapplot.create_interactive_plot with offline_mode=True...")
+            logger.debug(
+                "Calling datamapplot.create_interactive_plot with offline_mode=True..."
+            )
             fig = datamapplot.create_interactive_plot(
                 vectors,
                 np.array(label_names),
@@ -868,9 +985,11 @@ class VisualizationProcessor:
 
             # Patch HTML to use local embedded fonts instead of Google Fonts
             # This is a defense-in-depth measure even with offline_mode=True
-            logger.debug("Patching HTML to remove any remaining external resource references...")
+            logger.debug(
+                "Patching HTML to remove any remaining external resource references..."
+            )
             html_content = patch_html_fonts(html_content)
-            
+
             # Verify no external requests remain (logs warning if any found)
             remaining_external = verify_no_external_requests(html_content)
             if remaining_external:

@@ -189,6 +189,9 @@ where
         config.stream_name
     );
 
+    // Set worker ready status
+    crate::observability::set_worker_ready(&config.service_name, true);
+
     process_messages(consumer, context, semaphore, process_job).await
 }
 

@@ -32,6 +32,8 @@ pub(crate) async fn generate_response(
     temperature: Option<f32>,
     max_tokens: Option<i32>,
 ) -> Result<String, String> {
+    let llm_start = std::time::Instant::now();
+
     // Check for injection attempts in user query
     if let Some(reason) = crate::chat::prompt_injection::detect_injection_attempt(query) {
         tracing::warn!(
@@ -39,6 +41,8 @@ pub(crate) async fn generate_response(
             reason = %reason,
             "rejecting request due to injection attempt detection"
         );
+        let llm_duration = llm_start.elapsed().as_secs_f64();
+        semantic_explorer_core::observability::record_llm_response("unknown", llm_duration, false);
         return Err(format!("query rejected: {}", reason));
     }
 
@@ -46,7 +50,15 @@ pub(crate) async fn generate_response(
     let (name, provider, base_url, model, api_key) =
         chat_storage::get_llm_details(pool, encryption, llm_id)
             .await
-            .map_err(|e| format!("database error: {e}"))?;
+            .map_err(|e| {
+                let llm_duration = llm_start.elapsed().as_secs_f64();
+                semantic_explorer_core::observability::record_llm_response(
+                    "unknown",
+                    llm_duration,
+                    false,
+                );
+                format!("database error: {e}")
+            })?;
 
     // Sanitize user input to prevent injection
     let sanitized_query = crate::chat::prompt_injection::sanitize_user_input(query);
@@ -90,6 +102,8 @@ pub(crate) async fn generate_response(
             .await?
         }
         _ => {
+            let llm_duration = llm_start.elapsed().as_secs_f64();
+            semantic_explorer_core::observability::record_llm_response(&model, llm_duration, false);
             return Err(format!("unsupported LLM provider: {}", provider));
         }
     };
@@ -102,6 +116,9 @@ pub(crate) async fn generate_response(
             "LLM response contains suspicious patterns that may indicate successful injection"
         );
     }
+
+    let llm_duration = llm_start.elapsed().as_secs_f64();
+    semantic_explorer_core::observability::record_llm_response(&model, llm_duration, true);
 
     tracing::debug!(llm_name = %name, "generated LLM response");
     Ok(response_text)

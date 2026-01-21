@@ -241,14 +241,13 @@ pub(crate) async fn get_public_llms(
     tag = "Marketplace",
 )]
 #[post("/api/marketplace/collections/{collection_id}/grab")]
-#[tracing::instrument(name = "grab_collection", skip(user, s3_client, s3_config, pool, req))]
+#[tracing::instrument(name = "grab_collection", skip(user, s3_client, s3_config, pool))]
 pub(crate) async fn grab_collection(
     user: AuthenticatedUser,
     s3_client: Data<Client>,
     s3_config: Data<S3Config>,
     pool: Data<Pool<Postgres>>,
     collection_id: Path<i32>,
-    req: actix_web::HttpRequest,
 ) -> impl Responder {
     match collections::grab_public_collection(
         &pool.into_inner(),
@@ -263,7 +262,6 @@ pub(crate) async fn grab_collection(
         Ok(collection) => {
             // Audit log the marketplace grab
             crate::audit::events::marketplace_grab(
-                &req,
                 &user.as_owner(),
                 &user,
                 crate::audit::ResourceType::Collection,
@@ -290,12 +288,11 @@ pub(crate) async fn grab_collection(
     tag = "Marketplace",
 )]
 #[post("/api/marketplace/datasets/{dataset_id}/grab")]
-#[tracing::instrument(name = "grab_dataset", skip(user, pool, req))]
+#[tracing::instrument(name = "grab_dataset", skip(user, pool))]
 pub(crate) async fn grab_dataset(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
     dataset_id: Path<i32>,
-    req: actix_web::HttpRequest,
 ) -> impl Responder {
     match datasets::grab_public_dataset(&pool.into_inner(), &user.as_owner(), &user, *dataset_id)
         .await
@@ -303,7 +300,6 @@ pub(crate) async fn grab_dataset(
         Ok(dataset) => {
             // Audit log the marketplace grab
             crate::audit::events::marketplace_grab(
-                &req,
                 &user.as_owner(),
                 &user,
                 crate::audit::ResourceType::Dataset,
@@ -330,20 +326,18 @@ pub(crate) async fn grab_dataset(
     tag = "Marketplace",
 )]
 #[post("/api/marketplace/embedders/{embedder_id}/grab")]
-#[tracing::instrument(name = "grab_embedder", skip(user, pool, encryption, req))]
+#[tracing::instrument(name = "grab_embedder", skip(user, pool, encryption))]
 pub(crate) async fn grab_embedder(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
     encryption: Data<EncryptionService>,
     embedder_id: Path<i32>,
-    req: actix_web::HttpRequest,
 ) -> impl Responder {
     match embedders::grab_public_embedder(&pool.into_inner(), &user, *embedder_id, &encryption)
         .await
     {
         Ok(embedder) => {
             crate::audit::events::marketplace_grab(
-                &req,
                 &user.as_owner(),
                 &user,
                 crate::audit::ResourceType::Embedder,
@@ -370,18 +364,16 @@ pub(crate) async fn grab_embedder(
     tag = "Marketplace",
 )]
 #[post("/api/marketplace/llms/{llm_id}/grab")]
-#[tracing::instrument(name = "grab_llm", skip(user, pool, encryption, req))]
+#[tracing::instrument(name = "grab_llm", skip(user, pool, encryption))]
 pub(crate) async fn grab_llm(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
     encryption: Data<EncryptionService>,
     llm_id: Path<i32>,
-    req: actix_web::HttpRequest,
 ) -> impl Responder {
     match llms::grab_public_llm(&pool.into_inner(), &user, *llm_id, &encryption).await {
         Ok(llm) => {
             crate::audit::events::marketplace_grab(
-                &req,
                 &user.as_owner(),
                 &user,
                 crate::audit::ResourceType::LlmProvider,

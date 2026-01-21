@@ -137,6 +137,39 @@ class Metrics:
             registry=registry,
         )
 
+        # Granular operation timing metrics
+        self.visualization_fetch_vectors_duration = Histogram(
+            "visualization_fetch_vectors_duration_seconds",
+            "Duration to fetch vectors for visualization in seconds",
+            ["status"],
+            buckets=(0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, float("inf")),
+            registry=registry,
+        )
+
+        self.visualization_umap_duration = Histogram(
+            "visualization_umap_duration_seconds",
+            "Duration to run UMAP dimensionality reduction in seconds",
+            ["status"],
+            buckets=(0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, float("inf")),
+            registry=registry,
+        )
+
+        self.visualization_hdbscan_duration = Histogram(
+            "visualization_hdbscan_duration_seconds",
+            "Duration to run HDBSCAN clustering in seconds",
+            ["status"],
+            buckets=(0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, float("inf")),
+            registry=registry,
+        )
+
+        self.visualization_plot_duration = Histogram(
+            "visualization_plot_duration_seconds",
+            "Duration to generate visualization plots in seconds",
+            ["status"],
+            buckets=(0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, float("inf")),
+            registry=registry,
+        )
+
 
 def setup_observability(
     worker_id: str, service_name: str = "worker-visualizations"

@@ -128,7 +128,7 @@ pub(crate) async fn get_collection(
     tag = "Collections",
 )]
 #[get("/api/collections/search")]
-#[tracing::instrument(name = "search_collections", skip(user, pool), fields(query = ?query.q, limit = %query.limit, offset = %query.offset))]
+#[tracing::instrument(name = "search_collections", skip(user, pool, query), fields(query_len = query.q.as_ref().map(|q| q.len()).unwrap_or(0), limit = %query.limit, offset = %query.offset))]
 pub(crate) async fn search_collections(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
@@ -412,6 +412,7 @@ pub(crate) async fn upload_to_collection(
     let mut failed = Vec::new();
 
     for (idx, temp_file) in payload.files.iter().enumerate() {
+        let item_start = std::time::Instant::now();
         let file_name = temp_file
             .file_name
             .as_ref()
@@ -425,6 +426,12 @@ pub(crate) async fn upload_to_collection(
             Ok(bytes) => bytes,
             Err(e) => {
                 tracing::error!(file_name = %file_name, error = %e, "Failed to read temp file");
+                let item_duration = item_start.elapsed().as_secs_f64();
+                semantic_explorer_core::observability::record_document_upload(
+                    "collection",
+                    item_duration,
+                    false,
+                );
                 failed.push(file_name);
                 continue;
             }
@@ -440,6 +447,12 @@ pub(crate) async fn upload_to_collection(
                 file_name = %file_name,
                 validation_errors = ?validation_result.validation_errors,
                 "File validation failed, rejecting upload"
+            );
+            let item_duration = item_start.elapsed().as_secs_f64();
+            semantic_explorer_core::observability::record_document_upload(
+                "collection",
+                item_duration,
+                false,
             );
             failed.push(file_name.clone());
 
@@ -458,6 +471,12 @@ pub(crate) async fn upload_to_collection(
             Ok(stream) => stream,
             Err(e) => {
                 tracing::error!(file_name = %file_name, error = %e, "Failed to create stream from file");
+                let item_duration = item_start.elapsed().as_secs_f64();
+                semantic_explorer_core::observability::record_document_upload(
+                    "collection",
+                    item_duration,
+                    false,
+                );
                 failed.push(file_name);
                 continue;
             }
@@ -474,6 +493,12 @@ pub(crate) async fn upload_to_collection(
         };
 
         if let Err(e) = upload_document(&s3_client, &s3_config.bucket_name, document).await {
+            let item_duration = item_start.elapsed().as_secs_f64();
+            semantic_explorer_core::observability::record_document_upload(
+                "collection",
+                item_duration,
+                false,
+            );
             failed.push(file_name.clone());
             tracing::error!(
                 file_name = %file_name,
@@ -482,6 +507,13 @@ pub(crate) async fn upload_to_collection(
             );
             continue;
         }
+
+        let item_duration = item_start.elapsed().as_secs_f64();
+        semantic_explorer_core::observability::record_document_upload(
+            "collection",
+            item_duration,
+            true,
+        );
 
         tracing::info!(
             file_name = %file_name,
@@ -599,14 +631,13 @@ pub(crate) async fn list_collection_files(
     tag = "Collections",
 )]
 #[get("/api/collections/{collection_id}/files/{file_key}")]
-#[tracing::instrument(name = "download_collection_file", skip(user, s3_client, s3_config, pool, path, req), fields(collection_id = %path.0, file_key = %path.1))]
+#[tracing::instrument(name = "download_collection_file", skip(user, s3_client, s3_config, pool, path), fields(collection_id = %path.0, file_key = %path.1))]
 pub(crate) async fn download_collection_file(
     user: AuthenticatedUser,
     s3_client: Data<Client>,
     s3_config: Data<S3Config>,
     pool: Data<Pool<Postgres>>,
     path: Path<(i32, String)>,
-    req: actix_web::HttpRequest,
 ) -> impl Responder {
     let s3_client = s3_client.into_inner();
     let s3_config = s3_config.into_inner();
@@ -638,7 +669,6 @@ pub(crate) async fn download_collection_file(
         Ok(file_data) => {
             // Audit log the file download
             crate::audit::events::file_downloaded(
-                &req,
                 &user.as_owner(),
                 &user,
                 collection_id,

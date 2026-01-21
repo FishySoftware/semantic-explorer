@@ -350,7 +350,7 @@ pub(crate) async fn delete_dataset(
     Ok(())
 }
 
-#[tracing::instrument(name = "database.create_dataset_item", skip(pool, metadata), fields(database.system = "postgresql", database.operation = "INSERT", dataset_id = %dataset_id, title = %title, chunk_count = chunks.len(), owner_id = %owner_id))]
+#[tracing::instrument(name = "database.create_dataset_item", skip(pool, metadata, chunks), fields(database.system = "postgresql", database.operation = "INSERT", dataset_id = %dataset_id, title = %title, chunk_count = chunks.len(), owner_id = %owner_id))]
 pub(crate) async fn create_dataset_item(
     pool: &Pool<Postgres>,
     owner_id: &str,

@@ -9,14 +9,12 @@ const INSERT_AUDIT_EVENT_QUERY: &str = r#"
         outcome,
         user_id,
         username_display,
-        request_id,
-        client_ip,
         resource_type,
         resource_id,
         details
     )
     VALUES (
-        $1::timestamp with time zone, $2, $3, $4, $5, $6, $7::inet, $8, $9, $10
+        $1::timestamp with time zone, $2, $3, $4, $5, $6, $7, $8
     )
     ON CONFLICT DO NOTHING
 "#;
@@ -34,8 +32,6 @@ pub async fn store_audit_event_tx(
         .bind(format!("{:?}", event.outcome))
         .bind(&event.user)
         .bind(&event.user_display)
-        .bind(event.request_id.as_deref())
-        .bind(event.client_ip.as_deref())
         .bind(
             event
                 .resource_type
@@ -63,8 +59,6 @@ pub async fn store_audit_event_simple(
         .bind(format!("{:?}", event.outcome))
         .bind(&event.user)
         .bind(&event.user_display)
-        .bind(event.request_id.as_deref())
-        .bind(event.client_ip.as_deref())
         .bind(
             event
                 .resource_type

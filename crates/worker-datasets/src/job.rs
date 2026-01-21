@@ -131,7 +131,7 @@ pub(crate) async fn process_vector_job(job: DatasetTransformJob, ctx: WorkerCont
         embedder_model = ?job.embedder_config.model,
         "Generating embeddings"
     );
-    let embed_start = Instant::now();
+
     let embeddings = match embedder::generate_batch_embeddings(
         &job.embedder_config,
         texts,
@@ -139,7 +139,7 @@ pub(crate) async fn process_vector_job(job: DatasetTransformJob, ctx: WorkerCont
     )
     .await
     {
-        Ok(e) => e,
+        Ok(embeddings) => embeddings,
         Err(e) => {
             let duration = start_time.elapsed().as_secs_f64();
             record_worker_job("vector-embed", duration, "failed_embedding");
@@ -154,10 +154,8 @@ pub(crate) async fn process_vector_job(job: DatasetTransformJob, ctx: WorkerCont
             return Ok(());
         }
     };
-    let embed_duration = embed_start.elapsed().as_secs_f64();
     info!(
         embedding_count = embeddings.len(),
-        embed_duration_secs = embed_duration,
         "Embeddings generated successfully"
     );
 

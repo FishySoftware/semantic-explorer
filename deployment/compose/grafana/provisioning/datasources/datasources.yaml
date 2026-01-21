@@ -17,7 +17,7 @@ datasources:
   - name: Quickwit-Traces
     type: jaeger
     access: proxy
-    url: http://quickwit:7280
+    url: http://quickwit:7281
     jsonData:
       nodeGraph:
         enabled: true
@@ -34,6 +34,27 @@ datasources:
     editable: true
     uid: quickwit-logs
 
+  - name: Quickwit
+    type: quickwit-quickwit-datasource
+    access: proxy
+    url: http://quickwit:7280/api/v1
+    jsonData:
+      index: "otel-logs-v0_7"
+      logMessageField: "body.message"
+      logLevelField: "severity_text"
+    editable: true
+    uid: quickwit
+
+  - name: Quickwit-Traces-Data
+    type: quickwit-quickwit-datasource
+    access: proxy
+    url: http://quickwit:7280/api/v1
+    jsonData:
+      index: "otel-traces-v0_7"
+      logMessageField: "span_name"
+    editable: true
+    uid: quickwit-traces-data
+
   - name: Postgres-Audit
     type: postgres
     access: proxy
@@ -44,6 +65,7 @@ datasources:
       sslmode: disable
       postgresVersion: 1600
       timescaledb: false
+      database: explorer
     secureJsonData:
       password: password
     editable: true

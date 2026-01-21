@@ -88,12 +88,6 @@ pub struct AuditEvent {
     pub user: String,
     /// Display name for human-readable audit logs
     pub user_display: String,
-    /// Request ID for correlation
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub request_id: Option<String>,
-    /// Client IP address
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_ip: Option<String>,
     /// Resource type being accessed
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resource_type: Option<ResourceType>,
@@ -129,24 +123,10 @@ impl AuditEvent {
             outcome,
             user: user.into(),
             user_display: user_display.into(),
-            request_id: None,
-            client_ip: None,
             resource_type: None,
             resource_id: None,
             details: None,
         }
-    }
-
-    /// Add request ID for correlation
-    pub fn with_request_id(mut self, request_id: impl Into<String>) -> Self {
-        self.request_id = Some(request_id.into());
-        self
-    }
-
-    /// Add client IP address
-    pub fn with_client_ip(mut self, ip: impl Into<String>) -> Self {
-        self.client_ip = Some(ip.into());
-        self
     }
 
     /// Add resource information
@@ -178,8 +158,6 @@ impl AuditEvent {
                     event_type = ?self.event_type,
                     outcome = ?self.outcome,
                     user = %self.user,
-                    request_id = ?self.request_id,
-                    client_ip = ?self.client_ip,
                     resource_type = ?self.resource_type,
                     resource_id = ?self.resource_id,
                     details = ?self.details,
@@ -192,8 +170,6 @@ impl AuditEvent {
                     event_type = ?self.event_type,
                     outcome = ?self.outcome,
                     user = %self.user,
-                    request_id = ?self.request_id,
-                    client_ip = ?self.client_ip,
                     resource_type = ?self.resource_type,
                     resource_id = ?self.resource_id,
                     details = ?self.details,
@@ -236,13 +212,6 @@ pub mod events {
         AUDIT_NATS_CLIENT.get()
     }
 
-    /// Extract request ID from an HttpRequest if available
-    fn get_request_id(_req: &HttpRequest) -> Option<String> {
-        // RequestId would be available via extensions if RequestIdMiddleware is active
-        // For now, generate a unique ID per request
-        None
-    }
-
     /// Publish audit event to NATS stream for async processing
     /// Returns true if successfully published, false if NATS unavailable
     fn publish_audit_event(event: &AuditEvent) -> bool {
@@ -277,22 +246,19 @@ pub mod events {
 
     /// Log a successful resource creation with request context
     pub fn resource_created_with_request(
-        req: &HttpRequest,
+        _req: &HttpRequest,
         user_id: &str,
         user_display: &str,
         resource_type: ResourceType,
         resource_id: &str,
     ) {
-        let mut event = AuditEvent::new(
+        let event = AuditEvent::new(
             AuditEventType::ResourceCreate,
             AuditOutcome::Success,
             user_id,
             user_display,
         )
         .with_resource(resource_type, resource_id);
-        if let Some(id) = get_request_id(req) {
-            event = event.with_request_id(id);
-        }
         event.log();
 
         // Try to publish to NATS, fall back to direct database write if unavailable
@@ -380,22 +346,19 @@ pub mod events {
 
     /// Log a successful resource deletion with request context
     pub fn resource_deleted_with_request(
-        req: &HttpRequest,
+        _req: &HttpRequest,
         user_id: &str,
         user_display: &str,
         resource_type: ResourceType,
         resource_id: &str,
     ) {
-        let mut event = AuditEvent::new(
+        let event = AuditEvent::new(
             AuditEventType::ResourceDelete,
             AuditOutcome::Success,
             user_id,
             user_display,
         )
         .with_resource(resource_type, resource_id);
-        if let Some(id) = get_request_id(req) {
-            event = event.with_request_id(id);
-        }
         event.log();
 
         // Try to publish to NATS, fall back to direct database write if unavailable
@@ -416,17 +379,14 @@ pub mod events {
     }
 
     /// Log an authentication failure
-    pub fn auth_failed(user_id: &str, user_display: &str, reason: &str, client_ip: Option<&str>) {
-        let mut event = AuditEvent::new(
+    pub fn auth_failed(user_id: &str, user_display: &str, reason: &str) {
+        let event = AuditEvent::new(
             AuditEventType::AuthFailed,
             AuditOutcome::Failure,
             user_id,
             user_display,
         )
         .with_details(reason);
-        if let Some(ip) = client_ip {
-            event = event.with_client_ip(ip);
-        }
         event.log();
 
         // Try to publish to NATS, fall back to direct database write if unavailable
@@ -511,21 +471,18 @@ pub mod events {
 
     /// Log a chat message
     pub fn chat_message_sent(
-        req: &HttpRequest,
+        _req: &HttpRequest,
         user_id: &str,
         user_display: &str,
         session_id: &str,
     ) {
-        let mut event = AuditEvent::new(
+        let event = AuditEvent::new(
             AuditEventType::ChatMessage,
             AuditOutcome::Success,
             user_id,
             user_display,
         )
         .with_resource(ResourceType::Session, session_id);
-        if let Some(request_id) = get_request_id(req) {
-            event = event.with_request_id(request_id);
-        }
         event.log();
 
         // Try to publish to NATS, fall back to direct database write if unavailable
@@ -547,21 +504,18 @@ pub mod events {
 
     /// Log a search request
     pub fn search_request(
-        req: &HttpRequest,
+        _req: &HttpRequest,
         user_id: &str,
         user_display: &str,
         collection_ids: &[String],
     ) {
-        let mut event = AuditEvent::new(
+        let event = AuditEvent::new(
             AuditEventType::SearchRequest,
             AuditOutcome::Success,
             user_id,
             user_display,
         )
         .with_details(format!("collections: {}", collection_ids.join(", ")));
-        if let Some(request_id) = get_request_id(req) {
-            event = event.with_request_id(request_id);
-        }
         event.log();
 
         // Try to publish to NATS, fall back to direct database write if unavailable
@@ -582,14 +536,8 @@ pub mod events {
     }
 
     /// Log a file download
-    pub fn file_downloaded(
-        req: &HttpRequest,
-        user_id: &str,
-        user_display: &str,
-        collection_id: i32,
-        filename: &str,
-    ) {
-        let mut event = AuditEvent::new(
+    pub fn file_downloaded(user_id: &str, user_display: &str, collection_id: i32, filename: &str) {
+        let event = AuditEvent::new(
             AuditEventType::FileDownload,
             AuditOutcome::Success,
             user_id,
@@ -597,9 +545,6 @@ pub mod events {
         )
         .with_resource(ResourceType::Collection, collection_id.to_string())
         .with_details(filename);
-        if let Some(request_id) = get_request_id(req) {
-            event = event.with_request_id(request_id);
-        }
         event.log();
 
         // Try to publish to NATS, fall back to direct database write if unavailable
@@ -656,22 +601,18 @@ pub mod events {
 
     /// Log a marketplace operation (grab collection, grab dataset, etc.)
     pub fn marketplace_grab(
-        req: &HttpRequest,
         user_id: &str,
         user_display: &str,
         resource_type: ResourceType,
         resource_id: &str,
     ) {
-        let mut event = AuditEvent::new(
+        let event = AuditEvent::new(
             AuditEventType::MarketplaceGrab,
             AuditOutcome::Success,
             user_id,
             user_display,
         )
         .with_resource(resource_type, resource_id);
-        if let Some(request_id) = get_request_id(req) {
-            event = event.with_request_id(request_id);
-        }
         event.log();
 
         // Try to publish to NATS, fall back to direct database write if unavailable

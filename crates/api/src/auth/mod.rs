@@ -57,9 +57,6 @@ impl FromRequest for AuthenticatedUser {
     type Future = Ready<Result<Self, Self::Error>>;
 
     fn from_request(req: &HttpRequest, payload: &mut Payload) -> Self::Future {
-        // Extract client IP for audit logging
-        let client_ip = req.connection_info().peer_addr().map(|s| s.to_string());
-
         // First, extract the Authenticated from the request
         match Authenticated::from_request(req, payload).into_inner() {
             Ok(auth) => {
@@ -71,7 +68,6 @@ impl FromRequest for AuthenticatedUser {
                             "unknown",
                             "unknown",
                             "user has no username in the user info claim",
-                            client_ip.as_deref(),
                         );
                         err(ApiError::Unauthorized(
                             "user has no username in the user info claim".to_string(),
@@ -85,7 +81,6 @@ impl FromRequest for AuthenticatedUser {
                     "anonymous",
                     "anonymous",
                     "authentication failed - invalid or missing token",
-                    client_ip.as_deref(),
                 );
                 err(e)
             }

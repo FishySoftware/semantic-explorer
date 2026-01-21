@@ -92,6 +92,12 @@ pub async fn upload_document(client: &Client, document: DocumentUpload) -> Resul
     let duration = start.elapsed().as_secs_f64();
     let success = result.is_ok();
     record_storage_operation("upload", duration, Some(file_size), success);
+    crate::observability::record_storage_upload(
+        &document.collection_id,
+        duration,
+        Some(file_size),
+        success,
+    );
 
     result?;
     Ok(())
@@ -245,6 +251,7 @@ pub async fn get_file_with_size_check(client: &Client, bucket: &str, key: &str) 
     if file_size > max_size {
         let duration = start.elapsed().as_secs_f64();
         record_storage_operation("download", duration, None, false);
+        crate::observability::record_storage_download(bucket, duration, None, false);
         warn!(
             file_size_mb = file_size / (1024 * 1024),
             max_size_mb = max_size / (1024 * 1024),
@@ -265,11 +272,18 @@ pub async fn get_file_with_size_check(client: &Client, bucket: &str, key: &str) 
             let data = output.body.collect().await?.into_bytes();
             let duration = start.elapsed().as_secs_f64();
             record_storage_operation("download", duration, Some(data.len() as u64), true);
+            crate::observability::record_storage_download(
+                bucket,
+                duration,
+                Some(data.len() as u64),
+                true,
+            );
             Ok(data.to_vec())
         }
         Err(e) => {
             let duration = start.elapsed().as_secs_f64();
             record_storage_operation("download", duration, None, false);
+            crate::observability::record_storage_download(bucket, duration, None, false);
             Err(e.into())
         }
     }

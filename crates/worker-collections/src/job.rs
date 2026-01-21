@@ -109,11 +109,26 @@ pub(crate) async fn process_file_job(
         "Extracting text"
     );
 
+    let extraction_start = Instant::now();
     let extraction_result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         ExtractionService::extract(&mime_type, &file_content, &extraction_config)
     })) {
-        Ok(Ok(result)) => result,
+        Ok(Ok(result)) => {
+            let extraction_duration = extraction_start.elapsed().as_secs_f64();
+            semantic_explorer_core::observability::record_document_extraction(
+                "collection",
+                extraction_duration,
+                true,
+            );
+            result
+        }
         Ok(Err(e)) => {
+            let extraction_duration = extraction_start.elapsed().as_secs_f64();
+            semantic_explorer_core::observability::record_document_extraction(
+                "collection",
+                extraction_duration,
+                false,
+            );
             let duration = start_time.elapsed().as_secs_f64();
             record_worker_job("transform-file", duration, "failed_extraction");
             error!(error = %e, mime_type = %mime_type, "Extraction failed");
@@ -127,6 +142,12 @@ pub(crate) async fn process_file_job(
             return Ok(());
         }
         Err(_) => {
+            let extraction_duration = extraction_start.elapsed().as_secs_f64();
+            semantic_explorer_core::observability::record_document_extraction(
+                "collection",
+                extraction_duration,
+                false,
+            );
             let duration = start_time.elapsed().as_secs_f64();
             record_worker_job("transform-file", duration, "failed_extraction");
             error!(mime_type = %mime_type, "Extraction panicked");
@@ -180,6 +201,7 @@ pub(crate) async fn process_file_job(
         );
     }
 
+    let chunking_start = Instant::now();
     let chunks_with_metadata = match ChunkingService::chunk_text(
         extraction_result.text.clone(),
         &chunking_config,
@@ -188,8 +210,22 @@ pub(crate) async fn process_file_job(
     )
     .await
     {
-        Ok(c) => c,
+        Ok(c) => {
+            let chunking_duration = chunking_start.elapsed().as_secs_f64();
+            semantic_explorer_core::observability::record_document_chunking(
+                "collection",
+                chunking_duration,
+                true,
+            );
+            c
+        }
         Err(e) => {
+            let chunking_duration = chunking_start.elapsed().as_secs_f64();
+            semantic_explorer_core::observability::record_document_chunking(
+                "collection",
+                chunking_duration,
+                false,
+            );
             let duration = start_time.elapsed().as_secs_f64();
             record_worker_job("transform-file", duration, "failed_chunking");
             error!(error = %e, "Chunking failed");

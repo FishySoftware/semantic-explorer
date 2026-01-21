@@ -28,6 +28,7 @@ pub struct Metrics {
     pub storage_operations_total: Counter<u64>,
     pub storage_operation_duration: Histogram<f64>,
     pub storage_file_size_bytes: Histogram<f64>,
+    pub worker_ready: Gauge<f64>,
     pub worker_jobs_total: Counter<u64>,
     pub worker_job_duration: Histogram<f64>,
     pub worker_job_chunks: Histogram<f64>,
@@ -84,6 +85,21 @@ pub struct Metrics {
     pub inference_llm_duration: Histogram<f64>,
     pub inference_llm_tokens_generated: Counter<u64>,
     pub inference_llm_tokens_per_second: Histogram<f64>,
+    // Granular operation timing metrics
+    pub document_upload_per_item_duration: Histogram<f64>,
+    pub document_extraction_duration: Histogram<f64>,
+    pub document_chunking_per_item_duration: Histogram<f64>,
+    pub embedding_per_chunk_duration: Histogram<f64>,
+    pub llm_response_duration: Histogram<f64>,
+    pub chat_request_duration: Histogram<f64>,
+    pub visualization_fetch_vectors_duration: Histogram<f64>,
+    pub visualization_umap_duration: Histogram<f64>,
+    pub visualization_hdbscan_duration: Histogram<f64>,
+    pub visualization_plot_duration: Histogram<f64>,
+    pub storage_upload_duration: Histogram<f64>,
+    pub storage_download_duration: Histogram<f64>,
+    pub storage_delete_duration: Histogram<f64>,
+    pub storage_list_duration: Histogram<f64>,
 }
 
 impl Metrics {
@@ -126,6 +142,11 @@ impl Metrics {
         let storage_file_size_bytes = meter
             .f64_histogram("storage_file_size_bytes")
             .with_description("Size of files in storage operations")
+            .build();
+
+        let worker_ready = meter
+            .f64_gauge("worker_ready")
+            .with_description("Worker ready status (1 = ready, 0 = not ready)")
             .build();
 
         let worker_jobs_total = meter
@@ -374,6 +395,77 @@ impl Metrics {
             .with_description("Tokens generated per second (throughput)")
             .build();
 
+        // Granular operation timing metrics
+        let document_upload_per_item_duration = meter
+            .f64_histogram("document_upload_per_item_duration_seconds")
+            .with_description("Duration to upload individual documents in seconds")
+            .build();
+
+        let document_extraction_duration = meter
+            .f64_histogram("document_extraction_duration_seconds")
+            .with_description("Duration to extract text from documents in seconds")
+            .build();
+
+        let document_chunking_per_item_duration = meter
+            .f64_histogram("document_chunking_per_item_duration_seconds")
+            .with_description("Duration to chunk individual documents in seconds")
+            .build();
+
+        let embedding_per_chunk_duration = meter
+            .f64_histogram("embedding_per_chunk_duration_seconds")
+            .with_description("Duration to generate embeddings per chunk in seconds")
+            .build();
+
+        let llm_response_duration = meter
+            .f64_histogram("llm_response_duration_seconds")
+            .with_description("Duration to generate LLM responses in seconds")
+            .build();
+
+        let chat_request_duration = meter
+            .f64_histogram("chat_request_duration_seconds")
+            .with_description("Duration of chat requests in seconds")
+            .build();
+
+        let visualization_fetch_vectors_duration = meter
+            .f64_histogram("visualization_fetch_vectors_duration_seconds")
+            .with_description("Duration to fetch vectors for visualization in seconds")
+            .build();
+
+        let visualization_umap_duration = meter
+            .f64_histogram("visualization_umap_duration_seconds")
+            .with_description("Duration to run UMAP dimensionality reduction in seconds")
+            .build();
+
+        let visualization_hdbscan_duration = meter
+            .f64_histogram("visualization_hdbscan_duration_seconds")
+            .with_description("Duration to run HDBSCAN clustering in seconds")
+            .build();
+
+        let visualization_plot_duration = meter
+            .f64_histogram("visualization_plot_duration_seconds")
+            .with_description("Duration to generate visualization plots in seconds")
+            .build();
+
+        let storage_upload_duration = meter
+            .f64_histogram("storage_upload_duration_seconds")
+            .with_description("Duration of S3 upload operations in seconds")
+            .build();
+
+        let storage_download_duration = meter
+            .f64_histogram("storage_download_duration_seconds")
+            .with_description("Duration of S3 download operations in seconds")
+            .build();
+
+        let storage_delete_duration = meter
+            .f64_histogram("storage_delete_duration_seconds")
+            .with_description("Duration of S3 delete operations in seconds")
+            .build();
+
+        let storage_list_duration = meter
+            .f64_histogram("storage_list_duration_seconds")
+            .with_description("Duration of S3 list operations in seconds")
+            .build();
+
         Self {
             database_query_total,
             database_query_duration,
@@ -383,6 +475,7 @@ impl Metrics {
             storage_operations_total,
             storage_operation_duration,
             storage_file_size_bytes,
+            worker_ready,
             worker_jobs_total,
             worker_job_duration,
             worker_job_chunks,
@@ -430,6 +523,20 @@ impl Metrics {
             inference_llm_duration,
             inference_llm_tokens_generated,
             inference_llm_tokens_per_second,
+            document_upload_per_item_duration,
+            document_extraction_duration,
+            document_chunking_per_item_duration,
+            embedding_per_chunk_duration,
+            llm_response_duration,
+            chat_request_duration,
+            visualization_fetch_vectors_duration,
+            visualization_umap_duration,
+            visualization_hdbscan_duration,
+            visualization_plot_duration,
+            storage_upload_duration,
+            storage_download_duration,
+            storage_delete_duration,
+            storage_list_duration,
         }
     }
 }
@@ -569,6 +676,15 @@ pub fn record_worker_job_with_metrics(
             ],
         );
     }
+}
+
+pub fn set_worker_ready(worker: &str, ready: bool) {
+    let metrics = get_metrics();
+    let value = if ready { 1.0 } else { 0.0 };
+
+    metrics
+        .worker_ready
+        .record(value, &[KeyValue::new("worker", worker.to_string())]);
 }
 
 pub fn update_database_pool_stats(size: u64, active: u64, idle: u64) {
@@ -988,6 +1104,217 @@ pub fn record_llm_request(model: &str, tokens_generated: u64, duration_secs: f64
                 .record(tokens_per_sec, &[KeyValue::new("model", model.to_string())]);
         }
     }
+}
+
+/// Record document upload timing per item
+pub fn record_document_upload(operation: &str, duration_secs: f64, success: bool) {
+    let metrics = get_metrics();
+    let status = if success { "success" } else { "error" };
+
+    metrics.document_upload_per_item_duration.record(
+        duration_secs,
+        &[
+            KeyValue::new("operation", operation.to_string()),
+            KeyValue::new("status", status.to_string()),
+        ],
+    );
+}
+
+/// Record document extraction timing
+pub fn record_document_extraction(operation: &str, duration_secs: f64, success: bool) {
+    let metrics = get_metrics();
+    let status = if success { "success" } else { "error" };
+
+    metrics.document_extraction_duration.record(
+        duration_secs,
+        &[
+            KeyValue::new("operation", operation.to_string()),
+            KeyValue::new("status", status.to_string()),
+        ],
+    );
+}
+
+/// Record document chunking timing per item
+pub fn record_document_chunking(operation: &str, duration_secs: f64, success: bool) {
+    let metrics = get_metrics();
+    let status = if success { "success" } else { "error" };
+
+    metrics.document_chunking_per_item_duration.record(
+        duration_secs,
+        &[
+            KeyValue::new("operation", operation.to_string()),
+            KeyValue::new("status", status.to_string()),
+        ],
+    );
+}
+
+/// Record embedding generation timing per chunk
+pub fn record_embedding_per_chunk(model: &str, duration_secs: f64, success: bool) {
+    let metrics = get_metrics();
+    let status = if success { "success" } else { "error" };
+
+    metrics.embedding_per_chunk_duration.record(
+        duration_secs,
+        &[
+            KeyValue::new("model", model.to_string()),
+            KeyValue::new("status", status.to_string()),
+        ],
+    );
+}
+
+/// Record LLM response generation timing
+pub fn record_llm_response(model: &str, duration_secs: f64, success: bool) {
+    let metrics = get_metrics();
+    let status = if success { "success" } else { "error" };
+
+    metrics.llm_response_duration.record(
+        duration_secs,
+        &[
+            KeyValue::new("model", model.to_string()),
+            KeyValue::new("status", status.to_string()),
+        ],
+    );
+}
+
+/// Record chat request timing
+pub fn record_chat_request(duration_secs: f64, success: bool) {
+    let metrics = get_metrics();
+    let status = if success { "success" } else { "error" };
+
+    metrics.chat_request_duration.record(
+        duration_secs,
+        &[KeyValue::new("status", status.to_string())],
+    );
+}
+
+/// Record visualization vector fetch timing
+pub fn record_visualization_fetch_vectors(duration_secs: f64, success: bool) {
+    let metrics = get_metrics();
+    let status = if success { "success" } else { "error" };
+
+    metrics.visualization_fetch_vectors_duration.record(
+        duration_secs,
+        &[KeyValue::new("status", status.to_string())],
+    );
+}
+
+/// Record visualization UMAP timing
+pub fn record_visualization_umap(duration_secs: f64, success: bool) {
+    let metrics = get_metrics();
+    let status = if success { "success" } else { "error" };
+
+    metrics.visualization_umap_duration.record(
+        duration_secs,
+        &[KeyValue::new("status", status.to_string())],
+    );
+}
+
+/// Record visualization HDBSCAN timing
+pub fn record_visualization_hdbscan(duration_secs: f64, success: bool) {
+    let metrics = get_metrics();
+    let status = if success { "success" } else { "error" };
+
+    metrics.visualization_hdbscan_duration.record(
+        duration_secs,
+        &[KeyValue::new("status", status.to_string())],
+    );
+}
+
+/// Record visualization plot generation timing
+pub fn record_visualization_plot(duration_secs: f64, success: bool) {
+    let metrics = get_metrics();
+    let status = if success { "success" } else { "error" };
+
+    metrics.visualization_plot_duration.record(
+        duration_secs,
+        &[KeyValue::new("status", status.to_string())],
+    );
+}
+
+/// Record S3 upload operation timing
+pub fn record_storage_upload(
+    bucket: &str,
+    duration_secs: f64,
+    size_bytes: Option<u64>,
+    success: bool,
+) {
+    let metrics = get_metrics();
+    let status = if success { "success" } else { "error" };
+
+    metrics.storage_upload_duration.record(
+        duration_secs,
+        &[
+            KeyValue::new("bucket", bucket.to_string()),
+            KeyValue::new("status", status.to_string()),
+        ],
+    );
+
+    if let Some(size) = size_bytes {
+        metrics.storage_file_size_bytes.record(
+            size as f64,
+            &[
+                KeyValue::new("operation", "upload"),
+                KeyValue::new("bucket", bucket.to_string()),
+            ],
+        );
+    }
+}
+
+/// Record S3 download operation timing
+pub fn record_storage_download(
+    bucket: &str,
+    duration_secs: f64,
+    size_bytes: Option<u64>,
+    success: bool,
+) {
+    let metrics = get_metrics();
+    let status = if success { "success" } else { "error" };
+
+    metrics.storage_download_duration.record(
+        duration_secs,
+        &[
+            KeyValue::new("bucket", bucket.to_string()),
+            KeyValue::new("status", status.to_string()),
+        ],
+    );
+
+    if let Some(size) = size_bytes {
+        metrics.storage_file_size_bytes.record(
+            size as f64,
+            &[
+                KeyValue::new("operation", "download"),
+                KeyValue::new("bucket", bucket.to_string()),
+            ],
+        );
+    }
+}
+
+/// Record S3 delete operation timing
+pub fn record_storage_delete(bucket: &str, duration_secs: f64, success: bool) {
+    let metrics = get_metrics();
+    let status = if success { "success" } else { "error" };
+
+    metrics.storage_delete_duration.record(
+        duration_secs,
+        &[
+            KeyValue::new("bucket", bucket.to_string()),
+            KeyValue::new("status", status.to_string()),
+        ],
+    );
+}
+
+/// Record S3 list operation timing
+pub fn record_storage_list(bucket: &str, duration_secs: f64, success: bool) {
+    let metrics = get_metrics();
+    let status = if success { "success" } else { "error" };
+
+    metrics.storage_list_duration.record(
+        duration_secs,
+        &[
+            KeyValue::new("bucket", bucket.to_string()),
+            KeyValue::new("status", status.to_string()),
+        ],
+    );
 }
 
 /// Initialize observability for API services (actix-web based services)

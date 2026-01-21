@@ -121,14 +121,14 @@
 					<h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300">CURL</h4>
 					<button
 						onclick={() => copyText(getCurlExample())}
-						class="text-xs px-2 py-1 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded transition-colors"
+						class="text-xs px-2 py-1 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded transition-colors text-gray-900 dark:text-gray-100"
 					>
 						{copied ? '✓ Copied!' : 'Copy'}
 					</button>
 				</div>
 				<pre
 					class="text-xs bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700 overflow-x-auto"><code
-						>{getCurlExample()}</code
+						class="text-gray-900 dark:text-gray-100">{getCurlExample()}</code
 					></pre>
 			</div>
 
@@ -137,14 +137,14 @@
 					<h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300">Python (requests)</h4>
 					<button
 						onclick={() => copyText(getPythonExample())}
-						class="text-xs px-2 py-1 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded transition-colors"
+						class="text-xs px-2 py-1 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded transition-colors text-gray-900 dark:text-gray-100"
 					>
 						{copied ? '✓ Copied!' : 'Copy'}
 					</button>
 				</div>
 				<pre
 					class="text-xs bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700 overflow-x-auto"><code
-						>{getPythonExample()}</code
+						class="text-gray-900 dark:text-gray-100">{getPythonExample()}</code
 					></pre>
 			</div>
 		</div>

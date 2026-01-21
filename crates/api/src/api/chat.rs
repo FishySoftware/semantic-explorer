@@ -230,7 +230,8 @@ pub(crate) async fn get_chat_messages(
 #[post("/api/chat/sessions/{session_id}/messages")]
 #[tracing::instrument(
     name = "send_chat_message",
-    skip(user, pool, request, qdrant_client, req, encryption)
+    skip(user, pool, request, qdrant_client, req, encryption),
+    fields(session_id = %session_id, content_len = request.content.len())
 )]
 pub(crate) async fn send_chat_message(
     user: AuthenticatedUser,
@@ -241,10 +242,14 @@ pub(crate) async fn send_chat_message(
     session_id: Path<String>,
     request: Json<CreateChatMessageRequest>,
 ) -> impl Responder {
+    let chat_start = std::time::Instant::now();
+
     // Verify session ownership and get session details
     let session = match chat::get_chat_session(&pool, &session_id, &user.as_owner()).await {
         Ok(s) => s,
         Err(e) => {
+            let chat_duration = chat_start.elapsed().as_secs_f64();
+            semantic_explorer_core::observability::record_chat_request(chat_duration, false);
             tracing::error!(error = %e, session_id = %session_id, "session not found");
             return ApiError::NotFound(format!("session not found: {:?}", e)).error_response();
         }
@@ -359,6 +364,9 @@ pub(crate) async fn send_chat_message(
         created_at: assistant_message.created_at,
     };
 
+    let chat_duration = chat_start.elapsed().as_secs_f64();
+    semantic_explorer_core::observability::record_chat_request(chat_duration, true);
+
     HttpResponse::Ok().json(response)
 }
 
@@ -379,7 +387,8 @@ pub(crate) async fn send_chat_message(
 #[post("/api/chat/sessions/{session_id}/messages/stream")]
 #[tracing::instrument(
     name = "stream_chat_message",
-    skip(user, pool, qdrant_client, request, req, encryption)
+    skip(user, pool, qdrant_client, request, req, encryption),
+    fields(session_id = %session_id, content_len = request.content.len())
 )]
 pub(crate) async fn stream_chat_message(
     user: AuthenticatedUser,

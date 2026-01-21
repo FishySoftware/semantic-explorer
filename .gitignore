@@ -13,7 +13,7 @@ target
 node_modules/
 
 deployment/helm/semantic-explorer/values-custom.yaml
-.fastembed_cache
+.fastembed_cache/
 
 # Local ONNX Runtime installation for CUDA development
 # Created by crates/embedding-inference-api/setup_cuda_local.sh

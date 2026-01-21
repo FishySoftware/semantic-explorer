@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use tokio::time::sleep;
@@ -52,6 +52,10 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
     if texts.is_empty() {
         return Ok(Vec::with_capacity(0));
     }
+
+    let batch_start = Instant::now();
+    let chunk_count = texts.len();
+    let model_name = &config.model;
 
     let client = &*HTTP_CLIENT;
 
@@ -150,7 +154,20 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
             Ok(resp) => {
                 if resp.status().is_success() {
                     let response_body: serde_json::Value = resp.json().await?;
-                    return parse_embeddings_response(config, response_body);
+                    let result = parse_embeddings_response(config, response_body);
+
+                    // Record per-chunk timing for this batch
+                    let batch_duration = batch_start.elapsed().as_secs_f64();
+                    let per_chunk_duration = batch_duration / chunk_count as f64;
+                    for _ in 0..chunk_count {
+                        crate::observability::record_embedding_per_chunk(
+                            model_name,
+                            per_chunk_duration,
+                            result.is_ok(),
+                        );
+                    }
+
+                    return result;
                 }
 
                 let status = resp.status();
@@ -195,6 +212,13 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
                 last_error = Some(anyhow::anyhow!("Failed to send request to {}: {}", url, e));
             }
         }
+    }
+
+    // Record failure metrics for this batch
+    let batch_duration = batch_start.elapsed().as_secs_f64();
+    let per_chunk_duration = batch_duration / chunk_count as f64;
+    for _ in 0..chunk_count {
+        crate::observability::record_embedding_per_chunk(model_name, per_chunk_duration, false);
     }
 
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Unknown embedder error")))
