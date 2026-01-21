@@ -29,6 +29,7 @@ jobs:
         run: |
           chmod +x setup_cuda.sh cargo_cuda.sh
           ./setup_cuda.sh
+        continue-on-error: true
 
       - name: Install Cargo Components
         run: |
