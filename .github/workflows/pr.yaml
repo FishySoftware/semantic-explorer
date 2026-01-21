@@ -149,6 +149,17 @@ jobs:
           # Note: embedding-inference-api-cuda build is skipped in PR checks as it requires
           # CUDA base images which are large and slow to download
     steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
       - name: Checkout
         uses: actions/checkout@v4
 

@@ -59,7 +59,7 @@ data:
           "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
           "id": 1,
           "panels": [],
-          "title": "Infrastructure Health Overview",
+          "title": "🔴 Infrastructure Health Overview",
           "type": "row"
         },
         {
@@ -243,7 +243,7 @@ data:
           "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
           "id": 10,
           "panels": [],
-          "title": "PostgreSQL Database",
+          "title": "🗄️ PostgreSQL Database",
           "type": "row"
         },
         {
@@ -409,7 +409,7 @@ data:
           "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 },
           "id": 20,
           "panels": [],
-          "title": "Qdrant Vector Database",
+          "title": "🔍 Qdrant Vector Database",
           "type": "row"
         },
         {
@@ -596,7 +596,7 @@ data:
           "gridPos": { "h": 1, "w": 24, "x": 0, "y": 47 },
           "id": 30,
           "panels": [],
-          "title": "NATS Messaging",
+          "title": "📨 NATS Messaging",
           "type": "row"
         },
         {
@@ -692,7 +692,7 @@ data:
           "gridPos": { "h": 1, "w": 24, "x": 0, "y": 64 },
           "id": 40,
           "panels": [],
-          "title": "MinIO Object Storage",
+          "title": "🪣 MinIO Object Storage",
           "type": "row"
         },
         {
@@ -855,7 +855,7 @@ data:
           "gridPos": { "h": 1, "w": 24, "x": 0, "y": 81 },
           "id": 50,
           "panels": [],
-          "title": "Quickwit Search",
+          "title": "🔍 Quickwit Search",
           "type": "row"
         },
         {
@@ -957,7 +957,7 @@ data:
           "gridPos": { "h": 1, "w": 24, "x": 0, "y": 98 },
           "id": 60,
           "panels": [],
-          "title": "OpenTelemetry Collector",
+          "title": "📡 OpenTelemetry Collector",
           "type": "row"
         },
         {

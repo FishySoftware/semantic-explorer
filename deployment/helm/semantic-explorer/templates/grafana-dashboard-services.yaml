@@ -44,7 +44,7 @@ data:
               "type": "prometheus",
               "uid": "prometheus"
             },
-            "definition": "label_values(up{job=~\"semantic-explorer-api|embedding-inference-api|llm-inference-api|worker-visualizations-py|worker-collections|worker-datasets\"}, job)",
+            "definition": "label_values(up{namespace=\"{{ .Release.Namespace }}\",job=~\"semantic-explorer-api|embedding-inference-api|llm-inference-api|worker-visualizations-py|worker-collections|worker-datasets\"}, job)",
             "hide": 0,
             "includeAll": true,
             "label": "Service",
@@ -52,7 +52,7 @@ data:
             "name": "service",
             "options": [],
             "query": {
-              "query": "label_values(up{job=~\"semantic-explorer-api|embedding-inference-api|llm-inference-api|worker-visualizations-py|worker-collections|worker-datasets\"}, job)",
+              "query": "label_values(up{namespace=\"{{ .Release.Namespace }}\",job=~\"semantic-explorer-api|embedding-inference-api|llm-inference-api|worker-visualizations-py|worker-collections|worker-datasets\"}, job)",
               "refId": "StandardVariableQuery"
             },
             "refresh": 2,
@@ -153,7 +153,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "up{job=\"semantic-explorer-api\"}",
+              "expr": "up{namespace=\"{{ .Release.Namespace }}\",job=\"semantic-explorer-api\"}",
               "legendFormat": "API",
               "refId": "A"
             }
@@ -236,7 +236,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "up{job=\"embedding-inference-api\"}",
+              "expr": "up{namespace=\"{{ .Release.Namespace }}\",job=\"embedding-inference-api\"}",
               "legendFormat": "Embedding",
               "refId": "A"
             }
@@ -319,7 +319,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "up{job=\"llm-inference-api\"}",
+              "expr": "up{namespace=\"{{ .Release.Namespace }}\",job=\"llm-inference-api\"}",
               "legendFormat": "LLM",
               "refId": "A"
             }
@@ -402,7 +402,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "max(worker_ready{worker=\"worker-collections\"}) or vector(0)",
+              "expr": "max(worker_ready{namespace=\"{{ .Release.Namespace }}\",worker=\"worker-collections\"}) or vector(0)",
               "legendFormat": "Collections",
               "refId": "A"
             }
@@ -485,7 +485,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "max(worker_ready{worker=\"worker-datasets\"}) or vector(0)",
+              "expr": "max(worker_ready{namespace=\"{{ .Release.Namespace }}\",worker=\"worker-datasets\"}) or vector(0)",
               "legendFormat": "Datasets",
               "refId": "A"
             }
@@ -568,7 +568,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "up{job=\"worker-visualizations-py\"}",
+              "expr": "up{namespace=\"{{ .Release.Namespace }}\",job=\"worker-visualizations-py\"}",
               "legendFormat": "Visualization",
               "refId": "A"
             }
@@ -675,7 +675,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum(rate(api_http_requests_total{job=\"semantic-explorer-api\"}[$__rate_interval]))",
+              "expr": "sum(rate(api_http_requests_total{namespace=\"{{ .Release.Namespace }}\",job=\"semantic-explorer-api\"}[$__rate_interval]))",
               "legendFormat": "API Total",
               "refId": "A"
             },
@@ -684,7 +684,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum(rate(inference_http_requests_total{job=\"embedding-inference-api\"}[$__rate_interval]))",
+              "expr": "sum(rate(inference_http_requests_total{namespace=\"{{ .Release.Namespace }}\",job=\"embedding-inference-api\"}[$__rate_interval]))",
               "legendFormat": "Embedding API",
               "refId": "B"
             },
@@ -693,7 +693,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum(rate(llm_inference_http_requests_total{job=\"llm-inference-api\"}[$__rate_interval]))",
+              "expr": "sum(rate(llm_inference_http_requests_total{namespace=\"{{ .Release.Namespace }}\",job=\"llm-inference-api\"}[$__rate_interval]))",
               "legendFormat": "LLM API",
               "refId": "C"
             }
@@ -797,7 +797,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum(rate(api_http_requests_total{job=\"semantic-explorer-api\",status=~\"5..\"}[$__rate_interval])) / sum(rate(api_http_requests_total{job=\"semantic-explorer-api\"}[$__rate_interval]))",
+              "expr": "sum(rate(api_http_requests_total{namespace=\"{{ .Release.Namespace }}\",job=\"semantic-explorer-api\",status=~\"5..\"}[$__rate_interval])) / sum(rate(api_http_requests_total{namespace=\"{{ .Release.Namespace }}\",job=\"semantic-explorer-api\"}[$__rate_interval]))",
               "legendFormat": "API 5xx Rate",
               "refId": "A"
             },
@@ -806,7 +806,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum(rate(inference_http_requests_total{job=\"embedding-inference-api\",status=~\"5..\"}[$__rate_interval])) / sum(rate(inference_http_requests_total{job=\"embedding-inference-api\"}[$__rate_interval]))",
+              "expr": "sum(rate(inference_http_requests_total{namespace=\"{{ .Release.Namespace }}\",job=\"embedding-inference-api\",status=~\"5..\"}[$__rate_interval])) / sum(rate(inference_http_requests_total{namespace=\"{{ .Release.Namespace }}\",job=\"embedding-inference-api\"}[$__rate_interval]))",
               "legendFormat": "Embedding API 5xx Rate",
               "refId": "B"
             },
@@ -815,7 +815,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum(rate(llm_inference_http_requests_total{job=\"llm-inference-api\",status=~\"5..\"}[$__rate_interval])) / sum(rate(llm_inference_http_requests_total{job=\"llm-inference-api\"}[$__rate_interval]))",
+              "expr": "sum(rate(llm_inference_http_requests_total{namespace=\"{{ .Release.Namespace }}\",job=\"llm-inference-api\",status=~\"5..\"}[$__rate_interval])) / sum(rate(llm_inference_http_requests_total{namespace=\"{{ .Release.Namespace }}\",job=\"llm-inference-api\"}[$__rate_interval]))",
               "legendFormat": "LLM API 5xx Rate",
               "refId": "C"
             }
@@ -908,7 +908,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "histogram_quantile(0.50, sum(rate(api_http_requests_duration_seconds_bucket{job=\"semantic-explorer-api\"}[$__rate_interval])) by (le))",
+              "expr": "histogram_quantile(0.50, sum(rate(api_http_requests_duration_seconds_bucket{namespace=\"{{ .Release.Namespace }}\",job=\"semantic-explorer-api\"}[$__rate_interval])) by (le))",
               "legendFormat": "p50",
               "refId": "A"
             },
@@ -917,7 +917,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "histogram_quantile(0.90, sum(rate(api_http_requests_duration_seconds_bucket{job=\"semantic-explorer-api\"}[$__rate_interval])) by (le))",
+              "expr": "histogram_quantile(0.90, sum(rate(api_http_requests_duration_seconds_bucket{namespace=\"{{ .Release.Namespace }}\",job=\"semantic-explorer-api\"}[$__rate_interval])) by (le))",
               "legendFormat": "p90",
               "refId": "B"
             },
@@ -926,7 +926,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "histogram_quantile(0.95, sum(rate(api_http_requests_duration_seconds_bucket{job=\"semantic-explorer-api\"}[$__rate_interval])) by (le))",
+              "expr": "histogram_quantile(0.95, sum(rate(api_http_requests_duration_seconds_bucket{namespace=\"{{ .Release.Namespace }}\",job=\"semantic-explorer-api\"}[$__rate_interval])) by (le))",
               "legendFormat": "p95",
               "refId": "C"
             },
@@ -935,7 +935,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "histogram_quantile(0.99, sum(rate(api_http_requests_duration_seconds_bucket{job=\"semantic-explorer-api\"}[$__rate_interval])) by (le))",
+              "expr": "histogram_quantile(0.99, sum(rate(api_http_requests_duration_seconds_bucket{namespace=\"{{ .Release.Namespace }}\",job=\"semantic-explorer-api\"}[$__rate_interval])) by (le))",
               "legendFormat": "p99",
               "refId": "D"
             }
@@ -1028,7 +1028,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "histogram_quantile(0.50, sum(rate(inference_http_requests_duration_seconds_bucket{job=\"embedding-inference-api\"}[$__rate_interval])) by (le))",
+              "expr": "histogram_quantile(0.50, sum(rate(inference_http_requests_duration_seconds_bucket{namespace=\"{{ .Release.Namespace }}\",job=\"embedding-inference-api\"}[$__rate_interval])) by (le))",
               "legendFormat": "Embedding p50",
               "refId": "A"
             },
@@ -1037,7 +1037,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "histogram_quantile(0.95, sum(rate(inference_http_requests_duration_seconds_bucket{job=\"embedding-inference-api\"}[$__rate_interval])) by (le))",
+              "expr": "histogram_quantile(0.95, sum(rate(inference_http_requests_duration_seconds_bucket{namespace=\"{{ .Release.Namespace }}\",job=\"embedding-inference-api\"}[$__rate_interval])) by (le))",
               "legendFormat": "Embedding p95",
               "refId": "B"
             },
@@ -1046,7 +1046,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "histogram_quantile(0.50, sum(rate(llm_inference_http_requests_duration_seconds_bucket{job=\"llm-inference-api\"}[$__rate_interval])) by (le))",
+              "expr": "histogram_quantile(0.50, sum(rate(llm_inference_http_requests_duration_seconds_bucket{namespace=\"{{ .Release.Namespace }}\",job=\"llm-inference-api\"}[$__rate_interval])) by (le))",
               "legendFormat": "LLM p50",
               "refId": "C"
             },
@@ -1055,7 +1055,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "histogram_quantile(0.95, sum(rate(llm_inference_http_requests_duration_seconds_bucket{job=\"llm-inference-api\"}[$__rate_interval])) by (le))",
+              "expr": "histogram_quantile(0.95, sum(rate(llm_inference_http_requests_duration_seconds_bucket{namespace=\"{{ .Release.Namespace }}\",job=\"llm-inference-api\"}[$__rate_interval])) by (le))",
               "legendFormat": "LLM p95",
               "refId": "D"
             }
@@ -1148,7 +1148,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "topk(10, sum by (endpoint, method) (rate(api_http_requests_total{job=\"semantic-explorer-api\",endpoint!~\".*health.*|.*metrics.*\"}[$__rate_interval])))",
+              "expr": "topk(10, sum by (endpoint, method) (rate(api_http_requests_total{namespace=\"{{ .Release.Namespace }}\",job=\"semantic-explorer-api\",endpoint!~\".*health.*|.*metrics.*\"}[$__rate_interval])))",
               "legendFormat": "{{method}} {{endpoint}}",
               "refId": "A"
             }
@@ -1255,7 +1255,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum by (method, endpoint) (rate(api_http_requests_total{job=\"semantic-explorer-api\",endpoint=~\".*/chat/.*\"}[$__rate_interval]))",
+              "expr": "sum by (method, endpoint) (rate(api_http_requests_total{namespace=\"{{ .Release.Namespace }}\",job=\"semantic-explorer-api\",endpoint=~\".*/chat/.*\"}[$__rate_interval]))",
               "legendFormat": "{{method}} {{endpoint}}",
               "refId": "A"
             }
@@ -1348,7 +1348,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "histogram_quantile(0.50, sum by (le, endpoint) (rate(api_http_requests_duration_seconds_bucket{job=\"semantic-explorer-api\",endpoint=~\".*/chat/.*\"}[$__rate_interval])))",
+              "expr": "histogram_quantile(0.50, sum by (le, endpoint) (rate(api_http_requests_duration_seconds_bucket{namespace=\"{{ .Release.Namespace }}\",job=\"semantic-explorer-api\",endpoint=~\".*/chat/.*\"}[$__rate_interval])))",
               "legendFormat": "{{endpoint}} p50",
               "refId": "A"
             },
@@ -1357,7 +1357,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "histogram_quantile(0.95, sum by (le, endpoint) (rate(api_http_requests_duration_seconds_bucket{job=\"semantic-explorer-api\",endpoint=~\".*/chat/.*\"}[$__rate_interval])))",
+              "expr": "histogram_quantile(0.95, sum by (le, endpoint) (rate(api_http_requests_duration_seconds_bucket{namespace=\"{{ .Release.Namespace }}\",job=\"semantic-explorer-api\",endpoint=~\".*/chat/.*\"}[$__rate_interval])))",
               "legendFormat": "{{endpoint}} p95",
               "refId": "B"
             }
@@ -1418,7 +1418,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum(api_http_requests_total{job=\"semantic-explorer-api\",endpoint=~\".*/chat/.*\"})",
+              "expr": "sum(api_http_requests_total{namespace=\"{{ .Release.Namespace }}\",job=\"semantic-explorer-api\",endpoint=~\".*/chat/.*\"})",
               "refId": "A"
             }
           ],
@@ -1478,7 +1478,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum(api_http_requests_total{job=\"semantic-explorer-api\",endpoint=~\".*/chat/.*/messages/stream\"})",
+              "expr": "sum(api_http_requests_total{namespace=\"{{ .Release.Namespace }}\",job=\"semantic-explorer-api\",endpoint=~\".*/chat/.*/messages/stream\"})",
               "refId": "A"
             }
           ],
@@ -1538,7 +1538,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum(rate(api_http_requests_total{job=\"semantic-explorer-api\",endpoint=~\".*/chat/sessions\",method=\"POST\"}[5m])) * 300",
+              "expr": "sum(rate(api_http_requests_total{namespace=\"{{ .Release.Namespace }}\",job=\"semantic-explorer-api\",endpoint=~\".*/chat/sessions\",method=\"POST\"}[5m])) * 300",
               "refId": "A"
             }
           ],
@@ -1609,7 +1609,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum(rate(api_http_requests_total{job=\"semantic-explorer-api\",endpoint=~\".*/chat/.*\",status=~\"5..\"}[$__rate_interval])) / sum(rate(api_http_requests_total{job=\"semantic-explorer-api\",endpoint=~\".*/chat/.*\"}[$__rate_interval]))",
+              "expr": "sum(rate(api_http_requests_total{namespace=\"{{ .Release.Namespace }}\",job=\"semantic-explorer-api\",endpoint=~\".*/chat/.*\",status=~\"5..\"}[$__rate_interval])) / sum(rate(api_http_requests_total{namespace=\"{{ .Release.Namespace }}\",job=\"semantic-explorer-api\",endpoint=~\".*/chat/.*\"}[$__rate_interval]))",
               "refId": "A"
             }
           ],
@@ -2157,7 +2157,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum by (worker, status) (rate(worker_jobs_total{worker=\"visualization-transform\"}[$__rate_interval]))",
+              "expr": "sum by (worker, status) (rate(worker_jobs_total{namespace=\"{{ .Release.Namespace }}\",worker=\"visualization-transform\"}[$__rate_interval]))",
               "legendFormat": "{{status}}",
               "refId": "A"
             }
@@ -2250,7 +2250,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "histogram_quantile(0.50, sum(rate(worker_job_duration_seconds_bucket{worker=\"visualization-transform\"}[$__rate_interval])) by (le))",
+              "expr": "histogram_quantile(0.50, sum(rate(worker_job_duration_seconds_bucket{namespace=\"{{ .Release.Namespace }}\",worker=\"visualization-transform\"}[$__rate_interval])) by (le))",
               "legendFormat": "p50",
               "refId": "A"
             },
@@ -2259,7 +2259,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "histogram_quantile(0.95, sum(rate(worker_job_duration_seconds_bucket{worker=\"visualization-transform\"}[$__rate_interval])) by (le))",
+              "expr": "histogram_quantile(0.95, sum(rate(worker_job_duration_seconds_bucket{namespace=\"{{ .Release.Namespace }}\",worker=\"visualization-transform\"}[$__rate_interval])) by (le))",
               "legendFormat": "p95",
               "refId": "B"
             },
@@ -2268,7 +2268,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "histogram_quantile(0.99, sum(rate(worker_job_duration_seconds_bucket{worker=\"visualization-transform\"}[$__rate_interval])) by (le))",
+              "expr": "histogram_quantile(0.99, sum(rate(worker_job_duration_seconds_bucket{namespace=\"{{ .Release.Namespace }}\",worker=\"visualization-transform\"}[$__rate_interval])) by (le))",
               "legendFormat": "p99",
               "refId": "C"
             }
@@ -2329,7 +2329,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum(worker_jobs_total{worker=\"visualization-transform\"})",
+              "expr": "sum(worker_jobs_total{namespace=\"{{ .Release.Namespace }}\",worker=\"visualization-transform\"})",
               "refId": "A"
             }
           ],
@@ -2389,7 +2389,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum(worker_jobs_total{worker=\"visualization-transform\",status=\"success\"})",
+              "expr": "sum(worker_jobs_total{namespace=\"{{ .Release.Namespace }}\",worker=\"visualization-transform\",status=\"success\"})",
               "refId": "A"
             }
           ],
@@ -2467,7 +2467,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "visualization_worker_ready{job=\"worker-visualizations-py\"}",
+              "expr": "visualization_worker_ready{namespace=\"{{ .Release.Namespace }}\",job=\"worker-visualizations-py\"}",
               "refId": "A"
             }
           ],
@@ -2527,7 +2527,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "visualization_active_jobs{job=\"worker-visualizations-py\"}",
+              "expr": "visualization_active_jobs{namespace=\"{{ .Release.Namespace }}\",job=\"worker-visualizations-py\"}",
               "refId": "A"
             }
           ],
@@ -2632,7 +2632,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "process_resident_memory_bytes{job=~\"semantic-explorer-api|embedding-inference-api|llm-inference-api\"}",
+              "expr": "process_resident_memory_bytes{namespace=\"{{ .Release.Namespace }}\",job=~\"semantic-explorer-api|embedding-inference-api|llm-inference-api\"}",
               "legendFormat": "{{job}}",
               "refId": "A"
             },
@@ -2641,7 +2641,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum(python_info{job=\"worker-visualizations-py\"}) * on(job) group_left() process_resident_memory_bytes{job=\"worker-visualizations-py\"}",
+              "expr": "sum(python_info{namespace=\"{{ .Release.Namespace }}\",job=\"worker-visualizations-py\"}) * on(job) group_left() process_resident_memory_bytes{namespace=\"{{ .Release.Namespace }}\",job=\"worker-visualizations-py\"}",
               "legendFormat": "worker-visualizations-py",
               "refId": "B"
             }
@@ -2734,7 +2734,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "rate(process_cpu_seconds_total{job=~\"semantic-explorer-api|embedding-inference-api|llm-inference-api|worker-visualizations-py\"}[$__rate_interval])",
+              "expr": "rate(process_cpu_seconds_total{namespace=\"{{ .Release.Namespace }}\",job=~\"semantic-explorer-api|embedding-inference-api|llm-inference-api|worker-visualizations-py\"}[$__rate_interval])",
               "legendFormat": "{{job}}",
               "refId": "A"
             }
@@ -2827,7 +2827,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "process_open_fds{job=~\"semantic-explorer-api|embedding-inference-api|llm-inference-api|worker-visualizations-py\"}",
+              "expr": "process_open_fds{namespace=\"{{ .Release.Namespace }}\",job=~\"semantic-explorer-api|embedding-inference-api|llm-inference-api|worker-visualizations-py\"}",
               "legendFormat": "{{job}}",
               "refId": "A"
             }
@@ -2920,7 +2920,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "process_threads{job=~\"semantic-explorer-api|embedding-inference-api|llm-inference-api|worker-visualizations-py\"}",
+              "expr": "process_threads{namespace=\"{{ .Release.Namespace }}\",job=~\"semantic-explorer-api|embedding-inference-api|llm-inference-api|worker-visualizations-py\"}",
               "legendFormat": "{{job}}",
               "refId": "A"
             }
