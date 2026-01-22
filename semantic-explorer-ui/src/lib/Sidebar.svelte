@@ -88,12 +88,16 @@
 </script>
 
 <aside
-	class="shrink-0 w-64 bg-white border-r border-gray-200 dark:bg-gray-800 dark:border-gray-700 overflow-y-auto"
+	class="shrink-0 w-48 lg:w-56 xl:w-64 bg-white border-r border-gray-200 dark:bg-gray-800 dark:border-gray-700 overflow-y-auto"
 	role="navigation"
 	aria-label="Main navigation"
 >
-	<div class="h-full px-3 py-4 overflow-y-auto">
-		<ul class="space-y-2 font-medium" role="menubar" aria-label="Navigation menu">
+	<div class="h-full px-2 lg:px-3 py-3 lg:py-4 overflow-y-auto">
+		<ul
+			class="space-y-1 lg:space-y-2 font-medium text-sm lg:text-base"
+			role="menubar"
+			aria-label="Navigation menu"
+		>
 			{#each menuItems as item (item.url || item.name)}
 				{@const Icon = item.icon}
 				{#if item.isDivider}
@@ -105,29 +109,33 @@
 					<!-- Folder item with children -->
 					<li role="none">
 						<button
-							class="flex items-center w-full p-2 rounded-lg transition-colors duration-200 text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-700"
+							class="flex items-center w-full p-1.5 lg:p-2 rounded-lg transition-colors duration-200 text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-700"
 							onclick={() => toggleFolder(item.name)}
 							aria-expanded={expandedFolders.includes(item.name)}
 							aria-label={`${item.name} submenu, ${expandedFolders.includes(item.name) ? 'expanded' : 'collapsed'}`}
 						>
-							<Icon class="w-5 h-5" />
-							<span class="ml-3 flex-1 text-left">{item.name}</span>
+							<Icon class="w-4 h-4 lg:w-5 lg:h-5 shrink-0" />
+							<span class="ml-2 lg:ml-3 flex-1 text-left">{item.name}</span>
 							{#if expandedFolders.includes(item.name)}
-								<ChevronDownOutline class="w-4 h-4" />
+								<ChevronDownOutline class="w-3 h-3 lg:w-4 lg:h-4 shrink-0" />
 							{:else}
-								<ChevronRightOutline class="w-4 h-4" />
+								<ChevronRightOutline class="w-3 h-3 lg:w-4 lg:h-4 shrink-0" />
 							{/if}
 						</button>
 
 						{#if expandedFolders.includes(item.name)}
-							<ul class="ml-6 mt-2 space-y-2" role="menu" aria-label={`${item.name} submenu`}>
+							<ul
+								class="ml-4 lg:ml-6 mt-1 lg:mt-2 space-y-1 lg:space-y-2"
+								role="menu"
+								aria-label={`${item.name} submenu`}
+							>
 								{#each item.children as child (child.url)}
 									{@const ChildIcon = child.icon}
 									<li role="none">
 										<a
 											href={`#${child.url}`}
 											role="menuitem"
-											class="flex items-center p-2 rounded-lg transition-colors duration-200
+											class="flex items-center p-1.5 lg:p-2 rounded-lg transition-colors duration-200
 												{activeUrl === child.url
 												? 'bg-gray-100 text-gray-900 dark:bg-gray-700 dark:text-white'
 												: 'text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-700'}"
@@ -138,8 +146,8 @@
 												activeUrl = child.url || '';
 											}}
 										>
-											<ChildIcon class="w-4 h-4" />
-											<span class="ml-3 text-sm">{child.name}</span>
+											<ChildIcon class="w-3 h-3 lg:w-4 lg:h-4 shrink-0" />
+											<span class="ml-2 lg:ml-3 text-xs lg:text-sm">{child.name}</span>
 										</a>
 									</li>
 								{/each}
@@ -152,7 +160,7 @@
 						<a
 							href={`#${item.url}`}
 							role="menuitem"
-							class="flex items-center p-2 rounded-lg transition-colors duration-200
+							class="flex items-center p-1.5 lg:p-2 rounded-lg transition-colors duration-200
 								{activeUrl === item.url
 								? 'bg-gray-100 text-gray-900 dark:bg-gray-700 dark:text-white'
 								: 'text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-700'}"
@@ -163,8 +171,8 @@
 								activeUrl = item.url || '';
 							}}
 						>
-							<Icon class="w-5 h-5" />
-							<span class="ml-3">{item.name}</span>
+							<Icon class="w-4 h-4 lg:w-5 lg:h-5 shrink-0" />
+							<span class="ml-2 lg:ml-3">{item.name}</span>
 						</a>
 					</li>
 				{/if}

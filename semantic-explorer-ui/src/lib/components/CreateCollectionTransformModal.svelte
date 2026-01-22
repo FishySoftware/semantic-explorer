@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { Button, Modal, Tooltip } from 'flowbite-svelte';
 	import { QuestionCircleSolid } from 'flowbite-svelte-icons';
-	import { onMount } from 'svelte';
 	import { formatError, toastStore } from '../utils/notifications';
 
 	interface Props {
@@ -124,10 +123,12 @@
 	let isCreating = $state(false);
 	let error = $state<string | null>(null);
 
-	onMount(() => {
-		fetchCollections();
-		fetchDatasets();
-		fetchEmbedders();
+	// Fetch data when modal opens
+	$effect(() => {
+		if (open) {
+			fetchDatasets();
+			fetchEmbedders();
+		}
 	});
 
 	async function fetchCollections() {

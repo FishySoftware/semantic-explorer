@@ -88,6 +88,9 @@ const GET_DATASET_TRANSFORMS_PAGINATED_WITH_SEARCH_BASE: &str = r#"
     AND owner_id = $2
 "#;
 
+const VERIFY_DATASET_TRANSFORM_OWNERSHIP_QUERY: &str =
+    "SELECT dataset_transform_id FROM dataset_transforms WHERE dataset_transform_id = ANY($1)";
+
 const GET_DATASET_TRANSFORM_STATS_QUERY: &str = r#"
     WITH unique_batches AS (
         SELECT
@@ -405,6 +408,31 @@ pub async fn delete_dataset_transform(
 
     tx.commit().await?;
     Ok(())
+}
+
+// Batch ownership verification
+
+/// Verifies ownership of multiple dataset transforms in a single query.
+/// Returns the IDs that exist and are owned by the user.
+pub async fn verify_dataset_transform_ownership(
+    pool: &Pool<Postgres>,
+    owner: &str,
+    dataset_transform_ids: &[i32],
+) -> Result<Vec<i32>> {
+    if dataset_transform_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
+    let owned_ids: Vec<(i32,)> = sqlx::query_as(VERIFY_DATASET_TRANSFORM_OWNERSHIP_QUERY)
+        .bind(dataset_transform_ids)
+        .fetch_all(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+    Ok(owned_ids.into_iter().map(|(id,)| id).collect())
 }
 
 // Statistics

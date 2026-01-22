@@ -313,7 +313,11 @@
 	<div class="flex flex-1 overflow-hidden">
 		<Sidebar bind:activeUrl />
 
-		<main class="flex-1 overflow-y-auto {activeUrl === '/chat' ? 'p-0' : 'p-6'}">
+		<main
+			class="flex-1 overflow-y-auto {activeUrl === '/chat'
+				? 'p-0'
+				: 'p-3 sm:p-4 lg:p-6'} min-content-height"
+		>
 			<ErrorBoundary>
 				{#if activeUrl === '/dashboard'}
 					{#await Dashboard() then { default: DashboardComponent }}

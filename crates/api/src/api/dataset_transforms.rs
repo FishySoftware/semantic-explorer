@@ -524,19 +524,36 @@ pub async fn get_batch_dataset_transform_stats(
 ) -> impl Responder {
     let transform_ids = &body.dataset_transform_ids;
 
-    // Verify ownership
-    for &id in transform_ids {
-        match dataset_transforms::get_dataset_transform(&pool, &user.as_owner(), id).await {
-            Ok(_) => {}
-            Err(_) => {
-                return HttpResponse::NotFound().json(serde_json::json!({
-                    "error": format!("Dataset transform {} not found", id)
-                }));
-            }
+    // Verify ownership in a single batched query instead of N sequential queries
+    let owned_ids = match dataset_transforms::verify_dataset_transform_ownership(
+        &pool,
+        &user.as_owner(),
+        transform_ids,
+    )
+    .await
+    {
+        Ok(ids) => ids,
+        Err(e) => {
+            error!("Failed to verify ownership: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to verify ownership"
+            }));
         }
+    };
+
+    // Log warning if some IDs were not found/owned, but proceed with owned ones
+    if owned_ids.len() != transform_ids.len() {
+        let missing: Vec<_> = transform_ids
+            .iter()
+            .filter(|id| !owned_ids.contains(id))
+            .collect();
+        tracing::warn!(
+            "Some dataset transforms not found or not owned: {:?}",
+            missing
+        );
     }
 
-    match dataset_transforms::get_batch_dataset_transform_stats(&pool, transform_ids).await {
+    match dataset_transforms::get_batch_dataset_transform_stats(&pool, &owned_ids).await {
         Ok(stats_map) => HttpResponse::Ok().json(stats_map),
         Err(e) => {
             error!("Failed to get batch stats: {}", e);

@@ -16,6 +16,8 @@ export interface SSEConnectionOptions {
 	initialDelay?: number;
 	/** Maximum reconnection delay in ms (default: 60000) */
 	maxDelay?: number;
+	/** Heartbeat timeout in ms - reconnect if no heartbeat received (default: 90000) */
+	heartbeatTimeout?: number;
 	/** Callback when connected */
 	onConnect?: () => void;
 	/** Callback when a status event is received */
@@ -67,6 +69,7 @@ export function createSSEConnection(options: SSEConnectionOptions): SSEConnectio
 		maxReconnectAttempts = 10,
 		initialDelay = 1000,
 		maxDelay = 60000,
+		heartbeatTimeout = 90000,
 		onConnect,
 		onStatus,
 		onClose,
@@ -77,7 +80,48 @@ export function createSSEConnection(options: SSEConnectionOptions): SSEConnectio
 	let eventSource: EventSource | null = null;
 	let reconnectAttempts = 0;
 	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+	let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
 	let isDisconnecting = false;
+	let isPageVisible = true;
+
+	// Handle page visibility changes
+	function handleVisibilityChange() {
+		if (typeof document === 'undefined') return;
+
+		isPageVisible = !document.hidden;
+
+		if (isPageVisible && eventSource === null && !isDisconnecting) {
+			// Page became visible and we're not connected - try to reconnect
+			reconnectAttempts = 0; // Reset attempts when page becomes visible
+			connect();
+		} else if (!isPageVisible && reconnectTimer) {
+			// Page became hidden - pause reconnection attempts
+			clearTimeout(reconnectTimer);
+			reconnectTimer = null;
+		}
+	}
+
+	// Setup visibility listener
+	if (typeof document !== 'undefined') {
+		document.addEventListener('visibilitychange', handleVisibilityChange);
+	}
+
+	function resetHeartbeatTimer(): void {
+		if (heartbeatTimer) {
+			clearTimeout(heartbeatTimer);
+			heartbeatTimer = null;
+		}
+
+		// Set a new timeout for heartbeat
+		heartbeatTimer = setTimeout(() => {
+			console.warn('SSE: Heartbeat timeout - no heartbeat received, reconnecting...');
+			eventSource?.close();
+			eventSource = null;
+			if (!isDisconnecting) {
+				scheduleReconnect();
+			}
+		}, heartbeatTimeout);
+	}
 
 	function connect(): void {
 		// Don't connect if we're intentionally disconnecting
@@ -94,12 +138,14 @@ export function createSSEConnection(options: SSEConnectionOptions): SSEConnectio
 
 			eventSource.addEventListener('connected', () => {
 				reconnectAttempts = 0;
+				resetHeartbeatTimer(); // Start heartbeat monitoring
 				onConnect?.();
 			});
 
 			eventSource.addEventListener('status', (event) => {
 				try {
 					const data = JSON.parse((event as MessageEvent).data);
+					resetHeartbeatTimer(); // Reset heartbeat on any message
 					onStatus?.(data);
 				} catch (e) {
 					console.error('Failed to parse SSE status event:', e);
@@ -107,21 +153,34 @@ export function createSSEConnection(options: SSEConnectionOptions): SSEConnectio
 			});
 
 			eventSource.addEventListener('closed', () => {
+				if (heartbeatTimer) {
+					clearTimeout(heartbeatTimer);
+					heartbeatTimer = null;
+				}
 				onClose?.();
 				if (!isDisconnecting) {
 					scheduleReconnect();
 				}
 			});
 
-			// Handle heartbeat silently
+			// Handle heartbeat - reset timeout
 			eventSource.addEventListener('heartbeat', () => {
-				// Connection is alive - nothing to do
+				resetHeartbeatTimer();
 			});
 
 			eventSource.onerror = (error) => {
+				if (heartbeatTimer) {
+					clearTimeout(heartbeatTimer);
+					heartbeatTimer = null;
+				}
 				onError?.(error);
-				eventSource?.close();
+
+				// Only close if not already closed
+				if (eventSource && eventSource.readyState !== EventSource.CLOSED) {
+					eventSource.close();
+				}
 				eventSource = null;
+
 				if (!isDisconnecting) {
 					scheduleReconnect();
 				}
@@ -140,6 +199,12 @@ export function createSSEConnection(options: SSEConnectionOptions): SSEConnectio
 			reconnectTimer = null;
 		}
 
+		// Don't reconnect if page is hidden
+		if (!isPageVisible) {
+			console.log('SSE: Page is hidden, deferring reconnection until page is visible');
+			return;
+		}
+
 		if (reconnectAttempts >= maxReconnectAttempts) {
 			console.error(`SSE: Max reconnection attempts (${maxReconnectAttempts}) reached for ${url}`);
 			onMaxRetriesReached?.();
@@ -152,6 +217,10 @@ export function createSSEConnection(options: SSEConnectionOptions): SSEConnectio
 		const delay = baseDelay + jitter;
 
 		reconnectAttempts++;
+
+		console.log(
+			`SSE: Scheduling reconnection attempt ${reconnectAttempts}/${maxReconnectAttempts} in ${Math.round(delay)}ms`
+		);
 
 		reconnectTimer = setTimeout(() => {
 			connect();
@@ -166,9 +235,19 @@ export function createSSEConnection(options: SSEConnectionOptions): SSEConnectio
 			reconnectTimer = null;
 		}
 
+		if (heartbeatTimer) {
+			clearTimeout(heartbeatTimer);
+			heartbeatTimer = null;
+		}
+
 		if (eventSource) {
 			eventSource.close();
 			eventSource = null;
+		}
+
+		// Remove visibility listener
+		if (typeof document !== 'undefined') {
+			document.removeEventListener('visibilitychange', handleVisibilityChange);
 		}
 
 		reconnectAttempts = 0;

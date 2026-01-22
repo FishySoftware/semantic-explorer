@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { Table, TableBody, TableBodyCell, TableHead, TableHeadCell } from 'flowbite-svelte';
-	import { onMount } from 'svelte';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import ActionMenu from '../components/ActionMenu.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
@@ -282,16 +281,10 @@
 		}
 	}
 
-	onMount(() => {
-		fetchEmbeddedDatasets();
-	});
-
 	$effect(() => {
-		// Reset to first page when search changes
-		if (searchQuery || !searchQuery) {
-			currentOffset = 0;
-			fetchEmbeddedDatasets();
-		}
+		// Reset to first page when search changes and fetch data
+		currentOffset = 0;
+		fetchEmbeddedDatasets();
 	});
 
 	let filteredDatasets = $derived(

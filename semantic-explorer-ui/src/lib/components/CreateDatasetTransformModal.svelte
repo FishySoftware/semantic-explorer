@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { Button, Modal } from 'flowbite-svelte';
-	import { onMount } from 'svelte';
 	import { formatError, toastStore } from '../utils/notifications';
 
 	interface Props {
@@ -51,9 +50,12 @@
 	let isCreating = $state(false);
 	let error = $state<string | null>(null);
 
-	onMount(() => {
-		fetchDatasets();
-		fetchEmbedders();
+	// Fetch data when modal opens
+	$effect(() => {
+		if (open) {
+			fetchDatasets();
+			fetchEmbedders();
+		}
 	});
 
 	async function fetchDatasets() {

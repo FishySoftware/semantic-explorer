@@ -10,7 +10,6 @@ use tracing::{debug, error, info, warn};
 use crate::config::ModelConfig;
 use crate::errors::InferenceError;
 
-
 type EmbeddingCache = Arc<RwLock<HashMap<String, Arc<Mutex<TextEmbedding>>>>>;
 
 /// Global embedding model cache - using async RwLock for better concurrency

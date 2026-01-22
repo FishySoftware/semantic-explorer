@@ -176,7 +176,6 @@
 
 	onMount(() => {
 		fetchInferenceModels();
-		fetchLLMs();
 		extractSearchParamFromHash();
 	});
 

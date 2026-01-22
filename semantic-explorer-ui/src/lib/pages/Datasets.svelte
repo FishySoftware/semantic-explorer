@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { Table, TableBody, TableBodyCell, TableHead, TableHeadCell } from 'flowbite-svelte';
-	import { onMount } from 'svelte';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import ActionMenu from '../components/ActionMenu.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
@@ -187,10 +186,6 @@
 	$effect(() => {
 		searchQuery;
 		currentOffset = 0; // Reset to first page when searching
-		fetchDatasets();
-	});
-
-	onMount(() => {
 		fetchDatasets();
 	});
 

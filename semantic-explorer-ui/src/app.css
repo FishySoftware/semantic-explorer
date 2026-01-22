@@ -32,6 +32,29 @@
 @source "../node_modules/flowbite-svelte-icons/dist";
 
 @layer base {
+	/* Responsive base font size that scales with zoom */
+	html {
+		font-size: 16px;
+	}
+
+	@media (max-width: 1280px) {
+		html {
+			font-size: 15px;
+		}
+	}
+
+	@media (max-width: 1024px) {
+		html {
+			font-size: 14px;
+		}
+	}
+
+	/* Prevent layout shift during page loads */
+	body {
+		min-height: 100vh;
+		overflow-x: hidden;
+	}
+
 	/* disable chrome cancel button */
 	input[type='search']::-webkit-search-cancel-button {
 		display: none;
@@ -57,9 +80,41 @@
 }
 
 @layer utilities {
+	/* Prevent layout shift - reserve space for content */
+	.min-content-height {
+		min-height: 200px;
+	}
+
+	.min-card-height {
+		min-height: 120px;
+	}
+
+	/* Compact spacing variants for smaller screens */
+	.compact-p {
+		@apply p-3;
+	}
+
+	@media (min-width: 1024px) {
+		.compact-p {
+			@apply p-4;
+		}
+	}
+
+	@media (min-width: 1536px) {
+		.compact-p {
+			@apply p-6;
+		}
+	}
+
 	/* High contrast button utilities for CTAs */
 	.btn-primary {
-		@apply bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold py-2 px-4 rounded-lg shadow-md transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed;
+		@apply bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold py-1.5 px-3 rounded-lg shadow-md transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed;
+	}
+
+	@media (min-width: 1024px) {
+		.btn-primary {
+			@apply py-2 px-4;
+		}
 	}
 
 	.dark .btn-primary {
@@ -67,7 +122,13 @@
 	}
 
 	.btn-danger {
-		@apply bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-semibold py-2 px-4 rounded-lg shadow-md transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed;
+		@apply bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-semibold py-1.5 px-3 rounded-lg shadow-md transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed;
+	}
+
+	@media (min-width: 1024px) {
+		.btn-danger {
+			@apply py-2 px-4;
+		}
 	}
 
 	.dark .btn-danger {
@@ -75,7 +136,13 @@
 	}
 
 	.btn-secondary {
-		@apply bg-gray-200 hover:bg-gray-300 active:bg-gray-400 text-gray-900 font-semibold py-2 px-4 rounded-lg shadow-sm transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed;
+		@apply bg-gray-200 hover:bg-gray-300 active:bg-gray-400 text-gray-900 font-semibold py-1.5 px-3 rounded-lg shadow-sm transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed;
+	}
+
+	@media (min-width: 1024px) {
+		.btn-secondary {
+			@apply py-2 px-4;
+		}
 	}
 
 	.dark .btn-secondary {
