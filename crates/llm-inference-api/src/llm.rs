@@ -491,6 +491,7 @@ pub async fn generate_text(
         .set_sampler_max_len(max_tokens)
         .set_sampler_temperature(temperature as f64)
         .set_sampler_topp(top_p as f64)
+        .add_message(TextMessageRole::System, "You are a helpful assistant.")
         .add_message(TextMessageRole::User, &prompt);
 
     let response = model_arc
@@ -498,13 +499,41 @@ pub async fn generate_text(
         .await
         .map_err(|e| InferenceError::Generation(format!("Generation failed: {}", e)))?;
 
-    // Extract response text
-    let text = response.choices[0]
-        .message
-        .content
-        .as_ref()
-        .ok_or_else(|| InferenceError::Generation("Empty response from model".to_string()))?
-        .clone();
+    // Log response for debugging
+    debug!(
+        choices = response.choices.len(),
+        completion_tokens = response.usage.completion_tokens,
+        finish_reason = response.choices.first().map(|c| c.finish_reason.as_str()),
+        "Received response from model"
+    );
+
+    // Check if we have choices
+    if response.choices.is_empty() {
+        return Err(InferenceError::Generation(
+            "No choices in model response".to_string(),
+        ));
+    }
+
+    let text = if let Some(content) = response.choices[0].message.content.as_ref() {
+        content.clone()
+    } else {
+        tracing::error!(
+            finish_reason = response.choices[0].finish_reason,
+            completion_tokens = response.usage.completion_tokens,
+            "Model response has no content in message.content field - this is a mistral.rs bug or model issue"
+        );
+        return Err(InferenceError::Generation(
+            "Model returned empty content (mistral.rs response.choices[0].message.content is None)"
+                .to_string(),
+        ));
+    };
+
+    if text.trim().is_empty() {
+        tracing::warn!("Model returned empty text content");
+        return Err(InferenceError::Generation(
+            "Model returned empty text".to_string(),
+        ));
+    }
 
     // Determine finish reason
     let finish_reason = match response.choices[0].finish_reason.as_str() {
@@ -641,9 +670,12 @@ pub async fn chat_completion(
     // Get model from cache
     let model_arc = get_or_load_model(model_id, model_config).await?;
 
+    // Merge consecutive messages with the same role to ensure alternation
+    let merged_messages = merge_consecutive_messages(messages);
+
     // Build chat messages for mistral.rs
     let mut text_messages = TextMessages::new();
-    for msg in messages {
+    for msg in merged_messages {
         let role = match msg.role.to_lowercase().as_str() {
             "system" => TextMessageRole::System,
             "user" => TextMessageRole::User,
@@ -716,9 +748,12 @@ pub async fn chat_completion_stream(
     // Get model from cache
     let model_arc = get_or_load_model(model_id, model_config).await?;
 
+    // Merge consecutive messages with the same role to ensure alternation
+    let merged_messages = merge_consecutive_messages(messages);
+
     // Build chat messages for mistral.rs
     let mut text_messages = TextMessages::new();
-    for msg in messages {
+    for msg in merged_messages {
         let role = match msg.role.to_lowercase().as_str() {
             "system" => TextMessageRole::System,
             "user" => TextMessageRole::User,
@@ -777,6 +812,52 @@ pub async fn chat_completion_stream(
     };
 
     Ok(Box::pin(text_stream))
+}
+
+/// Merge consecutive messages with the same role to ensure proper alternation
+///
+/// Some chat models require strict alternation between user and assistant roles.
+/// This function merges consecutive messages with the same role by concatenating
+/// their content with newlines.
+fn merge_consecutive_messages(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
+    if messages.is_empty() {
+        return messages;
+    }
+
+    let mut merged = Vec::new();
+    let mut current_role = String::new();
+    let mut current_content = String::new();
+
+    for msg in messages {
+        if msg.role == current_role {
+            // Same role as previous - merge content
+            if !current_content.is_empty() {
+                current_content.push_str("\n\n");
+            }
+            current_content.push_str(&msg.content);
+        } else {
+            // Different role - save previous message if any
+            if !current_role.is_empty() {
+                merged.push(ChatMessage {
+                    role: current_role.clone(),
+                    content: current_content.clone(),
+                });
+            }
+            // Start new message
+            current_role = msg.role;
+            current_content = msg.content;
+        }
+    }
+
+    // Don't forget the last message
+    if !current_role.is_empty() {
+        merged.push(ChatMessage {
+            role: current_role,
+            content: current_content,
+        });
+    }
+
+    merged
 }
 
 /// Check if the LLM service is ready (models loaded)

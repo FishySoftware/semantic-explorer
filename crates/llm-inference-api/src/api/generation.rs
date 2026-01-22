@@ -138,7 +138,21 @@ pub async fn generate(
                 finish_reason: result.finish_reason.to_string(),
             })
         }
-        Err(e) => e.error_response(),
+        Err(e) => {
+            let duration = start.elapsed().as_secs_f64();
+            tracing::error!(
+                model = %model_id,
+                error = %e,
+                duration_secs = duration,
+                "Text generation failed"
+            );
+
+            semantic_explorer_core::observability::record_llm_request(
+                &model_id, 0, duration, false,
+            );
+
+            e.error_response()
+        }
     }
 }
 

@@ -4,7 +4,7 @@ use semantic_explorer_core::http_client::HTTP_CLIENT;
 use sqlx::{Pool, Postgres};
 use std::pin::Pin;
 
-use crate::storage::postgres::chat as chat_storage;
+use crate::{chat::models::ChatMessage, storage::postgres::chat as chat_storage};
 
 /// Type alias for streaming LLM response results
 type LLMStreamResult = Result<Pin<Box<dyn Stream<Item = Result<String, String>> + Send>>, String>;
@@ -23,10 +23,12 @@ struct LLMRequestConfig {
 
 /// Generate an LLM response with RAG context
 #[tracing::instrument(name = "generate_llm_response", skip(pool, query, context, encryption))]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn generate_response(
     pool: &Pool<Postgres>,
     encryption: &EncryptionService,
     llm_id: i32,
+    session_id: &str,
     query: &str,
     context: &str,
     temperature: Option<f32>,
@@ -75,8 +77,19 @@ pub(crate) async fn generate_response(
     // Call the appropriate LLM API
     let response_text = match provider.to_lowercase().as_str() {
         "internal" => {
-            call_internal_llm_api(&model, SYSTEM_PROMPT, &user_prompt, temperature, max_tokens)
-                .await?
+            // Get conversation history for internal LLM
+            let history = chat_storage::get_chat_messages(pool, session_id)
+                .await
+                .unwrap_or_default();
+            call_internal_llm_api(
+                &model,
+                SYSTEM_PROMPT,
+                &user_prompt,
+                &history,
+                temperature,
+                max_tokens,
+            )
+            .await?
         }
         "openai" => {
             call_openai_api(
@@ -183,21 +196,47 @@ async fn call_internal_llm_api(
     model: &str,
     system_prompt: &str,
     user_prompt: &str,
+    history: &[ChatMessage],
     temperature: f32,
     max_tokens: i32,
 ) -> Result<String, String> {
+    // Build messages with conversation history
+    let mut messages = vec![crate::llms::client::ChatMessage {
+        role: "system".to_string(),
+        content: system_prompt.to_string(),
+    }];
+
+    // Add conversation history (excluding the current incomplete assistant message)
+    for msg in history {
+        // Skip incomplete/error messages
+        if msg.status != "complete" {
+            continue;
+        }
+        messages.push(crate::llms::client::ChatMessage {
+            role: msg.role.clone(),
+            content: msg.content.clone(),
+        });
+    }
+
+    // Add current user prompt
+    messages.push(crate::llms::client::ChatMessage {
+        role: "user".to_string(),
+        content: user_prompt.to_string(),
+    });
+
     // Use the llm_client to call the internal inference API
-    let response = crate::llms::client::simple_chat(
+    let response = crate::llms::client::chat_completion(
         model,
-        system_prompt,
-        user_prompt,
+        messages,
         Some(temperature),
+        None,
         Some(max_tokens as usize),
+        None,
     )
     .await
     .map_err(|e| format!("Internal LLM API error: {}", e))?;
 
-    Ok(response)
+    Ok(response.message.content)
 }
 
 /// Call internal LLM inference API for streaming chat completion
@@ -205,20 +244,33 @@ async fn call_internal_llm_api_stream(
     model: &str,
     system_prompt: &str,
     user_prompt: &str,
+    history: &[ChatMessage],
     temperature: f32,
     max_tokens: i32,
 ) -> LLMStreamResult {
-    // Build messages for chat completion
-    let messages = vec![
-        crate::llms::client::ChatMessage {
-            role: "system".to_string(),
-            content: system_prompt.to_string(),
-        },
-        crate::llms::client::ChatMessage {
-            role: "user".to_string(),
-            content: user_prompt.to_string(),
-        },
-    ];
+    // Build messages with conversation history
+    let mut messages = vec![crate::llms::client::ChatMessage {
+        role: "system".to_string(),
+        content: system_prompt.to_string(),
+    }];
+
+    // Add conversation history (excluding the current incomplete assistant message)
+    for msg in history {
+        // Skip incomplete/error messages
+        if msg.status != "complete" {
+            continue;
+        }
+        messages.push(crate::llms::client::ChatMessage {
+            role: msg.role.clone(),
+            content: msg.content.clone(),
+        });
+    }
+
+    // Add current user prompt
+    messages.push(crate::llms::client::ChatMessage {
+        role: "user".to_string(),
+        content: user_prompt.to_string(),
+    });
 
     // Use the llm_client to call the local inference API streaming endpoint
     let stream = crate::llms::client::chat_completion_stream(
@@ -310,10 +362,12 @@ async fn call_cohere_api(
     name = "generate_llm_response_stream",
     skip(pool, query, context, encryption)
 )]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn generate_response_stream(
     pool: &Pool<Postgres>,
     encryption: &EncryptionService,
     llm_id: i32,
+    session_id: &str,
     query: &str,
     context: &str,
     temperature: Option<f32>,
@@ -338,11 +392,16 @@ pub(crate) async fn generate_response_stream(
 
     // Handle internal provider separately (before consuming model in config)
     if provider.to_lowercase() == "internal" {
+        // Get conversation history for internal LLM
+        let history = chat_storage::get_chat_messages(pool, session_id)
+            .await
+            .unwrap_or_default();
         // Use internal LLM inference API streaming
         let stream = call_internal_llm_api_stream(
             &model,
             SYSTEM_PROMPT,
             &user_prompt,
+            &history,
             temperature,
             max_tokens,
         )

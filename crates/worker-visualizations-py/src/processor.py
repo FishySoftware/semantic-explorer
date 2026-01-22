@@ -760,35 +760,27 @@ class VisualizationProcessor:
 
                         # Sample texts based on configuration
                         sample_texts = cluster_texts[:samples_per_cluster]
-                        tasks.append(
-                            (
-                                cluster_id,
-                                llm_provider.generate_topic_name(
-                                    sample_texts, job.llm_config
-                                ),
-                            )
-                        )
+                        tasks.append((cluster_id, sample_texts))
 
-                    # Execute batch in parallel
+                    # Execute batch sequentially to avoid overwhelming GPU
                     if tasks:
                         batch_start_time = time.time()
-                        results = await asyncio.gather(
-                            *[task for _, task in tasks], return_exceptions=True
-                        )
-                        batch_elapsed = time.time() - batch_start_time
-
-                        # Process results
-                        for (cluster_id, _), result in zip(tasks, results):
-                            if isinstance(result, Exception):
+                        
+                        for cluster_id, sample_texts in tasks:
+                            try:
+                                result = await llm_provider.generate_topic_name(
+                                    sample_texts, job.llm_config
+                                )
+                                cluster_labels[cluster_id] = result
+                                logger.debug(f"Cluster {cluster_id} -> '{result}'")
+                            except Exception as e:
                                 logger.warning(
-                                    f"Failed to generate label for cluster {cluster_id}: {type(result).__name__}: {result}, "
+                                    f"Failed to generate label for cluster {cluster_id}: {type(e).__name__}: {e}, "
                                     f"using numeric fallback"
                                 )
                                 cluster_labels[cluster_id] = f"Cluster {cluster_id}"
-                            else:
-                                cluster_labels[cluster_id] = result
-                                logger.debug(f"Cluster {cluster_id} -> '{result}'")
 
+                        batch_elapsed = time.time() - batch_start_time
                         logger.info(
                             f"Batch {batch_start//batch_size + 1} complete: {len(tasks)} clusters in {batch_elapsed:.3f}s "
                             f"({batch_elapsed/len(tasks):.3f}s per cluster)"

@@ -112,48 +112,6 @@ pub async fn chat_completion(
     Ok(result)
 }
 
-/// Generate a simple chat-style response from a system prompt and user message
-///
-/// This is a convenience wrapper around chat_completion for simple use cases.
-///
-/// # Arguments
-/// * `model` - Model to use (e.g., "mistralai/Mistral-7B-Instruct-v0.2")
-/// * `system_prompt` - System prompt that sets the assistant's behavior
-/// * `user_message` - User's message
-/// * `temperature` - Optional temperature for sampling (0.0-2.0)
-/// * `max_tokens` - Optional maximum number of tokens to generate
-#[tracing::instrument(name = "llm_client_simple_chat", skip(system_prompt, user_message))]
-pub async fn simple_chat(
-    model: &str,
-    system_prompt: &str,
-    user_message: &str,
-    temperature: Option<f32>,
-    max_tokens: Option<usize>,
-) -> Result<String> {
-    let messages = vec![
-        ChatMessage {
-            role: "system".to_string(),
-            content: system_prompt.to_string(),
-        },
-        ChatMessage {
-            role: "user".to_string(),
-            content: user_message.to_string(),
-        },
-    ];
-
-    let response = chat_completion(
-        model,
-        messages,
-        temperature,
-        None, // top_p
-        max_tokens,
-        None, // stop
-    )
-    .await?;
-
-    Ok(response.message.content)
-}
-
 /// Generate a streaming chat response
 ///
 /// Returns a stream of text chunks as they are generated.

@@ -141,7 +141,21 @@ pub async fn chat_completion(
             .await
         {
             Ok(r) => r,
-            Err(e) => return e.error_response(),
+            Err(e) => {
+                let duration = start.elapsed().as_secs_f64();
+                tracing::error!(
+                    model = %model_id,
+                    error = %e,
+                    duration_secs = duration,
+                    "Chat completion failed"
+                );
+
+                semantic_explorer_core::observability::record_llm_request(
+                    &model_id, 0, duration, false,
+                );
+
+                return e.error_response();
+            }
         };
 
     let duration = start.elapsed().as_secs_f64();
