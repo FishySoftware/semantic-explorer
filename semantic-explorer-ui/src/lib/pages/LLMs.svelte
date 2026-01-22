@@ -719,14 +719,16 @@
 		</div>
 	{:else}
 		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
-			<Table hoverable striped>
+			<Table hoverable striped class="table-fixed">
 				<TableHead>
-					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Name</TableHeadCell>
-					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Provider</TableHeadCell>
-					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Model</TableHeadCell>
-					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Public</TableHeadCell>
-					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Owner</TableHeadCell>
-					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Actions</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold w-[20%]">Name</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold w-[15%]">Provider</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold w-[30%]">Model</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold w-[10%]">Public</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold w-[15%]">Owner</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center w-[10%]"
+						>Actions</TableHeadCell
+					>
 				</TableHead>
 				<TableBody>
 					{#each llms as llm (llm.llm_id)}
@@ -746,7 +748,7 @@
 									{llm.provider}
 								</span>
 							</TableBodyCell>
-							<TableBodyCell class="px-4 py-3">
+							<TableBodyCell class="px-4 py-3 whitespace-normal break-all">
 								<span class="text-gray-700 dark:text-gray-300 text-sm">
 									{llm.config.model ?? 'N/A'}
 								</span>

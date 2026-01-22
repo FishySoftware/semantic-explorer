@@ -2,7 +2,7 @@
 	/* eslint-disable svelte/no-at-html-tags */
 	import { onDestroy, onMount } from 'svelte';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
-	import ApiExamples from '../ApiExamples.svelte';
+	import ApiIntegrationModal from '../components/ApiIntegrationModal.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import CreateCollectionTransformModal from '../components/CreateCollectionTransformModal.svelte';
 	import TabPanel from '../components/TabPanel.svelte';
@@ -92,6 +92,7 @@
 
 	let transformModalOpen = $state(false);
 	let activeTab = $state('files');
+	let apiIntegrationModalOpen = $state(false);
 
 	const tabs = [
 		{ id: 'files', label: 'Files', icon: '📁' },
@@ -663,6 +664,21 @@
 							</label>
 						</div>
 					</div>
+					<button
+						type="button"
+						onclick={() => (apiIntegrationModalOpen = true)}
+						class="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
+					>
+						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
+							/>
+						</svg>
+						API
+					</button>
 				</div>
 			</div>
 		{/if}
@@ -1035,54 +1051,6 @@
 			{/snippet}
 		</TabPanel>
 	</div>
-
-	{#if collection}
-		<div class="mt-4 bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
-			<h2 class="text-2xl font-bold text-gray-900 dark:text-white mb-4">API Integration</h2>
-			<p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
-				Use these examples to interact with this collection programmatically.
-			</p>
-
-			<div class="mb-4">
-				<h3 class="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-2">
-					List files in collection
-				</h3>
-				<ApiExamples
-					endpoint="/api/collections/{collectionId}/files?page=0&page_size=10"
-					method="GET"
-				/>
-			</div>
-
-			<div class="mb-4">
-				<h3 class="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-2">
-					Upload files (multipart/form-data)
-				</h3>
-				<p class="text-sm text-gray-600 dark:text-gray-400 mb-2">
-					Note: This endpoint requires multipart/form-data. Use FormData and append files with the
-					key "files".
-				</p>
-				<ApiExamples endpoint="/api/collections/{collectionId}/files" method="POST" />
-			</div>
-
-			<div class="mb-4">
-				<h3 class="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-2">
-					Download a specific file
-				</h3>
-				<ApiExamples
-					endpoint="/api/collections/{collectionId}/files/example-file.txt"
-					method="GET"
-				/>
-			</div>
-
-			<div>
-				<h3 class="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-2">Delete a file</h3>
-				<ApiExamples
-					endpoint="/api/collections/{collectionId}/files/example-file.txt"
-					method="DELETE"
-				/>
-			</div>
-		</div>
-	{/if}
 </div>
 
 <ConfirmDialog
@@ -1104,4 +1072,10 @@
 		// Redirect to datasets page to monitor transform progress
 		window.location.hash = '#/datasets';
 	}}
+/>
+
+<ApiIntegrationModal
+	bind:open={apiIntegrationModalOpen}
+	type="collection"
+	resourceId={collectionId}
 />

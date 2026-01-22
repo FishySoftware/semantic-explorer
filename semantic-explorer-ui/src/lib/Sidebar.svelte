@@ -30,6 +30,7 @@
 
 	const menuItems: MenuItem[] = [
 		{ name: 'Dashboard', icon: GridSolid, url: '/dashboard' },
+		{ name: 'Documentation', icon: BookOpenSolid, url: '/documentation' },
 		{ name: 'Marketplace', icon: CartSolid, url: '/marketplace' },
 
 		{ name: 'divider-1', icon: GridSolid, isDivider: true },
@@ -73,8 +74,6 @@
 			],
 		},
 		{ name: 'divider-4', icon: GridSolid, isDivider: true },
-
-		{ name: 'Documentation', icon: BookOpenSolid, url: '/documentation' },
 	];
 	let expandedFolders = $state<string[]>(['Transforms']);
 

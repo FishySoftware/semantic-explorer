@@ -675,8 +675,25 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
         }
     };
 
+    // Get the current status from transform_processed_files to handle state transitions
+    let previous_status = embedded_datasets::get_batch_previous_status(
+        &ctx.pool,
+        result.embedded_dataset_id,
+        &result.batch_file_key,
+    )
+    .await;
+
     match result.status.as_str() {
         "processing" => {
+            // Start a transaction for atomic updates
+            let mut tx = match ctx.pool.begin().await {
+                Ok(tx) => tx,
+                Err(e) => {
+                    error!("Failed to begin transaction: {}", e);
+                    return;
+                }
+            };
+
             // Record that processing has started
             info!(
                 "Marking batch as processing: {} (ed_id={}, chunks={})",
@@ -694,9 +711,10 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
             .await
             {
                 error!("Failed to record batch processing start: {}", e);
+                return;
             }
 
-            // Also record in dataset_transform_batches for tracking at transform level
+            // Record in dataset_transform_batches for tracking at transform level
             if let Err(e) = dataset_transform_batches::create_batch(
                 &ctx.pool,
                 CreateBatchRequest {
@@ -711,9 +729,39 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
             .await
             {
                 error!("Failed to create dataset transform batch record: {}", e);
+                return;
+            }
+
+            // Atomically increment processing stats (only if not already processing)
+            if previous_status.as_deref() != Some("processing")
+                && let Err(e) =
+                    crate::storage::postgres::dataset_transform_stats::increment_processing_batch(
+                        &mut tx,
+                        embedded_dataset.dataset_transform_id,
+                        result.chunk_count as i64,
+                        chrono::Utc::now(),
+                    )
+                    .await
+            {
+                error!("Failed to increment processing stats: {}", e);
+                let _ = tx.rollback().await;
+                return;
+            }
+
+            if let Err(e) = tx.commit().await {
+                error!("Failed to commit transaction: {}", e);
             }
         }
         "failed" => {
+            // Start a transaction for atomic updates
+            let mut tx = match ctx.pool.begin().await {
+                Ok(tx) => tx,
+                Err(e) => {
+                    error!("Failed to begin transaction: {}", e);
+                    return;
+                }
+            };
+
             error!(
                 "Vector batch failed for {}: {:?}",
                 result.batch_file_key, result.error
@@ -729,7 +777,7 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
                 &ctx.pool,
                 result.embedded_dataset_id,
                 &result.batch_file_key,
-                0,
+                result.chunk_count as i32,
                 "failed",
                 Some(&error_msg),
                 result.processing_duration_ms,
@@ -737,6 +785,8 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
             .await
             {
                 error!("Failed to record batch processing failure: {}", e);
+                let _ = tx.rollback().await;
+                return;
             }
 
             // Also update batch record at transform level
@@ -747,11 +797,48 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
                 "failed",
                 Some(&error_msg),
                 result.processing_duration_ms,
-                0,
+                result.chunk_count as i32,
             )
             .await
             {
                 error!("Failed to update dataset transform batch status: {}", e);
+                let _ = tx.rollback().await;
+                return;
+            }
+
+            // If transitioning from processing to failed, decrement processing and increment failed
+            if previous_status.as_deref() == Some("processing")
+                && let Err(e) =
+                    crate::storage::postgres::dataset_transform_stats::decrement_processing_batch(
+                        &mut tx,
+                        embedded_dataset.dataset_transform_id,
+                        result.chunk_count as i64,
+                    )
+                    .await
+            {
+                error!("Failed to decrement processing stats: {}", e);
+                let _ = tx.rollback().await;
+                return;
+            }
+
+            // Increment failed stats
+            if let Err(e) =
+                crate::storage::postgres::dataset_transform_stats::increment_failed_batch(
+                    &mut tx,
+                    embedded_dataset.dataset_transform_id,
+                    result.chunk_count as i64,
+                    chrono::Utc::now(),
+                )
+                .await
+            {
+                error!("Failed to increment failed stats: {}", e);
+                let _ = tx.rollback().await;
+                return;
+            }
+
+            if let Err(e) = tx.commit().await {
+                error!("Failed to commit transaction: {}", e);
+                return;
             }
 
             // Publish failed status for SSE streaming
@@ -767,6 +854,15 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
             .await;
         }
         "success" => {
+            // Start a transaction for atomic updates
+            let mut tx = match ctx.pool.begin().await {
+                Ok(tx) => tx,
+                Err(e) => {
+                    error!("Failed to begin transaction: {}", e);
+                    return;
+                }
+            };
+
             info!(
                 "Marking batch as completed: {} with {} chunks (ed_id={}, duration_ms={})",
                 result.batch_file_key,
@@ -786,6 +882,7 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
             .await
             {
                 error!("Failed to record batch processing: {}", e);
+                let _ = tx.rollback().await;
                 return;
             }
 
@@ -802,6 +899,43 @@ async fn handle_vector_result(result: DatasetTransformResult, ctx: &TransformCon
             .await
             {
                 error!("Failed to update dataset transform batch status: {}", e);
+                let _ = tx.rollback().await;
+                return;
+            }
+
+            // If transitioning from processing to success, decrement processing
+            if previous_status.as_deref() == Some("processing")
+                && let Err(e) =
+                    crate::storage::postgres::dataset_transform_stats::decrement_processing_batch(
+                        &mut tx,
+                        embedded_dataset.dataset_transform_id,
+                        result.chunk_count as i64,
+                    )
+                    .await
+            {
+                error!("Failed to decrement processing stats: {}", e);
+                let _ = tx.rollback().await;
+                return;
+            }
+
+            // Increment successful stats
+            if let Err(e) =
+                crate::storage::postgres::dataset_transform_stats::increment_successful_batch(
+                    &mut tx,
+                    embedded_dataset.dataset_transform_id,
+                    result.chunk_count as i64,
+                    chrono::Utc::now(),
+                )
+                .await
+            {
+                error!("Failed to increment successful stats: {}", e);
+                let _ = tx.rollback().await;
+                return;
+            }
+
+            if let Err(e) = tx.commit().await {
+                error!("Failed to commit transaction: {}", e);
+                return;
             }
 
             // Clean up the batch file from S3 after successful processing and database recording

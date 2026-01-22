@@ -4,6 +4,7 @@ use once_cell::sync::OnceCell;
 use ort::ep::CUDA;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::sync::{RwLock, Semaphore};
 use tracing::{debug, error, info, warn};
 
@@ -18,23 +19,49 @@ static EMBEDDING_MODELS: OnceCell<EmbeddingCache> = OnceCell::new();
 /// Global semaphore for limiting concurrent embedding requests (backpressure)
 static EMBEDDING_SEMAPHORE: OnceCell<Arc<Semaphore>> = OnceCell::new();
 
+/// Queue timeout for acquiring semaphore permits (allows brief queuing before 503)
+static SEMAPHORE_QUEUE_TIMEOUT: OnceCell<Duration> = OnceCell::new();
+
 /// Initialize the embedding semaphore for backpressure control
-pub fn init_semaphore(max_concurrent: usize) {
+/// queue_timeout_ms: how long to wait for a permit before returning 503
+pub fn init_semaphore(max_concurrent: usize, queue_timeout_ms: u64) {
     let permits = max_concurrent.max(1);
+    let timeout = Duration::from_millis(queue_timeout_ms);
+
     EMBEDDING_SEMAPHORE.get_or_init(|| {
         info!(
             max_concurrent = permits,
+            queue_timeout_ms = queue_timeout_ms,
             "Initialized embedding request semaphore for backpressure control"
         );
         Arc::new(Semaphore::new(permits))
     });
+
+    SEMAPHORE_QUEUE_TIMEOUT.get_or_init(|| timeout);
 }
 
-/// Try to acquire a permit for embedding. Returns None if at capacity.
-pub fn try_acquire_permit() -> Option<tokio::sync::OwnedSemaphorePermit> {
-    EMBEDDING_SEMAPHORE
+/// Acquire a permit with queuing - waits up to the configured timeout before giving up.
+/// This allows requests to briefly queue instead of immediately failing with 503.
+pub async fn acquire_permit_with_timeout() -> Option<tokio::sync::OwnedSemaphorePermit> {
+    let sem = EMBEDDING_SEMAPHORE.get()?;
+    let timeout = SEMAPHORE_QUEUE_TIMEOUT
         .get()
-        .and_then(|sem| sem.clone().try_acquire_owned().ok())
+        .copied()
+        .unwrap_or(Duration::from_millis(5000));
+
+    match tokio::time::timeout(timeout, sem.clone().acquire_owned()).await {
+        Ok(Ok(permit)) => Some(permit),
+        Ok(Err(_)) => None, // Semaphore closed
+        Err(_) => {
+            // Timeout - log queue depth
+            warn!(
+                available_permits = sem.available_permits(),
+                timeout_ms = timeout.as_millis(),
+                "Permit acquisition timed out, queue congested"
+            );
+            None
+        }
+    }
 }
 
 /// Get current available permits (for monitoring)

@@ -77,20 +77,20 @@ pub async fn embed(
     config: web::Data<ModelConfig>,
     body: web::Json<EmbedRequest>,
 ) -> impl Responder {
-    // Backpressure: try to acquire a permit, return 503 if at capacity
-    let _permit = match embedding::try_acquire_permit() {
+    // Backpressure: acquire a permit with queueing, return 503 only after timeout
+    let _permit = match embedding::acquire_permit_with_timeout().await {
         Some(permit) => permit,
         None => {
             warn!(
                 available_permits = embedding::available_permits(),
-                "Embedding service at capacity, returning 503"
+                "Embedding service at capacity after queue timeout, returning 503"
             );
             return HttpResponse::ServiceUnavailable()
-                .insert_header(("Retry-After", "5"))
+                .insert_header(("Retry-After", "1"))
                 .json(serde_json::json!({
                     "error": "Service temporarily at capacity",
                     "message": "Too many concurrent embedding requests. Please retry after a short delay.",
-                    "retry_after_seconds": 5
+                    "retry_after_seconds": 1
                 }));
         }
     };
@@ -169,20 +169,20 @@ pub async fn embed_batch(
         .error_response();
     }
 
-    // Backpressure: try to acquire a permit, return 503 if at capacity
-    let _permit = match embedding::try_acquire_permit() {
+    // Backpressure: acquire a permit with queueing, return 503 only after timeout
+    let _permit = match embedding::acquire_permit_with_timeout().await {
         Some(permit) => permit,
         None => {
             warn!(
                 available_permits = embedding::available_permits(),
-                "Embedding service at capacity, returning 503"
+                "Embedding service at capacity after queue timeout, returning 503"
             );
             return HttpResponse::ServiceUnavailable()
-                .insert_header(("Retry-After", "5"))
+                .insert_header(("Retry-After", "1"))
                 .json(serde_json::json!({
                     "error": "Service temporarily at capacity",
                     "message": "Too many concurrent embedding requests. Please retry after a short delay.",
-                    "retry_after_seconds": 5
+                    "retry_after_seconds": 1
                 }));
         }
     };

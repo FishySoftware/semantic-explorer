@@ -82,11 +82,15 @@ async fn main() -> Result<()> {
         reranker::init_cache(&config.models)
     );
 
-    // Initialize backpressure semaphore for embedding requests
-    embedding::init_semaphore(config.models.max_concurrent_requests);
+    // Initialize backpressure semaphore for embedding requests with queue timeout
+    embedding::init_semaphore(
+        config.models.max_concurrent_requests,
+        config.models.queue_timeout_ms,
+    );
 
     info!(
         max_concurrent_requests = config.models.max_concurrent_requests,
+        queue_timeout_ms = config.models.queue_timeout_ms,
         "Model caches and backpressure semaphore initialized."
     );
 

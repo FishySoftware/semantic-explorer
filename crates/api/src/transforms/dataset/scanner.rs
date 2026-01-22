@@ -93,6 +93,21 @@ async fn process_dataset_transform_scan(
         transform.embedder_ids.len()
     );
 
+    // Refresh total_chunks_to_process in case source dataset has changed
+    if let Err(e) = crate::storage::postgres::dataset_transform_stats::refresh_total_chunks(
+        pool,
+        &transform.owner_id,
+        transform.dataset_transform_id,
+    )
+    .await
+    {
+        error!(
+            "Failed to refresh total chunks for dataset transform {}: {}",
+            transform.dataset_transform_id, e
+        );
+        // Continue processing even if refresh fails - stats will be stale but transforms still work
+    }
+
     // Get all embedded datasets for this transform
     let embedded_datasets_list = embedded_datasets::get_embedded_datasets_for_transform(
         pool,

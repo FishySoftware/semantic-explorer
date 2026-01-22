@@ -2,7 +2,7 @@
 	/* eslint-disable svelte/no-at-html-tags */
 	import { onDestroy, onMount } from 'svelte';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
-	import ApiExamples from '../ApiExamples.svelte';
+	import ApiIntegrationModal from '../components/ApiIntegrationModal.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import CreateDatasetTransformModal from '../components/CreateDatasetTransformModal.svelte';
 	import DatasetTransformProgressPanel from '../components/DatasetTransformProgressPanel.svelte';
@@ -119,6 +119,7 @@
 
 	// Tab state
 	let activeTab = $state('overview');
+	let apiIntegrationModalOpen = $state(false);
 
 	const tabs = [
 		{ id: 'overview', label: 'Overview', icon: '📋' },
@@ -773,6 +774,21 @@
 							</label>
 						</div>
 					</div>
+					<button
+						type="button"
+						onclick={() => (apiIntegrationModalOpen = true)}
+						class="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
+					>
+						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
+							/>
+						</svg>
+						API
+					</button>
 				</div>
 			</div>
 
@@ -1300,48 +1316,6 @@
 					{/snippet}
 				</TabPanel>
 			</div>
-
-			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
-				<h2 class="text-2xl font-bold text-gray-900 dark:text-white mb-4">API Integration</h2>
-				<p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
-					Use these examples to upload data to this dataset programmatically.
-				</p>
-
-				<div class="mb-4">
-					<h3 class="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-2">
-						Upload dataset items
-					</h3>
-					<p class="text-sm text-gray-600 dark:text-gray-400 mb-3">
-						Send a JSON payload with an array of items. Each item must contain:
-					</p>
-					<ul class="list-disc list-inside text-sm text-gray-600 dark:text-gray-400 space-y-1 mb-4">
-						<li><strong>title</strong>: String - The title/name of the document or item</li>
-						<li><strong>chunks</strong>: Array of strings - Text chunks (at least one required)</li>
-						<li><strong>metadata</strong>: Object - Any additional metadata as key-value pairs</li>
-					</ul>
-
-					<ApiExamples
-						endpoint="/api/datasets/{datasetId}/items"
-						method="POST"
-						body={examplePayload}
-					/>
-				</div>
-
-				<div
-					class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4"
-				>
-					<h4 class="text-sm font-semibold text-yellow-900 dark:text-yellow-300 mb-2">
-						Important Notes
-					</h4>
-					<ul class="list-disc list-inside text-sm text-yellow-800 dark:text-yellow-400 space-y-1">
-						<li>Authentication is required via the access_token cookie</li>
-						<li>Each item's chunks array must contain at least one chunk</li>
-						<li>The items array must contain at least one item</li>
-						<li>Metadata can be any valid JSON object</li>
-						<li>Response includes "completed" and "failed" arrays with item titles</li>
-					</ul>
-				</div>
-			</div>
 		{/if}
 	</div>
 </div>
@@ -1367,4 +1341,11 @@
 		// Switch to transforms tab to show progress
 		activeTab = 'transforms';
 	}}
+/>
+
+<ApiIntegrationModal
+	bind:open={apiIntegrationModalOpen}
+	type="dataset"
+	resourceId={datasetId}
+	{examplePayload}
 />

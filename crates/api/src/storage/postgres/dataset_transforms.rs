@@ -19,6 +19,10 @@ fn validate_sort_direction(direction: &str) -> Result<String> {
     }
 }
 
+const GET_SOURCE_DATASET_TOTAL_CHUNKS_QUERY: &str = r#"
+    SELECT total_chunks FROM datasets WHERE dataset_id = $1
+"#;
+
 const GET_DATASET_TRANSFORM_QUERY: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
            job_config, created_at, updated_at
@@ -91,91 +95,8 @@ const GET_DATASET_TRANSFORMS_PAGINATED_WITH_SEARCH_BASE: &str = r#"
 const VERIFY_DATASET_TRANSFORM_OWNERSHIP_QUERY: &str =
     "SELECT dataset_transform_id FROM dataset_transforms WHERE dataset_transform_id = ANY($1)";
 
-const GET_DATASET_TRANSFORM_STATS_QUERY: &str = r#"
-    WITH unique_batches AS (
-        SELECT
-            ed.dataset_transform_id,
-            ed.embedded_dataset_id,
-            tpf.file_key,
-            MAX(tpf.item_count) as item_count,
-            MAX(tpf.process_status) as process_status,
-            MAX(tpf.processed_at) as processed_at,
-            MIN(tpf.processed_at) as first_processed_at
-        FROM transform_processed_files tpf
-        INNER JOIN embedded_datasets ed ON ed.embedded_dataset_id = tpf.transform_id
-        WHERE tpf.transform_type = 'dataset'
-        GROUP BY ed.dataset_transform_id, ed.embedded_dataset_id, tpf.file_key
-    ),
-    source_chunks AS (
-        SELECT COALESCE(SUM(jsonb_array_length(chunks)), 0)::BIGINT as chunk_count
-        FROM dataset_items
-        WHERE dataset_id = (SELECT source_dataset_id FROM dataset_transforms WHERE dataset_transform_id = $1)
-    )
-    SELECT
-        dt.dataset_transform_id,
-        COALESCE(array_length(dt.embedder_ids, 1), 0)::INTEGER as embedder_count,
-        COALESCE(COUNT(DISTINCT (ub.embedded_dataset_id, ub.file_key)), 0)::BIGINT as total_batches_processed,
-        COALESCE(COUNT(DISTINCT CASE WHEN ub.process_status = 'completed' THEN (ub.embedded_dataset_id, ub.file_key) END), 0)::BIGINT as successful_batches,
-        COALESCE(COUNT(DISTINCT CASE WHEN ub.process_status = 'failed' THEN (ub.embedded_dataset_id, ub.file_key) END), 0)::BIGINT as failed_batches,
-        COALESCE(COUNT(DISTINCT CASE WHEN ub.process_status = 'processing' THEN (ub.embedded_dataset_id, ub.file_key) END), 0)::BIGINT as processing_batches,
-        COALESCE(SUM(CASE WHEN ub.process_status = 'completed' THEN ub.item_count ELSE 0 END), 0)::BIGINT as total_chunks_embedded,
-        COALESCE(SUM(CASE WHEN ub.process_status = 'processing' THEN ub.item_count ELSE 0 END), 0)::BIGINT as total_chunks_processing,
-        COALESCE(SUM(CASE WHEN ub.process_status = 'failed' THEN ub.item_count ELSE 0 END), 0)::BIGINT as total_chunks_failed,
-        -- Multiply source chunks by embedder count to get total work across all embedders
-        (SELECT chunk_count FROM source_chunks) * COALESCE(array_length(dt.embedder_ids, 1), 1) as total_chunks_to_process,
-        MAX(ub.processed_at) as last_run_at,
-        MIN(CASE WHEN ub.process_status = 'processing' THEN ub.first_processed_at END) as first_processing_at
-    FROM dataset_transforms dt
-    LEFT JOIN unique_batches ub ON ub.dataset_transform_id = dt.dataset_transform_id
-    WHERE dt.dataset_transform_id = $1
-    GROUP BY dt.dataset_transform_id, dt.embedder_ids
-"#;
-
-const GET_BATCH_DATASET_TRANSFORM_STATS_QUERY: &str = r#"
-    WITH unique_batches AS (
-        SELECT
-            ed.dataset_transform_id,
-            ed.embedded_dataset_id,
-            tpf.file_key,
-            MAX(tpf.item_count) as item_count,
-            MAX(tpf.process_status) as process_status,
-            MAX(tpf.processed_at) as processed_at,
-            MIN(tpf.processed_at) as first_processed_at
-        FROM transform_processed_files tpf
-        INNER JOIN embedded_datasets ed ON ed.embedded_dataset_id = tpf.transform_id
-        WHERE tpf.transform_type = 'dataset'
-          AND ed.dataset_transform_id = ANY($1)
-        GROUP BY ed.dataset_transform_id, ed.embedded_dataset_id, tpf.file_key
-    ),
-    source_chunks AS (
-        SELECT
-            dt.dataset_transform_id,
-            COALESCE(SUM(jsonb_array_length(di.chunks)), 0)::BIGINT as chunk_count
-        FROM dataset_transforms dt
-        INNER JOIN dataset_items di ON di.dataset_id = dt.source_dataset_id
-        WHERE dt.dataset_transform_id = ANY($1)
-        GROUP BY dt.dataset_transform_id
-    )
-    SELECT
-        dt.dataset_transform_id,
-        COALESCE(array_length(dt.embedder_ids, 1), 0)::INTEGER as embedder_count,
-        COALESCE(COUNT(DISTINCT (ub.embedded_dataset_id, ub.file_key)), 0)::BIGINT as total_batches_processed,
-        COALESCE(COUNT(DISTINCT CASE WHEN ub.process_status = 'completed' THEN (ub.embedded_dataset_id, ub.file_key) END), 0)::BIGINT as successful_batches,
-        COALESCE(COUNT(DISTINCT CASE WHEN ub.process_status = 'failed' THEN (ub.embedded_dataset_id, ub.file_key) END), 0)::BIGINT as failed_batches,
-        COALESCE(COUNT(DISTINCT CASE WHEN ub.process_status = 'processing' THEN (ub.embedded_dataset_id, ub.file_key) END), 0)::BIGINT as processing_batches,
-        COALESCE(SUM(CASE WHEN ub.process_status = 'completed' THEN ub.item_count ELSE 0 END), 0)::BIGINT as total_chunks_embedded,
-        COALESCE(SUM(CASE WHEN ub.process_status = 'processing' THEN ub.item_count ELSE 0 END), 0)::BIGINT as total_chunks_processing,
-        COALESCE(SUM(CASE WHEN ub.process_status = 'failed' THEN ub.item_count ELSE 0 END), 0)::BIGINT as total_chunks_failed,
-        COALESCE(sc.chunk_count * array_length(dt.embedder_ids, 1), 0) as total_chunks_to_process,
-        MAX(ub.processed_at) as last_run_at,
-        MIN(CASE WHEN ub.process_status = 'processing' THEN ub.first_processed_at END) as first_processing_at
-    FROM dataset_transforms dt
-    LEFT JOIN unique_batches ub ON ub.dataset_transform_id = dt.dataset_transform_id
-    LEFT JOIN source_chunks sc ON sc.dataset_transform_id = dt.dataset_transform_id
-    WHERE dt.dataset_transform_id = ANY($1)
-    GROUP BY dt.dataset_transform_id, dt.embedder_ids, sc.chunk_count
-    ORDER BY dt.dataset_transform_id
-"#;
+// Old expensive query removed - now using dataset_transform_stats table
+// See dataset_transform_stats::get_stats() for the replacement
 
 pub async fn get_dataset_transform(
     pool: &Pool<Postgres>,
@@ -319,7 +240,14 @@ pub async fn create_dataset_transform(
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
     super::rls::set_rls_user_tx(&mut tx, &owner.owner_id).await?;
 
-    // Step 1: Create the Dataset Transform
+    // Step 1: Get source dataset total_chunks to calculate total_chunks_to_process
+    let total_chunks: i64 = sqlx::query_scalar(GET_SOURCE_DATASET_TOTAL_CHUNKS_QUERY)
+        .bind(source_dataset_id)
+        .fetch_one(&mut *tx)
+        .await
+        .context("Failed to fetch source dataset total_chunks")?;
+
+    // Step 2: Create the Dataset Transform
     let transform = sqlx::query_as::<_, DatasetTransform>(CREATE_DATASET_TRANSFORM_QUERY)
         .bind(title)
         .bind(source_dataset_id)
@@ -331,7 +259,17 @@ pub async fn create_dataset_transform(
         .await
         .context("Failed to create dataset transform")?;
 
-    // Step 2: Create N Embedded Datasets (one per embedder)
+    // Step 3: Initialize stats with total_chunks_to_process = source total_chunks * embedder_count
+    let total_chunks_to_process = total_chunks * embedder_ids.len() as i64;
+    super::dataset_transform_stats::initialize_stats(
+        &mut tx,
+        transform.dataset_transform_id,
+        total_chunks_to_process,
+    )
+    .await
+    .context("Failed to initialize dataset transform stats")?;
+
+    // Step 4: Create N Embedded Datasets (one per embedder)
     let mut embedded_datasets = Vec::new();
     for embedder_id in embedder_ids {
         let embedded_dataset = create_embedded_dataset_internal(
@@ -439,17 +377,25 @@ pub async fn verify_dataset_transform_ownership(
 
 pub async fn get_dataset_transform_stats(
     pool: &Pool<Postgres>,
+    owner: &str,
     dataset_transform_id: i32,
 ) -> Result<DatasetTransformStats> {
-    let stats = sqlx::query_as::<_, DatasetTransformStats>(GET_DATASET_TRANSFORM_STATS_QUERY)
-        .bind(dataset_transform_id)
-        .fetch_one(pool)
-        .await?;
+    // Use the new efficient stats table instead of expensive aggregation
+    // If no stats row exists (old transforms), it will return zeros via LEFT JOIN
+    let stats = super::dataset_transform_stats::get_stats(pool, owner, dataset_transform_id)
+        .await?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Dataset transform {} not found or access denied",
+                dataset_transform_id
+            )
+        })?;
     Ok(stats)
 }
 
 pub async fn get_batch_dataset_transform_stats(
     pool: &Pool<Postgres>,
+    owner: &str,
     dataset_transform_ids: &[i32],
 ) -> Result<std::collections::HashMap<i32, DatasetTransformStats>> {
     use std::collections::HashMap;
@@ -458,12 +404,9 @@ pub async fn get_batch_dataset_transform_stats(
         return Ok(HashMap::new());
     }
 
-    // Execute single batched query
+    // Use the new efficient stats table - single simple query with indexes
     let stats_list =
-        sqlx::query_as::<_, DatasetTransformStats>(GET_BATCH_DATASET_TRANSFORM_STATS_QUERY)
-            .bind(dataset_transform_ids)
-            .fetch_all(pool)
-            .await?;
+        super::dataset_transform_stats::get_batch_stats(pool, owner, dataset_transform_ids).await?;
 
     // Convert Vec to HashMap
     let stats_map = stats_list

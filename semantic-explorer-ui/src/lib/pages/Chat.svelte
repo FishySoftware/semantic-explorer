@@ -5,13 +5,13 @@
 	import { onMount } from 'svelte';
 	import PageHeader from '../components/PageHeader.svelte';
 	import type {
-		ChatSession,
 		ChatMessage,
-		LLM,
+		ChatSession,
 		EmbeddedDataset,
+		LLM,
 		PaginatedEmbeddedDatasetList,
-		RetrievedDocument,
 		PaginatedResponse,
+		RetrievedDocument,
 	} from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
 
@@ -863,7 +863,7 @@
 										<p class="text-sm">{message.content}</p>
 									{:else}
 										{#if message.content}
-											<div class="prose prose-sm dark:prose-invert max-w-none">
+											<div class="prose prose-sm dark:prose-invert max-w-none break-all">
 												{#await renderMarkdown(message.content, message.retrieved_documents) then html}
 													{@html html}
 												{/await}

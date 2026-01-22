@@ -247,6 +247,25 @@ CREATE TABLE IF NOT EXISTS dataset_transform_batches (
 CREATE INDEX IF NOT EXISTS idx_dataset_transform_batches_composite ON dataset_transform_batches(dataset_transform_id, status, processed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_dataset_transform_batches_status ON dataset_transform_batches(status) WHERE status IN ('pending', 'processing');
 
+-- Dataset Transform Stats - Materialized counters updated atomically as batches complete
+CREATE TABLE IF NOT EXISTS dataset_transform_stats (
+    dataset_transform_id        INTEGER                  PRIMARY KEY REFERENCES dataset_transforms(dataset_transform_id) ON DELETE CASCADE,
+    total_chunks_embedded       BIGINT                   NOT NULL DEFAULT 0,
+    total_chunks_processing     BIGINT                   NOT NULL DEFAULT 0,
+    total_chunks_failed         BIGINT                   NOT NULL DEFAULT 0,
+    total_chunks_to_process     BIGINT                   NOT NULL DEFAULT 0,
+    successful_batches          BIGINT                   NOT NULL DEFAULT 0,
+    failed_batches              BIGINT                   NOT NULL DEFAULT 0,
+    processing_batches          BIGINT                   NOT NULL DEFAULT 0,
+    last_processed_at           TIMESTAMP WITH TIME ZONE NULL,
+    first_processing_at         TIMESTAMP WITH TIME ZONE NULL,
+    created_at                  TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at                  TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Index for fast stats queries
+CREATE INDEX IF NOT EXISTS idx_dataset_transform_stats_updated ON dataset_transform_stats(updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS visualization_transforms (
     visualization_transform_id SERIAL PRIMARY KEY,
     title                      TEXT                     NOT NULL,
@@ -365,8 +384,6 @@ CREATE TABLE IF NOT EXISTS audit_events (
     outcome          TEXT                     NOT NULL,
     user_id          TEXT                     NOT NULL,
     username_display TEXT                     NOT NULL,
-    request_id       TEXT                     NULL,
-    client_ip        INET                     NULL,
     resource_type    TEXT                     NULL,
     resource_id      TEXT                     NULL,
     details          TEXT                     NULL

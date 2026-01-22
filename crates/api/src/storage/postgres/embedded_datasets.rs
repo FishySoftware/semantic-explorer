@@ -161,6 +161,14 @@ const RECORD_PROCESSED_BATCH_QUERY: &str = r#"
         processed_at = NOW()
 "#;
 
+const GET_BATCH_PREVIOUS_STATUS_QUERY: &str = r#"
+    SELECT process_status
+    FROM transform_processed_files
+    WHERE transform_type = 'dataset'
+      AND transform_id = $1
+      AND file_key = $2
+"#;
+
 const GET_EMBEDDED_DATASET_INFO_QUERY: &str = r#"
     SELECT collection_name, embedder_id FROM embedded_datasets WHERE embedded_dataset_id = $1
 "#;
@@ -434,6 +442,22 @@ pub async fn get_processed_batches(
         .fetch_all(pool)
         .await?;
     Ok(batches)
+}
+
+/// Get the previous status of a batch from transform_processed_files
+/// Used to determine state transitions for atomic stats updates
+pub async fn get_batch_previous_status(
+    pool: &Pool<Postgres>,
+    embedded_dataset_id: i32,
+    batch_file_key: &str,
+) -> Option<String> {
+    sqlx::query_scalar::<_, String>(GET_BATCH_PREVIOUS_STATUS_QUERY)
+        .bind(embedded_dataset_id)
+        .bind(batch_file_key)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
 }
 
 pub async fn record_processed_batch(

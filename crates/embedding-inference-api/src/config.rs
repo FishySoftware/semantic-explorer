@@ -50,6 +50,9 @@ pub struct ModelConfig {
     pub max_batch_size: usize,
     /// Maximum concurrent embedding requests (for backpressure)
     pub max_concurrent_requests: usize,
+    /// Queue timeout in milliseconds - how long to wait for a permit before 503
+    /// Setting this higher allows requests to queue briefly instead of immediate rejection
+    pub queue_timeout_ms: u64,
 }
 
 /// Observability configuration
@@ -176,9 +179,13 @@ impl ModelConfig {
                 .parse()
                 .context("INFERENCE_MAX_BATCH_SIZE must be a number")?,
             max_concurrent_requests: env::var("INFERENCE_MAX_CONCURRENT_REQUESTS")
-                .unwrap_or_else(|_| "2".to_string())
+                .unwrap_or_else(|_| "4".to_string())
                 .parse()
                 .context("INFERENCE_MAX_CONCURRENT_REQUESTS must be a number")?,
+            queue_timeout_ms: env::var("INFERENCE_QUEUE_TIMEOUT_MS")
+                .unwrap_or_else(|_| "5000".to_string())
+                .parse()
+                .context("INFERENCE_QUEUE_TIMEOUT_MS must be a number")?,
         })
     }
 
@@ -236,6 +243,7 @@ mod tests {
             allowed_rerank_models: vec![],
             max_batch_size: 256,
             max_concurrent_requests: 2,
+            queue_timeout_ms: 5000,
         };
 
         assert_eq!(model.allowed_embedding_models.len(), 2);
@@ -260,6 +268,7 @@ mod tests {
             allowed_rerank_models: vec![],
             max_batch_size: 256,
             max_concurrent_requests: 2,
+            queue_timeout_ms: 5000,
         };
         assert!(config_all_allowed.is_embedding_model_allowed("any-model"));
         assert!(config_all_allowed.is_rerank_model_allowed("any-model"));
@@ -278,6 +287,7 @@ mod tests {
             allowed_rerank_models: vec!["BAAI/bge-reranker-base".to_string()],
             max_batch_size: 256,
             max_concurrent_requests: 2,
+            queue_timeout_ms: 5000,
         };
         // Embedding checks
         assert!(config_restricted.is_embedding_model_allowed("BAAI/bge-small-en-v1.5"));
@@ -301,6 +311,7 @@ mod tests {
             allowed_rerank_models: vec![],
             max_batch_size: 256,
             max_concurrent_requests: 2,
+            queue_timeout_ms: 5000,
         };
         assert!(!config_no_rerankers.is_rerank_model_allowed("any-model"));
     }

@@ -453,7 +453,12 @@ pub async fn get_dataset_transform_stats(
         .await
     {
         Ok(_) => {
-            match dataset_transforms::get_dataset_transform_stats(&pool, dataset_transform_id).await
+            match dataset_transforms::get_dataset_transform_stats(
+                &pool,
+                &user.as_owner(),
+                dataset_transform_id,
+            )
+            .await
             {
                 Ok(stats) => {
                     debug!(
@@ -483,9 +488,9 @@ pub async fn get_dataset_transform_stats(
                     HttpResponse::Ok().json(response)
                 }
                 Err(e) => {
-                    error!("Failed to get stats: {}", e);
+                    error!("Failed to get stats: {:?}", e);
                     HttpResponse::InternalServerError().json(serde_json::json!({
-                        "error": format!("Failed to get stats: {}", e)
+                        "error": format!("Failed to get stats: {}. Note: If the dataset_transform_stats table doesn't exist, restart the service to run migrations.", e)
                     }))
                 }
             }
@@ -553,7 +558,9 @@ pub async fn get_batch_dataset_transform_stats(
         );
     }
 
-    match dataset_transforms::get_batch_dataset_transform_stats(&pool, &owned_ids).await {
+    match dataset_transforms::get_batch_dataset_transform_stats(&pool, &user.as_owner(), &owned_ids)
+        .await
+    {
         Ok(stats_map) => HttpResponse::Ok().json(stats_map),
         Err(e) => {
             error!("Failed to get batch stats: {}", e);
@@ -681,29 +688,34 @@ pub async fn get_dataset_transform_detailed_stats(
     }
 
     // Also get the aggregate stats
-    let aggregate_stats =
-        match dataset_transforms::get_dataset_transform_stats(&pool, dataset_transform_id).await {
-            Ok(s) => Some(serde_json::json!({
-                "dataset_transform_id": s.dataset_transform_id,
-                "embedder_count": s.embedder_count,
-                "total_batches_processed": s.total_batches_processed,
-                "successful_batches": s.successful_batches,
-                "failed_batches": s.failed_batches,
-                "processing_batches": s.processing_batches,
-                "total_chunks_embedded": s.total_chunks_embedded,
-                "total_chunks_processing": s.total_chunks_processing,
-                "total_chunks_failed": s.total_chunks_failed,
-                "total_chunks_to_process": s.total_chunks_to_process,
-                "status": s.status(),
-                "is_processing": s.is_processing(),
-                "last_run_at": s.last_run_at,
-                "first_processing_at": s.first_processing_at,
-            })),
-            Err(e) => {
-                error!("Failed to get aggregate stats: {}", e);
-                None
-            }
-        };
+    let aggregate_stats = match dataset_transforms::get_dataset_transform_stats(
+        &pool,
+        &user.as_owner(),
+        dataset_transform_id,
+    )
+    .await
+    {
+        Ok(s) => Some(serde_json::json!({
+            "dataset_transform_id": s.dataset_transform_id,
+            "embedder_count": s.embedder_count,
+            "total_batches_processed": s.total_batches_processed,
+            "successful_batches": s.successful_batches,
+            "failed_batches": s.failed_batches,
+            "processing_batches": s.processing_batches,
+            "total_chunks_embedded": s.total_chunks_embedded,
+            "total_chunks_processing": s.total_chunks_processing,
+            "total_chunks_failed": s.total_chunks_failed,
+            "total_chunks_to_process": s.total_chunks_to_process,
+            "status": s.status(),
+            "is_processing": s.is_processing(),
+            "last_run_at": s.last_run_at,
+            "first_processing_at": s.first_processing_at,
+        })),
+        Err(e) => {
+            error!("Failed to get aggregate stats: {}", e);
+            None
+        }
+    };
 
     HttpResponse::Ok().json(serde_json::json!({
         "dataset_transform_id": dataset_transform_id,
