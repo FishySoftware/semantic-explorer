@@ -49,8 +49,8 @@ fn merge_by_similarity(
     semantic_opts: &crate::chunk::config::SemanticOptions,
     _target_chunk_size: usize,
 ) -> Result<Vec<String>> {
-    let mut chunks = Vec::new();
-    let mut current_chunk = String::new();
+    let mut chunks = Vec::with_capacity(sentences.len());
+    let mut current_chunk = String::with_capacity(semantic_opts.max_chunk_size);
     let mut current_embedding = embeddings[0].clone();
     let mut current_sentence_count = 1;
 

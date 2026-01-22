@@ -232,8 +232,7 @@ pub(crate) async fn process_vector_job(job: DatasetTransformJob, ctx: WorkerCont
         })
         .collect();
 
-    // Chunk large batches to avoid overwhelming Qdrant
-    const QDRANT_CHUNK_SIZE: usize = 100;
+    const QDRANT_CHUNK_SIZE: usize = 1000;
     let point_chunks: Vec<_> = points.chunks(QDRANT_CHUNK_SIZE).collect();
     info!(
         point_count = points.len(),

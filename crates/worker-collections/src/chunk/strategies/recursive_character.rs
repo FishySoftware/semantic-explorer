@@ -41,8 +41,9 @@ fn split_text_recursive(
 
         if text.contains(separator.as_str()) {
             let splits: Vec<&str> = text.split(separator.as_str()).collect();
-            let mut chunks = Vec::new();
-            let mut current_chunk = String::new();
+            // Pre-allocate with estimated capacity to reduce reallocations
+            let mut chunks = Vec::with_capacity(splits.len() / 2);
+            let mut current_chunk = String::with_capacity(chunk_size);
 
             for split in splits {
                 let potential_len = if current_chunk.is_empty() {
@@ -90,8 +91,9 @@ fn split_text_recursive(
 }
 
 fn split_by_characters(text: &str, chunk_size: usize) -> Vec<String> {
-    let mut chunks = Vec::new();
     let chars: Vec<char> = text.chars().collect();
+    let estimated_chunks = chars.len().div_ceil(chunk_size);
+    let mut chunks = Vec::with_capacity(estimated_chunks);
 
     for chunk in chars.chunks(chunk_size) {
         chunks.push(chunk.iter().collect());

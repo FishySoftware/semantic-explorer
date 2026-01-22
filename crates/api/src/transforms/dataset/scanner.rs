@@ -41,7 +41,7 @@ pub(crate) fn initialize_scanner(
     encryption: EncryptionService,
 ) -> JoinHandle<()> {
     spawn(async move {
-        let mut interval = interval(Duration::from_secs(10)); // Check for new dataset transform jobs every 10 seconds
+        let mut interval = interval(Duration::from_secs(60)); // Check for new dataset transform jobs every 60 seconds
         loop {
             interval.tick().await;
             if let Err(e) =
@@ -118,13 +118,30 @@ async fn process_dataset_transform_scan(
     let embedded_datasets_count = embedded_datasets_list.len();
     let mut total_jobs = 0;
 
-    for embedded_dataset in embedded_datasets_list {
-        // Get embedder configuration (convert owner to AuthenticatedUser for storage layer)
-        let user = AuthenticatedUser(transform.owner_display_name.clone());
-        let embedder =
-            embedders::get_embedder(pool, &user, embedded_dataset.embedder_id, encryption).await?;
+    let embedder_ids: Vec<i32> = embedded_datasets_list
+        .iter()
+        .map(|ed| ed.embedder_id)
+        .collect();
+    let user = AuthenticatedUser(transform.owner_display_name.clone());
+    let embedders_list =
+        embedders::get_embedders_batch(pool, &user, &embedder_ids, encryption).await?;
 
-        // Extract model from embedder config - required field
+    let embedders_map: std::collections::HashMap<i32, _> = embedders_list
+        .into_iter()
+        .map(|embedder| (embedder.embedder_id, embedder))
+        .collect();
+
+    for embedded_dataset in embedded_datasets_list {
+        // Get embedder from pre-fetched map
+        let embedder = embedders_map
+            .get(&embedded_dataset.embedder_id)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Embedder {} not found in batch fetch",
+                    embedded_dataset.embedder_id
+                )
+            })?;
+
         let model = embedder
             .config
             .get("model")

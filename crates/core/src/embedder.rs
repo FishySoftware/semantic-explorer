@@ -156,21 +156,30 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
                     let response_body: serde_json::Value = resp.json().await?;
                     let result = parse_embeddings_response(config, response_body);
 
-                    // Record per-chunk timing for this batch
+                    // Aggregate metrics: record once per batch with total duration
                     let batch_duration = batch_start.elapsed().as_secs_f64();
-                    let per_chunk_duration = batch_duration / chunk_count as f64;
-                    for _ in 0..chunk_count {
-                        crate::observability::record_embedding_per_chunk(
-                            model_name,
-                            per_chunk_duration,
-                            result.is_ok(),
-                        );
-                    }
+                    crate::observability::record_embedding_batch(
+                        model_name,
+                        batch_duration,
+                        chunk_count,
+                        result.is_ok(),
+                    );
 
                     return result;
                 }
 
                 let status = resp.status();
+
+                // Don't retry 4xx client errors - these are non-transient failures
+                if status.is_client_error() {
+                    let text = resp.text().await.unwrap_or_default();
+                    tracing::error!(
+                        status = %status,
+                        error = %text,
+                        "Embedder API client error (non-retriable)"
+                    );
+                    return Err(anyhow::anyhow!("Embedder API error {}: {}", status, text));
+                }
 
                 // Handle 503 Service Unavailable with Retry-After header
                 if status == reqwest::StatusCode::SERVICE_UNAVAILABLE {
@@ -214,12 +223,9 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
         }
     }
 
-    // Record failure metrics for this batch
+    // Record failure metrics for this batch (aggregated)
     let batch_duration = batch_start.elapsed().as_secs_f64();
-    let per_chunk_duration = batch_duration / chunk_count as f64;
-    for _ in 0..chunk_count {
-        crate::observability::record_embedding_per_chunk(model_name, per_chunk_duration, false);
-    }
+    crate::observability::record_embedding_batch(model_name, batch_duration, chunk_count, false);
 
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Unknown embedder error")))
 }

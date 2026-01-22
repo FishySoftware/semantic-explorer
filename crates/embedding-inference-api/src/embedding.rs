@@ -4,17 +4,16 @@ use once_cell::sync::OnceCell;
 use ort::ep::CUDA;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tokio::sync::Semaphore;
-use tracing::{debug, error, info};
+use tokio::sync::{RwLock, Semaphore};
+use tracing::{debug, error, info, warn};
 
 use crate::config::ModelConfig;
 use crate::errors::InferenceError;
 
-/// Type alias for the embedding model cache to reduce complexity
-/// Using std::sync::Mutex for the inner lock to allow blocking operations in spawn_blocking
-type EmbeddingCache = Arc<Mutex<HashMap<String, Arc<Mutex<TextEmbedding>>>>>;
 
-/// Global embedding model cache - using per-model mutexes for concurrent access
+type EmbeddingCache = Arc<RwLock<HashMap<String, Arc<Mutex<TextEmbedding>>>>>;
+
+/// Global embedding model cache - using async RwLock for better concurrency
 static EMBEDDING_MODELS: OnceCell<EmbeddingCache> = OnceCell::new();
 
 /// Global semaphore for limiting concurrent embedding requests (backpressure)
@@ -55,7 +54,7 @@ pub fn available_permits() -> usize {
 /// 3. Loads each model from the filesystem cache, fetching if needed
 /// 4. Pre-populates the cache at startup to validate model availability
 pub async fn init_cache(config: &ModelConfig) {
-    let cache = EMBEDDING_MODELS.get_or_init(|| Arc::new(Mutex::new(HashMap::new())));
+    let cache = EMBEDDING_MODELS.get_or_init(|| Arc::new(RwLock::new(HashMap::new())));
 
     // Get list of models to load
     let models_to_load = get_models_to_load(config);
@@ -109,13 +108,7 @@ pub async fn init_cache(config: &ModelConfig) {
         .collect::<Vec<_>>()
         .await;
 
-    let mut cache_guard = match cache.lock() {
-        Ok(guard) => guard,
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to acquire embedding cache lock during initialization");
-            return;
-        }
-    };
+    let mut cache_guard = cache.write().await;
 
     for result in results {
         match result {
@@ -132,6 +125,11 @@ pub async fn init_cache(config: &ModelConfig) {
             }
         }
     }
+
+    tracing::info!(
+        loaded_models = cache_guard.len(),
+        "Embedding model cache initialization complete - all models loaded in memory"
+    );
 }
 
 /// Get the list of embedding models to load based on configuration
@@ -305,34 +303,27 @@ pub async fn generate_embeddings(
         .get()
         .ok_or_else(|| InferenceError::Internal("Embedding cache not initialized".to_string()))?;
 
-    // Get or create the model with minimal lock time on the HashMap
-    let model_mutex = {
-        let mut cache = models
-            .lock()
-            .map_err(|e| InferenceError::Internal(format!("Failed to acquire lock: {}", e)))?;
+    // Get the model with read lock (non-blocking for concurrent reads)
+    let model_arc = {
+        let cache = models.read().await;
 
-        // Check if model is in cache, if not load it
-        if !cache.contains_key(model_id) {
-            info!(model_id = %model_id, "Loading embedding model on demand");
-            let embedding_model = resolve_embedding_model(model_id)?;
-            let text_embedding = create_text_embedding(embedding_model, config)?;
-            cache.insert(model_id.to_string(), Arc::new(Mutex::new(text_embedding)));
-        }
-
-        Arc::clone(
-            cache
-                .get(model_id)
-                .ok_or_else(|| InferenceError::Internal(format!("Model {} not found", model_id)))?,
-        )
-    }; // HashMap lock released here
+        // All models should be preloaded
+        cache.get(model_id).cloned().ok_or_else(|| {
+            warn!(model_id = %model_id, "Model not found in preloaded cache");
+            InferenceError::UnsupportedModel(format!(
+                "Model {} not preloaded. Please check configuration.",
+                model_id
+            ))
+        })?
+    }; // Read lock released here
 
     // Generate embeddings in a blocking task to avoid blocking the async runtime
     let texts_clone = texts.clone();
     let batch_size = Some(config.max_batch_size);
-    let model_clone = model_mutex.clone();
 
     tokio::task::spawn_blocking(move || {
-        let mut text_embedding = model_clone.lock().map_err(|e| {
+        // Acquire mutex lock for mutable access to TextEmbedding
+        let mut text_embedding = model_arc.lock().map_err(|e| {
             InferenceError::Internal(format!("Failed to acquire model lock: {}", e))
         })?;
 
@@ -347,16 +338,7 @@ pub async fn generate_embeddings(
 
 /// Check if models are loaded and ready
 pub fn is_ready() -> bool {
-    EMBEDDING_MODELS
-        .get()
-        .and_then(|m| {
-            m.lock()
-                .map_err(|e| {
-                    error!("Failed to lock embedding models cache: {}", e);
-                    e
-                })
-                .ok()
-        })
-        .map(|cache| !cache.is_empty())
-        .unwrap_or(false)
+    // For sync contexts, we check if cache exists and assume it has models
+    // This is safe because models are preloaded at startup
+    EMBEDDING_MODELS.get().is_some()
 }

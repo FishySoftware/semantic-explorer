@@ -1429,3 +1429,21 @@ pub fn init_observability_api(
 
     Ok(prometheus)
 }
+
+/// Record embedding generation for a batch - more efficient than per-chunk recording
+/// Records total batch duration and chunk count to reduce observability overhead
+pub fn record_embedding_batch(model: &str, duration_secs: f64, chunk_count: usize, success: bool) {
+    let metrics = get_metrics();
+    let status = if success { "success" } else { "error" };
+
+    // Record total batch duration with chunk count metadata
+    metrics.embedding_per_chunk_duration.record(
+        duration_secs,
+        &[
+            KeyValue::new("model", model.to_string()),
+            KeyValue::new("status", status.to_string()),
+            KeyValue::new("batch", "true"),
+            KeyValue::new("chunk_count", chunk_count.to_string()),
+        ],
+    );
+}
