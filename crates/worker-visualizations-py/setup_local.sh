@@ -29,11 +29,6 @@ echo "Downloading fonts for offline use..."
 cd "$SCRIPT_DIR"
 ./download_fonts.sh
 
-# Run test
-echo ""
-echo "Running font patcher test..."
-python test/test_font_patcher.py
-
 echo ""
 echo "✓ Development environment ready!"
 echo ""

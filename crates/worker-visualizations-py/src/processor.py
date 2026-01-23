@@ -938,6 +938,11 @@ class VisualizationProcessor:
             logger.debug(
                 "Calling datamapplot.create_interactive_plot with offline_mode=True..."
             )
+
+            # Enable searching (feeds the html rendering kwargs)
+            plot_kwargs["enable_search"] = True
+            plot_kwargs["enable_topic_tree"] = False # Looks terrible - needs works.
+
             fig = datamapplot.create_interactive_plot(
                 vectors,
                 np.array(label_names),
