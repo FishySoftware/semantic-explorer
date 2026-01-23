@@ -219,7 +219,9 @@ pub(crate) async fn process_vector_job(job: DatasetTransformJob, ctx: WorkerCont
                 // or the previous create succeeded but response timed out
                 let error_str = e.to_string();
                 if error_str.contains("already exists") {
-                    info!("Collection already exists (created by another worker or previous attempt), continuing");
+                    info!(
+                        "Collection already exists (created by another worker or previous attempt), continuing"
+                    );
                 } else {
                     return Err(anyhow::anyhow!("Failed to create collection: {}", e));
                 }

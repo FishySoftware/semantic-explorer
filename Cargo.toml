@@ -13,11 +13,11 @@ members = [
 actix-web = { version = "4.12.1", features = ["actix-tls", "rustls-0_23"]}
 actix-cors = { version = "0.7.1" }
 actix-multipart = { version = "0.7.2" }
-thiserror = { version = "2.0.17" }
+thiserror = { version = "2.0.18" }
 actix-files = {version = "0.6.9", features = ["actix-server"]}
 actix_web_openidconnect = { version = "0.3.2"}
 actix-web-prom = {version = "0.10.0", features = ["process"]}
-async-nats = { version = "0.45.0" }
+async-nats = { version = "0.46.0" }
 async-stream = { version = "0.3.6" }
 futures-util = { version = "0.3.31" }
 aws-sdk-s3 = {version = "1.120.0", features = ["behavior-version-latest"] }
@@ -48,7 +48,7 @@ lopdf = { version = "0.39.0" }
 unicode-normalization = { version = "0.1.25" }
 unicode-segmentation = { version = "1.12.0" }
 scraper = { version = "0.25.0" }
-zip = {version = "7.1.0", features = ["deflate", "deflate64", "time", "ppmd", "bzip2"], default-features = false}
+zip = {version = "7.2.0", features = ["deflate", "deflate64", "time", "ppmd", "bzip2"], default-features = false}
 uuid = { version = "1.19.0", features = ["v4", "v5", "serde"] }
 chrono = { version = "0.4.43", features = ["serde"] }
 tokio = { version = "1.49.0", features = ["full"] }
@@ -75,18 +75,18 @@ rtf-parser = { version = "0.4.2" }
 epub = { version = "2.1.5" }
 cfb = { version = "0.12.1" }
 tree-sitter = { version = "0.26.3" }
-tree-sitter-rust = { version = "0.24" }
-tree-sitter-python = { version = "0.25" }
-tree-sitter-javascript = { version = "0.25" }
-tree-sitter-typescript = { version = "0.23" }
-tree-sitter-go = { version = "0.25" }
-tree-sitter-java = { version = "0.23" }
-tree-sitter-c = { version = "0.24" }
-tree-sitter-cpp = { version = "0.23" }
-tree-sitter-json = { version = "0.24" }
-tree-sitter-toml-ng = { version = "0.7" }
-tree-sitter-yaml = { version = "0.7" }
-tree-sitter-html = { version = "0.23" }
+tree-sitter-rust = { version = "0.24.0" }
+tree-sitter-python = { version = "0.25.0" }
+tree-sitter-javascript = { version = "0.25.0" }
+tree-sitter-typescript = { version = "0.23.2" }
+tree-sitter-go = { version = "0.25.0" }
+tree-sitter-java = { version = "0.23.5" }
+tree-sitter-c = { version = "0.24.1" }
+tree-sitter-cpp = { version = "0.23.4" }
+tree-sitter-json = { version = "0.24.8" }
+tree-sitter-toml-ng = { version = "0.7.0" }
+tree-sitter-yaml = { version = "0.7.2" }
+tree-sitter-html = { version = "0.23.2" }
 tree-sitter-css = { version = "0.25.0" }
 tree-sitter-bash = { version = "0.25.1" }
 

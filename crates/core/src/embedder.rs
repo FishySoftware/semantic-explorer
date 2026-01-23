@@ -19,7 +19,7 @@ static EMBEDDING_SEMAPHORE: Lazy<Arc<Semaphore>> = Lazy::new(|| {
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(3); // Default to 3 concurrent requests for local inference
-    
+
     tracing::info!(
         max_concurrent,
         "Initialized embedding request semaphore for rate limiting"
@@ -185,10 +185,7 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
             .await
             .map_err(|e| anyhow::anyhow!("Failed to acquire embedding semaphore permit: {}", e))?;
 
-        tracing::debug!(
-            texts = texts.len(),
-            "Acquired embedding request permit"
-        );
+        tracing::debug!(texts = texts.len(), "Acquired embedding request permit");
 
         let request = req
             .try_clone()
