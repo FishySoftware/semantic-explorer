@@ -109,6 +109,9 @@ spec:
           value: "/tmp"
         - name: MPLCONFIGDIR
           value: "/tmp/matplotlib"
+        # Set HOME to writable location for numba/umap cache locator
+        - name: HOME
+          value: "/tmp"
         {{- range $key, $value := .Values.workerVisualizationsPy.env }}
         - name: {{ $key }}
           value: {{ $value | quote }}

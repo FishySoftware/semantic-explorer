@@ -210,12 +210,21 @@ pub(crate) async fn process_vector_job(job: DatasetTransformJob, ctx: WorkerCont
             .on_disk_payload(true) // Store payloads on disk to reduce memory usage
             .build();
 
-        qdrant_client
-            .create_collection(create_collection)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to create collection: {}", e))?;
-
-        info!("Collection created successfully");
+        match qdrant_client.create_collection(create_collection).await {
+            Ok(_) => {
+                info!("Collection created successfully");
+            }
+            Err(e) => {
+                // Handle race condition: collection may have been created by another worker
+                // or the previous create succeeded but response timed out
+                let error_str = e.to_string();
+                if error_str.contains("already exists") {
+                    info!("Collection already exists (created by another worker or previous attempt), continuing");
+                } else {
+                    return Err(anyhow::anyhow!("Failed to create collection: {}", e));
+                }
+            }
+        }
     }
 
     let points: Vec<PointStruct> = items

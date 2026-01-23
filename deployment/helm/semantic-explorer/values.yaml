@@ -1039,7 +1039,7 @@ minio:
   # Optional: Custom init job for bucket creation (alternative to subchart's built-in)
   # Enable this if you need custom bucket policies or the subchart provisioning fails
   initJob:
-    enabled: false  # Set to true to use custom init job instead of subchart's bucket provisioning
+    enabled: true  # Create required buckets on startup
 
 # Storage Configuration (S3-compatible)
 # Configure external S3-compatible storage or use MinIO
