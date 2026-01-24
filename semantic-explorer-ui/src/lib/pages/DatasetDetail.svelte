@@ -13,76 +13,15 @@
 	import { createPollingInterval } from '../utils/polling';
 	import { createSSEConnection, type SSEConnection } from '../utils/sse';
 	import { formatDate } from '../utils/ui-helpers';
-
-	interface Dataset {
-		dataset_id: number;
-		title: string;
-		details: string | null;
-		owner: string;
-		tags: string[];
-		is_public: boolean;
-	}
-
-	interface DatasetItemSummary {
-		item_id: number;
-		dataset_id: number;
-		title: string;
-		chunk_count: number;
-		metadata: Record<string, any>;
-	}
-
-	interface DatasetItemChunks {
-		item_id: number;
-		dataset_id: number;
-		title: string;
-		chunks: Array<{ content: string; metadata: Record<string, any> }>;
-		metadata: Record<string, any>;
-	}
-
-	interface CollectionTransform {
-		collection_transform_id: number;
-		title: string;
-		collection_id: number;
-		dataset_id: number;
-		owner: string;
-		is_enabled: boolean;
-		chunk_size: number;
-		job_config: Record<string, any>;
-		created_at: string;
-		updated_at: string;
-	}
-
-	interface DatasetTransform {
-		dataset_transform_id: number;
-		title: string;
-		source_dataset_id: number;
-		embedder_ids: number[];
-		owner: string;
-		is_enabled: boolean;
-		job_config: Record<string, any>;
-		created_at: string;
-		updated_at: string;
-	}
-
-	interface EmbeddedDataset {
-		embedded_dataset_id: number;
-		title: string;
-		dataset_transform_id: number;
-		source_dataset_id: number;
-		embedder_id: number;
-		owner: string;
-		collection_name: string;
-		created_at: string;
-		updated_at: string;
-	}
-
-	interface PaginatedItems {
-		items: DatasetItemSummary[];
-		page: number;
-		page_size: number;
-		total_count: number;
-		has_more: boolean;
-	}
+	import type {
+		CollectionTransform,
+		Dataset,
+		DatasetItemChunks,
+		DatasetItemSummary,
+		DatasetTransform,
+		EmbeddedDataset,
+		PaginatedItems,
+	} from '../types/models';
 
 	interface Props {
 		datasetId: number;
@@ -1327,8 +1266,8 @@
 		: ''}
 	confirmLabel="Delete"
 	variant="danger"
-	on:confirm={confirmDeleteItem}
-	on:cancel={() => (itemPendingDelete = null)}
+	onConfirm={confirmDeleteItem}
+	onCancel={() => (itemPendingDelete = null)}
 />
 
 <CreateDatasetTransformModal

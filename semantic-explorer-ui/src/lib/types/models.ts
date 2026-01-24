@@ -39,6 +39,26 @@ export interface DatasetWithStats extends Dataset {
 	total_chunks: number;
 }
 
+export interface DatasetItemSummary {
+	item_id: number;
+	title: string;
+	chunk_count: number;
+}
+
+export interface DatasetItemChunks {
+	chunks: Array<{
+		content: string;
+		metadata: Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+	}>;
+	metadata: Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+}
+
+export interface PaginatedItems {
+	items: DatasetItemSummary[];
+	total_count: number;
+	has_more: boolean;
+}
+
 export interface DatasetTransform {
 	dataset_transform_id: number;
 	title: string;
@@ -423,6 +443,7 @@ export interface ChatMessage {
 	documents_retrieved?: number | null;
 	status?: string; // 'complete', 'incomplete', 'error'
 	retrieved_documents?: RetrievedDocument[];
+	embedded_dataset_id?: number;
 }
 
 export interface RetrievedDocument {

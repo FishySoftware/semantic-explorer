@@ -40,7 +40,6 @@ chrono = { workspace = true }
 reqwest = { workspace = true }
 regex = { workspace = true }
 infer = { workspace = true }
-zip = { workspace = true }
 sha2 = { workspace = true }
 
 [target.'cfg(target_env = "musl")'.dependencies]

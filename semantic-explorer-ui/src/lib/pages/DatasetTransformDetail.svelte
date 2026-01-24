@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Heading } from 'flowbite-svelte';
 	import { onDestroy, onMount } from 'svelte';
+	import { formatDate } from '../utils/ui-helpers';
 	import PageHeader from '../components/PageHeader.svelte';
 
 	interface Props {
@@ -340,7 +341,7 @@
 				<div>
 					<Heading tag="h2" class="text-2xl font-bold mb-2">{transform.title}</Heading>
 					<p class="text-sm text-gray-500 dark:text-gray-400">
-						Created {new Date(transform.created_at).toLocaleString()}
+						Created {formatDate(transform.created_at)}
 					</p>
 				</div>
 				<span
@@ -457,7 +458,7 @@
 				</div>
 				{#if stats.last_run_at}
 					<p class="text-xs text-gray-500 dark:text-gray-400 mt-4">
-						Last run: {new Date(stats.last_run_at).toLocaleString()}
+						Last run: {formatDate(stats.last_run_at)}
 					</p>
 				{/if}
 			</div>
@@ -537,7 +538,7 @@
 								{/if}
 								{#if stat.last_run_at}
 									<p class="text-xs text-gray-500 dark:text-gray-400">
-										Last run: {new Date(stat.last_run_at).toLocaleString()}
+										Last run: {formatDate(stat.last_run_at)}
 									</p>
 								{/if}
 							{/if}
@@ -596,7 +597,7 @@
 									<td class="px-4 py-3">
 										{batch.processing_duration_ms ? `${batch.processing_duration_ms}ms` : '-'}
 									</td>
-									<td class="px-4 py-3">{new Date(batch.processed_at).toLocaleString()}</td>
+									<td class="px-4 py-3">{formatDate(batch.processed_at)}</td>
 								</tr>
 								{#if batch.error_message}
 									<tr

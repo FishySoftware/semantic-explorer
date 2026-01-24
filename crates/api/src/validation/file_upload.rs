@@ -3,20 +3,11 @@
 //! This module provides comprehensive validation for uploaded files including:
 //! - Magic byte verification using the `infer` crate
 //! - MIME type validation
-//! - ZIP bomb detection via compression ratio analysis
 //! - File size limits
-
-use anyhow::{Result, anyhow};
 use infer::Infer;
-use std::io::Cursor;
-use zip::ZipArchive;
 
 /// Maximum allowed file size: 100MB
 const MAX_FILE_SIZE_BYTES: usize = 100 * 1024 * 1024;
-
-/// Maximum compression ratio before flagging as potential ZIP bomb
-/// A ratio > 100 means the compressed file is 100x smaller than uncompressed
-const MAX_COMPRESSION_RATIO: f64 = 100.0;
 
 /// Whitelist of allowed MIME types for document uploads
 /// This list matches the extraction capabilities in worker-collections
@@ -71,7 +62,7 @@ const ALLOWED_MIME_TYPES: &[&str] = &[
     "text/x-ndjson",
     // Email
     "message/rfc822", // .eml files
-    // Archives (will be further validated for ZIP bombs)
+    // Archives
     "application/zip",
     "application/x-zip-compressed",
     "application/x-7z-compressed",
@@ -145,13 +136,6 @@ fn validate_upload_file_sync(file_bytes: &[u8], filename: &str) -> FileValidatio
         "File validation started"
     );
 
-    // Check for ZIP bombs if it's a ZIP file
-    if detected_mime == "application/zip"
-        && let Err(e) = validate_zip_bomb(file_bytes)
-    {
-        errors.push(e.to_string());
-    }
-
     let is_valid = errors.is_empty();
 
     if !is_valid {
@@ -167,67 +151,6 @@ fn validate_upload_file_sync(file_bytes: &[u8], filename: &str) -> FileValidatio
         validation_errors: errors,
         mime_type: Some(detected_mime),
     }
-}
-
-/// Detect and prevent ZIP bomb attacks
-///
-/// Checks for suspiciously high compression ratios which may indicate
-/// a ZIP bomb (e.g., highly compressed large files).
-fn validate_zip_bomb(file_bytes: &[u8]) -> Result<()> {
-    let cursor = Cursor::new(file_bytes);
-    let mut zip = ZipArchive::new(cursor).map_err(|e| anyhow!("Invalid ZIP file: {}", e))?;
-
-    let mut total_uncompressed = 0u64;
-    let total_compressed = file_bytes.len() as u64;
-
-    // Iterate through all files in the archive
-    for i in 0..zip.len() {
-        let file = zip
-            .by_index(i)
-            .map_err(|e| anyhow!("Error reading ZIP entry {}: {}", i, e))?;
-
-        let uncompressed_size = file.size();
-        total_uncompressed += uncompressed_size;
-
-        // Check individual file limit (100MB uncompressed)
-        if uncompressed_size > MAX_FILE_SIZE_BYTES as u64 {
-            return Err(anyhow!(
-                "ZIP contains file exceeding {}MB uncompressed: {} bytes",
-                MAX_FILE_SIZE_BYTES / (1024 * 1024),
-                uncompressed_size
-            ));
-        }
-    }
-
-    // Check overall compression ratio
-    if total_compressed > 0 {
-        let ratio = total_uncompressed as f64 / total_compressed as f64;
-        if ratio > MAX_COMPRESSION_RATIO {
-            return Err(anyhow!(
-                "ZIP compression ratio exceeds {}x ({}x detected). Possible ZIP bomb.",
-                MAX_COMPRESSION_RATIO,
-                ratio
-            ));
-        }
-    }
-
-    // Check total uncompressed size
-    if total_uncompressed > MAX_FILE_SIZE_BYTES as u64 {
-        return Err(anyhow!(
-            "ZIP archive uncompresses to {}MB, exceeds limit of {}MB",
-            total_uncompressed / (1024 * 1024),
-            MAX_FILE_SIZE_BYTES / (1024 * 1024)
-        ));
-    }
-
-    tracing::debug!(
-        compressed_size = total_compressed,
-        uncompressed_size = total_uncompressed,
-        compression_ratio = total_uncompressed as f64 / total_compressed as f64,
-        "ZIP file validation passed"
-    );
-
-    Ok(())
 }
 
 /// Get the list of allowed MIME types for client display

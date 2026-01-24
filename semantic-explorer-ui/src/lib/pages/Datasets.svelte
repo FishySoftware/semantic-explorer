@@ -501,8 +501,8 @@
 		: ''}
 	confirmLabel="Delete"
 	variant="danger"
-	on:confirm={confirmDeleteDataset}
-	on:cancel={() => (datasetPendingDelete = null)}
+	onConfirm={confirmDeleteDataset}
+	onCancel={() => (datasetPendingDelete = null)}
 />
 
 <CreateDatasetTransformModal

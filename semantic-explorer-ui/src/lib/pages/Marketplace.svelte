@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import PageHeader from '../components/PageHeader.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
+	import { formatDate } from '../utils/ui-helpers';
 
 	interface Collection {
 		collection_id: number;
@@ -331,9 +332,7 @@
 							class="flex justify-between items-center mt-auto pt-3 border-t border-gray-200 dark:border-gray-700"
 						>
 							<span class="text-xs text-gray-500 dark:text-gray-400"
-								>{collection.created_at
-									? new Date(collection.created_at).toLocaleDateString()
-									: ''}</span
+								>{collection.created_at ? formatDate(collection.created_at, false) : ''}</span
 							>
 							<button
 								onclick={() => grabCollection(collection.collection_id)}
@@ -384,7 +383,7 @@
 							class="flex justify-between items-center mt-auto pt-3 border-t border-gray-200 dark:border-gray-700"
 						>
 							<span class="text-xs text-gray-500 dark:text-gray-400"
-								>{dataset.created_at ? new Date(dataset.created_at).toLocaleDateString() : ''}</span
+								>{dataset.created_at ? formatDate(dataset.created_at, false) : ''}</span
 							>
 							<button
 								onclick={() => grabDataset(dataset.dataset_id)}
@@ -419,6 +418,7 @@
 							<div class="flex gap-2">
 								<span class="font-medium text-gray-600 dark:text-gray-400 min-w-fit">Provider:</span
 								>
+								>
 								<span class="text-gray-700 dark:text-gray-300">{embedder.provider}</span>
 							</div>
 							<div class="flex gap-2">
@@ -430,6 +430,7 @@
 							<div class="flex gap-2">
 								<span class="font-medium text-gray-600 dark:text-gray-400 min-w-fit">Base URL:</span
 								>
+								>
 								<span class="text-gray-700 dark:text-gray-300 font-mono text-xs break-all">
 									{embedder.base_url}
 								</span>
@@ -439,9 +440,8 @@
 							class="flex justify-between items-center mt-auto pt-3 border-t border-gray-200 dark:border-gray-700"
 						>
 							<span class="text-xs text-gray-500 dark:text-gray-400"
-								>{embedder.created_at
-									? new Date(embedder.created_at).toLocaleDateString()
-									: ''}</span
+								>{embedder.created_at ? formatDate(embedder.created_at, false) : ''}</span
+							>
 							>
 							<button
 								onclick={() => grabEmbedder(embedder.embedder_id)}
@@ -476,10 +476,12 @@
 							<div class="flex gap-2">
 								<span class="font-medium text-gray-600 dark:text-gray-400 min-w-fit">Provider:</span
 								>
+								>
 								<span class="text-gray-700 dark:text-gray-300">{llm.provider}</span>
 							</div>
 							<div class="flex gap-2">
 								<span class="font-medium text-gray-600 dark:text-gray-400 min-w-fit">Base URL:</span
+								>
 								>
 								<span class="text-gray-700 dark:text-gray-300 font-mono text-xs break-all">
 									{llm.base_url}
@@ -490,7 +492,8 @@
 							class="flex justify-between items-center mt-auto pt-3 border-t border-gray-200 dark:border-gray-700"
 						>
 							<span class="text-xs text-gray-500 dark:text-gray-400"
-								>{llm.created_at ? new Date(llm.created_at).toLocaleDateString() : ''}</span
+								>{llm.created_at ? formatDate(llm.created_at, false) : ''}</span
+							>
 							>
 							<button
 								onclick={() => grabLLM(llm.llm_id)}

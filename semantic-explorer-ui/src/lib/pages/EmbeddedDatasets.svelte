@@ -12,7 +12,7 @@
 		ProcessedBatch,
 	} from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
-	import { formatNumber } from '../utils/ui-helpers';
+	import { formatNumber, formatDate } from '../utils/ui-helpers';
 
 	let { onNavigate, onViewDataset } = $props<{
 		onNavigate: (_path: string) => void;
@@ -539,7 +539,7 @@
 											{batch.file_key.split('/').pop() || batch.file_key}
 										</p>
 										<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-											Processed: {new Date(batch.processed_at).toLocaleString()} | Items: {batch.item_count}
+											Processed: {formatDate(batch.processed_at)} | Items: {batch.item_count}
 										</p>
 									</div>
 								</div>

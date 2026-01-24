@@ -6,12 +6,21 @@
  * - Configurable timing
  */
 
+/** Default polling interval in milliseconds */
+export const DEFAULT_POLLING_INTERVAL = 3000;
+
+/** Default max consecutive errors before stopping polling */
+export const DEFAULT_MAX_ERRORS = 5;
+
+/** Default heartbeat timeout in milliseconds */
+export const DEFAULT_HEARTBEAT_TIMEOUT = 90000;
+
 export interface PollingOptions {
 	/** Polling interval in milliseconds (default: 3000) */
 	interval?: number;
 	/** Callback to check if polling should continue */
 	shouldContinue?: () => boolean;
-	/** Max number of consecutive errors before stopping (default: 5) */
+	/** Max number of consecutive errors before stopping (default:5) */
 	maxErrors?: number;
 	/** Callback on error */
 	onError?: (error: Error, retryCount: number) => void;
@@ -53,7 +62,12 @@ export function createPollingInterval(
 	callback: () => Promise<void>,
 	options: PollingOptions = {}
 ): PollingController {
-	const { interval = 3000, shouldContinue, maxErrors = 5, onError } = options;
+	const {
+		interval = DEFAULT_POLLING_INTERVAL,
+		shouldContinue,
+		maxErrors = DEFAULT_MAX_ERRORS,
+		onError,
+	} = options;
 
 	let pollingInterval: ReturnType<typeof setInterval> | null = null;
 	let isPolling = false;

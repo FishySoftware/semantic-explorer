@@ -41,7 +41,7 @@ pub(crate) fn initialize_scanner(
     encryption: EncryptionService,
 ) -> JoinHandle<()> {
     spawn(async move {
-        let mut interval = interval(Duration::from_secs(60)); // Check for new dataset transform jobs every 60 seconds
+        let mut interval = interval(Duration::from_secs(10)); // Check for new dataset transform jobs every 10 seconds
         loop {
             interval.tick().await;
             if let Err(e) =

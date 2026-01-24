@@ -470,8 +470,8 @@
 		: ''}
 	confirmLabel="Delete"
 	variant="danger"
-	on:confirm={confirmDeleteCollection}
-	on:cancel={() => (collectionPendingDelete = null)}
+	onConfirm={confirmDeleteCollection}
+	onCancel={() => (collectionPendingDelete = null)}
 />
 
 <CreateCollectionTransformModal

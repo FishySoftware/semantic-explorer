@@ -13,6 +13,7 @@
 		PaginatedResponse,
 	} from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
+	import { formatDate } from '../utils/ui-helpers';
 
 	interface Props {
 		// eslint-disable-next-line no-unused-vars
@@ -663,7 +664,7 @@
 								{stats?.total_chunks_embedded ?? '-'}
 							</td>
 							<td class="px-4 py-3">
-								{new Date(transform.created_at).toLocaleDateString()}
+								{formatDate(transform.created_at, false)}
 							</td>
 						</tr>
 					{/each}
@@ -739,8 +740,8 @@
 		: ''}
 	confirmLabel="Delete"
 	variant="danger"
-	on:confirm={confirmDeleteTransform}
-	on:cancel={() => (transformPendingDelete = null)}
+	onConfirm={confirmDeleteTransform}
+	onCancel={() => (transformPendingDelete = null)}
 />
 
 <style>

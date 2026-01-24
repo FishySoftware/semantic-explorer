@@ -6,6 +6,7 @@
 	import ErrorBoundary from './lib/components/ErrorBoundary.svelte';
 	import ToastHost from './lib/components/ToastHost.svelte';
 	import { initializeTheme } from './lib/utils/theme';
+	import { setupGlobalErrorHandler } from './lib/utils/errorHandler';
 
 	// Dynamic imports for code-splitting
 	const Chat = () => import('./lib/pages/Chat.svelte');
@@ -120,37 +121,43 @@
 		}
 
 		if (path === '/embedded-datasets/detail' && params.id) {
-			selectedEmbeddedDatasetId = parseInt(params.id, 10);
+			const id = parseInt(params.id, 10);
+			selectedEmbeddedDatasetId = !isNaN(id) ? id : null;
 		} else if (path !== '/embedded-datasets/detail') {
 			selectedEmbeddedDatasetId = null;
 		}
 
 		if (path === '/visualizations/detail' && params.id) {
-			selectedVisualizationId = parseInt(params.id, 10);
+			const id = parseInt(params.id, 10);
+			selectedVisualizationId = !isNaN(id) ? id : null;
 		} else if (path !== '/visualizations/detail') {
 			selectedVisualizationId = null;
 		}
 
 		if (path === '/embedders/detail' && params.id) {
-			selectedEmbedderId = parseInt(params.id, 10);
+			const id = parseInt(params.id, 10);
+			selectedEmbedderId = !isNaN(id) ? id : null;
 		} else if (path !== '/embedders/detail') {
 			selectedEmbedderId = null;
 		}
 
 		if (path === '/collection-transforms/detail' && params.id) {
-			selectedCollectionTransformId = parseInt(params.id, 10);
+			const id = parseInt(params.id, 10);
+			selectedCollectionTransformId = !isNaN(id) ? id : null;
 		} else if (path !== '/collection-transforms/detail') {
 			selectedCollectionTransformId = null;
 		}
 
 		if (path === '/dataset-transforms/detail' && params.id) {
-			selectedDatasetTransformId = parseInt(params.id, 10);
+			const id = parseInt(params.id, 10);
+			selectedDatasetTransformId = !isNaN(id) ? id : null;
 		} else if (path !== '/dataset-transforms/detail') {
 			selectedDatasetTransformId = null;
 		}
 
 		if (path === '/visualization-transforms/detail' && params.id) {
-			selectedVisualizationTransformId = parseInt(params.id, 10);
+			const id = parseInt(params.id, 10);
+			selectedVisualizationTransformId = !isNaN(id) ? id : null;
 		} else if (path !== '/visualization-transforms/detail') {
 			selectedVisualizationTransformId = null;
 		}
@@ -158,7 +165,8 @@
 		if (path.includes('/marketplace/') && path.includes('/grab')) {
 			if (params.resourceType && params.id) {
 				grabResourceType = params.resourceType as 'collections' | 'datasets' | 'embedders' | 'llms';
-				grabResourceId = parseInt(params.id, 10);
+				const id = parseInt(params.id, 10);
+				grabResourceId = !isNaN(id) ? id : null;
 			}
 		} else {
 			grabResourceType = null;
@@ -168,6 +176,7 @@
 
 	onMount(() => {
 		initializeTheme();
+		setupGlobalErrorHandler();
 		handleHashChange();
 		window.addEventListener('hashchange', handleHashChange);
 		return () => {

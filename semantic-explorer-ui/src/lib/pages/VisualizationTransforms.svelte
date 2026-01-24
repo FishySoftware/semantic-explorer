@@ -14,7 +14,7 @@
 		LLM,
 	} from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
-	import { showTooltip } from '../utils/ui-helpers';
+	import { showTooltip, formatDate } from '../utils/ui-helpers';
 	import { InfoIcon } from '../utils/icons';
 
 	interface Props {
@@ -2030,7 +2030,7 @@
 							</td>
 							<td class="px-4 py-3">{stats?.total_points ?? '-'}</td>
 							<td class="px-4 py-3">{stats?.total_clusters ?? '-'}</td>
-							<td class="px-4 py-3">{new Date(transform.created_at).toLocaleDateString()}</td>
+							<td class="px-4 py-3">{formatDate(transform.created_at, false)}</td>
 							<td class="px-4 py-3 text-center">
 								<button
 									type="button"
@@ -2121,8 +2121,8 @@
 		: ''}
 	confirmLabel="Delete"
 	variant="danger"
-	on:confirm={confirmDeleteTransform}
-	on:cancel={() => (transformPendingDelete = null)}
+	onConfirm={confirmDeleteTransform}
+	onCancel={() => (transformPendingDelete = null)}
 />
 
 <style>

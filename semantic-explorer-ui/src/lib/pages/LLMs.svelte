@@ -30,6 +30,7 @@
 	let formApiKey = $state('');
 	let formConfig = $state('{}');
 	let formIsPublic = $state(false);
+	let nameManuallyEdited = $state(false);
 
 	let testStatus = $state<'idle' | 'testing' | 'success' | 'error'>('idle');
 	let testMessage = $state('');
@@ -219,6 +220,7 @@
 		formProvider = 'internal';
 		formApiKey = '';
 		formIsPublic = false;
+		nameManuallyEdited = false;
 		updateProviderDefaults();
 
 		testStatus = 'idle';
@@ -227,17 +229,7 @@
 	}
 
 	$effect(() => {
-		if (showCreateForm && !editingLLM && !formName) {
-			const model = localModel === '__custom__' ? customModel : localModel;
-			if (model && typeof model === 'string') {
-				const cleanModel = model.split('/').pop()?.toLowerCase() || model.toLowerCase();
-				formName = `llm-${formProvider}-${cleanModel}`;
-			}
-		}
-	});
-
-	$effect(() => {
-		if (showCreateForm && !editingLLM && formName.startsWith('llm-')) {
+		if (showCreateForm && !editingLLM && !nameManuallyEdited && !formName) {
 			const model = localModel === '__custom__' ? customModel : localModel;
 			if (model && typeof model === 'string') {
 				const cleanModel = model.split('/').pop()?.toLowerCase() || model.toLowerCase();
@@ -449,6 +441,7 @@
 							id="llm-name"
 							type="text"
 							bind:value={formName}
+							oninput={() => (nameManuallyEdited = true)}
 							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 							placeholder="My LLM"
 						/>
@@ -822,6 +815,6 @@
 		: ''}
 	confirmLabel="Delete"
 	variant="danger"
-	on:confirm={confirmDeleteLLM}
-	on:cancel={() => (llmPendingDelete = null)}
+	onConfirm={confirmDeleteLLM}
+	onCancel={() => (llmPendingDelete = null)}
 />

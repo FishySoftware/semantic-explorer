@@ -186,7 +186,6 @@ sequenceDiagram
 
 **File Upload Limits:**
 - Maximum file size: 100 MB per file
-- ZIP bomb detection enabled (compression ratio limit: 100x)
 - Magic byte verification for MIME type detection
 
 ### Embedding Providers
@@ -440,7 +439,7 @@ semantic-explorer/
 ### Prerequisites
 
 - **Docker & Docker Compose** v2.0+
-- **NVIDIA GPU** (optional, for local inference APIs)
+- **NVIDIA GPU** (optional, for local inference APIs.  CUDA 13 required.)
 - **Rust** 1.75+ (for development)
 - **Python** 3.11+ (for visualization worker development)
 - **Node.js** 20+ (for UI development)

@@ -73,7 +73,7 @@
 				},
 			],
 		},
-		{ name: 'divider-4', icon: GridSolid, isDivider: true },
+		{ name: 'divider-5', icon: GridSolid, isDivider: true },
 	];
 	let expandedFolders = $state<string[]>(['Transforms']);
 
@@ -110,6 +110,12 @@
 						<button
 							class="flex items-center w-full p-1.5 lg:p-2 rounded-lg transition-colors duration-200 text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-700"
 							onclick={() => toggleFolder(item.name)}
+							onkeydown={(e) => {
+								if (e.key === 'Enter' || e.key === ' ') {
+									e.preventDefault();
+									toggleFolder(item.name);
+								}
+							}}
 							aria-expanded={expandedFolders.includes(item.name)}
 							aria-label={`${item.name} submenu, ${expandedFolders.includes(item.name) ? 'expanded' : 'collapsed'}`}
 						>

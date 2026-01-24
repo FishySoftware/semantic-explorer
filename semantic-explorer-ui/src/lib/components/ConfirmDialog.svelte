@@ -1,9 +1,7 @@
 <script lang="ts">
-	import { createEventDispatcher } from 'svelte';
+	import { onDestroy } from 'svelte';
 
 	type Variant = 'primary' | 'danger';
-
-	const dispatch = createEventDispatcher<{ confirm: void; cancel: void }>();
 
 	let {
 		open = false,
@@ -12,6 +10,8 @@
 		confirmLabel = 'Confirm',
 		cancelLabel = 'Cancel',
 		variant = 'danger' as Variant,
+		onConfirm,
+		onCancel,
 	} = $props<{
 		open?: boolean;
 		title?: string;
@@ -19,15 +19,80 @@
 		confirmLabel?: string;
 		cancelLabel?: string;
 		variant?: Variant;
+		onConfirm?: () => void;
+		onCancel?: () => void;
 	}>();
 
+	let focusableElements: HTMLElement[] = [];
+	let previousActiveElement: HTMLElement | null = null;
+
 	function confirm() {
-		dispatch('confirm');
+		onConfirm?.();
 	}
 
 	function cancel() {
-		dispatch('cancel');
+		onCancel?.();
 	}
+
+	function handleKeydown(event: KeyboardEvent) {
+		if (event.key === 'Escape') {
+			cancel();
+		} else if (event.key === 'Tab') {
+			event.preventDefault();
+			const currentIndex = focusableElements.indexOf(document.activeElement as HTMLElement);
+			const nextIndex = event.shiftKey
+				? (currentIndex - 1 + focusableElements.length) % focusableElements.length
+				: (currentIndex + 1) % focusableElements.length;
+			focusableElements[nextIndex]?.focus();
+		} else if (event.key === 'Enter' || event.key === ' ') {
+			event.preventDefault();
+			const activeElement = document.activeElement;
+			if (activeElement instanceof HTMLButtonElement) {
+				activeElement.click();
+			}
+		}
+	}
+
+	function trapFocus() {
+		const dialog = document.querySelector('[role="alertdialog"]');
+		if (!dialog) return;
+
+		// Store the previously focused element to restore later
+		previousActiveElement = document.activeElement as HTMLElement;
+
+		focusableElements = Array.from(
+			dialog.querySelectorAll('button, [tabindex]:not([tabindex="-1"])')
+		);
+
+		const firstFocusable = focusableElements[0];
+		if (firstFocusable) {
+			firstFocusable.focus();
+		}
+	}
+
+	function releaseFocus() {
+		focusableElements = [];
+		// Restore focus to the previously focused element
+		if (previousActiveElement) {
+			previousActiveElement.focus();
+			previousActiveElement = null;
+		}
+	}
+
+	// Use $effect to trap focus when open changes
+	$effect(() => {
+		if (open) {
+			// Small delay to ensure DOM is updated
+			const timeoutId = setTimeout(() => trapFocus(), 0);
+			return () => clearTimeout(timeoutId);
+		} else {
+			releaseFocus();
+		}
+	});
+
+	onDestroy(() => {
+		releaseFocus();
+	});
 
 	function confirmClasses() {
 		switch (variant) {
@@ -36,12 +101,6 @@
 			case 'danger':
 			default:
 				return 'bg-red-600 hover:bg-red-700 focus-visible:ring-red-500';
-		}
-	}
-
-	function handleKeydown(event: KeyboardEvent) {
-		if (event.key === 'Escape') {
-			cancel();
 		}
 	}
 </script>

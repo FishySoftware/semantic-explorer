@@ -582,6 +582,6 @@
 		: ''}
 	confirmLabel="Delete"
 	variant="danger"
-	on:confirm={confirmDeleteTransform}
-	on:cancel={() => (transformPendingDelete = null)}
+	onConfirm={confirmDeleteTransform}
+	onCancel={() => (transformPendingDelete = null)}
 />

@@ -1059,8 +1059,8 @@
 	message={`Are you sure you want to delete "${filePendingDelete?.key ?? ''}"? This action cannot be undone.`}
 	confirmLabel="Delete file"
 	cancelLabel="Cancel"
-	on:confirm={confirmDeleteFile}
-	on:cancel={cancelDeleteFile}
+	onConfirm={confirmDeleteFile}
+	onCancel={cancelDeleteFile}
 />
 
 <CreateCollectionTransformModal

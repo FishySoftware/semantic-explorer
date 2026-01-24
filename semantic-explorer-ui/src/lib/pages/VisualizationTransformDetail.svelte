@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Heading } from 'flowbite-svelte';
 	import { onDestroy, onMount } from 'svelte';
+	import { formatDate } from '../utils/ui-helpers';
 	import PageHeader from '../components/PageHeader.svelte';
 
 	interface Props {
@@ -304,7 +305,7 @@
 				<div>
 					<Heading tag="h2" class="text-2xl font-bold mb-2">{transform.title}</Heading>
 					<p class="text-sm text-gray-500 dark:text-gray-400">
-						Created {new Date(transform.created_at).toLocaleString()}
+						Created {formatDate(transform.created_at)}
 					</p>
 				</div>
 				<span
@@ -374,7 +375,7 @@
 				<div>
 					<p class="text-sm text-gray-500 dark:text-gray-400 mb-1">Last Run At</p>
 					<p class="text-lg font-medium text-gray-900 dark:text-white">
-						{transform.last_run_at ? new Date(transform.last_run_at).toLocaleString() : 'N/A'}
+						{transform.last_run_at ? formatDate(transform.last_run_at) : 'N/A'}
 					</p>
 				</div>
 				{#if transform.last_error}
@@ -441,7 +442,7 @@
 							{`${transform?.title || 'Visualization'} - ${new Date(stats.latest_visualization.created_at).toISOString().split('T')[0]}`}
 						</p>
 						<p class="text-xs text-gray-500 dark:text-gray-400">
-							Created {new Date(stats.latest_visualization.created_at).toLocaleString()}
+							Created {formatDate(stats.latest_visualization.created_at)}
 						</p>
 					</div>
 				{/if}
@@ -512,16 +513,12 @@
 										{/if}
 									</td>
 									<td class="px-4 py-3">
-										{visualization.started_at
-											? new Date(visualization.started_at).toLocaleString()
-											: '-'}
+										{visualization.started_at ? formatDate(visualization.started_at) : '-'}
 									</td>
 									<td class="px-4 py-3">
-										{visualization.completed_at
-											? new Date(visualization.completed_at).toLocaleString()
-											: '-'}
+										{visualization.completed_at ? formatDate(visualization.completed_at) : '-'}
 									</td>
-									<td class="px-4 py-3">{new Date(visualization.created_at).toLocaleString()}</td>
+									<td class="px-4 py-3">{formatDate(visualization.created_at)}</td>
 								</tr>
 								{#if visualization.error_message}
 									<tr

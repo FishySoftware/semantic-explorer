@@ -37,6 +37,36 @@ export default [
 	},
 	...svelte.configs['flat/recommended'],
 	{
+		// Override svelte parser for .svelte.ts files - they are pure TypeScript with runes
+		files: ['**/*.svelte.ts'],
+		languageOptions: {
+			parser: tsparser,
+			parserOptions: {
+				projectService: true,
+				extraFileExtensions: ['.svelte'],
+			},
+			globals: {
+				...globals.browser,
+				// Svelte 5 runes
+				$state: 'readonly',
+				$derived: 'readonly',
+				$effect: 'readonly',
+				$props: 'readonly',
+				$bindable: 'readonly',
+				$inspect: 'readonly',
+				$host: 'readonly',
+			},
+		},
+		plugins: {
+			'@typescript-eslint': tseslint,
+		},
+		rules: {
+			...tseslint.configs.recommended.rules,
+			'@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+			'@typescript-eslint/no-explicit-any': 'warn',
+		},
+	},
+	{
 		files: ['**/*.svelte'],
 		languageOptions: {
 			parser: svelteParser,
@@ -63,12 +93,6 @@ export default [
 	},
 	{
 		files: ['**/VisualizationTransforms.svelte'],
-		rules: {
-			'svelte/no-at-html-tags': 'off',
-		},
-	},
-	{
-		files: ['**/Chat.svelte'],
 		rules: {
 			'svelte/no-at-html-tags': 'off',
 		},

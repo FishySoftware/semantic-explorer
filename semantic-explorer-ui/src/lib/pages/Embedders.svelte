@@ -1171,6 +1171,6 @@
 		: ''}
 	confirmLabel="Delete"
 	variant="danger"
-	on:confirm={confirmDeleteEmbedder}
-	on:cancel={() => (embedderPendingDelete = null)}
+	onConfirm={confirmDeleteEmbedder}
+	onCancel={() => (embedderPendingDelete = null)}
 />

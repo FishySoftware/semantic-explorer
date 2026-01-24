@@ -349,9 +349,6 @@
 						<div><strong>ZIP:</strong> .zip</div>
 						<div><strong>GZIP:</strong> .gz, .tar.gz</div>
 						<div><strong>7-Zip:</strong> .7z</div>
-						<p class="mt-2 text-xs italic">
-							Archives are scanned for ZIP bomb protection and nested content is extracted.
-						</p>
 					</div>
 				</div>
 			</div>
@@ -361,8 +358,8 @@
 			>
 				<p class="text-xs text-gray-700 dark:text-gray-300">
 					<strong>🔒 Security:</strong> All uploads are validated using magic byte detection (not just
-					file extensions) to prevent type mismatch attacks. Archives are scanned for compression ratio
-					to detect ZIP bombs. Maximum file size: 100MB per file, 1GB per upload request.
+					file extensions) to prevent type mismatch attacks. Maximum file size: 100MB per file, 1GB per
+					upload request.
 				</p>
 			</div>
 
