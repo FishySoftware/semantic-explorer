@@ -70,7 +70,6 @@
 		cluster_boundary_polygons: true,
 		polygon_alpha: 0.1,
 		cvd_safer: false,
-		enable_topic_tree: true,
 		// Datamapplot render_html parameters
 		title: null,
 		sub_title: null,
@@ -1802,18 +1801,6 @@
 										/>
 										<span class="text-xs font-medium text-gray-700 dark:text-gray-300"
 											>Inline Data (embed data in HTML vs separate files)</span
-										>
-									</label>
-								</div>
-								<div class="col-span-2">
-									<label class="flex items-center gap-2">
-										<input
-											type="checkbox"
-											bind:checked={config.enable_topic_tree}
-											class="w-3 h-3 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
-										/>
-										<span class="text-xs font-medium text-gray-700 dark:text-gray-300"
-											>Enable Topic Tree</span
 										>
 									</label>
 								</div>
