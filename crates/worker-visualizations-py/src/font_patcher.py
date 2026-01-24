@@ -58,6 +58,13 @@ EXTERNAL_RESOURCE_PATTERNS = [
         "Font-Awesome CDNJS link",
     ),
     (re.compile(r"<link[^>]*fontawesome[^>]*>", re.IGNORECASE), "FontAwesome link"),
+    # Bootstrap CDN - catch all bootstrapcdn.com links
+    (
+        re.compile(
+            r"<link[^>]*maxcdn\.bootstrapcdn\.com[^>]*>", re.IGNORECASE
+        ),
+        "Bootstrap CDN link",
+    ),
     # Generic preconnect to font services (safety catch-all)
     (
         re.compile(r"<link[^>]*rel=['\"]preconnect['\"][^>]*>", re.IGNORECASE),
