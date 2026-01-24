@@ -1,18 +1,18 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
-	import PageHeader from '../components/PageHeader.svelte';
-	import ChatMessage from '../components/ChatMessage.svelte';
+	import { onDestroy, onMount, untrack } from 'svelte';
 	import ChatInput from '../components/ChatInput.svelte';
+	import ChatMessage from '../components/ChatMessage.svelte';
 	import ChatSettings from '../components/ChatSettings.svelte';
 	import ChatSidebar from '../components/ChatSidebar.svelte';
+	import PageHeader from '../components/PageHeader.svelte';
+	import { useChatStream } from '../composables/useChatStream.svelte';
 	import type {
+		ChatMessage as ChatMessageType,
 		ChatSession,
 		EmbeddedDataset,
 		LLM,
-		ChatMessage as ChatMessageType,
 	} from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
-	import { useChatStream } from '../composables/useChatStream.svelte';
 
 	// Session management
 	let sessions = $state<ChatSession[]>([]);
@@ -26,9 +26,14 @@
 	let newSessionTitle = $state('');
 	let newSessionEmbeddedDatasetId = $state<number | null>(null);
 	let newSessionLLMId = $state<number | null>(null);
+	let showCreateForm = $state(false);
+
+	// UI state
+	let settingsExpanded = $state(false);
+	let inputValue = $state('');
 
 	// RAG Configuration
-	let maxChunks = $state(20);
+	let maxChunks = $state(5);
 	let minSimilarityScore = $state(0.2);
 
 	// LLM Configuration
@@ -63,6 +68,7 @@
 		newSessionTitle = '';
 		newSessionEmbeddedDatasetId = null;
 		newSessionLLMId = null;
+		showCreateForm = false;
 	}
 
 	async function fetchSessions() {
@@ -136,17 +142,7 @@
 			// Select the new session
 			currentSession = newSession;
 			currentMessages = [];
-
-			// Initialize chat stream
-			chatStream = useChatStream({
-				sessionId: newSession.session_id,
-				content: '',
-				maxChunks,
-				minSimilarityScore,
-				temperature,
-				maxTokens,
-				callbacks: {},
-			});
+			inputValue = '';
 
 			toastStore.success('Chat session created successfully');
 
@@ -161,17 +157,7 @@
 		try {
 			messagesLoading = true;
 			currentSession = session;
-
-			// Initialize chat stream
-			chatStream = useChatStream({
-				sessionId: session.session_id,
-				content: '',
-				maxChunks,
-				minSimilarityScore,
-				temperature,
-				maxTokens,
-				callbacks: {},
-			});
+			inputValue = '';
 
 			const response = await fetch(`/api/chat/sessions/${session.session_id}/messages`);
 			if (!response.ok) {
@@ -231,6 +217,104 @@
 		return llm ? `${llm.name} (${llm.provider})` : `LLM ${id}`;
 	}
 
+	async function handleSendMessage() {
+		if (!currentSession || !inputValue.trim()) return;
+
+		const content = inputValue.trim();
+		inputValue = '';
+
+		// Add optimistic user message
+		const tempUserMessage = {
+			message_id: Date.now(),
+			role: 'user' as const,
+			content,
+			created_at: new Date().toISOString(),
+			tokens_used: null,
+			metadata: null,
+			documents_retrieved: null,
+			status: 'complete' as const,
+		};
+		currentMessages = [...currentMessages, tempUserMessage];
+
+		// Add placeholder assistant message
+		const tempAssistantMessage = {
+			message_id: Date.now() + 1,
+			role: 'assistant' as const,
+			content: '',
+			created_at: new Date().toISOString(),
+			tokens_used: null,
+			metadata: null,
+			documents_retrieved: 0,
+			status: 'incomplete' as const,
+		};
+		currentMessages = [...currentMessages, tempAssistantMessage];
+
+		// Initialize chat stream if needed
+		if (!chatStream) {
+			chatStream = useChatStream({
+				sessionId: currentSession.session_id,
+				maxChunks,
+				minSimilarityScore,
+				temperature,
+				maxTokens,
+				callbacks: {
+					onComplete: () => {
+						// Refresh messages after completion
+						fetchMessagesForCurrentSession();
+					},
+					onError: (error) => {
+						toastStore.error(`Chat error: ${error}`);
+						fetchMessagesForCurrentSession();
+					},
+				},
+			});
+		}
+
+		await chatStream.sendMessage(content);
+		// Refresh to get actual messages from server
+		await fetchMessagesForCurrentSession();
+	}
+
+	async function fetchMessagesForCurrentSession() {
+		if (!currentSession) return;
+		try {
+			const response = await fetch(`/api/chat/sessions/${currentSession.session_id}/messages`);
+			if (response.ok) {
+				const data = await response.json();
+				currentMessages = data.messages;
+			}
+		} catch {
+			// Silently fail - messages will be out of sync but user can refresh
+		}
+	}
+
+	// Reset chat stream when session changes
+	$effect(() => {
+		const session = currentSession;
+		if (session) {
+			untrack(() => {
+				if (chatStream) {
+					chatStream.cleanup();
+				}
+				chatStream = useChatStream({
+					sessionId: session.session_id,
+					maxChunks,
+					minSimilarityScore,
+					temperature,
+					maxTokens,
+					callbacks: {
+						onComplete: () => {
+							fetchMessagesForCurrentSession();
+						},
+						onError: (error) => {
+							toastStore.error(`Chat error: ${error}`);
+						},
+					},
+				});
+			});
+		}
+	});
+
 	onMount(() => {
 		// Parse URL parameters for preset values
 		const hashParts = window.location.hash.split('?');
@@ -270,16 +354,11 @@
 		{llms}
 		{currentSession}
 		onSelectSession={selectSession}
-		onNewSession={async () => {
+		onNewSession={() => {
 			newSessionTitle = generateDefaultTitle();
-			// Auto-select first items
-			if (embeddedDatasets.length > 0 && !newSessionEmbeddedDatasetId) {
-				newSessionEmbeddedDatasetId = embeddedDatasets[0].embedded_dataset_id;
-			}
-			if (llms.length > 0 && !newSessionLLMId) {
-				newSessionLLMId = llms[0].llm_id;
-			}
-			await createSession();
+			newSessionEmbeddedDatasetId = null;
+			newSessionLLMId = null;
+			showCreateForm = true;
 		}}
 	/>
 
@@ -338,9 +417,11 @@
 						{#each currentMessages as message (message.message_id)}
 							<ChatMessage
 								{message}
-								onRegenerate={(messageId) => {
+								embeddedDatasetId={currentSession.embedded_dataset_id}
+								onRegenerate={async (messageId) => {
 									if (chatStream) {
-										chatStream.regenerateMessage(messageId);
+										await chatStream.regenerateMessage(messageId);
+										await fetchMessagesForCurrentSession();
 									}
 								}}
 							/>
@@ -375,54 +456,152 @@
 					</div>
 				{/if}
 
-				<!-- Chat Settings -->
-				<ChatSettings
-					{maxChunks}
-					{minSimilarityScore}
-					{temperature}
-					{maxTokens}
-					onMaxChunksChange={(v) => (maxChunks = v)}
-					onMinSimilarityScoreChange={(v) => (minSimilarityScore = v)}
-					onTemperatureChange={(v) => (temperature = v)}
-					onMaxTokensChange={(v) => (maxTokens = v)}
-				/>
+				<!-- Chat Settings (Collapsible) -->
+				<div class="mb-4">
+					<button
+						onclick={() => (settingsExpanded = !settingsExpanded)}
+						class="flex items-center gap-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"
+					>
+						<svg
+							class="w-4 h-4 transition-transform {settingsExpanded ? 'rotate-90' : ''}"
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M9 5l7 7-7 7"
+							/>
+						</svg>
+						RAG & LLM Settings
+					</button>
+					{#if settingsExpanded}
+						<div class="mt-3">
+							<ChatSettings
+								{maxChunks}
+								{minSimilarityScore}
+								{temperature}
+								{maxTokens}
+								onMaxChunksChange={(v) => (maxChunks = v)}
+								onMinSimilarityScoreChange={(v) => (minSimilarityScore = v)}
+								onTemperatureChange={(v) => (temperature = v)}
+								onMaxTokensChange={(v) => (maxTokens = v)}
+							/>
+						</div>
+					{/if}
+				</div>
 
 				<!-- Input -->
 				<ChatInput
-					value=""
+					bind:value={inputValue}
 					disabled={chatStream ? chatStream.isGenerating : false}
-					onSend={() => {
-						if (chatStream) {
-							chatStream.sendMessage();
-						}
-					}}
+					onSend={handleSendMessage}
 					onKeyDown={(e) => {
 						if (e.key === 'Enter' && !e.shiftKey) {
 							e.preventDefault();
-							if (chatStream) {
-								chatStream.sendMessage();
-							}
+							handleSendMessage();
 						}
 					}}
 				/>
-
-				{#if chatStream && chatStream.streamingState.status}
-					<div class="flex gap-3">
-						<button
-							onclick={() => {
-								if (chatStream && chatStream.messages.length > 0) {
-									const lastMessage = chatStream.messages[chatStream.messages.length - 1];
-									chatStream.regenerateMessage(lastMessage.message_id);
-								}
-							}}
-							disabled={chatStream ? chatStream.isGenerating : false}
-							class="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors"
-						>
-							{chatStream ? (chatStream.isGenerating ? 'Generating...' : 'Send') : 'Send'}
-						</button>
-					</div>
-				{/if}
 			</div>
 		{/if}
 	</div>
+
+	<!-- Create Session Modal -->
+	{#if showCreateForm}
+		<div
+			class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+			onclick={(e) => {
+				if (e.target === e.currentTarget) showCreateForm = false;
+			}}
+			onkeydown={(e) => {
+				if (e.key === 'Escape') showCreateForm = false;
+			}}
+			role="dialog"
+			aria-modal="true"
+			tabindex="-1"
+		>
+			<div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md p-6">
+				<h3 class="text-xl font-bold text-gray-900 dark:text-white mb-4">Create New Session</h3>
+
+				<div class="space-y-4">
+					<div>
+						<label
+							for="session-title"
+							class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+						>
+							Session Title
+						</label>
+						<input
+							id="session-title"
+							type="text"
+							bind:value={newSessionTitle}
+							placeholder="Enter session title..."
+							class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+						/>
+					</div>
+
+					<div>
+						<label
+							for="embedded-dataset"
+							class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+						>
+							Embedded Dataset <span class="text-red-500">*</span>
+						</label>
+						<select
+							id="embedded-dataset"
+							bind:value={newSessionEmbeddedDatasetId}
+							class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+						>
+							<option value={null}>Select an embedded dataset...</option>
+							{#each embeddedDatasets as dataset (dataset.embedded_dataset_id)}
+								<option value={dataset.embedded_dataset_id}>
+									{dataset.title}
+								</option>
+							{/each}
+						</select>
+					</div>
+
+					<div>
+						<label
+							for="llm"
+							class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+						>
+							LLM <span class="text-red-500">*</span>
+						</label>
+						<select
+							id="llm"
+							bind:value={newSessionLLMId}
+							class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+						>
+							<option value={null}>Select an LLM...</option>
+							{#each llms as llm (llm.llm_id)}
+								<option value={llm.llm_id}>
+									{llm.name} ({llm.provider})
+								</option>
+							{/each}
+						</select>
+					</div>
+				</div>
+
+				<div class="flex justify-end gap-3 mt-6">
+					<button
+						onclick={() => (showCreateForm = false)}
+						class="px-4 py-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+					>
+						Cancel
+					</button>
+					<button
+						onclick={createSession}
+						disabled={!newSessionEmbeddedDatasetId || !newSessionLLMId}
+						class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+					>
+						Create Session
+					</button>
+				</div>
+			</div>
+		</div>
+	{/if}
 </div>

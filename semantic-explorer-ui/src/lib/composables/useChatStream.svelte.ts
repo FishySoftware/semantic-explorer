@@ -30,7 +30,6 @@ export interface RetrievedDocument {
 
 export interface UseChatStreamOptions {
 	sessionId: string;
-	content: string;
 	maxChunks: number;
 	minSimilarityScore: number;
 	temperature: number;
@@ -42,14 +41,13 @@ export interface UseChatStreamResult {
 	messages: ChatMessage[];
 	isGenerating: boolean;
 	streamingState: StreamingState;
-	sendMessage: () => Promise<void>;
+	sendMessage: (_content: string) => Promise<void>;
 	regenerateMessage: (_messageId: number) => Promise<void>;
 	cleanup: () => void;
 }
 
 export function useChatStream(options: UseChatStreamOptions): UseChatStreamResult {
-	const { sessionId, content, maxChunks, minSimilarityScore, temperature, maxTokens, callbacks } =
-		options;
+	const { sessionId, maxChunks, minSimilarityScore, temperature, maxTokens, callbacks } = options;
 
 	// State
 	let messages = $state<ChatMessage[]>([]);
@@ -168,7 +166,7 @@ export function useChatStream(options: UseChatStreamOptions): UseChatStreamResul
 	}
 
 	// Start streaming
-	async function sendMessage(): Promise<void> {
+	async function sendMessage(content: string): Promise<void> {
 		if (!content.trim() || isGenerating) return;
 
 		isGenerating = true;

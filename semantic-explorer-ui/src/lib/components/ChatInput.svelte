@@ -7,7 +7,7 @@
 		placeholder?: string;
 	}
 
-	let { value, disabled, onSend, onKeyDown, placeholder }: Props = $props();
+	let { value = $bindable(), disabled, onSend, onKeyDown, placeholder }: Props = $props();
 
 	function handleKeyDown(e: KeyboardEvent) {
 		if (onKeyDown) {
