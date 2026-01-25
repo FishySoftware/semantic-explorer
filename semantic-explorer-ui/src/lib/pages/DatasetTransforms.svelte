@@ -56,6 +56,7 @@
 
 	// Modal state
 	let showCreateModal = $state(false);
+	let editingTransform = $state<DatasetTransform | null>(null);
 
 	let transformPendingDelete = $state<DatasetTransform | null>(null);
 
@@ -345,6 +346,11 @@
 		}
 	}
 
+	function openEditForm(transform: DatasetTransform) {
+		editingTransform = transform;
+		showCreateModal = true;
+	}
+
 	function connectSSE() {
 		// Close existing connection
 		disconnectSSE();
@@ -454,18 +460,36 @@
 	<div class="flex justify-between items-center mb-6">
 		<Heading tag="h1" class="text-3xl font-bold">Dataset Transforms</Heading>
 		<button
-			onclick={() => (showCreateModal = true)}
+			onclick={() => {
+				if (showCreateModal) {
+					showCreateModal = false;
+					editingTransform = null;
+				} else {
+					showCreateModal = true;
+				}
+			}}
 			class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
 		>
-			Create Dataset Transform
+			{showCreateModal ? 'Cancel' : 'Create Dataset Transform'}
 		</button>
 	</div>
 
 	<CreateDatasetTransformModal
 		bind:open={showCreateModal}
-		onSuccess={() => {
-			// Redirect to embedded datasets page to monitor transform progress
-			window.location.hash = '#/embedded-datasets';
+		{editingTransform}
+		onSuccess={(transformId, transformTitle) => {
+			if (editingTransform) {
+				// Update the transform in the list
+				transforms = transforms.map((t) =>
+					t.dataset_transform_id === transformId ? { ...t, title: transformTitle } : t
+				);
+				toastStore.success('Dataset transform updated successfully');
+			} else {
+				// Redirect to embedded datasets page to monitor transform progress
+				window.location.hash = '#/embedded-datasets';
+			}
+			// Reset editing state
+			editingTransform = null;
 		}}
 	/>
 
@@ -593,6 +617,7 @@
 								{/if}
 							</button>
 						</th>
+						<th class="px-4 py-3 w-12"></th>
 					</tr>
 				</thead>
 				<tbody>
@@ -665,6 +690,16 @@
 							</td>
 							<td class="px-4 py-3">
 								{formatDate(transform.created_at, false)}
+							</td>
+							<td class="px-4 py-3 w-12 text-center">
+								<button
+									type="button"
+									onclick={() => openEditForm(transform)}
+									title="Edit"
+									class="text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-300 transition-colors"
+								>
+									✎
+								</button>
 							</td>
 						</tr>
 					{/each}

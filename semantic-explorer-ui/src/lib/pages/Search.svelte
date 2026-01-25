@@ -2,16 +2,16 @@
 	import { onMount } from 'svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import PageHeader from '../components/PageHeader.svelte';
-	import { apiCall } from '../utils/api';
-	import { formatError, toastStore } from '../utils/notifications';
 	import type {
 		Dataset,
 		EmbeddedDataset,
 		Embedder,
-		SearchResponse,
-		PaginatedResponse,
 		PaginatedEmbeddedDatasetList,
+		PaginatedResponse,
+		SearchResponse,
 	} from '../types/models';
+	import { apiCall } from '../utils/api';
+	import { formatError, toastStore } from '../utils/notifications';
 
 	let {
 		onViewDataset: handleViewDataset,
@@ -603,7 +603,7 @@
 															Best matching chunk:
 														</div>
 														<p
-															class="text-sm text-gray-900 dark:text-gray-100 leading-relaxed whitespace-pre-wrap"
+															class="text-sm text-gray-900 dark:text-gray-100 leading-relaxed whitespace-pre-wrap break-all"
 														>
 															{document.best_chunk.text}
 														</p>
@@ -691,7 +691,7 @@
 														class="bg-gray-50 dark:bg-gray-900 rounded p-3 border border-gray-200 dark:border-gray-700"
 													>
 														<p
-															class="text-sm text-gray-900 dark:text-gray-100 leading-relaxed whitespace-pre-wrap line-clamp-6"
+															class="text-sm text-gray-900 dark:text-gray-100 leading-relaxed whitespace-pre-wrap line-clamp-6 break-all"
 														>
 															{match.text}
 														</p>

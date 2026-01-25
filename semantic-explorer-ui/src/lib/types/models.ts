@@ -268,7 +268,6 @@ export interface VisualizationConfig {
 	cluster_boundary_polygons: boolean;
 	polygon_alpha: number;
 	cvd_safer: boolean;
-	enable_topic_tree: boolean;
 	// Datamapplot render_html parameters
 	title: string | null;
 	sub_title: string | null;

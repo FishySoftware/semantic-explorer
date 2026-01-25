@@ -130,7 +130,6 @@ impl ServerConfig {
 
 impl ModelConfig {
     pub fn from_env() -> Result<Self> {
-        // INFERENCE_ALLOWED_EMBEDDING_MODELS is required
         let embedding_models_raw = env::var("INFERENCE_ALLOWED_EMBEDDING_MODELS")
             .context("INFERENCE_ALLOWED_EMBEDDING_MODELS is required. Set to '*' for all models or a comma-separated list.")?;
 

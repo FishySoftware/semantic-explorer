@@ -58,6 +58,7 @@
 	let newDatasetName = $state('');
 	let selectedEmbedderId = $state<number | null>(null);
 	let autoCreateDatasetTransform = $state(false);
+	let datasetTransformName = $state('');
 	let selectedDatasetTransformEmbedderIds = $state<number[]>([]);
 	let datasetTransformBatchSize = $state<number | null>(null);
 
@@ -84,6 +85,13 @@
 			if (collection) {
 				transformTitle = `${collection.title}-transform`;
 			}
+		}
+	});
+
+	// Auto-generate dataset transform name when transform title changes
+	$effect(() => {
+		if (transformTitle && !datasetTransformName) {
+			datasetTransformName = `${transformTitle}-embeddings`;
 		}
 	});
 
@@ -299,7 +307,7 @@
 						method: 'POST',
 						headers: { 'Content-Type': 'application/json' },
 						body: JSON.stringify({
-							title: `${transformTitle}-embeddings`,
+							title: datasetTransformName.trim() || `${transformTitle}-embeddings`,
 							source_dataset_id: targetDatasetId,
 							embedder_ids: selectedDatasetTransformEmbedderIds,
 							embedding_batch_size: datasetTransformBatchSize,
@@ -342,6 +350,7 @@
 		newDatasetName = '';
 		selectedEmbedderId = null;
 		autoCreateDatasetTransform = false;
+		datasetTransformName = '';
 		selectedDatasetTransformEmbedderIds = [];
 		datasetTransformBatchSize = null;
 		extractionStrategy = 'plain_text';
@@ -798,6 +807,23 @@
 
 				{#if autoCreateDatasetTransform}
 					<div class="mt-4 space-y-4 bg-gray-50 dark:bg-gray-900/20 p-4 rounded-lg">
+						<!-- Dataset Transform Name -->
+						<div>
+							<label
+								for="dataset-transform-name"
+								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+							>
+								Dataset Transform Name
+							</label>
+							<input
+								id="dataset-transform-name"
+								type="text"
+								bind:value={datasetTransformName}
+								placeholder="e.g., my-transform-embeddings"
+								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
+							/>
+						</div>
+
 						<!-- Embedders Selection -->
 						<div>
 							<div class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">

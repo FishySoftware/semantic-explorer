@@ -2,9 +2,19 @@
 	import { Button, Modal } from 'flowbite-svelte';
 	import { formatError, toastStore } from '../utils/notifications';
 
+	interface DatasetTransform {
+		dataset_transform_id: number;
+		title: string;
+		source_dataset_id: number;
+		embedder_ids: number[];
+		is_enabled: boolean;
+		job_config: any;
+	}
+
 	interface Props {
 		open?: boolean;
 		datasetId?: number | null;
+		editingTransform?: DatasetTransform | null;
 		onSuccess?: (_transformId: number, _transformTitle: string) => void;
 	}
 
@@ -19,7 +29,12 @@
 		provider: string;
 	}
 
-	let { open = $bindable(false), datasetId = null, onSuccess }: Props = $props();
+	let {
+		open = $bindable(false),
+		datasetId = null,
+		editingTransform = null,
+		onSuccess,
+	}: Props = $props();
 
 	let datasets = $state<Dataset[]>([]);
 	let embedders = $state<Embedder[]>([]);
@@ -29,13 +44,23 @@
 	let transformTitle = $state('');
 	let embeddingBatchSize = $state<number | null>(null);
 
-	// Auto-generate title when opening the modal for new transforms
+	// Auto-generate title when opening the modal for new transforms (not when editing)
 	$effect(() => {
-		if (open && !transformTitle.startsWith('dataset-transform-')) {
+		if (open && !editingTransform && !transformTitle.startsWith('dataset-transform-')) {
 			const now = new Date();
 			const date = now.toISOString().split('T')[0];
 			const time = now.toTimeString().split(' ')[0].replace(/:/g, '').slice(0, 4);
 			transformTitle = `dataset-transform-${date}-${time}`;
+		}
+	});
+
+	// Populate form when editing an existing transform
+	$effect(() => {
+		if (editingTransform) {
+			transformTitle = editingTransform.title;
+			selectedDatasetId = editingTransform.source_dataset_id;
+			selectedEmbedderIds = [...editingTransform.embedder_ids];
+			embeddingBatchSize = editingTransform.job_config?.embedding_batch_size || null;
 		}
 	});
 
@@ -115,31 +140,57 @@
 		try {
 			isCreating = true;
 
-			const response = await fetch('/api/dataset-transforms', {
-				method: 'POST',
+			const url = editingTransform
+				? `/api/dataset-transforms/${editingTransform.dataset_transform_id}`
+				: '/api/dataset-transforms';
+			const method = editingTransform ? 'PATCH' : 'POST';
+
+			const body = editingTransform
+				? {
+						title: transformTitle.trim(),
+						embedder_ids: selectedEmbedderIds,
+						job_config:
+							embeddingBatchSize !== null
+								? { embedding_batch_size: embeddingBatchSize }
+								: undefined,
+					}
+				: {
+						title: transformTitle.trim(),
+						source_dataset_id: selectedDatasetId,
+						embedder_ids: selectedEmbedderIds,
+						embedding_batch_size: embeddingBatchSize,
+					};
+
+			const response = await fetch(url, {
+				method,
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					title: transformTitle.trim(),
-					source_dataset_id: selectedDatasetId,
-					embedder_ids: selectedEmbedderIds,
-					embedding_batch_size: embeddingBatchSize,
-				}),
+				body: JSON.stringify(body),
 			});
 
 			if (!response.ok) {
-				throw new Error(`Failed to create transform: ${response.statusText}`);
+				throw new Error(
+					`Failed to ${editingTransform ? 'update' : 'create'} transform: ${response.statusText}`
+				);
 			}
 
 			const result = await response.json();
-			const newTransformId = result.transform?.dataset_transform_id;
-			const newTransformTitle = transformTitle.trim();
+			const transformId = editingTransform
+				? editingTransform.dataset_transform_id
+				: result.transform?.dataset_transform_id;
+			const transformTitleValue = transformTitle.trim();
+
 			// Close modal immediately
 			resetForm();
-			// Notify parent with the new transform ID and title
-			onSuccess?.(newTransformId, newTransformTitle);
-			toastStore.success('Dataset transform created! Embedding generation started.');
+			// Notify parent with the transform ID and title
+			onSuccess?.(transformId, transformTitleValue);
+			toastStore.success(
+				`Dataset transform ${editingTransform ? 'updated' : 'created'}${!editingTransform ? '! Embedding generation started.' : ''}`
+			);
 		} catch (e) {
-			const message = formatError(e, 'Failed to create transform');
+			const message = formatError(
+				e,
+				`Failed to ${editingTransform ? 'update' : 'create'} transform`
+			);
 			error = message;
 			toastStore.error(message);
 		} finally {
@@ -154,6 +205,7 @@
 		embeddingBatchSize = null;
 		error = null;
 		open = false;
+		// Don't clear editingTransform - let parent handle that
 	}
 
 	function handleClose() {
@@ -170,7 +222,9 @@
 
 <Modal bind:open onclose={handleClose}>
 	<div class="w-full max-w-4xl mx-auto px-4 py-4">
-		<h2 class="text-xl font-bold text-gray-900 dark:text-white mb-4">Create Dataset Transform</h2>
+		<h2 class="text-xl font-bold text-gray-900 dark:text-white mb-4">
+			{editingTransform ? 'Edit Dataset Transform' : 'Create Dataset Transform'}
+		</h2>
 
 		{#if error}
 			<div
@@ -198,29 +252,56 @@
 				/>
 			</div>
 
-			<!-- Dataset Selection -->
-			<div>
-				<label
-					for="dataset-select"
-					class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-				>
-					Source Dataset <span class="text-red-500">*</span>
-				</label>
-				{#if loadingDatasets}
-					<div class="text-sm text-gray-500">Loading datasets...</div>
-				{:else}
-					<select
-						id="dataset-select"
-						bind:value={selectedDatasetId}
-						class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
+			<!-- Dataset Selection (only shown when creating, not editing) -->
+			{#if !editingTransform}
+				<div>
+					<label
+						for="dataset-select"
+						class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
 					>
-						<option value={null}>Select a dataset</option>
-						{#each datasets as dataset (dataset.dataset_id)}
-							<option value={dataset.dataset_id}>{dataset.title}</option>
-						{/each}
-					</select>
-				{/if}
-			</div>
+						Source Dataset <span class="text-red-500">*</span>
+					</label>
+					{#if loadingDatasets}
+						<div class="text-sm text-gray-500">Loading datasets...</div>
+					{:else}
+						<select
+							id="dataset-select"
+							bind:value={selectedDatasetId}
+							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
+						>
+							<option value={null}>Select a dataset</option>
+							{#each datasets as dataset (dataset.dataset_id)}
+								<option value={dataset.dataset_id}>{dataset.title}</option>
+							{/each}
+						</select>
+					{/if}
+				</div>
+			{:else}
+				<!-- Show source dataset info when editing -->
+				<div>
+					<div class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+						Source Dataset
+					</div>
+					{#if datasets.length > 0}
+						<div class="text-sm text-gray-500">Loading datasets...</div>
+					{:else}
+						{@const sourceDataset = datasets.find((d) => d.dataset_id === selectedDatasetId)}
+						{#if sourceDataset}
+							<div
+								class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-sm text-gray-900 dark:text-white"
+							>
+								{sourceDataset.title}
+							</div>
+						{:else}
+							<div
+								class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-sm text-gray-900 dark:text-white"
+							>
+								Dataset {selectedDatasetId}
+							</div>
+						{/if}
+					{/if}
+				</div>
+			{/if}
 
 			<!-- Embedders -->
 			<div>
@@ -283,7 +364,13 @@
 		<!-- Actions -->
 		<div class="flex gap-3 mt-6">
 			<Button onclick={createTransform} disabled={isCreating} color="blue" class="flex-1">
-				{isCreating ? 'Creating...' : 'Create Transform'}
+				{isCreating
+					? editingTransform
+						? 'Updating...'
+						: 'Creating...'
+					: editingTransform
+						? 'Update Transform'
+						: 'Create Transform'}
 			</Button>
 			<Button onclick={handleClose} color="alternative" class="flex-1">Cancel</Button>
 		</div>

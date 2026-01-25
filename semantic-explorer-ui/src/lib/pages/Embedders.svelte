@@ -53,6 +53,7 @@
 	let userEditedName = $state(false);
 	let inferenceModels = $state<string[]>([]);
 	let inferenceModelDimensions = $state<Record<string, number>>({});
+	let inferenceModelQuantized = $state<Record<string, boolean>>({});
 	let localModelsForDisplay = $derived([...inferenceModels].sort((a, b) => a.localeCompare(b)));
 
 	function getProviderDefaults(): Record<string, ProviderDefaultConfig> {
@@ -111,12 +112,17 @@
 			inferenceModels = [...new Set(embedderModels.map((m: any) => m.id))].sort();
 			// Build dimensions map
 			const dimMap: Record<string, number> = {};
+			const quantizedMap: Record<string, boolean> = {};
 			for (const model of embedderModels) {
 				if (model.dimensions) {
 					dimMap[model.id] = model.dimensions;
 				}
+				if (model.is_quantized !== undefined) {
+					quantizedMap[model.id] = model.is_quantized;
+				}
 			}
 			inferenceModelDimensions = dimMap;
+			inferenceModelQuantized = quantizedMap;
 		} catch (e) {
 			console.error('Error fetching inference models:', e);
 		}
@@ -645,13 +651,23 @@
 							>
 								{#if providerDefaults[formProvider]?.models}
 									{#each providerDefaults[formProvider].models as model (model)}
-										<option value={model}>{model}</option>
+										<option value={model}>
+											{model}{#if inferenceModelQuantized[model]}
+												(Quantized){/if}
+										</option>
 									{/each}
 									<option value="__custom__">Custom...</option>
 								{:else}
 									<option value="__custom__">Custom...</option>
 								{/if}
 							</select>
+							{#if localModel && inferenceModelQuantized[localModel]}
+								<div
+									class="mt-2 text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-300 px-2 py-1 rounded"
+								>
+									Selected model is quantized
+								</div>
+							{/if}
 							{#if localModel === '__custom__'}
 								<input
 									type="text"

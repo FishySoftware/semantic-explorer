@@ -22,6 +22,12 @@ static EMBEDDING_SEMAPHORE: OnceCell<Arc<Semaphore>> = OnceCell::new();
 /// Queue timeout for acquiring semaphore permits (allows brief queuing before 503)
 static SEMAPHORE_QUEUE_TIMEOUT: OnceCell<Duration> = OnceCell::new();
 
+/// Mapping from model_code to EmbeddingModel enum
+type ModelCodeToEnum = HashMap<String, EmbeddingModel>;
+
+/// Global model code to enum mapping
+static MODEL_CODE_MAP: OnceCell<ModelCodeToEnum> = OnceCell::new();
+
 /// Initialize the embedding semaphore for backpressure control
 /// queue_timeout_ms: how long to wait for a permit before returning 503
 pub fn init_semaphore(max_concurrent: usize, queue_timeout_ms: u64) {
@@ -72,6 +78,23 @@ pub fn available_permits() -> usize {
         .unwrap_or(0)
 }
 
+/// Build the model code to enum mapping from FastEmbed's supported models
+fn build_model_code_map() -> ModelCodeToEnum {
+    TextEmbedding::list_supported_models()
+        .iter()
+        .map(|m| (m.model_code.clone(), m.model.clone()))
+        .collect()
+}
+
+/// Resolve a model code string to a fastembed EmbeddingModel enum
+fn resolve_embedding_model(model_code: &str) -> Result<EmbeddingModel, InferenceError> {
+    MODEL_CODE_MAP
+        .get_or_init(build_model_code_map)
+        .get(model_code)
+        .cloned()
+        .ok_or_else(|| InferenceError::UnsupportedModel(format!("Unknown model: {}", model_code)))
+}
+
 /// Initialize the embedding model cache and pre-load allowed models
 ///
 /// This function:
@@ -81,6 +104,9 @@ pub fn available_permits() -> usize {
 /// 4. Pre-populates the cache at startup to validate model availability
 pub async fn init_cache(config: &ModelConfig) {
     let cache = EMBEDDING_MODELS.get_or_init(|| Arc::new(RwLock::new(HashMap::new())));
+
+    // Initialize the model code map
+    let _ = MODEL_CODE_MAP.get_or_init(build_model_code_map);
 
     // Get list of models to load
     let models_to_load = get_models_to_load(config);
@@ -161,128 +187,15 @@ pub async fn init_cache(config: &ModelConfig) {
 /// Get the list of embedding models to load based on configuration
 fn get_models_to_load(config: &ModelConfig) -> Vec<String> {
     if config.all_embedding_models {
-        // Load all supported embedding models
-        get_all_supported_embedding_models()
+        // Load all supported embedding models from FastEmbed
+        TextEmbedding::list_supported_models()
+            .iter()
+            .map(|m| m.model_code.clone())
+            .collect()
     } else {
         // Use specific allowed models list
         config.allowed_embedding_models.clone()
     }
-}
-
-/// Get all supported embedding model IDs
-fn get_all_supported_embedding_models() -> Vec<String> {
-    vec![
-        "Alibaba-NLP/gte-base-en-v1.5".to_string(),
-        "Alibaba-NLP/gte-base-en-v1.5-Q".to_string(),
-        "Alibaba-NLP/gte-large-en-v1.5".to_string(),
-        "Alibaba-NLP/gte-large-en-v1.5-Q".to_string(),
-        "BAAI/bge-base-en-v1.5".to_string(),
-        "BAAI/bge-base-en-v1.5-Q".to_string(),
-        "BAAI/bge-large-en-v1.5".to_string(),
-        "BAAI/bge-large-en-v1.5-Q".to_string(),
-        "BAAI/bge-large-zh-v1.5".to_string(),
-        "BAAI/bge-m3".to_string(),
-        "BAAI/bge-small-en-v1.5".to_string(),
-        "BAAI/bge-small-en-v1.5-Q".to_string(),
-        "BAAI/bge-small-zh-v1.5".to_string(),
-        "intfloat/multilingual-e5-base".to_string(),
-        "intfloat/multilingual-e5-large".to_string(),
-        "intfloat/multilingual-e5-small".to_string(),
-        "jinaai/jina-embeddings-v2-base-code".to_string(),
-        "jinaai/jina-embeddings-v2-base-en".to_string(),
-        "lightonai/modernbert-embed-large".to_string(),
-        "mixedbread-ai/mxbai-embed-large-v1".to_string(),
-        "mixedbread-ai/mxbai-embed-large-v1-Q".to_string(),
-        "nomic-ai/nomic-embed-text-v1".to_string(),
-        "nomic-ai/nomic-embed-text-v1.5".to_string(),
-        "nomic-ai/nomic-embed-text-v1.5-Q".to_string(),
-        "onnx-community/embeddinggemma-300m-ONNX".to_string(),
-        "Qdrant/clip-ViT-B-32-text".to_string(),
-        "sentence-transformers/all-MiniLM-L12-v2".to_string(),
-        "sentence-transformers/all-MiniLM-L12-v2-Q".to_string(),
-        "sentence-transformers/all-MiniLM-L6-v2".to_string(),
-        "sentence-transformers/all-MiniLM-L6-v2-Q".to_string(),
-        "sentence-transformers/all-mpnet-base-v2".to_string(),
-        "sentence-transformers/paraphrase-MiniLM-L6-v2".to_string(),
-        "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2".to_string(),
-        "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2-Q".to_string(),
-        "sentence-transformers/paraphrase-multilingual-mpnet-base-v2".to_string(),
-        "snowflake/snowflake-arctic-embed-l".to_string(),
-        "snowflake/snowflake-arctic-embed-l-Q".to_string(),
-        "snowflake/snowflake-arctic-embed-m".to_string(),
-        "snowflake/snowflake-arctic-embed-m-long".to_string(),
-        "snowflake/snowflake-arctic-embed-m-long-Q".to_string(),
-        "snowflake/snowflake-arctic-embed-m-Q".to_string(),
-        "snowflake/snowflake-arctic-embed-s".to_string(),
-        "snowflake/snowflake-arctic-embed-s-Q".to_string(),
-        "snowflake/snowflake-arctic-embed-xs".to_string(),
-        "snowflake/snowflake-arctic-embed-xs-Q".to_string(),
-    ]
-}
-
-/// Resolve a model ID string to a fastembed EmbeddingModel enum
-fn resolve_embedding_model(model_id: &str) -> Result<EmbeddingModel, InferenceError> {
-    let model = match model_id {
-        "Alibaba-NLP/gte-base-en-v1.5" => EmbeddingModel::GTEBaseENV15,
-        "Alibaba-NLP/gte-base-en-v1.5-Q" => EmbeddingModel::GTEBaseENV15Q,
-        "Alibaba-NLP/gte-large-en-v1.5" => EmbeddingModel::GTELargeENV15,
-        "Alibaba-NLP/gte-large-en-v1.5-Q" => EmbeddingModel::GTELargeENV15Q,
-        "BAAI/bge-base-en-v1.5" => EmbeddingModel::BGEBaseENV15,
-        "BAAI/bge-base-en-v1.5-Q" => EmbeddingModel::BGEBaseENV15Q,
-        "BAAI/bge-large-en-v1.5" => EmbeddingModel::BGELargeENV15,
-        "BAAI/bge-large-en-v1.5-Q" => EmbeddingModel::BGELargeENV15Q,
-        "BAAI/bge-large-zh-v1.5" => EmbeddingModel::BGELargeZHV15,
-        "BAAI/bge-m3" => EmbeddingModel::BGEM3,
-        "BAAI/bge-small-en-v1.5" => EmbeddingModel::BGESmallENV15,
-        "BAAI/bge-small-en-v1.5-Q" => EmbeddingModel::BGESmallENV15Q,
-        "BAAI/bge-small-zh-v1.5" => EmbeddingModel::BGESmallZHV15,
-        "intfloat/multilingual-e5-base" => EmbeddingModel::MultilingualE5Base,
-        "intfloat/multilingual-e5-large" => EmbeddingModel::MultilingualE5Large,
-        "intfloat/multilingual-e5-small" => EmbeddingModel::MultilingualE5Small,
-        "jinaai/jina-embeddings-v2-base-code" => EmbeddingModel::JinaEmbeddingsV2BaseCode,
-        "jinaai/jina-embeddings-v2-base-en" => EmbeddingModel::JinaEmbeddingsV2BaseEN,
-        "lightonai/modernbert-embed-large" => EmbeddingModel::ModernBertEmbedLarge,
-        "mixedbread-ai/mxbai-embed-large-v1" => EmbeddingModel::MxbaiEmbedLargeV1,
-        "mixedbread-ai/mxbai-embed-large-v1-Q" => EmbeddingModel::MxbaiEmbedLargeV1Q,
-        "nomic-ai/nomic-embed-text-v1" => EmbeddingModel::NomicEmbedTextV1,
-        "nomic-ai/nomic-embed-text-v1.5" => EmbeddingModel::NomicEmbedTextV15,
-        "nomic-ai/nomic-embed-text-v1.5-Q" => EmbeddingModel::NomicEmbedTextV15Q,
-        "onnx-community/embeddinggemma-300m-ONNX" => EmbeddingModel::EmbeddingGemma300M,
-        "Qdrant/clip-ViT-B-32-text" => EmbeddingModel::ClipVitB32,
-        "sentence-transformers/all-MiniLM-L12-v2" => EmbeddingModel::AllMiniLML12V2,
-        "sentence-transformers/all-MiniLM-L12-v2-Q" => EmbeddingModel::AllMiniLML12V2Q,
-        "sentence-transformers/all-MiniLM-L6-v2" => EmbeddingModel::AllMiniLML6V2,
-        "sentence-transformers/all-MiniLM-L6-v2-Q" => EmbeddingModel::AllMiniLML6V2Q,
-        "sentence-transformers/all-mpnet-base-v2" => EmbeddingModel::AllMpnetBaseV2,
-        "sentence-transformers/paraphrase-MiniLM-L6-v2"
-        | "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2" => {
-            EmbeddingModel::ParaphraseMLMiniLML12V2
-        }
-        "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2-Q" => {
-            EmbeddingModel::ParaphraseMLMiniLML12V2Q
-        }
-        "sentence-transformers/paraphrase-multilingual-mpnet-base-v2" => {
-            EmbeddingModel::ParaphraseMLMpnetBaseV2
-        }
-        "snowflake/snowflake-arctic-embed-l" => EmbeddingModel::SnowflakeArcticEmbedL,
-        "snowflake/snowflake-arctic-embed-l-Q" => EmbeddingModel::SnowflakeArcticEmbedLQ,
-        "snowflake/snowflake-arctic-embed-m" => EmbeddingModel::SnowflakeArcticEmbedM,
-        "snowflake/snowflake-arctic-embed-m-long" => EmbeddingModel::SnowflakeArcticEmbedMLong,
-        "snowflake/snowflake-arctic-embed-m-long-Q" => EmbeddingModel::SnowflakeArcticEmbedMLongQ,
-        "snowflake/snowflake-arctic-embed-m-Q" => EmbeddingModel::SnowflakeArcticEmbedMQ,
-        "snowflake/snowflake-arctic-embed-s" => EmbeddingModel::SnowflakeArcticEmbedS,
-        "snowflake/snowflake-arctic-embed-s-Q" => EmbeddingModel::SnowflakeArcticEmbedSQ,
-        "snowflake/snowflake-arctic-embed-xs" => EmbeddingModel::SnowflakeArcticEmbedXS,
-        "snowflake/snowflake-arctic-embed-xs-Q" => EmbeddingModel::SnowflakeArcticEmbedXSQ,
-        _ => {
-            return Err(InferenceError::UnsupportedModel(format!(
-                "Unsupported embedding model: {}",
-                model_id
-            )));
-        }
-    };
-
-    Ok(model)
 }
 
 /// Create a TextEmbedding instance with proper configuration
