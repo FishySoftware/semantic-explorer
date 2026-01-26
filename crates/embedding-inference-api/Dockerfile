@@ -104,6 +104,10 @@ COPY --from=chef /opt/onnxruntime /opt/onnxruntime
 ENV LD_LIBRARY_PATH=/opt/onnxruntime:${LD_LIBRARY_PATH}
 ENV ORT_DYLIB_PATH=/opt/onnxruntime/libonnxruntime.so
 
+# ORT CUDA memory arena settings to reduce VRAM fragmentation
+# SHRINK=1 encourages releasing memory back to CUDA when sessions are dropped
+ENV ORT_CUDA_MEM_ARENA_SHRINK=1
+
 # Copy binary
 COPY --from=builder /usr/src/app/target/release/embedding-inference-api /usr/local/bin/embedding-inference-api
 COPY --from=builder /etc/passwd /etc/passwd

@@ -49,7 +49,7 @@
         {
             "label": "Run Embedding Inference API",
             "type": "shell",
-            "command": "set -a && source crates/embedding-inference-api/.env && set +a && ${workspaceFolder}/cargo_cuda.sh run -p embedding-inference-api",
+            "command": "set -a && source crates/embedding-inference-api/.env && set +a && ${workspaceFolder}/cargo_cuda.sh run -p embedding-inference-api --release",
             "options": {
                 "cwd": "${workspaceFolder}"
             },

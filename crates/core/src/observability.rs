@@ -100,6 +100,15 @@ pub struct Metrics {
     pub storage_download_duration: Histogram<f64>,
     pub storage_delete_duration: Histogram<f64>,
     pub storage_list_duration: Histogram<f64>,
+    // GPU metrics for VRAM monitoring
+    pub gpu_memory_used_bytes: Gauge<f64>,
+    pub gpu_memory_total_bytes: Gauge<f64>,
+    pub gpu_utilization_percent: Gauge<f64>,
+    pub gpu_memory_utilization_percent: Gauge<f64>,
+    // Embedding session lifecycle metrics
+    pub embedding_session_resets_total: Counter<u64>,
+    pub embedding_session_request_count: Gauge<f64>,
+    pub embedding_session_age_seconds: Gauge<f64>,
 }
 
 impl Metrics {
@@ -466,6 +475,43 @@ impl Metrics {
             .with_description("Duration of S3 list operations in seconds")
             .build();
 
+        // GPU metrics for VRAM monitoring
+        let gpu_memory_used_bytes = meter
+            .f64_gauge("gpu_memory_used_bytes")
+            .with_description("GPU memory currently used in bytes")
+            .build();
+
+        let gpu_memory_total_bytes = meter
+            .f64_gauge("gpu_memory_total_bytes")
+            .with_description("Total GPU memory available in bytes")
+            .build();
+
+        let gpu_utilization_percent = meter
+            .f64_gauge("gpu_utilization_percent")
+            .with_description("GPU compute utilization percentage")
+            .build();
+
+        let gpu_memory_utilization_percent = meter
+            .f64_gauge("gpu_memory_utilization_percent")
+            .with_description("GPU memory utilization percentage")
+            .build();
+
+        // Embedding session lifecycle metrics
+        let embedding_session_resets_total = meter
+            .u64_counter("embedding_session_resets_total")
+            .with_description("Total number of embedding session resets due to memory thresholds")
+            .build();
+
+        let embedding_session_request_count = meter
+            .f64_gauge("embedding_session_request_count")
+            .with_description("Current request count for each embedding model session")
+            .build();
+
+        let embedding_session_age_seconds = meter
+            .f64_gauge("embedding_session_age_seconds")
+            .with_description("Age of the current embedding model session in seconds")
+            .build();
+
         Self {
             database_query_total,
             database_query_duration,
@@ -537,6 +583,13 @@ impl Metrics {
             storage_download_duration,
             storage_delete_duration,
             storage_list_duration,
+            gpu_memory_used_bytes,
+            gpu_memory_total_bytes,
+            gpu_utilization_percent,
+            gpu_memory_utilization_percent,
+            embedding_session_resets_total,
+            embedding_session_request_count,
+            embedding_session_age_seconds,
         }
     }
 }
@@ -1381,7 +1434,14 @@ pub fn init_observability_api(
         .build()
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
-    let prometheus_exporter = opentelemetry_prometheus::exporter().build()?;
+    // Share the Prometheus registry between actix-web-prom and OpenTelemetry
+    // This ensures all metrics (HTTP, GPU, embedding sessions) are exposed via /metrics
+    let shared_registry = prometheus.registry.clone();
+
+    let prometheus_exporter = opentelemetry_prometheus::exporter()
+        .with_registry(shared_registry)
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to build prometheus exporter: {}", e))?;
 
     let meter_provider = SdkMeterProvider::builder()
         .with_reader(prometheus_exporter)
@@ -1446,4 +1506,203 @@ pub fn record_embedding_batch(model: &str, duration_secs: f64, chunk_count: usiz
             KeyValue::new("chunk_count", chunk_count.to_string()),
         ],
     );
+}
+
+// ============================================================================
+// GPU Metrics Recording Functions
+// ============================================================================
+
+/// Record GPU memory and utilization metrics
+pub fn record_gpu_metrics(
+    device_index: u32,
+    memory_used_bytes: u64,
+    memory_total_bytes: u64,
+    gpu_utilization: u32,
+    memory_utilization: u32,
+) {
+    let metrics = get_metrics();
+    let device_label = device_index.to_string();
+
+    metrics.gpu_memory_used_bytes.record(
+        memory_used_bytes as f64,
+        &[KeyValue::new("device", device_label.clone())],
+    );
+
+    metrics.gpu_memory_total_bytes.record(
+        memory_total_bytes as f64,
+        &[KeyValue::new("device", device_label.clone())],
+    );
+
+    metrics.gpu_utilization_percent.record(
+        gpu_utilization as f64,
+        &[KeyValue::new("device", device_label.clone())],
+    );
+
+    metrics.gpu_memory_utilization_percent.record(
+        memory_utilization as f64,
+        &[KeyValue::new("device", device_label)],
+    );
+}
+
+/// Record embedding session lifecycle metrics
+pub fn record_embedding_session_metrics(model_id: &str, request_count: u64, age_seconds: f64) {
+    let metrics = get_metrics();
+
+    metrics.embedding_session_request_count.record(
+        request_count as f64,
+        &[KeyValue::new("model", model_id.to_string())],
+    );
+
+    metrics
+        .embedding_session_age_seconds
+        .record(age_seconds, &[KeyValue::new("model", model_id.to_string())]);
+}
+
+/// Record embedding session reset event
+pub fn record_embedding_session_reset(model_id: &str, reason: &str) {
+    let metrics = get_metrics();
+
+    metrics.embedding_session_resets_total.add(
+        1,
+        &[
+            KeyValue::new("model", model_id.to_string()),
+            KeyValue::new("reason", reason.to_string()),
+        ],
+    );
+}
+
+/// Initialize embedding session reset counter for a model so it appears in metrics
+/// Call this at model load time to ensure the metric exists with zero value
+pub fn init_embedding_session_reset_metric(model_id: &str) {
+    let metrics = get_metrics();
+
+    // Add 0 to initialize the counter so it appears in Prometheus
+    metrics.embedding_session_resets_total.add(
+        0,
+        &[
+            KeyValue::new("model", model_id.to_string()),
+            KeyValue::new("reason", "none".to_string()),
+        ],
+    );
+}
+
+/// GPU metrics collector using NVML
+/// Polls GPU memory and utilization at regular intervals
+pub mod gpu_monitor {
+    use nvml_wrapper::Nvml;
+    use std::sync::OnceLock;
+    use std::time::Duration;
+    use tracing::{debug, info, warn};
+
+    static NVML: OnceLock<Option<Nvml>> = OnceLock::new();
+
+    /// Initialize NVML for GPU monitoring
+    /// Returns true if NVML is available, false otherwise
+    pub fn init() -> bool {
+        let nvml = NVML.get_or_init(|| match Nvml::init() {
+            Ok(nvml) => {
+                info!("NVML initialized successfully for GPU monitoring");
+                Some(nvml)
+            }
+            Err(e) => {
+                warn!(
+                    "NVML initialization failed (no GPU or drivers not installed): {}",
+                    e
+                );
+                None
+            }
+        });
+        nvml.is_some()
+    }
+
+    /// Get current GPU memory usage for a device
+    /// Returns (used_bytes, total_bytes) or None if unavailable
+    pub fn get_memory_info(device_index: u32) -> Option<(u64, u64)> {
+        let nvml = NVML.get()?.as_ref()?;
+        let device = nvml.device_by_index(device_index).ok()?;
+        let memory = device.memory_info().ok()?;
+        Some((memory.used, memory.total))
+    }
+
+    /// Get GPU utilization percentage
+    /// Returns (gpu_util, memory_util) or None if unavailable
+    pub fn get_utilization(device_index: u32) -> Option<(u32, u32)> {
+        let nvml = NVML.get()?.as_ref()?;
+        let device = nvml.device_by_index(device_index).ok()?;
+        let utilization = device.utilization_rates().ok()?;
+        Some((utilization.gpu, utilization.memory))
+    }
+
+    /// Get the number of GPU devices
+    pub fn device_count() -> u32 {
+        NVML.get()
+            .and_then(|nvml| nvml.as_ref())
+            .and_then(|nvml| nvml.device_count().ok())
+            .unwrap_or(0)
+    }
+
+    /// Check if GPU memory utilization exceeds threshold
+    /// Returns true if any device exceeds the threshold percentage
+    pub fn is_memory_pressure_high(threshold_percent: f64) -> bool {
+        let count = device_count();
+        for i in 0..count {
+            if let Some((used, total)) = get_memory_info(i) {
+                let utilization = (used as f64 / total as f64) * 100.0;
+                if utilization > threshold_percent {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Get memory utilization percentage for a device
+    pub fn get_memory_utilization_percent(device_index: u32) -> Option<f64> {
+        let (used, total) = get_memory_info(device_index)?;
+        Some((used as f64 / total as f64) * 100.0)
+    }
+
+    /// Collect and record all GPU metrics
+    /// Call this periodically from a background task
+    pub fn collect_metrics() {
+        let count = device_count();
+        for i in 0..count {
+            if let (Some((used, total)), Some((gpu_util, mem_util))) =
+                (get_memory_info(i), get_utilization(i))
+            {
+                super::record_gpu_metrics(i, used, total, gpu_util, mem_util);
+                debug!(
+                    device = i,
+                    used_mb = used / 1024 / 1024,
+                    total_mb = total / 1024 / 1024,
+                    gpu_util = gpu_util,
+                    mem_util = mem_util,
+                    "GPU metrics collected"
+                );
+            }
+        }
+    }
+
+    /// Spawn a background task to collect GPU metrics at regular intervals
+    /// Returns a JoinHandle that can be used to cancel the task
+    pub fn spawn_metrics_collector(interval: Duration) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            if !init() {
+                warn!("GPU monitoring disabled - NVML not available");
+                return;
+            }
+
+            info!(
+                interval_secs = interval.as_secs(),
+                device_count = device_count(),
+                "Starting GPU metrics collector"
+            );
+
+            let mut ticker = tokio::time::interval(interval);
+            loop {
+                ticker.tick().await;
+                collect_metrics();
+            }
+        })
+    }
 }

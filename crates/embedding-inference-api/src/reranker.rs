@@ -5,7 +5,7 @@ use ort::ep::CUDA;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::Mutex as TokioMutex;
-use tracing::{debug, error, info};
+use tracing::{error, info, warn};
 
 use crate::config::ModelConfig;
 use crate::errors::InferenceError;
@@ -146,17 +146,34 @@ fn resolve_reranker_model(model_id: &str) -> Result<RerankerModel, InferenceErro
 }
 
 /// Create a TextRerank instance with proper configuration
+///
+/// IMPORTANT: ONNX Runtime's CUDA execution provider can silently fall back to CPU
+/// if CUDA initialization fails. This function now logs detailed information.
 fn create_text_rerank(
     model: RerankerModel,
     config: &ModelConfig,
 ) -> Result<TextRerank, InferenceError> {
-    // Try CUDA execution provider, fall back to CPU if unavailable
-    let mut options = if std::env::var("CUDA_VISIBLE_DEVICES").is_ok() {
-        debug!("CUDA available, using CUDA execution provider for reranking");
-        let cuda_provider = CUDA::default().build();
+    let cuda_devices = std::env::var("CUDA_VISIBLE_DEVICES").ok();
+    let use_cuda = cuda_devices.is_some();
+
+    let mut options = if use_cuda {
+        let devices = cuda_devices.as_deref().unwrap_or("0");
+        info!(
+            cuda_visible_devices = %devices,
+            "Attempting to initialize CUDA execution provider for reranking"
+        );
+
+        // Configure CUDA EP with error_on_failure() to detect if CUDA fails
+        let cuda_provider = CUDA::default()
+            .build()
+            .error_on_failure();
+
         RerankInitOptions::new(model).with_execution_providers(vec![cuda_provider])
     } else {
-        debug!("CUDA not available, using CPU execution provider");
+        warn!(
+            "CUDA_VISIBLE_DEVICES not set - using CPU execution provider for reranking. \
+             Set CUDA_VISIBLE_DEVICES=0 in .env to enable GPU acceleration."
+        );
         RerankInitOptions::new(model)
     };
 
@@ -165,10 +182,41 @@ fn create_text_rerank(
         options = options.with_cache_dir(hf_home.clone());
     }
 
-    TextRerank::try_new(options).map_err(|e| {
-        error!(error = %e, "Failed to initialize reranker model");
+    let start = std::time::Instant::now();
+    let text_rerank = TextRerank::try_new(options).map_err(|e| {
+        if use_cuda {
+            error!(
+                error = %e,
+                "Failed to initialize reranker model with CUDA. \
+                 This may indicate a CUDA/cuDNN version mismatch."
+            );
+        } else {
+            error!(error = %e, "Failed to initialize reranker model on CPU");
+        }
         InferenceError::ModelLoad(e.to_string())
-    })
+    })?;
+
+    let init_time = start.elapsed();
+    if use_cuda {
+        if init_time.as_secs_f64() > 3.0 {
+            warn!(
+                init_time_secs = init_time.as_secs_f64(),
+                "Reranker initialization took longer than expected - may indicate CPU fallback"
+            );
+        } else {
+            info!(
+                init_time_secs = init_time.as_secs_f64(),
+                "Reranker initialized with CUDA execution provider"
+            );
+        }
+    } else {
+        info!(
+            init_time_secs = init_time.as_secs_f64(),
+            "Reranker initialized with CPU execution provider"
+        );
+    }
+
+    Ok(text_rerank)
 }
 
 /// Rerank documents using the model cache

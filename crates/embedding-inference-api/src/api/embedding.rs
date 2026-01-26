@@ -2,7 +2,7 @@
 
 use actix_web::{HttpResponse, Responder, ResponseError, get, post, web};
 use serde::{Deserialize, Serialize};
-use tracing::{info, instrument, warn};
+use tracing::{info, instrument};
 use utoipa::ToSchema;
 
 use crate::config::ModelConfig;
@@ -77,24 +77,6 @@ pub async fn embed(
     config: web::Data<ModelConfig>,
     body: web::Json<EmbedRequest>,
 ) -> impl Responder {
-    // Backpressure: acquire a permit with queueing, return 503 only after timeout
-    let _permit = match embedding::acquire_permit_with_timeout().await {
-        Some(permit) => permit,
-        None => {
-            warn!(
-                available_permits = embedding::available_permits(),
-                "Embedding service at capacity after queue timeout, returning 503"
-            );
-            return HttpResponse::ServiceUnavailable()
-                .insert_header(("Retry-After", "1"))
-                .json(serde_json::json!({
-                    "error": "Service temporarily at capacity",
-                    "message": "Too many concurrent embedding requests. Please retry after a short delay.",
-                    "retry_after_seconds": 1
-                }));
-        }
-    };
-
     let model_id = body.model.clone();
     let text = body.text.clone();
 
@@ -168,24 +150,6 @@ pub async fn embed_batch(
         ))
         .error_response();
     }
-
-    // Backpressure: acquire a permit with queueing, return 503 only after timeout
-    let _permit = match embedding::acquire_permit_with_timeout().await {
-        Some(permit) => permit,
-        None => {
-            warn!(
-                available_permits = embedding::available_permits(),
-                "Embedding service at capacity after queue timeout, returning 503"
-            );
-            return HttpResponse::ServiceUnavailable()
-                .insert_header(("Retry-After", "1"))
-                .json(serde_json::json!({
-                    "error": "Service temporarily at capacity",
-                    "message": "Too many concurrent embedding requests. Please retry after a short delay.",
-                    "retry_after_seconds": 1
-                }));
-        }
-    };
 
     let model_id = body.model.clone();
     let texts = body.texts.clone();

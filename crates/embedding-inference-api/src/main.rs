@@ -128,6 +128,7 @@ async fn main() -> Result<()> {
             .openapi(ApiDoc::openapi())
             .service(api::health::health_live)
             .service(api::health::health_ready)
+            .service(api::health::health_status)
             .service(api::embedding::list_embedders)
             .service(api::embedding::embed)
             .service(api::embedding::embed_batch)
