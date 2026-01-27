@@ -1,4 +1,7 @@
-//! Chat completion API endpoints.
+//! Text and code completion API endpoints.
+//!
+//! Provides completion-style endpoints for code and text completion use-cases,
+//! with support for optional suffix (fill-in-middle).
 
 use actix_web::{HttpResponse, Responder, ResponseError, post, web};
 use futures::StreamExt;
@@ -7,43 +10,18 @@ use tracing::{info, instrument, warn};
 use utoipa::ToSchema;
 
 use crate::config::{GenerationConfig, ModelConfig};
-use crate::errors::InferenceError;
 use crate::llm;
 
-/// Chat message
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct ChatMessage {
-    /// Role of the message sender (system, user, assistant)
-    pub role: String,
-    /// Content of the message
-    pub content: String,
-}
-
-impl From<ChatMessage> for llm::ChatMessage {
-    fn from(msg: ChatMessage) -> Self {
-        llm::ChatMessage {
-            role: msg.role,
-            content: msg.content,
-        }
-    }
-}
-
-impl From<llm::ChatMessage> for ChatMessage {
-    fn from(msg: llm::ChatMessage) -> Self {
-        ChatMessage {
-            role: msg.role,
-            content: msg.content,
-        }
-    }
-}
-
-/// Request body for chat completion
+/// Request body for text/code completion
 #[derive(Debug, Deserialize, ToSchema)]
-pub struct ChatRequest {
+pub struct CompletionRequest {
     /// Model to use (e.g., "mistralai/Mistral-7B-Instruct-v0.2")
     pub model: String,
-    /// Conversation history
-    pub messages: Vec<ChatMessage>,
+    /// Input prompt (text before the completion point)
+    pub prompt: String,
+    /// Optional suffix (text after the completion point, for fill-in-middle)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suffix: Option<String>,
     /// Temperature for sampling (0.0-2.0, optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
@@ -58,11 +36,11 @@ pub struct ChatRequest {
     pub stop: Option<Vec<String>>,
 }
 
-/// Response for chat completion
+/// Response for text/code completion
 #[derive(Debug, Serialize, ToSchema)]
-pub struct ChatResponse {
-    /// Generated message
-    pub message: ChatMessage,
+pub struct CompletionResponse {
+    /// Generated completion text
+    pub text: String,
     /// Model used
     pub model: String,
     /// Number of tokens generated
@@ -71,26 +49,28 @@ pub struct ChatResponse {
     pub finish_reason: String,
 }
 
-/// Chat completion endpoint
+/// Text/code completion endpoint (blocking)
 ///
-/// Generates a response based on conversation history
+/// Generates a completion based on prompt and optional suffix (fill-in-middle).
+/// Use this endpoint for code completion, text continuation, or fill-in-middle tasks.
 #[utoipa::path(
     post,
-    path = "/api/chat",
-    request_body = ChatRequest,
+    path = "/api/completions",
+    request_body = CompletionRequest,
     responses(
-        (status = 200, description = "Chat completion generated successfully", body = ChatResponse),
+        (status = 200, description = "Completion generated successfully", body = CompletionResponse),
         (status = 400, description = "Invalid request or unsupported model"),
+        (status = 503, description = "Service at capacity"),
         (status = 500, description = "Internal server error")
     ),
-    tag = "chat"
+    tag = "completions"
 )]
-#[post("/api/chat")]
-#[instrument(skip(model_config, gen_config), fields(model, messages))]
-pub async fn chat_completion(
+#[post("/api/completions")]
+#[instrument(skip(model_config, gen_config), fields(model))]
+pub async fn completion(
     model_config: web::Data<ModelConfig>,
     gen_config: web::Data<GenerationConfig>,
-    body: web::Json<ChatRequest>,
+    body: web::Json<CompletionRequest>,
 ) -> impl Responder {
     // Backpressure: wait for permit with timeout, return 503 if queue congested
     let _permit = match llm::acquire_permit_with_timeout().await {
@@ -101,16 +81,10 @@ pub async fn chat_completion(
     };
 
     let model_id = body.model.clone();
-    let messages = body.messages.clone();
+    let prompt = body.prompt.clone();
+    let suffix = body.suffix.clone();
 
     tracing::Span::current().record("model", &model_id);
-    tracing::Span::current().record("messages", messages.len());
-
-    // Validate messages
-    if messages.is_empty() {
-        return InferenceError::BadRequest("Messages array cannot be empty".to_string())
-            .error_response();
-    }
 
     // Build generation parameters
     let params = llm::GenerationParams {
@@ -122,31 +96,34 @@ pub async fn chat_completion(
 
     let start = std::time::Instant::now();
 
-    // Convert messages
-    let llm_messages: Vec<llm::ChatMessage> = messages.into_iter().map(Into::into).collect();
+    // Generate completion
+    let result = match llm::text_completion(
+        &model_id,
+        prompt,
+        suffix,
+        params,
+        &model_config,
+        &gen_config,
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            let duration = start.elapsed().as_secs_f64();
+            tracing::error!(
+                model = %model_id,
+                error = %e,
+                duration_secs = duration,
+                "Text completion failed"
+            );
 
-    // Generate chat completion
-    let result =
-        match llm::chat_completion(&model_id, llm_messages, params, &model_config, &gen_config)
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                let duration = start.elapsed().as_secs_f64();
-                tracing::error!(
-                    model = %model_id,
-                    error = %e,
-                    duration_secs = duration,
-                    "Chat completion failed"
-                );
+            semantic_explorer_core::observability::record_llm_request(
+                &model_id, 0, duration, false,
+            );
 
-                semantic_explorer_core::observability::record_llm_request(
-                    &model_id, 0, duration, false,
-                );
-
-                return e.error_response();
-            }
-        };
+            return e.error_response();
+        }
+    };
 
     let duration = start.elapsed().as_secs_f64();
 
@@ -154,7 +131,7 @@ pub async fn chat_completion(
         model = %model_id,
         tokens = result.tokens_generated,
         duration_secs = duration,
-        "Chat completion generated successfully"
+        "Text completion generated successfully"
     );
 
     semantic_explorer_core::observability::record_llm_request(
@@ -164,34 +141,36 @@ pub async fn chat_completion(
         true,
     );
 
-    HttpResponse::Ok().json(ChatResponse {
-        message: result.message.into(),
+    HttpResponse::Ok().json(CompletionResponse {
+        text: result.text,
         model: result.model,
         tokens_generated: result.tokens_generated,
         finish_reason: result.finish_reason.to_string(),
     })
 }
 
-/// Chat completion with streaming response
+/// Text/code completion with streaming response
 ///
-/// Generates a response based on conversation history and streams it as Server-Sent Events
+/// Generates a completion and streams it as Server-Sent Events.
+/// Use this for real-time code completion or text continuation with streaming output.
 #[utoipa::path(
     post,
-    path = "/api/chat/stream",
-    request_body = ChatRequest,
+    path = "/api/completions/stream",
+    request_body = CompletionRequest,
     responses(
-        (status = 200, description = "Streaming chat completion", content_type = "text/event-stream"),
+        (status = 200, description = "Streaming completion", content_type = "text/event-stream"),
         (status = 400, description = "Invalid request or unsupported model"),
+        (status = 503, description = "Service at capacity"),
         (status = 500, description = "Internal server error")
     ),
-    tag = "chat"
+    tag = "completions"
 )]
-#[post("/api/chat/stream")]
-#[instrument(skip(model_config, gen_config), fields(model, messages))]
-pub async fn chat_completion_stream(
+#[post("/api/completions/stream")]
+#[instrument(skip(model_config, gen_config), fields(model))]
+pub async fn completion_stream(
     model_config: web::Data<ModelConfig>,
     gen_config: web::Data<GenerationConfig>,
-    body: web::Json<ChatRequest>,
+    body: web::Json<CompletionRequest>,
 ) -> impl Responder {
     // Backpressure: try to acquire a permit, return 503 if at capacity
     let _permit = match llm::try_acquire_permit() {
@@ -212,16 +191,10 @@ pub async fn chat_completion_stream(
     };
 
     let model_id = body.model.clone();
-    let messages = body.messages.clone();
+    let prompt = body.prompt.clone();
+    let suffix = body.suffix.clone();
 
     tracing::Span::current().record("model", &model_id);
-    tracing::Span::current().record("messages", messages.len());
-
-    // Validate messages
-    if messages.is_empty() {
-        return InferenceError::BadRequest("Messages array cannot be empty".to_string())
-            .error_response();
-    }
 
     // Build generation parameters
     let params = llm::GenerationParams {
@@ -233,16 +206,15 @@ pub async fn chat_completion_stream(
 
     info!(
         model = %model_id,
-        "Starting streaming chat completion"
+        has_suffix = suffix.is_some(),
+        "Starting streaming text completion"
     );
 
-    // Convert messages
-    let llm_messages: Vec<llm::ChatMessage> = messages.into_iter().map(Into::into).collect();
-
-    // Generate chat completion stream
-    let stream = match llm::chat_completion_stream(
+    // Generate completion stream
+    let stream = match llm::text_completion_stream(
         &model_id,
-        llm_messages,
+        prompt,
+        suffix,
         params,
         &model_config,
         &gen_config,
@@ -259,7 +231,7 @@ pub async fn chat_completion_stream(
             // Format as Server-Sent Events with JSON data
             Ok::<_, actix_web::Error>(web::Bytes::from(format!(
                 "data: {}\n\n",
-                serde_json::json!({"content": chunk})
+                serde_json::json!({"text": chunk})
             )))
         }
         Err(e) => {
@@ -283,45 +255,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_chat_message_conversion() {
-        let api_msg = ChatMessage {
-            role: "user".to_string(),
-            content: "Hello".to_string(),
-        };
-
-        let llm_msg: llm::ChatMessage = api_msg.clone().into();
-        assert_eq!(llm_msg.role, "user");
-        assert_eq!(llm_msg.content, "Hello");
-
-        let back_to_api: ChatMessage = llm_msg.into();
-        assert_eq!(back_to_api.role, api_msg.role);
-        assert_eq!(back_to_api.content, api_msg.content);
+    fn test_completion_request_deserialization() {
+        let json = r#"{"model": "test-model", "prompt": "def hello():", "temperature": 0.2}"#;
+        let req: CompletionRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.model, "test-model");
+        assert_eq!(req.prompt, "def hello():");
+        assert_eq!(req.temperature, Some(0.2));
+        assert_eq!(req.suffix, None);
     }
 
     #[test]
-    fn test_chat_request_deserialization() {
+    fn test_completion_request_with_suffix() {
         let json = r#"{
             "model": "test-model",
-            "messages": [
-                {"role": "user", "content": "Hello"}
-            ],
-            "temperature": 0.7
+            "prompt": "def hello():\n    ",
+            "suffix": "\n    return result",
+            "max_tokens": 50
         }"#;
-        let req: ChatRequest = serde_json::from_str(json).unwrap();
+        let req: CompletionRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.model, "test-model");
-        assert_eq!(req.messages.len(), 1);
-        assert_eq!(req.temperature, Some(0.7));
+        assert_eq!(req.prompt, "def hello():\n    ");
+        assert_eq!(req.suffix, Some("\n    return result".to_string()));
+        assert_eq!(req.max_tokens, Some(50));
     }
 
     #[test]
-    fn test_chat_request_minimal() {
-        let json = r#"{
-            "model": "test-model",
-            "messages": [{"role": "user", "content": "Hi"}]
-        }"#;
-        let req: ChatRequest = serde_json::from_str(json).unwrap();
+    fn test_completion_request_minimal() {
+        let json = r#"{"model": "test-model", "prompt": "Hello"}"#;
+        let req: CompletionRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.model, "test-model");
-        assert_eq!(req.messages.len(), 1);
+        assert_eq!(req.prompt, "Hello");
         assert_eq!(req.temperature, None);
+        assert_eq!(req.suffix, None);
     }
 }

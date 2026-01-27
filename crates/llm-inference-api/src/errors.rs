@@ -18,6 +18,8 @@ pub enum InferenceError {
     BadRequest(String),
     /// Internal error
     Internal(String),
+    /// Service temporarily unavailable (503)
+    ServiceUnavailable(String),
 }
 
 impl fmt::Display for InferenceError {
@@ -28,6 +30,7 @@ impl fmt::Display for InferenceError {
             InferenceError::UnsupportedModel(msg) => write!(f, "Unsupported model: {}", msg),
             InferenceError::BadRequest(msg) => write!(f, "Bad request: {}", msg),
             InferenceError::Internal(msg) => write!(f, "Internal error: {}", msg),
+            InferenceError::ServiceUnavailable(msg) => write!(f, "Service unavailable: {}", msg),
         }
     }
 }
@@ -48,6 +51,7 @@ impl ResponseError for InferenceError {
             InferenceError::ModelLoad(_) => StatusCode::SERVICE_UNAVAILABLE,
             InferenceError::Generation(_) => StatusCode::INTERNAL_SERVER_ERROR,
             InferenceError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            InferenceError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
         }
     }
 
@@ -58,6 +62,7 @@ impl ResponseError for InferenceError {
             InferenceError::UnsupportedModel(_) => "UNSUPPORTED_MODEL",
             InferenceError::BadRequest(_) => "BAD_REQUEST",
             InferenceError::Internal(_) => "INTERNAL_ERROR",
+            InferenceError::ServiceUnavailable(_) => "SERVICE_UNAVAILABLE",
         };
 
         HttpResponse::build(self.status_code()).json(ErrorResponse {

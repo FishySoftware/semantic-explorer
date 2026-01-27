@@ -164,9 +164,7 @@ fn create_text_rerank(
         );
 
         // Configure CUDA EP with error_on_failure() to detect if CUDA fails
-        let cuda_provider = CUDA::default()
-            .build()
-            .error_on_failure();
+        let cuda_provider = CUDA::default().build().error_on_failure();
 
         RerankInitOptions::new(model).with_execution_providers(vec![cuda_provider])
     } else {

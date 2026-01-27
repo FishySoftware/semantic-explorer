@@ -41,6 +41,8 @@ pub struct ModelConfig {
     pub allowed_models: Vec<String>,
     /// Maximum number of concurrent inference requests
     pub max_concurrent_requests: usize,
+    /// Queue timeout in milliseconds - how long to wait for a permit before returning 503
+    pub queue_timeout_ms: u64,
     /// Enable ISQ (In-situ Quantization) for regular HF models
     /// Note: This is slow on first load. Prefer pre-quantized GGUF models.
     pub enable_isq: bool,
@@ -171,6 +173,10 @@ impl ModelConfig {
                 .unwrap_or_else(|_| "10".to_string())
                 .parse()
                 .context("LLM_MAX_CONCURRENT_REQUESTS must be a number")?,
+            queue_timeout_ms: env::var("LLM_QUEUE_TIMEOUT_MS")
+                .unwrap_or_else(|_| "30000".to_string())
+                .parse()
+                .context("LLM_QUEUE_TIMEOUT_MS must be a number")?,
             enable_isq: env::var("LLM_ENABLE_ISQ")
                 .unwrap_or_else(|_| "false".to_string())
                 .parse()
@@ -274,6 +280,7 @@ mod tests {
             isq_type: None,
             paged_attention_block_size: 32,
             paged_attention_context_size: 1024,
+            queue_timeout_ms: 30000,
         };
 
         assert_eq!(model.allowed_models.len(), 2);
@@ -293,6 +300,7 @@ mod tests {
             isq_type: None,
             paged_attention_block_size: 32,
             paged_attention_context_size: 1024,
+            queue_timeout_ms: 30000,
         };
         assert_eq!(config_restricted.allowed_models.len(), 1);
         assert!(

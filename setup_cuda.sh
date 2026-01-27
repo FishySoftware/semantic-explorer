@@ -5,7 +5,7 @@ set -e
 # Downloads ONNX Runtime with CUDA support for both inference APIs
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ORT_VERSION="1.23.0"
+ORT_VERSION="1.23.2"
 
 echo "=========================================="
 echo "Semantic Explorer CUDA Setup"

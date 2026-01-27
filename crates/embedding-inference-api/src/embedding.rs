@@ -50,10 +50,10 @@ impl ModelSize {
     /// Can be overridden by EMBEDDING_REQUEST_LIMIT env var for testing
     pub fn request_limit(&self) -> u64 {
         // Allow env override for testing
-        if let Ok(limit) = std::env::var("EMBEDDING_REQUEST_LIMIT") {
-            if let Ok(n) = limit.parse::<u64>() {
-                return n;
-            }
+        if let Ok(limit) = std::env::var("EMBEDDING_REQUEST_LIMIT")
+            && let Ok(n) = limit.parse::<u64>()
+        {
+            return n;
         }
         match self {
             ModelSize::Small => 2000,
@@ -243,7 +243,7 @@ static GLOBAL_CONFIG: OnceCell<ModelConfig> = OnceCell::new();
 static GPU_MEMORY_PRESSURE_HIGH: AtomicBool = AtomicBool::new(false);
 
 /// GPU memory pressure threshold (percentage) for triggering reset
-const GPU_MEMORY_PRESSURE_THRESHOLD: f64 = 80.0;
+const GPU_MEMORY_PRESSURE_THRESHOLD: f64 = 90.0;
 
 /// Metrics sampling rate (record metrics every N requests to reduce overhead)
 const METRICS_SAMPLE_RATE: u64 = 10;
@@ -496,9 +496,7 @@ fn create_text_embedding(
 
         // Configure CUDA EP with error_on_failure() to detect if CUDA fails
         // Note: fastembed/ort may still fall back silently in some cases
-        let cuda_provider = CUDA::default()
-            .build()
-            .error_on_failure(); // This makes registration return an error if CUDA fails
+        let cuda_provider = CUDA::default().build().error_on_failure(); // This makes registration return an error if CUDA fails
 
         TextInitOptions::new(model).with_execution_providers(vec![cuda_provider])
     } else {
@@ -513,9 +511,7 @@ fn create_text_embedding(
         options = options.with_cache_dir(hf_home.clone());
     }
 
-    let start = std::time::Instant::now();
-    let mut text_embedding = TextEmbedding::try_new(options).map_err(|e| {
-        // This error might indicate CUDA EP failed to register
+    TextEmbedding::try_new(options).map_err(|e| {
         if use_cuda {
             error!(
                 error = %e,
@@ -527,108 +523,7 @@ fn create_text_embedding(
             error!(error = %e, "Failed to initialize embedding model on CPU");
         }
         InferenceError::ModelLoad(e.to_string())
-    })?;
-
-    let init_time = start.elapsed();
-
-    // Log the execution provider status
-    // Fast init (<2s) typically indicates GPU, slow init (>5s) may indicate CPU fallback
-    if use_cuda {
-        if init_time.as_secs_f64() > 3.0 {
-            warn!(
-                init_time_secs = init_time.as_secs_f64(),
-                "Model initialization took longer than expected. \
-                 This MAY indicate CUDA EP failed silently and fell back to CPU. \
-                 Expected GPU init: <2s, Got: {:.2}s",
-                init_time.as_secs_f64()
-            );
-        } else {
-            info!(
-                init_time_secs = init_time.as_secs_f64(),
-                "Model initialized with CUDA execution provider (init time suggests GPU is active)"
-            );
-        }
-    } else {
-        info!(
-            init_time_secs = init_time.as_secs_f64(),
-            "Model initialized with CPU execution provider"
-        );
-    }
-
-    // Run a warm-up benchmark to definitively detect GPU vs CPU execution
-    // GPU should process a small batch in <100ms, CPU takes 500ms+
-    if use_cuda {
-        // Create benchmark texts that match real workload: 500 chars each
-        let sample_text = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. Curabitur pretium.".to_string();
-        
-        // Use 32 texts (1/8 of typical batch) for benchmark - enough to be representative
-        let warmup_texts: Vec<String> = (0..32).map(|_| sample_text.clone()).collect();
-        let bench_batch_size = 32;
-
-        info!(
-            text_count = warmup_texts.len(),
-            chars_per_text = sample_text.len(),
-            total_chars = sample_text.len() * warmup_texts.len(),
-            "Running GPU benchmark with realistic text sizes"
-        );
-
-        // Warmup run (first inference has extra overhead)
-        let warmup_start = std::time::Instant::now();
-        if let Err(e) = text_embedding.embed(warmup_texts.clone(), Some(bench_batch_size)) {
-            error!(error = %e, "Warmup embedding failed");
-            return Err(InferenceError::ModelLoad(format!(
-                "Warmup failed: {}",
-                e
-            )));
-        }
-        let warmup_time = warmup_start.elapsed();
-
-        // Benchmark run (steady-state performance)
-        let bench_start = std::time::Instant::now();
-        if let Err(e) = text_embedding.embed(warmup_texts, Some(bench_batch_size)) {
-            error!(error = %e, "Benchmark embedding failed");
-            return Err(InferenceError::ModelLoad(format!(
-                "Benchmark failed: {}",
-                e
-            )));
-        }
-        let bench_time = bench_start.elapsed();
-
-        let bench_ms = bench_time.as_millis();
-        let chars_per_sec = (sample_text.len() * bench_batch_size) as f64 / bench_time.as_secs_f64();
-
-        // GPU threshold: 32 texts × 500 chars should complete in <500ms on GPU
-        // CPU would take 2-5 seconds for this workload
-        if bench_ms > 800 {
-            error!(
-                warmup_ms = warmup_time.as_millis(),
-                bench_ms = bench_ms,
-                chars_per_sec = chars_per_sec,
-                "CUDA EXECUTION PROVIDER FALLBACK DETECTED! \
-                 Benchmark took {}ms (expected <500ms for GPU). \
-                 ONNX Runtime likely fell back to CPU silently. \
-                 Try: 1) Restart the service, 2) Check nvidia-smi for GPU memory, \
-                 3) Verify CUDA/cuDNN versions match ORT requirements.",
-                bench_ms
-            );
-            // Return an error to prevent starting with slow CPU execution
-            return Err(InferenceError::ModelLoad(format!(
-                "GPU benchmark failed: {}ms (threshold: 800ms). \
-                 CUDA EP likely fell back to CPU. Restart the service.",
-                bench_ms
-            )));
-        } else {
-            info!(
-                warmup_ms = warmup_time.as_millis(),
-                bench_ms = bench_ms,
-                chars_per_sec = chars_per_sec,
-                per_text_ms = bench_ms as f64 / bench_batch_size as f64,
-                "GPU execution confirmed: benchmark passed"
-            );
-        }
-    }
-
-    Ok(text_embedding)
+    })
 }
 
 // ============================================================================
@@ -800,12 +695,12 @@ pub async fn generate_embeddings(
     let request_count = active_slot.increment_request_count();
 
     // Record session metrics only on sample (reduce overhead)
-    if request_count % METRICS_SAMPLE_RATE == 0 {
+    if request_count.is_multiple_of(METRICS_SAMPLE_RATE) {
         record_embedding_session_metrics(model_id, request_count, active_slot.age_seconds());
     }
 
     // Check lifecycle management only periodically (not every request)
-    let slot_to_use: Arc<ModelSlot> = if request_count % 100 == 0 {
+    let slot_to_use: Arc<ModelSlot> = if request_count.is_multiple_of(100) {
         // Check GPU memory pressure using cached state (no NVML call)
         if is_gpu_memory_pressure_high() && entry.should_swap() {
             let standby_guard = entry.standby.lock().await;

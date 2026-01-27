@@ -30,8 +30,9 @@ use config::LlmInferenceConfig;
     ),
     tags(
         (name = "health", description = "Health check endpoints"),
-        (name = "generation", description = "Text generation"),
-        (name = "chat", description = "Chat completions"),
+        (name = "generation", description = "Single prompt text generation"),
+        (name = "chat", description = "Chat with message history"),
+        (name = "completions", description = "Text and code completions with optional fill-in-middle"),
         (name = "models", description = "Model discovery and listing")
     )
 )]
@@ -59,14 +60,18 @@ async fn main() -> Result<()> {
         "Allowed LLM models configured"
     );
 
-    // Initialize model cache
+    // Initialize model cache with warmup benchmark
     llm::init_cache(&config.models).await;
 
     // Initialize backpressure semaphore for LLM requests
-    llm::init_semaphore(config.models.max_concurrent_requests);
+    llm::init_semaphore(
+        config.models.max_concurrent_requests,
+        config.models.queue_timeout_ms,
+    );
 
     info!(
         max_concurrent_requests = config.models.max_concurrent_requests,
+        queue_timeout_ms = config.models.queue_timeout_ms,
         "Model cache and backpressure semaphore initialized."
     );
 
@@ -109,12 +114,14 @@ async fn main() -> Result<()> {
             .service(api::health::health_ready)
             // Model listing
             .service(api::generation::list_llms)
-            // Generation endpoints
+            // Generation endpoint (single prompt)
             .service(api::generation::generate)
-            .service(api::streaming::generate_stream)
-            // Chat endpoints
+            // Chat endpoints (conversation with message history)
             .service(api::chat::chat_completion)
             .service(api::chat::chat_completion_stream)
+            // Completion endpoints (code/text completion with optional fill-in-middle)
+            .service(api::completions::completion)
+            .service(api::completions::completion_stream)
             // Swagger UI
             .openapi_service(|api| {
                 SwaggerUi::new("/swagger-ui/{_:.*}").url("/api/openapi.json", api)
