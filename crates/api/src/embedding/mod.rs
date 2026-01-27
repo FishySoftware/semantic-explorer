@@ -55,6 +55,13 @@ pub async fn generate_embedding(
             let inference_url = std::env::var("EMBEDDING_INFERENCE_API_URL")
                 .unwrap_or_else(|_| "http://localhost:8090".to_string());
             let endpoint = format!("{}/api/embed", inference_url.trim_end_matches('/'));
+            tracing::debug!(
+                provider = "internal",
+                model = model,
+                endpoint = %endpoint,
+                query_len = query.len(),
+                "Generating embedding via internal inference API"
+            );
             let body = serde_json::json!({
                 "text": query,
                 "model": model,

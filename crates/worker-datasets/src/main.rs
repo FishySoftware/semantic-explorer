@@ -1,4 +1,5 @@
 use anyhow::Result;
+use semantic_explorer_core::nats::connect_with_retry;
 use semantic_explorer_core::worker::WorkerContext;
 use semantic_explorer_core::{storage::initialize_client, worker};
 
@@ -15,11 +16,10 @@ async fn main() -> Result<()> {
     // Initialize S3 client
     let s3_client = initialize_client().await?;
 
-    // Initialize NATS client
-    let nats_client = async_nats::connect(
-        &std::env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string()),
-    )
-    .await?;
+    // Initialize NATS client with auto-reconnect
+    let nats_url =
+        std::env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string());
+    let nats_client = connect_with_retry(&nats_url).await?;
 
     // Create worker context with Qdrant client cache
     let context = WorkerContext {
@@ -36,9 +36,10 @@ async fn main() -> Result<()> {
     let config = worker::WorkerConfig {
         service_name,
         stream_name: "DATASET_TRANSFORMS".to_string(),
-        consumer_config: semantic_explorer_core::nats::create_vector_embed_consumer_config(),
+        consumer_config: semantic_explorer_core::nats::create_dataset_transform_consumer_config(),
         max_concurrent_jobs,
+        max_deliver: 5, // Matches consumer config
     };
 
-    worker::run_worker(config, context, job::process_vector_job).await
+    worker::run_worker(config, context, job::process_dataset_transform_job).await
 }

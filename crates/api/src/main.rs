@@ -106,7 +106,6 @@ async fn main() -> Result<()> {
         pool.clone(),
         s3_client.clone(),
         nats_client.clone(),
-        encryption_service.clone(),
     )
     .await?;
 
@@ -120,21 +119,27 @@ async fn main() -> Result<()> {
     let llm_inference_config = config.llm_inference.clone();
     let max_upload_size = config.s3.max_upload_size_bytes as usize;
 
-    // Start scanners for each transform type
-    let collection_scanner_handle = transforms::collection::scanner::initialize_scanner(
-        pool.clone(),
-        nats_client.clone(),
-        s3_client.clone(),
-        config.s3.bucket_name.clone(),
-        encryption_service.clone(),
-    );
+    // Build QdrantConnectionConfig from QdrantConfig (reused across scanners and API)
+    let qdrant_connection_config = semantic_explorer_core::models::QdrantConnectionConfig {
+        url: config.qdrant.url.clone(),
+        api_key: config.qdrant.api_key.clone(),
+    };
 
-    let dataset_scanner_handle = transforms::dataset::scanner::initialize_scanner(
-        pool.clone(),
-        nats_client.clone(),
-        s3_client.clone(),
-        encryption_service.clone(),
-    );
+    let scanner_ctx = transforms::trigger::ScannerContext {
+        pool: pool.clone(),
+        nats: nats_client.clone(),
+        s3: s3_client.clone(),
+        s3_bucket_name: config.s3.bucket_name.clone(),
+        encryption: encryption_service.clone(),
+        qdrant_config: qdrant_connection_config.clone(),
+    };
+
+    // Start trigger listener (all instances listen, NATS coordinates)
+    let _scanner_listener = transforms::trigger::start_trigger_listener(scanner_ctx);
+
+    // Start trigger publisher (publishes periodic scan triggers)
+    // In a multi-instance deployment, redundant triggers are deduplicated by NATS
+    let _scanner_publisher = transforms::trigger::start_trigger_publisher(nats_client.clone());
 
     // Initialize audit event infrastructure (database and NATS)
     audit::events::init(pool.clone(), nats_client.clone());
@@ -194,6 +199,7 @@ async fn main() -> Result<()> {
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(nats_client.clone()))
             .app_data(web::Data::new(encryption_service.clone()))
+            .app_data(web::Data::new(qdrant_connection_config.clone()))
             .app_data(
                 MultipartFormConfig::default()
                     .total_limit(max_upload_size) //TODO fix this with proper vars
@@ -351,9 +357,7 @@ async fn main() -> Result<()> {
 
     info!("Shutting down gracefully...");
 
-    // Stop background scanners
-    collection_scanner_handle.abort();
-    dataset_scanner_handle.abort();
+    // Stop background tasks (scanner trigger system handles its own cleanup via NATS)
     audit_consumer_handle.abort();
 
     // Drain NATS client - flush pending messages

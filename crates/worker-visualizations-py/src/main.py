@@ -25,6 +25,11 @@ from nats.js.api import ConsumerConfig
 from pydantic import ValidationError
 from dotenv import load_dotenv
 
+# OpenTelemetry trace context propagation
+from opentelemetry import trace
+from opentelemetry.propagate import extract
+from opentelemetry.trace import SpanKind
+
 # Load environment variables from .env file
 # Look for .env in the parent directory (crates/worker-visualizations-py/)
 env_path = Path(__file__).parent.parent / ".env"
@@ -135,6 +140,21 @@ def build_status_subject(
     Format: transforms.visualization.status.{owner}.{embedded_dataset_id}.{transform_id}
     """
     return f"{RESULT_SUBJECT_PREFIX}.{owner}.{embedded_dataset_id}.{transform_id}"
+
+
+def extract_trace_context_from_headers(msg: Msg) -> dict:
+    """Extract W3C trace context headers from NATS message.
+
+    Returns a carrier dict for OpenTelemetry context extraction.
+    """
+    carrier = {}
+    if msg.headers:
+        # NATS headers are case-insensitive, but OpenTelemetry expects lowercase
+        for key in ["traceparent", "tracestate"]:
+            value = msg.headers.get(key)
+            if value:
+                carrier[key] = value
+    return carrier
 
 
 # Global state
@@ -312,7 +332,7 @@ async def handle_job(
         processing_duration_ms = int((time.time() - job_start_time) * 1000)
 
         # Update result with success
-        result.status = "completed"
+        result.status = "success"
         result.html_s3_key = s3_key
         result.point_count = processed_result.get("point_count")
         result.cluster_count = processed_result.get("cluster_count")
@@ -320,7 +340,7 @@ async def handle_job(
         result.stats_json = processed_result.get("stats", {})
 
         # Record metrics
-        metrics.visualization_jobs_total.labels("completed").inc()
+        metrics.visualization_jobs_total.labels("success").inc()
         metrics.visualization_job_duration.observe((time.time() - job_start_time))
         metrics.visualization_points_created.inc(result.point_count or 0)
         metrics.visualization_clusters_created.inc(result.cluster_count or 0)
@@ -386,42 +406,66 @@ async def handle_job(
 
 
 async def message_handler(msg: Msg, nc: NATSConnection) -> None:
-    """Handle incoming NATS messages."""
+    """Handle incoming NATS messages with distributed trace context."""
     handler_start = time.time()
     metrics.nats_messages_received_total.inc()
-    try:
-        logger.debug("Received NATS message, parsing payload")
-        # Parse the message payload
-        job_data = json.loads(msg.data.decode())
-        job = VisualizationTransformJob(**job_data)
-        logger.debug(f"Successfully parsed job {job.job_id}")
 
-        # Process the job
-        await handle_job(nc, msg, job)
+    # Extract trace context from NATS headers for distributed tracing
+    carrier = extract_trace_context_from_headers(msg)
+    parent_context = extract(carrier)
+    tracer = trace.get_tracer(__name__)
 
-    except ValidationError as e:
-        logger.error(f"Invalid job payload: {e}", exc_info=True)
-        # Ack the message to avoid reprocessing invalid data
-        await msg.ack()
-        metrics.nats_messages_acked_total.inc()
-        metrics.visualization_job_failures_total.labels("validation_error").inc()
-        logger.info("Acknowledged invalid message to prevent reprocessing")
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse job JSON: {e}", exc_info=True)
-        await msg.ack()
-        metrics.nats_messages_acked_total.inc()
-        metrics.visualization_job_failures_total.labels("json_decode_error").inc()
-        logger.info("Acknowledged malformed message to prevent reprocessing")
-    except Exception as e:
-        handler_elapsed = time.time() - handler_start
-        logger.error(
-            f"Unexpected error in message handler: {e} (elapsed: {handler_elapsed:.3f}s)",
-            exc_info=True,
-        )
-        await msg.nak()
-        metrics.nats_messages_nacked_total.inc()
-        metrics.visualization_job_failures_total.labels("unexpected_error").inc()
-        logger.warning("Nacked message due to unexpected error")
+    # Create a span with the parent context
+    with tracer.start_as_current_span(
+        "process_visualization_job",
+        context=parent_context,
+        kind=SpanKind.CONSUMER,
+    ) as span:
+        try:
+            logger.debug("Received NATS message, parsing payload")
+            # Parse the message payload
+            job_data = json.loads(msg.data.decode())
+            job = VisualizationTransformJob(**job_data)
+            logger.debug(f"Successfully parsed job {job.job_id}")
+
+            # Add job info to span
+            span.set_attribute("job.id", str(job.job_id))
+            span.set_attribute("job.transform_id", job.visualization_transform_id)
+            span.set_attribute("job.visualization_id", job.visualization_id)
+
+            # Process the job
+            await handle_job(nc, msg, job)
+
+        except ValidationError as e:
+            logger.error(f"Invalid job payload: {e}", exc_info=True)
+            span.set_attribute("error", True)
+            span.set_attribute("error.type", "validation_error")
+            # Ack the message to avoid reprocessing invalid data
+            await msg.ack()
+            metrics.nats_messages_acked_total.inc()
+            metrics.visualization_job_failures_total.labels("validation_error").inc()
+            logger.info("Acknowledged invalid message to prevent reprocessing")
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse job JSON: {e}", exc_info=True)
+            span.set_attribute("error", True)
+            span.set_attribute("error.type", "json_decode_error")
+            await msg.ack()
+            metrics.nats_messages_acked_total.inc()
+            metrics.visualization_job_failures_total.labels("json_decode_error").inc()
+            logger.info("Acknowledged malformed message to prevent reprocessing")
+        except Exception as e:
+            handler_elapsed = time.time() - handler_start
+            logger.error(
+                f"Unexpected error in message handler: {e} (elapsed: {handler_elapsed:.3f}s)",
+                exc_info=True,
+            )
+            span.set_attribute("error", True)
+            span.set_attribute("error.type", "unexpected_error")
+            span.record_exception(e)
+            await msg.nak()
+            metrics.nats_messages_nacked_total.inc()
+            metrics.visualization_job_failures_total.labels("unexpected_error").inc()
+            logger.warning("Nacked message due to unexpected error")
 
 
 async def main():

@@ -9,11 +9,8 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 
-class VectorDatabaseConfig(BaseModel):
-    """Vector database configuration."""
-
-    database_type: str  # "qdrant"
-    connection_url: str
+class QdrantConnectionConfig(BaseModel):
+    url: str
     api_key: Optional[str] = None
 
 
@@ -200,7 +197,7 @@ class VisualizationTransformJob(BaseModel):
     embedded_dataset_id: int
     qdrant_collection_name: str
     visualization_config: VisualizationConfig
-    vector_database_config: VectorDatabaseConfig
+    qdrant_config: QdrantConnectionConfig
     llm_config: Optional[LLMConfig] = None
 
     class Config:
@@ -214,7 +211,7 @@ class VisualizationTransformResult(BaseModel):
     visualization_transform_id: int = Field(alias="visualizationTransformId")
     visualization_id: int = Field(alias="visualizationId")
     owner_id: str = Field(alias="ownerId")
-    status: str  # "processing", "completed", "failed"
+    status: str  # "processing", "success", "failed"
     html_s3_key: Optional[str] = Field(default=None, alias="htmlS3Key")
     point_count: Optional[int] = Field(default=None, alias="pointCount")
     cluster_count: Optional[int] = Field(default=None, alias="clusterCount")

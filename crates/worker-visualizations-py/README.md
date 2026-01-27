@@ -236,9 +236,8 @@ sequenceDiagram
     "noise_label": "",
     "noise_color": "#999999"
   },
-  "vector_database_config": {
-    "database_type": "qdrant",
-    "connection_url": "http://qdrant:6334",
+  "qdrant_config": {
+    "url": "http://qdrant:6334",
     "api_key": null
   },
   "llm_config": {
@@ -258,7 +257,7 @@ sequenceDiagram
   "visualizationTransformId": 123,
   "visualizationId": 456,
   "owner": "user@example.com",
-  "status": "completed",
+  "status": "success",
   "htmlS3Key": "visualization-2024-01-11T12:00:00Z.html",
   "pointCount": 5000,
   "clusterCount": 42,

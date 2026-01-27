@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -40,17 +41,61 @@ pub struct DatasetTransformJob {
     pub embedded_dataset_id: i32,
     pub owner_id: String,
     pub embedder_config: EmbedderConfig,
-    pub vector_database_config: VectorDatabaseConfig,
+    pub qdrant_config: QdrantConnectionConfig,
     pub collection_name: String,
     #[serde(default)]
     pub batch_size: Option<usize>,
 }
 
+// =============================================================================
+// Scanner Trigger Messages
+// =============================================================================
+
+/// Trigger message for collection transform scanning.
+/// Sent periodically to initiate scanning of active collection transforms.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DatasetTransformScanJob {
-    pub job_id: Uuid,
-    pub dataset_transform_id: i32,
-    pub owner_id: String,
+pub struct ScanTrigger {
+    /// Unique ID for this trigger (used for deduplication)
+    pub trigger_id: Uuid,
+    /// Type of scan: "collection", "dataset", or "visualization"
+    pub scan_type: String,
+    /// Optional: specific transform ID to scan (None = scan all active)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transform_id: Option<i32>,
+    /// Optional: owner ID for permission scoping (None = privileged scan)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_id: Option<String>,
+    /// Timestamp when trigger was created
+    pub triggered_at: DateTime<Utc>,
+}
+
+impl ScanTrigger {
+    /// Create a new periodic scan trigger (scans all active transforms)
+    pub fn periodic(scan_type: &str) -> Self {
+        Self {
+            trigger_id: Uuid::new_v4(),
+            scan_type: scan_type.to_string(),
+            transform_id: None,
+            owner_id: None,
+            triggered_at: Utc::now(),
+        }
+    }
+
+    /// Create a targeted scan trigger for a specific transform
+    pub fn targeted(scan_type: &str, transform_id: i32, owner_id: &str) -> Self {
+        Self {
+            trigger_id: Uuid::new_v4(),
+            scan_type: scan_type.to_string(),
+            transform_id: Some(transform_id),
+            owner_id: Some(owner_id.to_string()),
+            triggered_at: Utc::now(),
+        }
+    }
+
+    /// Get the NATS subject for this trigger type
+    pub fn subject(&self) -> String {
+        format!("scan.trigger.{}", self.scan_type)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,9 +150,8 @@ fn default_max_input_tokens() -> i32 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VectorDatabaseConfig {
-    pub database_type: String,
-    pub connection_url: String,
+pub struct QdrantConnectionConfig {
+    pub url: String,
     pub api_key: Option<String>,
 }
 
@@ -130,7 +174,7 @@ pub struct VisualizationTransformJob {
     pub embedded_dataset_id: i32,
     pub qdrant_collection_name: String,
     pub visualization_config: VisualizationConfig,
-    pub vector_database_config: VectorDatabaseConfig,
+    pub qdrant_config: QdrantConnectionConfig,
     pub llm_config: Option<LLMConfig>,
 }
 

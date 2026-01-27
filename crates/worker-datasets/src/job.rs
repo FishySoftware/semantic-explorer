@@ -19,14 +19,17 @@ pub(crate) struct BatchItem {
 }
 
 #[instrument(skip(ctx), fields(job_id = %job.job_id, dataset_transform_id = %job.dataset_transform_id, embedded_dataset_id = %job.embedded_dataset_id, collection = %job.collection_name))]
-pub(crate) async fn process_vector_job(job: DatasetTransformJob, ctx: WorkerContext) -> Result<()> {
+pub(crate) async fn process_dataset_transform_job(
+    job: DatasetTransformJob,
+    ctx: WorkerContext,
+) -> Result<()> {
     let start_time = Instant::now();
-    info!("Processing vector job");
+    info!("Processing dataset transform job");
 
     // Validate S3 inputs to prevent path traversal attacks
     if let Err(e) = validate_bucket_name(&job.bucket) {
         let duration = start_time.elapsed().as_secs_f64();
-        record_worker_job("vector-embed", duration, "failed_validation");
+        record_worker_job("dataset-transform", duration, "failed_validation");
         error!(error = %e, bucket = %job.bucket, "Invalid bucket name");
         send_result(
             &ctx.nats_client,
@@ -40,7 +43,7 @@ pub(crate) async fn process_vector_job(job: DatasetTransformJob, ctx: WorkerCont
 
     if let Err(e) = validate_s3_key(&job.batch_file_key) {
         let duration = start_time.elapsed().as_secs_f64();
-        record_worker_job("vector-embed", duration, "failed_validation");
+        record_worker_job("dataset-transform", duration, "failed_validation");
         error!(error = %e, key = %job.batch_file_key, "Invalid S3 key");
         send_result(
             &ctx.nats_client,
@@ -72,7 +75,7 @@ pub(crate) async fn process_vector_job(job: DatasetTransformJob, ctx: WorkerCont
         Ok(content) => content,
         Err(e) => {
             let duration = start_time.elapsed().as_secs_f64();
-            record_worker_job("vector-embed", duration, "failed_download");
+            record_worker_job("dataset-transform", duration, "failed_download");
             error!(error = %e, "Failed to download batch");
             send_result(
                 &ctx.nats_client,
@@ -93,7 +96,7 @@ pub(crate) async fn process_vector_job(job: DatasetTransformJob, ctx: WorkerCont
         Ok(items) => items,
         Err(e) => {
             let duration = start_time.elapsed().as_secs_f64();
-            record_worker_job("vector-embed", duration, "failed_parse");
+            record_worker_job("dataset-transform", duration, "failed_parse");
             error!(error = %e, "Failed to parse batch");
             send_result(
                 &ctx.nats_client,
@@ -111,7 +114,7 @@ pub(crate) async fn process_vector_job(job: DatasetTransformJob, ctx: WorkerCont
 
     if items.is_empty() {
         let duration = start_time.elapsed().as_secs_f64();
-        record_worker_job("vector-embed", duration, "success_empty");
+        record_worker_job("dataset-transform", duration, "success_empty");
         info!("Empty batch, skipping");
         send_result(
             &ctx.nats_client,
@@ -129,6 +132,8 @@ pub(crate) async fn process_vector_job(job: DatasetTransformJob, ctx: WorkerCont
         batch_size = job.batch_size,
         embedder_provider = ?job.embedder_config.provider,
         embedder_model = ?job.embedder_config.model,
+        collection_name = %job.collection_name,
+        embedded_dataset_id = job.embedded_dataset_id,
         "Generating embeddings"
     );
 
@@ -142,7 +147,7 @@ pub(crate) async fn process_vector_job(job: DatasetTransformJob, ctx: WorkerCont
         Ok(embeddings) => embeddings,
         Err(e) => {
             let duration = start_time.elapsed().as_secs_f64();
-            record_worker_job("vector-embed", duration, "failed_embedding");
+            record_worker_job("dataset-transform", duration, "failed_embedding");
             error!(error = %e, "Embedding failed");
             send_result(
                 &ctx.nats_client,
@@ -161,7 +166,7 @@ pub(crate) async fn process_vector_job(job: DatasetTransformJob, ctx: WorkerCont
 
     if embeddings.len() != items.len() {
         let duration = start_time.elapsed().as_secs_f64();
-        record_worker_job("vector-embed", duration, "failed_mismatch");
+        record_worker_job("dataset-transform", duration, "failed_mismatch");
         error!(
             expected = items.len(),
             actual = embeddings.len(),
@@ -178,8 +183,8 @@ pub(crate) async fn process_vector_job(job: DatasetTransformJob, ctx: WorkerCont
     }
 
     // Create and reuse client instead of recreating for each job
-    let qdrant_client = Qdrant::from_url(&job.vector_database_config.connection_url)
-        .api_key(job.vector_database_config.api_key.clone())
+    let qdrant_client = Qdrant::from_url(&job.qdrant_config.url)
+        .api_key(job.qdrant_config.api_key.clone())
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to build Qdrant client: {e}"))?;
 
@@ -261,7 +266,7 @@ pub(crate) async fn process_vector_job(job: DatasetTransformJob, ctx: WorkerCont
             .await
         {
             let duration = start_time.elapsed().as_secs_f64();
-            record_worker_job("vector-embed", duration, "failed_upsert");
+            record_worker_job("dataset-transform", duration, "failed_upsert");
             error!(error = %e, chunk_index = idx, "Qdrant upsert chunk failed");
             return Err(anyhow::anyhow!(
                 "Qdrant upsert failed at chunk {}: {}",
@@ -273,7 +278,7 @@ pub(crate) async fn process_vector_job(job: DatasetTransformJob, ctx: WorkerCont
     let upsert_duration = upsert_start.elapsed().as_secs_f64();
 
     let duration = start_time.elapsed().as_secs_f64();
-    record_worker_job("vector-embed", duration, "success");
+    record_worker_job("dataset-transform", duration, "success");
     info!(
         duration_secs = duration,
         upsert_duration_secs = upsert_duration,

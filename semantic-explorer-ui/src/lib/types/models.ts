@@ -204,36 +204,25 @@ export interface PaginatedFiles {
 
 export interface CollectionTransform {
 	collection_transform_id: number;
-	dataset_id: number;
+	title: string;
 	collection_id: number;
+	dataset_id: number;
 	owner_id: string;
-	extraction_policy: string; // 'all' | 'extensions' | 'metadata'
-	extraction_config: Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
-	chunking_policy: string; // 'recursive' | 'token' | 'semantic' | 'none'
-	chunking_config: Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
-	embedder_config?: {
-		embedder_id: number;
-		model: string;
-		api_key?: string;
-	} | null;
-	cron_schedule: string | null;
+	owner_display_name: string;
 	is_enabled: boolean;
-	last_run_at: string | null;
-	next_run_at: string | null;
+	chunk_size: number;
+	job_config: Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 	created_at: string;
 	updated_at: string;
-	// Joined fields
-	collection_title?: string;
-	dataset_title?: string;
 }
 
 export interface CollectionTransformStats {
 	collection_transform_id: number;
 	total_files_processed: number;
-	total_chunks_created: number;
-	total_errors: number;
-	last_processed_file: string | null;
-	last_activity_at: string | null;
+	successful_files: number;
+	failed_files: number;
+	total_items_created: number;
+	last_run_at: string | null;
 }
 
 // --- Visualizations ---

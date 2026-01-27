@@ -13,9 +13,11 @@ use opentelemetry_sdk::{
 };
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::sync::Semaphore;
-use tracing::{error, info, warn};
+use tracing::{Instrument, error, info, info_span, warn};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_subscriber::{
     EnvFilter, Layer, Registry as TracingRegistry, layer::SubscriberExt, util::SubscriberInitExt,
 };
@@ -29,6 +31,28 @@ pub struct WorkerConfig {
     pub stream_name: String,
     pub consumer_config: Config,
     pub max_concurrent_jobs: usize,
+    /// Maximum number of delivery attempts before sending to DLQ
+    pub max_deliver: u64,
+}
+
+/// DLQ subject mapping for each stream type
+fn get_dlq_subject(stream_name: &str) -> &'static str {
+    match stream_name {
+        "COLLECTION_TRANSFORMS" => "dlq.collection-transforms",
+        "DATASET_TRANSFORMS" => "dlq.dataset-transforms",
+        "VISUALIZATION_TRANSFORMS" => "dlq.visualization-transforms",
+        _ => "dlq.unknown-transforms",
+    }
+}
+
+/// Get transform type from stream name for metrics
+fn get_transform_type(stream_name: &str) -> &'static str {
+    match stream_name {
+        "COLLECTION_TRANSFORMS" => "collection",
+        "DATASET_TRANSFORMS" => "dataset",
+        "VISUALIZATION_TRANSFORMS" => "visualization",
+        _ => "unknown",
+    }
 }
 
 #[derive(Clone)]
@@ -154,7 +178,7 @@ pub fn initialize_opentelemetry(service_name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Run the worker message processing loop
+/// Run the worker message processing loop with graceful shutdown support
 pub async fn run_worker<J, F, Fut>(
     config: WorkerConfig,
     context: WorkerContext,
@@ -169,6 +193,8 @@ where
     let nats_client = context.nats_client.clone();
 
     let semaphore = Arc::new(Semaphore::new(config.max_concurrent_jobs));
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let in_flight = Arc::new(AtomicUsize::new(0));
 
     info!("Using JetStream mode for reliable message delivery");
 
@@ -192,15 +218,103 @@ where
     // Set worker ready status
     crate::observability::set_worker_ready(&config.service_name, true);
 
-    process_messages(consumer, context, semaphore, process_job).await
+    let service_name = config.service_name.clone();
+    let shutdown_clone = shutdown.clone();
+    let in_flight_clone = in_flight.clone();
+
+    let proc_ctx = ProcessingContext {
+        shutdown: shutdown.clone(),
+        in_flight: in_flight.clone(),
+        stream_name: config.stream_name.clone(),
+        max_deliver: config.max_deliver,
+    };
+
+    // Run message processing with graceful shutdown
+    tokio::select! {
+        result = process_messages(
+            consumer,
+            context,
+            semaphore,
+            process_job,
+            proc_ctx,
+        ) => {
+            result
+        }
+        _ = shutdown_signal() => {
+            info!("Shutdown signal received, initiating graceful shutdown...");
+            shutdown_clone.store(true, Ordering::SeqCst);
+
+            // Wait for in-flight jobs to complete (max 5 minutes)
+            let shutdown_timeout = Duration::from_secs(300);
+            let start = std::time::Instant::now();
+
+            while in_flight_clone.load(Ordering::SeqCst) > 0 {
+                let remaining = in_flight_clone.load(Ordering::SeqCst);
+                info!("Waiting for {} in-flight jobs to complete...", remaining);
+
+                if start.elapsed() > shutdown_timeout {
+                    warn!(
+                        "Shutdown timeout reached, {} jobs still in progress",
+                        remaining
+                    );
+                    break;
+                }
+
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+
+            crate::observability::set_worker_ready(&service_name, false);
+            info!("Graceful shutdown complete");
+            Ok(())
+        }
+    }
 }
 
-/// Process messages from the consumer
+/// Wait for shutdown signals (SIGTERM or SIGINT)
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("Failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {
+            info!("Received SIGINT (Ctrl+C)");
+        }
+        _ = terminate => {
+            info!("Received SIGTERM");
+        }
+    }
+}
+
+/// Internal context for message processing
+struct ProcessingContext {
+    shutdown: Arc<AtomicBool>,
+    in_flight: Arc<AtomicUsize>,
+    stream_name: String,
+    max_deliver: u64,
+}
+
+/// Process messages from the consumer with DLQ support
+#[allow(clippy::too_many_arguments)]
 async fn process_messages<J, F, Fut>(
     consumer: Consumer<Config>,
     context: WorkerContext,
     semaphore: Arc<Semaphore>,
     process_job: F,
+    proc_ctx: ProcessingContext,
 ) -> Result<()>
 where
     J: DeserializeOwned + Send + 'static,
@@ -209,8 +323,15 @@ where
 {
     let process_job = Arc::new(process_job);
     let mut messages = consumer.messages().await?;
+    let jetstream = async_nats::jetstream::new(context.nats_client.clone());
 
     while let Some(msg) = messages.next().await {
+        // Check for shutdown signal
+        if proc_ctx.shutdown.load(Ordering::SeqCst) {
+            info!("Shutdown in progress, stopping message consumption");
+            break;
+        }
+
         let msg = match msg {
             Ok(m) => m,
             Err(e) => {
@@ -218,6 +339,12 @@ where
                 continue;
             }
         };
+
+        // Get delivery count for DLQ decision
+        let delivery_count = msg.info().map(|info| info.delivered as u64).unwrap_or(1);
+
+        // Extract trace context from message headers for distributed tracing
+        let parent_context = crate::nats::extract_otel_context(msg.headers.as_ref());
 
         let job: J = match serde_json::from_slice(&msg.payload) {
             Ok(j) => j,
@@ -251,45 +378,105 @@ where
             }
         };
 
+        // Track in-flight jobs for graceful shutdown
+        proc_ctx.in_flight.fetch_add(1, Ordering::SeqCst);
+
         let ctx = context.clone();
         let process_job = Arc::clone(&process_job);
-        let stream_name = consumer.cached_info().name.clone();
+        let stream_name_clone = proc_ctx.stream_name.clone();
+        let max_deliver = proc_ctx.max_deliver;
+        let in_flight_clone = proc_ctx.in_flight.clone();
+        let jetstream_clone = jetstream.clone();
+        let payload = msg.payload.clone();
 
-        tokio::spawn(async move {
-            let _permit = permit; // Hold permit until task completes
+        // Create a span with the parent context for distributed tracing
+        let job_span = info_span!(
+            "process_worker_job",
+            stream = %stream_name_clone,
+            delivery_attempt = delivery_count,
+        );
+        let _ = job_span.set_parent(parent_context);
 
-            match process_job(job, ctx).await {
-                Ok(_) => {
-                    info!("Job processed successfully.");
-                    // Acknowledge success
-                    if let Err(e) = msg.ack().await {
-                        error!("Failed to acknowledge successful job: {}", e);
+        tokio::spawn(
+            async move {
+                let _permit = permit; // Hold permit until task completes
+
+                match process_job(job, ctx).await {
+                    Ok(_) => {
+                        info!("Job processed successfully.");
+                        // Acknowledge success
+                        if let Err(e) = msg.ack().await {
+                            error!("Failed to acknowledge successful job: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        let error_type = format!("{:?}", e)
+                            .split(':')
+                            .next()
+                            .unwrap_or("Unknown")
+                            .to_string();
+                        crate::observability::record_worker_job_failure(
+                            &stream_name_clone,
+                            &error_type,
+                        );
+
+                        error!(
+                            "Job failed (attempt {}/{}): {}",
+                            delivery_count, max_deliver, e
+                        );
+
+                        // Check if we've exhausted retries
+                        if delivery_count >= max_deliver {
+                            // Send to DLQ
+                            let dlq_subject = get_dlq_subject(&stream_name_clone);
+                            let transform_type = get_transform_type(&stream_name_clone);
+
+                            warn!(
+                                "Max delivery attempts ({}) reached, sending to DLQ: {}",
+                                max_deliver, dlq_subject
+                            );
+
+                            if let Err(dlq_err) =
+                                jetstream_clone.publish(dlq_subject, payload).await
+                            {
+                                error!("Failed to publish to DLQ: {}", dlq_err);
+                            } else {
+                                crate::observability::record_dlq_message(
+                                    transform_type,
+                                    &error_type,
+                                );
+                                info!("Message sent to DLQ successfully");
+                            }
+
+                            // Acknowledge to remove from main queue
+                            if let Err(ack_err) = msg.ack().await {
+                                error!("Failed to acknowledge DLQ'd message: {}", ack_err);
+                            }
+                        } else {
+                            // Negative acknowledgment for retry (30s delay)
+                            if let Err(ack_err) = msg
+                                .ack_with(async_nats::jetstream::AckKind::Nak(Some(
+                                    Duration::from_secs(30),
+                                )))
+                                .await
+                            {
+                                error!("Failed to negatively acknowledge failed job: {}", ack_err);
+                            } else {
+                                // Track retry
+                                crate::observability::record_worker_job_retry(
+                                    &stream_name_clone,
+                                    delivery_count as u32,
+                                );
+                            }
+                        }
                     }
                 }
-                Err(e) => {
-                    let error_type = format!("{:?}", e)
-                        .split(':')
-                        .next()
-                        .unwrap_or("Unknown")
-                        .to_string();
-                    crate::observability::record_worker_job_failure(&stream_name, &error_type);
 
-                    error!("Job failed: {}", e);
-                    // Negative acknowledgment for retry (30s delay)
-                    if let Err(ack_err) = msg
-                        .ack_with(async_nats::jetstream::AckKind::Nak(Some(
-                            Duration::from_secs(30),
-                        )))
-                        .await
-                    {
-                        error!("Failed to negatively acknowledge failed job: {}", ack_err);
-                    } else {
-                        // Track retry
-                        crate::observability::record_worker_job_retry(&stream_name, 1);
-                    }
-                }
+                // Decrement in-flight counter
+                in_flight_clone.fetch_sub(1, Ordering::SeqCst);
             }
-        });
+            .instrument(job_span),
+        );
     }
 
     Ok(())

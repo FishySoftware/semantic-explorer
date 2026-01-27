@@ -5,7 +5,6 @@ use crate::storage::postgres::{dataset_transform_batches, dataset_transforms, em
 use crate::transforms::dataset::models::{
     CreateDatasetTransform, DatasetTransform, DatasetTransformStats, UpdateDatasetTransform,
 };
-use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::models::PaginatedResponse;
 use semantic_explorer_core::validation;
 
@@ -16,7 +15,6 @@ use qdrant_client::Qdrant;
 use serde::Deserialize;
 use sqlx::{Pool, Postgres};
 use tracing::{debug, error, info};
-use uuid::Uuid;
 
 #[derive(Deserialize, Debug)]
 pub struct SortParams {
@@ -177,34 +175,20 @@ pub async fn create_dataset_transform(
                 ResourceType::Transform,
                 &dataset_transform_id.to_string(),
             );
-            let scan_job = semantic_explorer_core::models::DatasetTransformScanJob {
-                job_id: Uuid::new_v4(),
+            // Publish targeted scan trigger via SCANNER_TRIGGERS stream
+            if let Err(e) = crate::transforms::trigger::publish_targeted_trigger(
+                nats_client.as_ref(),
+                "dataset",
                 dataset_transform_id,
-                owner_id: user.as_owner(),
-            };
-
-            if let Ok(payload) = serde_json::to_vec(&scan_job) {
-                // Use JetStream with message ID for deduplication
-                let msg_id = format!("scan-{}", dataset_transform_id);
-                let jetstream = async_nats::jetstream::new(nats_client.as_ref().clone());
-                if let Err(e) = jetstream
-                    .publish_with_headers(
-                        "workers.dataset-transform-scan".to_string(),
-                        {
-                            let mut headers = async_nats::HeaderMap::new();
-                            headers.insert("Nats-Msg-Id", msg_id.as_str());
-                            headers
-                        },
-                        payload.into(),
-                    )
-                    .await
-                {
-                    error!(
-                        "Failed to enqueue dataset transform scan for {}: {}",
-                        dataset_transform_id, e
-                    );
-                    // Log but don't fail the response
-                }
+                &user.as_owner(),
+            )
+            .await
+            {
+                error!(
+                    "Failed to publish targeted scan trigger for dataset transform {}: {}",
+                    dataset_transform_id, e
+                );
+                // Log but don't fail - periodic scan will pick it up
             }
 
             HttpResponse::Created().json(serde_json::json!({
@@ -373,13 +357,11 @@ pub async fn delete_dataset_transform(
     ),
 )]
 #[post("/api/dataset-transforms/{id}/trigger")]
-#[tracing::instrument(name = "trigger_dataset_transform", skip(user, pool, nats_client, s3_client, encryption), fields(dataset_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "trigger_dataset_transform", skip(user, pool, nats_client), fields(dataset_transform_id = %path.as_ref()))]
 pub async fn trigger_dataset_transform(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
     nats_client: Data<NatsClient>,
-    s3_client: Data<aws_sdk_s3::Client>,
-    encryption: Data<EncryptionService>,
     path: Path<i32>,
 ) -> impl Responder {
     let dataset_transform_id = path.into_inner();
@@ -401,12 +383,9 @@ pub async fn trigger_dataset_transform(
 
     // Actually trigger the scan
     if let Err(e) = crate::transforms::dataset::scanner::trigger_dataset_transform_scan(
-        &pool,
         &nats_client,
-        &s3_client,
         dataset_transform_id,
         &user.as_owner(),
-        &encryption,
     )
     .await
     {

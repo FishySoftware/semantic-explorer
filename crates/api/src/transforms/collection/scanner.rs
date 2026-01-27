@@ -1,53 +1,26 @@
-use actix_web::rt::{spawn, task::JoinHandle, time::interval};
 use anyhow::Result;
-use async_nats::{Client as NatsClient, jetstream};
+use async_nats::Client as NatsClient;
 use aws_sdk_s3::Client as S3Client;
 use sqlx::{Pool, Postgres};
 use std::collections::HashSet;
-use std::time::Duration;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::models::{CollectionTransformJob, EmbedderConfig};
+use semantic_explorer_core::observability::record_scanner_items_discovered;
 
 use crate::auth::AuthenticatedUser;
 use crate::storage::postgres::collection_transforms::{
-    get_active_collection_transforms_privileged, get_collection_transform, get_processed_files,
+    get_active_collection_transforms_privileged, get_collection_transform_privileged,
+    get_processed_files,
 };
 use crate::storage::postgres::{collections, embedders};
 use crate::storage::s3;
 use crate::transforms::collection::models::CollectionTransform;
 
-/// Initialize the background scanner for collection transforms
-pub(crate) fn initialize_scanner(
-    pool: Pool<Postgres>,
-    nats_client: NatsClient,
-    s3_client: S3Client,
-    s3_bucket_name: String,
-    encryption: EncryptionService,
-) -> JoinHandle<()> {
-    spawn(async move {
-        let mut interval = interval(Duration::from_secs(60));
-        loop {
-            interval.tick().await;
-            if let Err(e) = scan_active_collection_transforms(
-                &pool,
-                &nats_client,
-                &s3_client,
-                &s3_bucket_name,
-                &encryption,
-            )
-            .await
-            {
-                error!("Error scanning collection transforms: {}", e);
-            }
-        }
-    })
-}
-
 #[tracing::instrument(name = "scan_active_collection_transforms", skip_all)]
-async fn scan_active_collection_transforms(
+pub(crate) async fn scan_active_collection_transforms(
     pool: &Pool<Postgres>,
     nats: &NatsClient,
     s3: &S3Client,
@@ -75,6 +48,33 @@ async fn scan_active_collection_transforms(
         }
     }
     Ok(())
+}
+
+/// Scan a specific collection transform by ID (privileged, for NATS triggers)
+#[tracing::instrument(
+    name = "scan_collection_transform",
+    skip(pool, nats, s3, encryption),
+    fields(collection_transform_id = %collection_transform_id)
+)]
+pub(crate) async fn scan_collection_transform(
+    pool: &Pool<Postgres>,
+    nats: &NatsClient,
+    s3: &S3Client,
+    s3_bucket_name: &str,
+    collection_transform_id: i32,
+    encryption: &EncryptionService,
+) -> Result<()> {
+    let transform = get_collection_transform_privileged(pool, collection_transform_id).await?;
+
+    if !transform.is_enabled {
+        info!(
+            "Collection transform {} is disabled, skipping scan",
+            collection_transform_id
+        );
+        return Ok(());
+    }
+
+    process_collection_transform_scan(pool, nats, s3, s3_bucket_name, &transform, encryption).await
 }
 
 /// Extract embedder config from chunking config if semantic chunking is used
@@ -245,20 +245,27 @@ async fn process_collection_transform_scan(
 
                 let payload = serde_json::to_vec(&job)?;
 
-                // Use JetStream publish with message ID for deduplication
-                let jetstream = jetstream::new(nats.clone());
-                let mut headers = async_nats::HeaderMap::new();
-                headers.insert("Nats-Msg-Id", msg_id.as_str());
-
-                jetstream
-                    .publish_with_headers(
-                        "workers.collection-transform".to_string(),
-                        headers,
-                        payload.into(),
-                    )
-                    .await?
-                    .await?; // Wait for ack
-                jobs_sent += 1;
+                // Publish with retry (3 attempts with exponential backoff)
+                match semantic_explorer_core::nats::publish_with_retry(
+                    nats,
+                    "workers.collection-transform",
+                    &msg_id,
+                    payload,
+                    3,
+                )
+                .await
+                {
+                    semantic_explorer_core::nats::PublishResult::Published => {
+                        jobs_sent += 1;
+                    }
+                    semantic_explorer_core::nats::PublishResult::Failed(e) => {
+                        // TODO: Insert pending record for fallback recovery
+                        error!(
+                            "Failed to publish job for file {} after retries: {}",
+                            file.key, e
+                        );
+                    }
+                }
             }
         }
 
@@ -273,38 +280,43 @@ async fn process_collection_transform_scan(
         transform.collection_transform_id, files_found, jobs_sent
     );
 
+    if jobs_sent > 0 {
+        record_scanner_items_discovered("collection", jobs_sent as u64);
+    }
+
     Ok(())
 }
 
-/// Trigger a collection transform scan immediately
+/// Trigger a collection transform scan via NATS (non-blocking)
+///
+/// This publishes a targeted scan trigger to NATS, which will be processed
+/// asynchronously by the trigger listener. This allows the API to return
+/// immediately while the scan runs in the background.
 #[tracing::instrument(
     name = "trigger_collection_transform_scan",
-    skip(pool, nats, s3, encryption),
+    skip(nats),
     fields(collection_transform_id = %collection_transform_id)
 )]
 pub async fn trigger_collection_transform_scan(
-    pool: &Pool<Postgres>,
     nats: &NatsClient,
-    s3: &S3Client,
-    s3_bucket_name: &str,
     collection_transform_id: i32,
     owner: &str,
-    encryption: &EncryptionService,
 ) -> Result<()> {
     info!(
-        "Triggering collection transform scan for {}",
+        "Publishing collection transform scan trigger for {}",
         collection_transform_id
     );
 
-    // Get the collection transform
-    let transform = get_collection_transform(pool, owner, collection_transform_id).await?;
-
-    // Process the scan immediately
-    process_collection_transform_scan(pool, nats, s3, s3_bucket_name, &transform, encryption)
-        .await?;
+    crate::transforms::trigger::publish_targeted_trigger(
+        nats,
+        "collection",
+        collection_transform_id,
+        owner,
+    )
+    .await?;
 
     info!(
-        "Triggered collection transform scan for {}",
+        "Published collection transform scan trigger for {}",
         collection_transform_id
     );
 

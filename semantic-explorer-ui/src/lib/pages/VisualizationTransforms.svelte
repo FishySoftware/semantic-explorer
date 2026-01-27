@@ -120,6 +120,7 @@
 	let createError = $state<string | null>(null);
 
 	let transformPendingDelete = $state<VisualizationTransform | null>(null);
+	let transformsPendingBulkDelete = $state<VisualizationTransform[]>([]);
 
 	// Selection state
 	// eslint-disable-next-line svelte/no-unnecessary-state-wrap
@@ -167,14 +168,47 @@
 	}
 
 	async function bulkDelete() {
+		const toDelete: VisualizationTransform[] = [];
 		for (const id of selected) {
 			const transform = transforms.find((t) => t.visualization_transform_id === id);
 			if (transform) {
-				await requestDeleteTransform(transform, false);
+				toDelete.push(transform);
 			}
 		}
+		if (toDelete.length > 0) {
+			transformsPendingBulkDelete = toDelete;
+		}
+	}
+
+	async function confirmBulkDeleteTransforms() {
+		const toDelete = transformsPendingBulkDelete;
+		transformsPendingBulkDelete = [];
+
+		for (const transform of toDelete) {
+			try {
+				const response = await fetch(
+					`/api/visualization-transforms/${transform.visualization_transform_id}`,
+					{
+						method: 'DELETE',
+					}
+				);
+
+				if (!response.ok) {
+					throw new Error(`Failed to delete visualization transform: ${response.statusText}`);
+				}
+
+				transforms = transforms.filter(
+					(t) => t.visualization_transform_id !== transform.visualization_transform_id
+				);
+			} catch (e) {
+				toastStore.error(formatError(e, `Failed to delete transform "${transform.title}"`));
+			}
+		}
+
 		selected.clear();
 		selectAll = false;
+		toastStore.success(`Deleted ${toDelete.length} transform${toDelete.length !== 1 ? 's' : ''}`);
+		await fetchTransforms();
 	}
 
 	$effect(() => {
@@ -467,11 +501,6 @@
 		showCreateForm = false;
 		editingTransform = null;
 		createError = null;
-	}
-
-	function requestDeleteTransform(transform: VisualizationTransform, refresh = true) {
-		transformPendingDelete = transform;
-		(transformPendingDelete as any)._skipRefresh = !refresh;
 	}
 
 	async function confirmDeleteTransform() {
@@ -2110,6 +2139,16 @@
 	variant="danger"
 	onConfirm={confirmDeleteTransform}
 	onCancel={() => (transformPendingDelete = null)}
+/>
+
+<ConfirmDialog
+	open={transformsPendingBulkDelete.length > 0}
+	title="Delete Visualization Transforms"
+	message={`Are you sure you want to delete ${transformsPendingBulkDelete.length} transform${transformsPendingBulkDelete.length !== 1 ? 's' : ''}? This action cannot be undone.`}
+	confirmLabel="Delete All"
+	variant="danger"
+	onConfirm={confirmBulkDeleteTransforms}
+	onCancel={() => (transformsPendingBulkDelete = [])}
 />
 
 <style>

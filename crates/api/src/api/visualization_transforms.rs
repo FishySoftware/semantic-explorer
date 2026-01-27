@@ -8,7 +8,7 @@ use crate::transforms::visualization::models::{
 };
 use crate::transforms::visualization::scanner::trigger_visualization_transform_scan;
 use semantic_explorer_core::encryption::EncryptionService;
-use semantic_explorer_core::models::PaginatedResponse;
+use semantic_explorer_core::models::{PaginatedResponse, QdrantConnectionConfig};
 use semantic_explorer_core::validation;
 
 use actix_web::web::{Data, Json, Path, Query};
@@ -162,13 +162,14 @@ pub async fn get_visualization_transform(
     ),
 )]
 #[post("/api/visualization-transforms")]
-#[tracing::instrument(name = "create_visualization_transform", skip(user, pool, nats_client, body, req, encryption), fields(title = %body.title))]
+#[tracing::instrument(name = "create_visualization_transform", skip(user, pool, nats_client, body, req, encryption, qdrant_config), fields(title = %body.title))]
 pub async fn create_visualization_transform(
     user: AuthenticatedUser,
     req: HttpRequest,
     pool: Data<Pool<Postgres>>,
     nats_client: Data<NatsClient>,
     encryption: Data<EncryptionService>,
+    qdrant_config: Data<QdrantConnectionConfig>,
     body: Json<CreateVisualizationTransform>,
 ) -> impl Responder {
     if let Err(e) = validation::validate_title(&body.title) {
@@ -255,6 +256,7 @@ pub async fn create_visualization_transform(
                 transform_id,
                 &user.as_owner(),
                 &encryption,
+                &qdrant_config,
             )
             .await
             {
@@ -430,12 +432,13 @@ pub async fn delete_visualization_transform(
     ),
 )]
 #[post("/api/visualization-transforms/{id}/trigger")]
-#[tracing::instrument(name = "trigger_visualization_transform", skip(user, pool, nats_client, encryption), fields(visualization_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "trigger_visualization_transform", skip(user, pool, nats_client, encryption, qdrant_config), fields(visualization_transform_id = %path.as_ref()))]
 pub async fn trigger_visualization_transform(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
     nats_client: Data<NatsClient>,
     encryption: Data<EncryptionService>,
+    qdrant_config: Data<QdrantConnectionConfig>,
     path: Path<i32>,
 ) -> impl Responder {
     let id = path.into_inner();
@@ -462,6 +465,7 @@ pub async fn trigger_visualization_transform(
         id,
         &user.as_owner(),
         &encryption,
+        &qdrant_config,
     )
     .await
     {

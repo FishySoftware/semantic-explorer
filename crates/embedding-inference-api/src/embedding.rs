@@ -761,32 +761,17 @@ pub async fn generate_embeddings(
         });
         let embed_time = embed_start.elapsed();
 
-        // Log timing breakdown for debugging slow requests
-        if embed_time.as_millis() > 500 {
-            warn!(
-                model_id = %model_id_owned,
-                texts_count = texts_count,
-                total_chars = total_chars,
-                avg_chars_per_text = avg_chars,
-                lock_time_ms = lock_time.as_millis(),
-                embed_time_ms = embed_time.as_millis(),
-                per_text_ms = embed_time.as_millis() as f64 / texts_count as f64,
-                chars_per_sec = total_chars as f64 / embed_time.as_secs_f64(),
-                "Slow embedding detected"
-            );
-        } else {
-            debug!(
-                model_id = %model_id_owned,
-                texts_count = texts_count,
-                total_chars = total_chars,
-                avg_chars_per_text = avg_chars,
-                lock_time_ms = lock_time.as_millis(),
-                embed_time_ms = embed_time.as_millis(),
-                per_text_ms = embed_time.as_millis() as f64 / texts_count as f64,
-                chars_per_sec = total_chars as f64 / embed_time.as_secs_f64(),
-                "Embedding timing"
-            );
-        }
+        debug!(
+            model_id = %model_id_owned,
+            texts_count = texts_count,
+            total_chars = total_chars,
+            avg_chars_per_text = avg_chars,
+            lock_time_ms = lock_time.as_millis(),
+            embed_time_ms = embed_time.as_millis(),
+            per_text_ms = embed_time.as_millis() as f64 / texts_count as f64,
+            chars_per_sec = total_chars as f64 / embed_time.as_secs_f64(),
+            "Embedding timing"
+        );
 
         result
     })

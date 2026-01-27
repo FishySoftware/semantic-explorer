@@ -109,6 +109,13 @@ pub struct Metrics {
     pub embedding_session_resets_total: Counter<u64>,
     pub embedding_session_request_count: Gauge<f64>,
     pub embedding_session_age_seconds: Gauge<f64>,
+    // Dead Letter Queue metrics
+    pub dlq_messages_total: Counter<u64>,
+    // Scanner trigger metrics
+    pub scanner_triggers_published_total: Counter<u64>,
+    pub scanner_triggers_processed_total: Counter<u64>,
+    pub scanner_items_discovered_total: Counter<u64>,
+    pub scanner_scan_duration: Histogram<f64>,
 }
 
 impl Metrics {
@@ -512,6 +519,31 @@ impl Metrics {
             .with_description("Age of the current embedding model session in seconds")
             .build();
 
+        let dlq_messages_total = meter
+            .u64_counter("dlq_messages_total")
+            .with_description("Total number of messages sent to Dead Letter Queue")
+            .build();
+
+        let scanner_triggers_published_total = meter
+            .u64_counter("scanner_triggers_published_total")
+            .with_description("Total number of scanner triggers published")
+            .build();
+
+        let scanner_triggers_processed_total = meter
+            .u64_counter("scanner_triggers_processed_total")
+            .with_description("Total number of scanner triggers processed")
+            .build();
+
+        let scanner_items_discovered_total = meter
+            .u64_counter("scanner_items_discovered_total")
+            .with_description("Total number of items discovered by scanners")
+            .build();
+
+        let scanner_scan_duration = meter
+            .f64_histogram("scanner_scan_duration_seconds")
+            .with_description("Duration of scanner scans in seconds")
+            .build();
+
         Self {
             database_query_total,
             database_query_duration,
@@ -590,6 +622,11 @@ impl Metrics {
             embedding_session_resets_total,
             embedding_session_request_count,
             embedding_session_age_seconds,
+            dlq_messages_total,
+            scanner_triggers_published_total,
+            scanner_triggers_processed_total,
+            scanner_items_discovered_total,
+            scanner_scan_duration,
         }
     }
 }
@@ -1025,6 +1062,57 @@ pub fn record_worker_job_retry(worker: &str, attempt: u32) {
             KeyValue::new("worker", worker.to_string()),
             KeyValue::new("attempt", attempt.to_string()),
         ],
+    );
+}
+
+/// Record a message sent to the Dead Letter Queue
+pub fn record_dlq_message(transform_type: &str, reason: &str) {
+    let metrics = get_metrics();
+    metrics.dlq_messages_total.add(
+        1,
+        &[
+            KeyValue::new("transform_type", transform_type.to_string()),
+            KeyValue::new("reason", reason.to_string()),
+        ],
+    );
+}
+
+/// Record a scanner trigger being published
+pub fn record_scanner_trigger_published(scanner_type: &str) {
+    let metrics = get_metrics();
+    metrics.scanner_triggers_published_total.add(
+        1,
+        &[KeyValue::new("scanner_type", scanner_type.to_string())],
+    );
+}
+
+/// Record a scanner trigger being processed
+pub fn record_scanner_trigger_processed(scanner_type: &str, success: bool) {
+    let metrics = get_metrics();
+    metrics.scanner_triggers_processed_total.add(
+        1,
+        &[
+            KeyValue::new("scanner_type", scanner_type.to_string()),
+            KeyValue::new("success", success.to_string()),
+        ],
+    );
+}
+
+/// Record items discovered by a scanner
+pub fn record_scanner_items_discovered(scanner_type: &str, count: u64) {
+    let metrics = get_metrics();
+    metrics.scanner_items_discovered_total.add(
+        count,
+        &[KeyValue::new("scanner_type", scanner_type.to_string())],
+    );
+}
+
+/// Record the duration of a scanner scan
+pub fn record_scanner_scan_duration(scanner_type: &str, duration_secs: f64) {
+    let metrics = get_metrics();
+    metrics.scanner_scan_duration.record(
+        duration_secs,
+        &[KeyValue::new("scanner_type", scanner_type.to_string())],
     );
 }
 

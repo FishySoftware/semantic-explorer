@@ -158,6 +158,19 @@ pub async fn get_collection_transform(
     Ok(transform)
 }
 
+/// **PRIVILEGED OPERATION** - Get a specific collection transform by ID, bypassing RLS.
+/// Used by scanner workers that need to process triggers for specific transforms.
+pub async fn get_collection_transform_privileged(
+    pool: &Pool<Postgres>,
+    collection_transform_id: i32,
+) -> Result<CollectionTransform> {
+    let transform = sqlx::query_as::<_, CollectionTransform>(GET_COLLECTION_TRANSFORM_QUERY)
+        .bind(collection_transform_id)
+        .fetch_one(pool)
+        .await?;
+    Ok(transform)
+}
+
 pub async fn get_collection_transforms_paginated(
     pool: &Pool<Postgres>,
     owner: &str,

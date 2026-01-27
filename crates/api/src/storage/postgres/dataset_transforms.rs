@@ -115,6 +115,19 @@ pub async fn get_dataset_transform(
     Ok(transform)
 }
 
+/// **PRIVILEGED OPERATION** - Get a specific dataset transform by ID, bypassing RLS.
+/// Used by scanner workers that need to process triggers for specific transforms.
+pub async fn get_dataset_transform_privileged(
+    pool: &Pool<Postgres>,
+    dataset_transform_id: i32,
+) -> Result<DatasetTransform> {
+    let transform = sqlx::query_as::<_, DatasetTransform>(GET_DATASET_TRANSFORM_QUERY)
+        .bind(dataset_transform_id)
+        .fetch_one(pool)
+        .await?;
+    Ok(transform)
+}
+
 pub async fn get_dataset_transforms_paginated(
     pool: &Pool<Postgres>,
     owner: &str,

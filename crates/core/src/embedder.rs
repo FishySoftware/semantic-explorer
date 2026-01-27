@@ -146,6 +146,13 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
             });
             let inference_url = get_embedding_inference_api_url();
             let url = format!("{}/api/embed/batch", inference_url.trim_end_matches('/'));
+            tracing::debug!(
+                provider = "internal",
+                model = %model,
+                endpoint = %url,
+                text_count = texts.len(),
+                "Generating batch embeddings via internal inference API"
+            );
             (url, body, false)
         }
         _ => return Err(anyhow::anyhow!("Unsupported provider: {}", config.provider)),

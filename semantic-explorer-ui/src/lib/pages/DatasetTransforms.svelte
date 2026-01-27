@@ -59,6 +59,7 @@
 	let editingTransform = $state<DatasetTransform | null>(null);
 
 	let transformPendingDelete = $state<DatasetTransform | null>(null);
+	let transformsPendingBulkDelete = $state<DatasetTransform[]>([]);
 
 	// Selection state
 	let selected = new SvelteSet<number>();
@@ -105,14 +106,44 @@
 	}
 
 	async function bulkDelete() {
+		const toDelete: DatasetTransform[] = [];
 		for (const id of selected) {
 			const transform = transforms.find((t) => t.dataset_transform_id === id);
 			if (transform) {
-				await requestDeleteTransform(transform, false);
+				toDelete.push(transform);
 			}
 		}
+		if (toDelete.length > 0) {
+			transformsPendingBulkDelete = toDelete;
+		}
+	}
+
+	async function confirmBulkDeleteTransforms() {
+		const toDelete = transformsPendingBulkDelete;
+		transformsPendingBulkDelete = [];
+
+		for (const transform of toDelete) {
+			try {
+				const response = await fetch(`/api/dataset-transforms/${transform.dataset_transform_id}`, {
+					method: 'DELETE',
+				});
+
+				if (!response.ok) {
+					throw new Error(`Failed to delete dataset transform: ${response.statusText}`);
+				}
+
+				transforms = transforms.filter(
+					(t) => t.dataset_transform_id !== transform.dataset_transform_id
+				);
+			} catch (e) {
+				toastStore.error(formatError(e, `Failed to delete transform "${transform.title}"`));
+			}
+		}
+
 		selected.clear();
 		selectAll = false;
+		toastStore.success(`Deleted ${toDelete.length} transform${toDelete.length !== 1 ? 's' : ''}`);
+		await fetchTransforms();
 	}
 
 	async function fetchTransforms() {
@@ -314,11 +345,6 @@
 		} catch (e) {
 			toastStore.error(formatError(e, 'Failed to trigger dataset transform'));
 		}
-	}
-
-	function requestDeleteTransform(transform: DatasetTransform, refresh = true) {
-		transformPendingDelete = transform;
-		(transformPendingDelete as any)._skipRefresh = !refresh;
 	}
 
 	async function confirmDeleteTransform() {
@@ -777,6 +803,16 @@
 	variant="danger"
 	onConfirm={confirmDeleteTransform}
 	onCancel={() => (transformPendingDelete = null)}
+/>
+
+<ConfirmDialog
+	open={transformsPendingBulkDelete.length > 0}
+	title="Delete Dataset Transforms"
+	message={`Are you sure you want to delete ${transformsPendingBulkDelete.length} transform${transformsPendingBulkDelete.length !== 1 ? 's' : ''}? This will also delete associated Embedded Datasets.`}
+	confirmLabel="Delete All"
+	variant="danger"
+	onConfirm={confirmBulkDeleteTransforms}
+	onCancel={() => (transformsPendingBulkDelete = [])}
 />
 
 <style>

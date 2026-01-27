@@ -7,15 +7,12 @@ use crate::transforms::collection::models::{
     UpdateCollectionTransform,
 };
 use crate::transforms::collection::scanner::trigger_collection_transform_scan;
-use semantic_explorer_core::config::S3Config;
-use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::models::PaginatedResponse;
 use semantic_explorer_core::validation;
 
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpRequest, HttpResponse, Responder, delete, get, patch, post};
 use async_nats::Client as NatsClient;
-use aws_sdk_s3::Client as S3Client;
 use serde::Deserialize;
 use sqlx::{Pool, Postgres};
 use tracing::error;
@@ -154,16 +151,12 @@ pub async fn get_collection_transform(
     ),
 )]
 #[post("/api/collection-transforms")]
-#[tracing::instrument(name = "create_collection_transform", skip(user, pool, nats_client, s3_client, encryption, body, req), fields(title = %body.title))]
-#[allow(clippy::too_many_arguments)] // Actix-web handler with dependency injection
+#[tracing::instrument(name = "create_collection_transform", skip(user, pool, nats_client, body, req), fields(title = %body.title))]
 pub async fn create_collection_transform(
     user: AuthenticatedUser,
     req: HttpRequest,
     pool: Data<Pool<Postgres>>,
     nats_client: Data<NatsClient>,
-    s3_client: Data<S3Client>,
-    s3_config: Data<S3Config>,
-    encryption: Data<EncryptionService>,
     body: Json<CreateCollectionTransform>,
 ) -> impl Responder {
     if let Err(e) = validation::validate_title(&body.title) {
@@ -185,13 +178,9 @@ pub async fn create_collection_transform(
         Ok(transform) => {
             let collection_transform_id = transform.collection_transform_id;
             if let Err(e) = trigger_collection_transform_scan(
-                &pool,
                 &nats_client,
-                &s3_client,
-                &s3_config.bucket_name,
                 collection_transform_id,
                 &user.as_owner(),
-                &encryption,
             )
             .await
             {

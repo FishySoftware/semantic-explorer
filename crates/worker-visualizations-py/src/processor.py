@@ -15,7 +15,6 @@ from typing import Any, Dict, Optional
 import numpy as np
 import random
 from qdrant_client import AsyncQdrantClient
-from qdrant_client.http import models as RestModels
 from umap import UMAP
 from fast_hdbscan import HDBSCAN
 import datamapplot
@@ -765,7 +764,7 @@ class VisualizationProcessor:
                     # Execute batch sequentially to avoid overwhelming GPU
                     if tasks:
                         batch_start_time = time.time()
-                        
+
                         for cluster_id, sample_texts in tasks:
                             try:
                                 result = await llm_provider.generate_topic_name(
@@ -941,7 +940,7 @@ class VisualizationProcessor:
 
             # Enable searching (feeds the html rendering kwargs)
             plot_kwargs["enable_search"] = True
-            plot_kwargs["enable_topic_tree"] = False # Looks terrible - needs works.
+            plot_kwargs["enable_topic_tree"] = False  # Looks terrible - needs works.
 
             fig = datamapplot.create_interactive_plot(
                 vectors,
@@ -1029,5 +1028,5 @@ async def process_visualization_job(
     Returns:
         Result dictionary with html, point_count, cluster_count, stats
     """
-    processor = VisualizationProcessor(job.vector_database_config.connection_url)
+    processor = VisualizationProcessor(job.qdrant_config.url)
     return await processor.process_job(job, llm_provider, progress_callback)

@@ -157,6 +157,18 @@ pub(crate) async fn search(
                     }
                 };
 
+                // Log which embedder is being used for this embedded dataset
+                let model_name = embedder.config.get("model").and_then(|m| m.as_str()).unwrap_or("unknown");
+                tracing::info!(
+                    embedded_dataset_id = embedded_dataset_id,
+                    embedder_id = embedder.embedder_id,
+                    embedder_name = %embedder.name,
+                    embedder_provider = %embedder.provider,
+                    embedder_model = model_name,
+                    collection_name = %ed_details.collection_name,
+                    "Generating query embedding for search"
+                );
+
                 // Generate embedding for the query
                 let query_vector = match crate::embedding::generate_embedding(
                     &embedder.provider,
@@ -167,7 +179,15 @@ pub(crate) async fn search(
                 )
                 .await
                 {
-                    Ok(v) => v,
+                    Ok(v) => {
+                        tracing::info!(
+                            embedded_dataset_id = embedded_dataset_id,
+                            embedder_name = %embedder.name,
+                            vector_dimensions = v.len(),
+                            "Generated query embedding"
+                        );
+                        v
+                    },
                     Err(e) => {
                         tracing::error!(
                             "Failed to generate embedding for embedded dataset {}: {}",

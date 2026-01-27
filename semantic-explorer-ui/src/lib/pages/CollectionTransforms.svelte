@@ -65,6 +65,7 @@
 	let showCreateModal = $state(false);
 
 	let transformPendingDelete = $state<CollectionTransform | null>(null);
+	let transformsPendingBulkDelete = $state<CollectionTransform[]>([]);
 
 	// Selection state
 	// eslint-disable-next-line svelte/no-unnecessary-state-wrap
@@ -112,14 +113,47 @@
 	}
 
 	async function bulkDelete() {
+		const toDelete: CollectionTransform[] = [];
 		for (const id of selected) {
 			const transform = transforms.find((t) => t.collection_transform_id === id);
 			if (transform) {
-				await requestDeleteTransform(transform, false);
+				toDelete.push(transform);
 			}
 		}
+		if (toDelete.length > 0) {
+			transformsPendingBulkDelete = toDelete;
+		}
+	}
+
+	async function confirmBulkDeleteTransforms() {
+		const toDelete = transformsPendingBulkDelete;
+		transformsPendingBulkDelete = [];
+
+		for (const transform of toDelete) {
+			try {
+				const response = await fetch(
+					`/api/collection-transforms/${transform.collection_transform_id}`,
+					{
+						method: 'DELETE',
+					}
+				);
+
+				if (!response.ok) {
+					throw new Error(`Failed to delete collection transform: ${response.statusText}`);
+				}
+
+				transforms = transforms.filter(
+					(t) => t.collection_transform_id !== transform.collection_transform_id
+				);
+			} catch (e) {
+				toastStore.error(formatError(e, `Failed to delete transform "${transform.title}"`));
+			}
+		}
+
 		selected = new SvelteSet();
 		selectAll = false;
+		toastStore.success(`Deleted ${toDelete.length} transform${toDelete.length !== 1 ? 's' : ''}`);
+		await fetchTransforms();
 	}
 
 	function openEditForm(_transform: CollectionTransform) {
@@ -339,12 +373,6 @@
 		} catch (e) {
 			toastStore.error(formatError(e, 'Failed to trigger collection transform'));
 		}
-	}
-
-	function requestDeleteTransform(transform: CollectionTransform, refresh = true) {
-		transformPendingDelete = transform;
-		// Store refresh preference
-		(transformPendingDelete as any)._skipRefresh = !refresh;
 	}
 
 	async function confirmDeleteTransform() {
@@ -685,10 +713,10 @@
 										onclick={() => onViewTransform(transform.collection_transform_id)}
 										class="text-blue-600 dark:text-blue-400 hover:underline"
 									>
-										{transform.dataset_title}
+										{transform.title}
 									</button>
 								{:else}
-									{transform.dataset_title}
+									{transform.title}
 								{/if}
 							</td>
 							<td class="px-4 py-3 text-sm">
@@ -720,7 +748,7 @@
 								{stats?.total_files_processed ?? '-'}
 							</td>
 							<td class="px-4 py-3">
-								{stats?.total_chunks_created ?? '-'}
+								{stats?.total_items_created ?? '-'}
 							</td>
 							<td class="px-4 py-3">
 								{formatDate(transform.created_at, false)}
@@ -804,12 +832,21 @@
 <ConfirmDialog
 	open={transformPendingDelete !== null}
 	message={transformPendingDelete
-		? `Are you sure you want to delete the transform "${transformPendingDelete.collection_title} > ${transformPendingDelete.dataset_title}"? This action cannot be undone.`
+		? `Are you sure you want to delete the transform "${transformPendingDelete.title}"? This action cannot be undone.`
 		: ''}
 	confirmLabel="Delete"
 	variant="danger"
 	onConfirm={confirmDeleteTransform}
 	onCancel={() => (transformPendingDelete = null)}
+/>
+
+<ConfirmDialog
+	open={transformsPendingBulkDelete.length > 0}
+	message={`Are you sure you want to delete ${transformsPendingBulkDelete.length} transform${transformsPendingBulkDelete.length !== 1 ? 's' : ''}? This action cannot be undone.`}
+	confirmLabel="Delete All"
+	variant="danger"
+	onConfirm={confirmBulkDeleteTransforms}
+	onCancel={() => (transformsPendingBulkDelete = [])}
 />
 
 <!-- Failed Files Modal -->

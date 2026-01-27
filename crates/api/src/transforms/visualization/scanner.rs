@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::models::{
-    LLMConfig, VectorDatabaseConfig, VisualizationConfig, VisualizationTransformJob,
+    LLMConfig, QdrantConnectionConfig, VisualizationConfig, VisualizationTransformJob,
 };
 
 use crate::auth::AuthenticatedUser;
@@ -19,6 +19,7 @@ pub async fn trigger_visualization_transform_scan(
     visualization_transform_id: i32,
     owner: &str,
     encryption: &EncryptionService,
+    qdrant_config: &QdrantConnectionConfig,
 ) -> Result<()> {
     info!(
         "Manually triggering visualization transform scan for ID: {}",
@@ -191,15 +192,6 @@ pub async fn trigger_visualization_transform_scan(
         None
     };
 
-    // Get vector database config
-    let qdrant_url =
-        std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string());
-    let vector_db_config = VectorDatabaseConfig {
-        database_type: "qdrant".to_string(),
-        connection_url: qdrant_url,
-        api_key: std::env::var("QDRANT_API_KEY").ok(),
-    };
-
     // Build job
     let job = VisualizationTransformJob {
         job_id: Uuid::new_v4(),
@@ -209,32 +201,39 @@ pub async fn trigger_visualization_transform_scan(
         embedded_dataset_id: transform.embedded_dataset_id,
         qdrant_collection_name: embedded_dataset.collection_name.clone(),
         visualization_config,
-        vector_database_config: vector_db_config,
+        qdrant_config: qdrant_config.clone(),
         llm_config,
     };
 
-    // Publish to NATS
-    let js = async_nats::jetstream::new(nats.clone());
+    // Publish to NATS with retry
     let message_id = format!(
         "vt-{}-{}",
         visualization_transform_id, visualization.visualization_id
     );
 
-    let mut headers = async_nats::HeaderMap::new();
-    headers.insert("Nats-Msg-Id", message_id.as_str());
-
-    js.publish_with_headers(
-        "workers.visualization-transform".to_string(),
-        headers,
-        serde_json::to_vec(&job)?.into(),
+    let payload = serde_json::to_vec(&job)?;
+    match semantic_explorer_core::nats::publish_with_retry(
+        nats,
+        "workers.visualization-transform",
+        &message_id,
+        payload,
+        3,
     )
-    .await?
-    .await?;
-
-    info!(
-        "Published visualization job {} for transform {} (visualization {})",
-        job.job_id, visualization_transform_id, visualization.visualization_id
-    );
+    .await
+    {
+        semantic_explorer_core::nats::PublishResult::Published => {
+            info!(
+                "Published visualization job {} for transform {} (visualization {})",
+                job.job_id, visualization_transform_id, visualization.visualization_id
+            );
+        }
+        semantic_explorer_core::nats::PublishResult::Failed(e) => {
+            return Err(anyhow::anyhow!(
+                "Failed to publish visualization job after retries: {}",
+                e
+            ));
+        }
+    }
 
     Ok(())
 }

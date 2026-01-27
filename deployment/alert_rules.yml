@@ -198,6 +198,36 @@ groups:
             Queue has {{ $value }} pending messages.
             Workers may be lagging. Check worker processes.
 
+      - alert: DLQMessagesGrowing
+        expr: |
+          increase(dlq_messages_total[1h]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: worker
+        annotations:
+          summary: "Dead Letter Queue receiving messages"
+          description: |
+            {{ $value }} messages sent to DLQ in the last hour.
+            Transform type: {{ $labels.transform_type }}
+            Reason: {{ $labels.reason }}
+            Messages in DLQ have exhausted all retry attempts.
+            Check worker logs for root cause analysis.
+
+      - alert: DLQMessagesHigh
+        expr: |
+          sum(dlq_messages_total) > 100
+        for: 5m
+        labels:
+          severity: critical
+          service: worker
+        annotations:
+          summary: "High number of messages in Dead Letter Queue"
+          description: |
+            Total DLQ messages: {{ $value }}
+            This indicates persistent job failures.
+            Investigate and remediate failed transforms.
+
       # NOTE: NATS connection error metrics require nats_exporter with connection stats enabled
       # This alert is a placeholder - enable if using NATS with monitoring
       # - alert: NatsConnectionFailures

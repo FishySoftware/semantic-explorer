@@ -8,7 +8,6 @@ Even when datamapplot is run in offline_mode=True, we still patch the HTML as a 
 """
 
 import logging
-import os
 import base64
 import re
 from pathlib import Path
@@ -60,9 +59,7 @@ EXTERNAL_RESOURCE_PATTERNS = [
     (re.compile(r"<link[^>]*fontawesome[^>]*>", re.IGNORECASE), "FontAwesome link"),
     # Bootstrap CDN - catch all bootstrapcdn.com links
     (
-        re.compile(
-            r"<link[^>]*maxcdn\.bootstrapcdn\.com[^>]*>", re.IGNORECASE
-        ),
+        re.compile(r"<link[^>]*maxcdn\.bootstrapcdn\.com[^>]*>", re.IGNORECASE),
         "Bootstrap CDN link",
     ),
     # Generic preconnect to font services (safety catch-all)

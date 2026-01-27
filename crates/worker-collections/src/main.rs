@@ -1,5 +1,6 @@
 use anyhow::Result;
 use semantic_explorer_core::{
+    nats::connect_with_retry,
     storage::initialize_client,
     worker::{self, WorkerContext},
 };
@@ -19,11 +20,10 @@ async fn main() -> Result<()> {
     // Initialize S3 client
     let s3_client = initialize_client().await?;
 
-    // Initialize NATS client
-    let nats_client = async_nats::connect(
-        &std::env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string()),
-    )
-    .await?;
+    // Initialize NATS client with auto-reconnect
+    let nats_url =
+        std::env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string());
+    let nats_client = connect_with_retry(&nats_url).await?;
 
     // Create worker context
     let context = WorkerContext {
@@ -42,6 +42,7 @@ async fn main() -> Result<()> {
         stream_name: "COLLECTION_TRANSFORMS".to_string(),
         consumer_config: semantic_explorer_core::nats::create_transform_file_consumer_config(),
         max_concurrent_jobs,
+        max_deliver: 5, // Matches consumer config
     };
 
     worker::run_worker(config, context, job::process_file_job).await

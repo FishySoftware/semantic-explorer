@@ -1,21 +1,20 @@
-use actix_web::rt::{spawn, task::JoinHandle, time::interval};
 use anyhow::Result;
-use async_nats::{Client as NatsClient, jetstream};
+use async_nats::Client as NatsClient;
 use aws_sdk_s3::Client as S3Client;
 use sqlx::{Pool, Postgres};
 use std::collections::HashSet;
-use std::time::Duration;
 use tracing::{error, info};
 use uuid::Uuid;
 
 use semantic_explorer_core::encryption::EncryptionService;
-use semantic_explorer_core::models::{DatasetTransformJob, EmbedderConfig, VectorDatabaseConfig};
+use semantic_explorer_core::models::{DatasetTransformJob, EmbedderConfig, QdrantConnectionConfig};
+use semantic_explorer_core::observability::record_scanner_items_discovered;
 use semantic_explorer_core::storage::{DocumentUpload, upload_document};
 
 use crate::auth::AuthenticatedUser;
 use crate::embedded_datasets::EmbeddedDataset;
 use crate::storage::postgres::dataset_transforms::{
-    get_active_dataset_transforms_privileged, get_dataset_transform,
+    get_active_dataset_transforms_privileged, get_dataset_transform_privileged,
 };
 use crate::storage::postgres::datasets;
 use crate::storage::postgres::embedded_datasets;
@@ -27,44 +26,27 @@ use crate::transforms::dataset::models::DatasetTransform;
 #[derive(Debug, Clone)]
 struct DatasetBatchConfig {
     embedder_config: EmbedderConfig,
-    vector_db_config: VectorDatabaseConfig,
+    qdrant_config: QdrantConnectionConfig,
     s3_bucket: String,
     embedded_dataset_prefix: String,
     embedding_batch_size: usize,
 }
 
-/// Initialize the background scanner for dataset transforms
-pub(crate) fn initialize_scanner(
-    pool: Pool<Postgres>,
-    nats_client: NatsClient,
-    s3_client: S3Client,
-    encryption: EncryptionService,
-) -> JoinHandle<()> {
-    spawn(async move {
-        let mut interval = interval(Duration::from_secs(10)); // Check for new dataset transform jobs every 10 seconds
-        loop {
-            interval.tick().await;
-            if let Err(e) =
-                scan_active_dataset_transforms(&pool, &nats_client, &s3_client, &encryption).await
-            {
-                error!("Error scanning dataset transforms: {}", e);
-            }
-        }
-    })
-}
-
 #[tracing::instrument(name = "scan_active_dataset_transforms", skip_all)]
-async fn scan_active_dataset_transforms(
+pub(crate) async fn scan_active_dataset_transforms(
     pool: &Pool<Postgres>,
     nats: &NatsClient,
     s3: &S3Client,
     encryption: &EncryptionService,
+    qdrant_config: &QdrantConnectionConfig,
 ) -> Result<()> {
     let transforms = get_active_dataset_transforms_privileged(pool).await?;
     info!("Scanning {} active dataset transforms", transforms.len());
 
     for transform in transforms {
-        if let Err(e) = process_dataset_transform_scan(pool, nats, s3, &transform, encryption).await
+        if let Err(e) =
+            process_dataset_transform_scan(pool, nats, s3, &transform, encryption, qdrant_config)
+                .await
         {
             error!(
                 "Failed to process dataset transform scan for {}: {}",
@@ -75,9 +57,36 @@ async fn scan_active_dataset_transforms(
     Ok(())
 }
 
+/// Scan a specific dataset transform by ID (privileged, for NATS triggers)
+#[tracing::instrument(
+    name = "scan_dataset_transform",
+    skip(pool, nats, s3, encryption, qdrant_config),
+    fields(dataset_transform_id = %dataset_transform_id)
+)]
+pub(crate) async fn scan_dataset_transform(
+    pool: &Pool<Postgres>,
+    nats: &NatsClient,
+    s3: &S3Client,
+    dataset_transform_id: i32,
+    encryption: &EncryptionService,
+    qdrant_config: &QdrantConnectionConfig,
+) -> Result<()> {
+    let transform = get_dataset_transform_privileged(pool, dataset_transform_id).await?;
+
+    if !transform.is_enabled {
+        info!(
+            "Dataset transform {} is disabled, skipping scan",
+            dataset_transform_id
+        );
+        return Ok(());
+    }
+
+    process_dataset_transform_scan(pool, nats, s3, &transform, encryption, qdrant_config).await
+}
+
 #[tracing::instrument(
     name = "process_dataset_transform_scan",
-    skip(pool, nats, s3, transform, encryption),
+    skip(pool, nats, s3, transform, encryption, qdrant_config),
     fields(dataset_transform_id = %transform.dataset_transform_id, embedder_count = %transform.embedder_ids.len())
 )]
 async fn process_dataset_transform_scan(
@@ -86,6 +95,7 @@ async fn process_dataset_transform_scan(
     s3: &S3Client,
     transform: &DatasetTransform,
     encryption: &EncryptionService,
+    qdrant_config: &QdrantConnectionConfig,
 ) -> Result<()> {
     info!(
         "Starting dataset transform scan for {} with {} embedders",
@@ -120,15 +130,6 @@ async fn process_dataset_transform_scan(
         embedded_datasets_list.len(),
         transform.dataset_transform_id
     );
-
-    // Get vector database config from environment
-    let qdrant_url =
-        std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string());
-    let vector_db_config = VectorDatabaseConfig {
-        database_type: "qdrant".to_string(),
-        connection_url: qdrant_url,
-        api_key: std::env::var("QDRANT_API_KEY").ok(),
-    };
 
     let embedded_datasets_count = embedded_datasets_list.len();
     let mut total_jobs = 0;
@@ -266,28 +267,35 @@ async fn process_dataset_transform_scan(
                 embedded_dataset_id: embedded_dataset.embedded_dataset_id,
                 owner_id: transform.owner_id.clone(),
                 embedder_config: embedder_config.clone(),
-                vector_database_config: vector_db_config.clone(),
+                qdrant_config: qdrant_config.clone(),
                 collection_name: embedded_dataset.collection_name.clone(),
                 batch_size: Some(embedding_batch_size),
             };
 
             let payload = serde_json::to_vec(&job)?;
 
-            // Use JetStream with message ID for deduplication
+            // Publish with retry (3 attempts with exponential backoff)
             let msg_id = format!("dt-{}-{}", transform.dataset_transform_id, batch_file_key);
-            let jetstream = jetstream::new(nats.clone());
-            let mut headers = async_nats::HeaderMap::new();
-            headers.insert("Nats-Msg-Id", msg_id.as_str());
-
-            jetstream
-                .publish_with_headers(
-                    "workers.dataset-transform".to_string(),
-                    headers,
-                    payload.into(),
-                )
-                .await?
-                .await?;
-            total_jobs += 1;
+            match semantic_explorer_core::nats::publish_with_retry(
+                nats,
+                "workers.dataset-transform",
+                &msg_id,
+                payload,
+                3,
+            )
+            .await
+            {
+                semantic_explorer_core::nats::PublishResult::Published => {
+                    total_jobs += 1;
+                }
+                semantic_explorer_core::nats::PublishResult::Failed(e) => {
+                    // TODO: Insert pending record for fallback recovery
+                    error!(
+                        "Failed to publish job for batch {} after retries: {}",
+                        batch_file_key, e
+                    );
+                }
+            }
         }
 
         // If all existing batches are processed (or none exist), check if we need to create new batches
@@ -295,7 +303,7 @@ async fn process_dataset_transform_scan(
             // Get dataset items that haven't been batched yet
             let batch_config = DatasetBatchConfig {
                 embedder_config: embedder_config.clone(),
-                vector_db_config: vector_db_config.clone(),
+                qdrant_config: qdrant_config.clone(),
                 s3_bucket: s3_bucket.clone(),
                 embedded_dataset_prefix: embedded_dataset_prefix.clone(),
                 embedding_batch_size,
@@ -317,6 +325,10 @@ async fn process_dataset_transform_scan(
         "Dataset transform scan finished for {}. Created {} jobs across {} embedded datasets.",
         transform.dataset_transform_id, total_jobs, embedded_datasets_count
     );
+
+    if total_jobs > 0 {
+        record_scanner_items_discovered("dataset", total_jobs as u64);
+    }
 
     Ok(())
 }
@@ -458,28 +470,35 @@ async fn create_batches_from_dataset_items(
             embedded_dataset_id: embedded_dataset.embedded_dataset_id,
             owner_id: transform.owner_id.clone(),
             embedder_config: config.embedder_config.clone(),
-            vector_database_config: config.vector_db_config.clone(),
+            qdrant_config: config.qdrant_config.clone(),
             collection_name: embedded_dataset.collection_name.clone(),
             batch_size: Some(config.embedding_batch_size),
         };
 
         let payload = serde_json::to_vec(&job)?;
 
-        // Use JetStream with message ID for deduplication
+        // Publish with retry (3 attempts with exponential backoff)
         let msg_id = format!("dt-{}-{}", transform.dataset_transform_id, batch_key);
-        let jetstream = jetstream::new(nats.clone());
-        let mut headers = async_nats::HeaderMap::new();
-        headers.insert("Nats-Msg-Id", msg_id.as_str());
-
-        jetstream
-            .publish_with_headers(
-                "workers.dataset-transform".to_string(),
-                headers,
-                payload.into(),
-            )
-            .await?
-            .await?;
-        jobs_created += 1;
+        match semantic_explorer_core::nats::publish_with_retry(
+            nats,
+            "workers.dataset-transform",
+            &msg_id,
+            payload,
+            3,
+        )
+        .await
+        {
+            semantic_explorer_core::nats::PublishResult::Published => {
+                jobs_created += 1;
+            }
+            semantic_explorer_core::nats::PublishResult::Failed(e) => {
+                // TODO: Insert pending record for fallback recovery
+                error!(
+                    "Failed to publish job for batch {} after retries: {}",
+                    batch_key, e
+                );
+            }
+        }
     }
 
     info!(
@@ -503,33 +522,36 @@ async fn create_batches_from_dataset_items(
     Ok(jobs_created)
 }
 
-/// Trigger a dataset transform scan immediately
+/// Trigger a dataset transform scan via NATS (non-blocking)
+///
+/// This publishes a targeted scan trigger to NATS, which will be processed
+/// asynchronously by the trigger listener. This allows the API to return
+/// immediately while the scan runs in the background.
 #[tracing::instrument(
     name = "trigger_dataset_transform_scan",
-    skip(pool, nats, s3, encryption),
+    skip(nats),
     fields(dataset_transform_id = %dataset_transform_id)
 )]
 pub async fn trigger_dataset_transform_scan(
-    pool: &Pool<Postgres>,
     nats: &NatsClient,
-    s3: &S3Client,
     dataset_transform_id: i32,
     owner: &str,
-    encryption: &EncryptionService,
 ) -> Result<()> {
     info!(
-        "Triggering dataset transform scan for {}",
+        "Publishing dataset transform scan trigger for {}",
         dataset_transform_id
     );
 
-    // Get the dataset transform
-    let transform = get_dataset_transform(pool, owner, dataset_transform_id).await?;
-
-    // Process the scan immediately
-    process_dataset_transform_scan(pool, nats, s3, &transform, encryption).await?;
+    crate::transforms::trigger::publish_targeted_trigger(
+        nats,
+        "dataset",
+        dataset_transform_id,
+        owner,
+    )
+    .await?;
 
     info!(
-        "Triggered dataset transform scan for {}",
+        "Published dataset transform scan trigger for {}",
         dataset_transform_id
     );
 

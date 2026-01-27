@@ -106,8 +106,8 @@ Jobs from the `DATASET_TRANSFORMS` NATS stream:
     "model": "text-embedding-3-small",
     "api_key": "sk-..."
   },
-  "vector_database_config": {
-    "connection_url": "http://localhost:6334",
+  "qdrant_config": {
+    "url": "http://localhost:6334",
     "api_key": null
   }
 }

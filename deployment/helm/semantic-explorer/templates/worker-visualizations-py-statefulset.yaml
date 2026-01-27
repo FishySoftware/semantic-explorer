@@ -165,6 +165,13 @@ spec:
         - name: SERVICE_NAME
           value: "worker-visualizations-py"
         {{- end }}
+        {{- if .Values.llmInferenceApi.enabled }}
+        # LLM Inference API for topic naming in visualization transforms
+        - name: LLM_INFERENCE_API_URL
+          value: "http://{{ include "semantic-explorer.fullname" . }}-llm-inference-api:{{ .Values.llmInferenceApi.service.port }}"
+        - name: LLM_INFERENCE_API_TIMEOUT_SECS
+          value: {{ .Values.workerVisualizationsPy.llmTimeoutSeconds | default 120 | quote }}
+        {{- end }}
         {{- with .Values.workerVisualizationsPy.envFrom }}
         envFrom:
           {{- toYaml . | nindent 10 }}
