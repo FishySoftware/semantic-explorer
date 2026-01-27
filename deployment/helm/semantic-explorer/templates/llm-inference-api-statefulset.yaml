@@ -82,9 +82,6 @@ spec:
         - name: http
           containerPort: 8091
           protocol: TCP
-        - name: metrics
-          containerPort: 8091
-          protocol: TCP
         env:
         {{- range $key, $value := .Values.llmInferenceApi.env }}
         - name: {{ $key }}
@@ -93,8 +90,10 @@ spec:
         {{- if .Values.observability.otelCollector.enabled }}
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: {{ include "semantic-explorer.otel.endpoint" . }}
+        {{- if not (hasKey .Values.llmInferenceApi.env "SERVICE_NAME") }}
         - name: SERVICE_NAME
           value: "llm-inference-api"
+        {{- end }}
         {{- end }}
         {{- with .Values.llmInferenceApi.envFrom }}
         envFrom:
@@ -123,12 +122,18 @@ spec:
           mountPath: /tmp
         - name: hf-cache
           mountPath: /home/appuser/.cache
+        {{- with .Values.llmInferenceApi.volumeMounts }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       volumes:
       - name: tmp
         emptyDir: {}
       - name: hf-cache
         emptyDir:
           sizeLimit: 1Gi
+      {{- with .Values.llmInferenceApi.volumes }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
       {{- with .Values.llmInferenceApi.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

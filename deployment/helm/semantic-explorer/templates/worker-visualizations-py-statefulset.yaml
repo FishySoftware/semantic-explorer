@@ -162,6 +162,7 @@ spec:
         {{- if .Values.observability.otelCollector.enabled }}
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: {{ include "semantic-explorer.otel.endpoint" . }}
+        {{- if not (hasKey .Values.workerVisualizationsPy.env "SERVICE_NAME") }}
         - name: SERVICE_NAME
           value: "worker-visualizations-py"
         {{- end }}

@@ -246,8 +246,10 @@ spec:
         {{- if .Values.observability.otelCollector.enabled }}
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: {{ include "semantic-explorer.otel.endpoint" . }}
+        {{- if not (hasKey .Values.api.env "SERVICE_NAME") }}
         - name: SERVICE_NAME
           value: "api"
+        {{- end }}
         {{- end }}
         {{- with .Values.api.envFrom }}
         envFrom:

@@ -591,7 +591,8 @@ pub async fn stream_collection_transform_status(
     nats_client: Data<NatsClient>,
     query: Query<SSEStreamQuery>,
 ) -> impl Responder {
-    let owner = user.to_string();
+    // Use hashed owner ID to match the format used by publish_transform_status
+    let owner = user.as_owner();
     let nats = nats_client.get_ref().clone();
     let collection_id_filter = query.collection_id;
 

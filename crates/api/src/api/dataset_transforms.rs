@@ -923,7 +923,8 @@ pub async fn stream_dataset_transform_status(
     use std::time::Duration;
     use tokio::time::interval;
 
-    let owner = user.to_string();
+    // Use hashed owner ID to match the format used by publish_transform_status
+    let owner = user.as_owner();
     let nats = nats_client.get_ref().clone();
     let dataset_id_filter = query.dataset_id;
 

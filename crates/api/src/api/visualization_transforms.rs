@@ -913,7 +913,8 @@ pub async fn stream_visualization_transform_status(
     use std::time::Duration;
     use tokio::time::interval;
 
-    let owner = user.to_string();
+    // Use hashed owner ID to match the format used by publish_transform_status
+    let owner = user.as_owner();
     let nats = nats_client.get_ref().clone();
     let embedded_dataset_id_filter = query.embedded_dataset_id;
     let visualization_transform_id_filter = query.visualization_transform_id;
