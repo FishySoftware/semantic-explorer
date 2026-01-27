@@ -136,7 +136,7 @@ const LIST_VISUALIZATIONS_QUERY: &str = r#"
 
 const UPDATE_VISUALIZATION_QUERY: &str = r#"
     UPDATE visualizations
-    SET status = $2,
+    SET status = COALESCE($2, status),
         started_at = COALESCE($3, started_at),
         completed_at = COALESCE($4, completed_at),
         html_s3_key = COALESCE($5, html_s3_key),
@@ -145,6 +145,18 @@ const UPDATE_VISUALIZATION_QUERY: &str = r#"
         error_message = COALESCE($8, error_message),
         stats_json = COALESCE($9, stats_json)
     WHERE visualization_id = $1
+    RETURNING visualization_id, visualization_transform_id, status, started_at, completed_at,
+              html_s3_key, point_count, cluster_count, error_message, stats_json, created_at
+"#;
+
+/// Atomically update visualization to processing status only if not already completed/failed.
+/// This prevents race conditions when processing messages arrive after success/failure.
+const UPDATE_VISUALIZATION_TO_PROCESSING_QUERY: &str = r#"
+    UPDATE visualizations
+    SET status = 'processing',
+        started_at = COALESCE($2, started_at)
+    WHERE visualization_id = $1
+      AND status NOT IN ('completed', 'failed')
     RETURNING visualization_id, visualization_transform_id, status, started_at, completed_at,
               html_s3_key, point_count, cluster_count, error_message, stats_json, created_at
 "#;
@@ -262,6 +274,22 @@ pub async fn update_visualization(
         .bind(update.error_message.as_deref())
         .bind(update.stats_json.as_ref())
         .fetch_one(pool)
+        .await?;
+    Ok(visualization)
+}
+
+/// Atomically update visualization to processing status only if not already completed/failed.
+/// Returns Some(visualization) if update succeeded, None if status was already terminal.
+/// This prevents race conditions when processing messages arrive after success/failure.
+pub async fn update_visualization_to_processing(
+    pool: &Pool<Postgres>,
+    visualization_id: i32,
+    started_at: Option<DateTime<Utc>>,
+) -> Result<Option<Visualization>> {
+    let visualization = sqlx::query_as::<_, Visualization>(UPDATE_VISUALIZATION_TO_PROCESSING_QUERY)
+        .bind(visualization_id)
+        .bind(started_at)
+        .fetch_optional(pool)
         .await?;
     Ok(visualization)
 }

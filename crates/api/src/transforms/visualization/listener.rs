@@ -169,18 +169,6 @@ async fn handle_processing_status(
         result.visualization_transform_id, result.visualization_id
     );
 
-    // Check current status - don't overwrite if already completed or failed
-    // This prevents race conditions when processing/success messages arrive out of order
-    if let Ok(viz) = visualization_transforms::get_visualization(&ctx.pool, result.visualization_id).await {
-        if viz.status == "completed" || viz.status == "failed" {
-            info!(
-                "Skipping processing update for visualization {} - already {}",
-                result.visualization_id, viz.status
-            );
-            return;
-        }
-    }
-
     // Update the visualization transform status
     if let Err(e) = visualization_transforms::update_visualization_transform_status(
         &ctx.pool,
@@ -198,19 +186,33 @@ async fn handle_processing_status(
         );
     }
 
-    // Update the individual visualization record
-    let update = VisualizationUpdate::new()
-        .status("processing")
-        .started_at(chrono::Utc::now());
-
-    if let Err(e) =
-        visualization_transforms::update_visualization(&ctx.pool, result.visualization_id, &update)
-            .await
+    // Atomically update the individual visualization record to processing
+    // This will NOT update if status is already 'completed' or 'failed' (prevents race conditions)
+    match visualization_transforms::update_visualization_to_processing(
+        &ctx.pool,
+        result.visualization_id,
+        Some(chrono::Utc::now()),
+    )
+    .await
     {
-        error!(
-            "Failed to update visualization {} to processing: {}",
-            result.visualization_id, e
-        );
+        Ok(Some(_)) => {
+            info!(
+                "Updated visualization {} to processing",
+                result.visualization_id
+            );
+        }
+        Ok(None) => {
+            info!(
+                "Skipping processing update for visualization {} - already completed or failed",
+                result.visualization_id
+            );
+        }
+        Err(e) => {
+            error!(
+                "Failed to update visualization {} to processing: {}",
+                result.visualization_id, e
+            );
+        }
     }
 }
 
