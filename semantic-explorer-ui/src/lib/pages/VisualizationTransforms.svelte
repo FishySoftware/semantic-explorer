@@ -551,9 +551,10 @@
 				try {
 					const statusUpdate = JSON.parse(event.data);
 					// Handle status update - refresh specific transform or trigger refetch
-					if (statusUpdate.visualization_transform_id) {
+					// API sends transform_id (generic) not visualization_transform_id
+					if (statusUpdate.transform_id) {
 						// Refresh stats for the specific transform
-						fetchStatsForTransform(statusUpdate.visualization_transform_id);
+						fetchStatsForTransform(statusUpdate.transform_id);
 					}
 				} catch (e) {
 					console.error('Failed to parse SSE status event:', e);

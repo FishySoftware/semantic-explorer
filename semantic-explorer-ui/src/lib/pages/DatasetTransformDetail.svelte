@@ -240,7 +240,8 @@
 				try {
 					const statusUpdate = JSON.parse(event.data);
 					// If this is an update for our transform, refresh stats and batches
-					if (statusUpdate.dataset_transform_id === datasetTransformId) {
+					// API sends transform_id (generic) not dataset_transform_id
+					if (statusUpdate.transform_id === datasetTransformId) {
 						fetchDetailedStats();
 						fetchBatches();
 					}

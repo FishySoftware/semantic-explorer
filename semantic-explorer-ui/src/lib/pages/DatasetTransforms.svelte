@@ -392,9 +392,10 @@
 				try {
 					const statusUpdate = JSON.parse(event.data);
 					// Handle status update - refresh specific transform or trigger refetch
-					if (statusUpdate.dataset_transform_id) {
+					// API sends transform_id (generic) not dataset_transform_id
+					if (statusUpdate.transform_id) {
 						// Queue stats update for batching (reduces requests during high-frequency updates)
-						queueSSEStatsUpdate(statusUpdate.dataset_transform_id);
+						queueSSEStatsUpdate(statusUpdate.transform_id);
 					}
 				} catch (e) {
 					console.error('Failed to parse SSE status event:', e);

@@ -166,6 +166,7 @@ spec:
         - name: SERVICE_NAME
           value: "worker-visualizations-py"
         {{- end }}
+        {{- end }}
         {{- if .Values.llmInferenceApi.enabled }}
         # LLM Inference API for topic naming in visualization transforms
         - name: LLM_INFERENCE_API_URL

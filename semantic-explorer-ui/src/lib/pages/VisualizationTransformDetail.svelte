@@ -204,7 +204,8 @@
 				try {
 					const statusUpdate = JSON.parse(event.data);
 					// If this is an update for our transform, refresh stats and visualizations
-					if (statusUpdate.visualization_transform_id === visualizationTransformId) {
+					// API sends transform_id (generic) not visualization_transform_id
+					if (statusUpdate.transform_id === visualizationTransformId) {
 						fetchStats();
 						fetchVisualizations();
 					}

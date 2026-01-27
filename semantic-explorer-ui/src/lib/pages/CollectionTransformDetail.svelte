@@ -200,7 +200,8 @@
 				try {
 					const statusUpdate = JSON.parse(event.data);
 					// If this is an update for our transform, refresh stats and files
-					if (statusUpdate.collection_transform_id === collectionTransformId) {
+					// API sends transform_id (generic) not collection_transform_id
+					if (statusUpdate.transform_id === collectionTransformId) {
 						fetchStats();
 						fetchProcessedFiles();
 					}

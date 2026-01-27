@@ -169,6 +169,18 @@ async fn handle_processing_status(
         result.visualization_transform_id, result.visualization_id
     );
 
+    // Check current status - don't overwrite if already completed or failed
+    // This prevents race conditions when processing/success messages arrive out of order
+    if let Ok(viz) = visualization_transforms::get_visualization(&ctx.pool, result.visualization_id).await {
+        if viz.status == "completed" || viz.status == "failed" {
+            info!(
+                "Skipping processing update for visualization {} - already {}",
+                result.visualization_id, viz.status
+            );
+            return;
+        }
+    }
+
     // Update the visualization transform status
     if let Err(e) = visualization_transforms::update_visualization_transform_status(
         &ctx.pool,
