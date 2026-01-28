@@ -170,5 +170,5 @@ fn default_cluster_boundary_polygons() -> bool {
 }
 
 fn default_polygon_alpha() -> f32 {
-    0.3
+    0.5
 }

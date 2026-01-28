@@ -195,6 +195,8 @@ pub struct VisualizationConfig {
     pub llm_batch_size: i32, // Number of clusters to process in parallel (1-100, default 10)
     #[serde(default = "default_samples_per_cluster")]
     pub samples_per_cluster: i32, // Number of sample texts to send to LLM per cluster (1-100, default 5)
+    #[serde(default = "default_topic_naming_prompt")]
+    pub topic_naming_prompt: String, // Custom prompt template for LLM topic naming
 
     // Datamapplot create_interactive_plot parameters
     #[serde(default = "default_inline_data")]
@@ -313,6 +315,9 @@ fn default_llm_batch_size() -> i32 {
 fn default_samples_per_cluster() -> i32 {
     5
 }
+fn default_topic_naming_prompt() -> String {
+    "These are representative texts from a document cluster:\n\n{{samples}}\n\nProvide a short, concise topic name (2-4 words) that captures the main theme. Respond with ONLY the topic name, nothing else.".to_string()
+}
 fn default_width() -> String {
     "100%".to_string()
 }
@@ -338,7 +343,7 @@ fn default_cluster_boundary_polygons() -> bool {
     false
 }
 fn default_polygon_alpha() -> f32 {
-    0.1
+    0.5
 }
 fn default_cvd_safer() -> bool {
     false

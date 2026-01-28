@@ -3,6 +3,7 @@ pub(crate) mod chat;
 pub(crate) mod collection_transforms;
 pub(crate) mod collections;
 pub(crate) mod dataset_transform_batches;
+pub(crate) mod dataset_transform_pending_batches;
 pub(crate) mod dataset_transform_stats;
 pub(crate) mod dataset_transforms;
 pub(crate) mod datasets;

@@ -1,18 +1,31 @@
 //! Dataset transform result listener
 //!
 //! Handles results from dataset transform workers (embedding generation).
+//!
+//! ## Reliability Guarantees
+//!
+//! This listener is designed for high reliability in distributed environments:
+//!
+//! 1. **Idempotency**: Results for already-completed batches are skipped (no duplicate stats)
+//! 2. **Atomic Transactions**: All batch tracking and stats updates happen in a single transaction
+//! 3. **ACK-after-commit**: NATS messages are only acknowledged AFTER the transaction commits
+//! 4. **Distributed Tracing**: Trace context is propagated for end-to-end visibility
 
 use async_nats::{Client as NatsClient, jetstream};
 use aws_sdk_s3::Client as S3Client;
 use futures_util::StreamExt;
 use sqlx::{Pool, Postgres};
 use std::time::Duration;
-use tracing::{error, info, warn};
+use tracing::{Instrument, error, info, info_span, warn};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-use crate::storage::postgres::dataset_transform_batches::CreateBatchRequest;
-use crate::storage::postgres::{dataset_transform_batches, embedded_datasets};
+use crate::storage::postgres::dataset_transform_batches::{
+    CreateBatchRequest, create_batch_tx, update_batch_status_tx,
+};
+use crate::storage::postgres::embedded_datasets;
 use crate::storage::s3::delete_file;
 use semantic_explorer_core::models::DatasetTransformResult;
+use semantic_explorer_core::nats::extract_otel_context;
 
 use super::super::listeners::publish_transform_status;
 
@@ -22,6 +35,16 @@ pub(crate) struct DatasetListenerContext {
     pub pool: Pool<Postgres>,
     pub s3_client: S3Client,
     pub nats_client: NatsClient,
+}
+
+/// Result of handling a batch result message
+enum HandleResult {
+    /// Successfully processed and committed
+    Success,
+    /// Skipped due to idempotency (already processed)
+    Skipped,
+    /// Failed - should NAK for retry
+    Failed(String),
 }
 
 /// Start the dataset transform result listener
@@ -54,7 +77,7 @@ pub(crate) fn start_result_listener(context: DatasetListenerContext) {
                     description: Some("Dataset transform status listener".to_string()),
                     filter_subject: subject.to_string(),
                     ack_policy: jetstream::consumer::AckPolicy::Explicit,
-                    ack_wait: Duration::from_secs(60),
+                    ack_wait: Duration::from_secs(120), // 2 minutes - enough for transaction
                     max_deliver: 5,
                     ..Default::default()
                 };
@@ -90,22 +113,48 @@ pub(crate) fn start_result_listener(context: DatasetListenerContext) {
                 }
             };
 
-            info!(
-                "Received dataset transform result on subject: {}",
-                msg.subject
+            // Extract trace context for distributed tracing
+            let parent_context = extract_otel_context(msg.headers.as_ref());
+            let span = info_span!(
+                "handle_dataset_transform_result",
+                subject = %msg.subject,
             );
-            match serde_json::from_slice::<DatasetTransformResult>(&msg.payload) {
-                Ok(result) => {
-                    handle_result(result, &context).await;
-                    if let Err(e) = msg.ack().await {
-                        error!("Failed to acknowledge message: {}", e);
-                    }
-                }
+            let _ = span.set_parent(parent_context);
+
+            let result: DatasetTransformResult = match serde_json::from_slice(&msg.payload) {
+                Ok(r) => r,
                 Err(e) => {
                     error!("Failed to deserialize dataset transform result: {}", e);
                     // Acknowledge bad messages to prevent reprocessing
                     if let Err(ack_err) = msg.ack().await {
                         error!("Failed to acknowledge bad message: {}", ack_err);
+                    }
+                    continue;
+                }
+            };
+
+            // Process within the trace span
+            let handle_result = async { handle_result_atomic(result.clone(), &context).await }
+                .instrument(span.clone())
+                .await;
+
+            // ACK/NAK based on result - CRITICAL: only after transaction commits
+            match handle_result {
+                HandleResult::Success | HandleResult::Skipped => {
+                    if let Err(e) = msg.ack().await {
+                        error!("Failed to acknowledge message: {}", e);
+                    }
+                }
+                HandleResult::Failed(reason) => {
+                    warn!("Batch handling failed, will retry: {}", reason);
+                    // NAK with delay for retry
+                    if let Err(e) = msg
+                        .ack_with(async_nats::jetstream::AckKind::Nak(Some(
+                            Duration::from_secs(30),
+                        )))
+                        .await
+                    {
+                        error!("Failed to NAK message: {}", e);
                     }
                 }
             }
@@ -113,11 +162,17 @@ pub(crate) fn start_result_listener(context: DatasetListenerContext) {
     });
 }
 
-#[tracing::instrument(name = "handle_dataset_transform_result", skip(ctx))]
-async fn handle_result(result: DatasetTransformResult, ctx: &DatasetListenerContext) {
+/// Handle a batch result atomically with proper idempotency and transaction boundaries
+async fn handle_result_atomic(
+    result: DatasetTransformResult,
+    ctx: &DatasetListenerContext,
+) -> HandleResult {
     info!(
-        "Handling dataset transform batch result for: {} (status: {})",
-        result.batch_file_key, result.status
+        batch_key = %result.batch_file_key,
+        status = %result.status,
+        chunk_count = result.chunk_count,
+        embedded_dataset_id = result.embedded_dataset_id,
+        "Handling dataset transform batch result"
     );
 
     // Validate ownership by fetching the embedded dataset
@@ -134,11 +189,11 @@ async fn handle_result(result: DatasetTransformResult, ctx: &DatasetListenerCont
                 "Embedded dataset {} not found or access denied for owner {}: {}",
                 result.embedded_dataset_id, result.owner_id, e
             );
-            return;
+            return HandleResult::Failed(format!("Embedded dataset not found: {}", e));
         }
     };
 
-    // Get the current status from transform_processed_files to handle state transitions
+    // Get the current status from transform_processed_files for idempotency check
     let previous_status = embedded_datasets::get_batch_previous_status(
         &ctx.pool,
         result.embedded_dataset_id,
@@ -146,49 +201,78 @@ async fn handle_result(result: DatasetTransformResult, ctx: &DatasetListenerCont
     )
     .await;
 
+    // IDEMPOTENCY GUARD: Skip if already successfully processed
+    // This prevents duplicate stats when NATS redelivers messages
+    if let Some(ref prev) = previous_status
+        && (prev == "completed" || prev == "success")
+    {
+        info!(
+            batch_key = %result.batch_file_key,
+            previous_status = %prev,
+            "Batch already completed, skipping (idempotency guard)"
+        );
+        return HandleResult::Skipped;
+    }
+
     match result.status.as_str() {
         "processing" => {
-            handle_processing_status(&result, &embedded_dataset, previous_status.as_deref(), ctx)
-                .await;
+            handle_processing_status_atomic(
+                &result,
+                &embedded_dataset,
+                previous_status.as_deref(),
+                ctx,
+            )
+            .await
         }
         "failed" => {
-            handle_failed_status(&result, &embedded_dataset, previous_status.as_deref(), ctx).await;
+            handle_failed_status_atomic(&result, &embedded_dataset, previous_status.as_deref(), ctx)
+                .await
         }
         "success" => {
-            handle_success_status(&result, &embedded_dataset, previous_status.as_deref(), ctx)
-                .await;
+            handle_success_status_atomic(
+                &result,
+                &embedded_dataset,
+                previous_status.as_deref(),
+                ctx,
+            )
+            .await
         }
         _ => {
             error!(
                 "Unknown status '{}' for batch {}",
                 result.status, result.batch_file_key
             );
+            HandleResult::Failed(format!("Unknown status: {}", result.status))
         }
     }
 }
 
-async fn handle_processing_status(
+/// Handle "processing" status - batch has started processing
+async fn handle_processing_status_atomic(
     result: &DatasetTransformResult,
     embedded_dataset: &crate::embedded_datasets::EmbeddedDataset,
     previous_status: Option<&str>,
     ctx: &DatasetListenerContext,
-) {
+) -> HandleResult {
     // Start a transaction for atomic updates
     let mut tx = match ctx.pool.begin().await {
         Ok(tx) => tx,
         Err(e) => {
             error!("Failed to begin transaction: {}", e);
-            return;
+            return HandleResult::Failed(format!("Transaction begin failed: {}", e));
         }
     };
 
-    // Record that processing has started
     info!(
-        "Marking batch as processing: {} (ed_id={}, chunks={})",
-        result.batch_file_key, result.embedded_dataset_id, result.chunk_count
+        batch_key = %result.batch_file_key,
+        embedded_dataset_id = result.embedded_dataset_id,
+        chunk_count = result.chunk_count,
+        "Marking batch as processing"
     );
-    if let Err(e) = embedded_datasets::record_processed_batch(
-        &ctx.pool,
+
+    // Record that processing has started (in transaction)
+    if let Err(e) = embedded_datasets::record_processed_batch_tx(
+        &mut tx,
         result.embedded_dataset_id,
         &result.batch_file_key,
         result.chunk_count as i32,
@@ -199,12 +283,13 @@ async fn handle_processing_status(
     .await
     {
         error!("Failed to record batch processing start: {}", e);
-        return;
+        let _ = tx.rollback().await;
+        return HandleResult::Failed(format!("Record batch failed: {}", e));
     }
 
-    // Record in dataset_transform_batches for tracking at transform level
-    if let Err(e) = dataset_transform_batches::create_batch(
-        &ctx.pool,
+    // Record in dataset_transform_batches for tracking at transform level (in transaction)
+    if let Err(e) = create_batch_tx(
+        &mut tx,
         CreateBatchRequest {
             dataset_transform_id: embedded_dataset.dataset_transform_id,
             batch_key: result.batch_file_key.clone(),
@@ -217,7 +302,8 @@ async fn handle_processing_status(
     .await
     {
         error!("Failed to create dataset transform batch record: {}", e);
-        return;
+        let _ = tx.rollback().await;
+        return HandleResult::Failed(format!("Create batch failed: {}", e));
     }
 
     // Atomically increment processing stats (only if not already processing)
@@ -233,42 +319,48 @@ async fn handle_processing_status(
     {
         error!("Failed to increment processing stats: {}", e);
         let _ = tx.rollback().await;
-        return;
+        return HandleResult::Failed(format!("Increment stats failed: {}", e));
     }
 
     if let Err(e) = tx.commit().await {
         error!("Failed to commit transaction: {}", e);
+        return HandleResult::Failed(format!("Transaction commit failed: {}", e));
     }
+
+    HandleResult::Success
 }
 
-async fn handle_failed_status(
+/// Handle "failed" status - batch processing failed
+async fn handle_failed_status_atomic(
     result: &DatasetTransformResult,
     embedded_dataset: &crate::embedded_datasets::EmbeddedDataset,
     previous_status: Option<&str>,
     ctx: &DatasetListenerContext,
-) {
+) -> HandleResult {
     // Start a transaction for atomic updates
     let mut tx = match ctx.pool.begin().await {
         Ok(tx) => tx,
         Err(e) => {
             error!("Failed to begin transaction: {}", e);
-            return;
+            return HandleResult::Failed(format!("Transaction begin failed: {}", e));
         }
     };
 
-    error!(
-        "Dataset transform batch failed for {}: {:?}",
-        result.batch_file_key, result.error
-    );
-
-    // Clone error before using it multiple times
     let error_msg = result
         .error
         .clone()
         .unwrap_or_else(|| "Unknown error".to_string());
 
-    if let Err(e) = embedded_datasets::record_processed_batch(
-        &ctx.pool,
+    error!(
+        batch_key = %result.batch_file_key,
+        error = %error_msg,
+        chunk_count = result.chunk_count,
+        "Dataset transform batch failed"
+    );
+
+    // Record failure in transform_processed_files (in transaction)
+    if let Err(e) = embedded_datasets::record_processed_batch_tx(
+        &mut tx,
         result.embedded_dataset_id,
         &result.batch_file_key,
         result.chunk_count as i32,
@@ -280,12 +372,12 @@ async fn handle_failed_status(
     {
         error!("Failed to record batch processing failure: {}", e);
         let _ = tx.rollback().await;
-        return;
+        return HandleResult::Failed(format!("Record batch failed: {}", e));
     }
 
-    // Also update batch record at transform level
-    if let Err(e) = dataset_transform_batches::update_batch_status(
-        &ctx.pool,
+    // Update batch record at transform level (in transaction)
+    if let Err(e) = update_batch_status_tx(
+        &mut tx,
         embedded_dataset.dataset_transform_id,
         &result.batch_file_key,
         "failed",
@@ -297,10 +389,10 @@ async fn handle_failed_status(
     {
         error!("Failed to update dataset transform batch status: {}", e);
         let _ = tx.rollback().await;
-        return;
+        return HandleResult::Failed(format!("Update batch status failed: {}", e));
     }
 
-    // If transitioning from processing to failed, decrement processing and increment failed
+    // If transitioning from processing to failed, decrement processing counter
     if previous_status == Some("processing")
         && let Err(e) =
             crate::storage::postgres::dataset_transform_stats::decrement_processing_batch(
@@ -312,7 +404,7 @@ async fn handle_failed_status(
     {
         error!("Failed to decrement processing stats: {}", e);
         let _ = tx.rollback().await;
-        return;
+        return HandleResult::Failed(format!("Decrement stats failed: {}", e));
     }
 
     // Increment failed stats
@@ -326,15 +418,15 @@ async fn handle_failed_status(
     {
         error!("Failed to increment failed stats: {}", e);
         let _ = tx.rollback().await;
-        return;
+        return HandleResult::Failed(format!("Increment failed stats failed: {}", e));
     }
 
     if let Err(e) = tx.commit().await {
         error!("Failed to commit transaction: {}", e);
-        return;
+        return HandleResult::Failed(format!("Transaction commit failed: {}", e));
     }
 
-    // Publish failed status for SSE streaming
+    // Publish failed status for SSE streaming (non-critical, after commit)
     publish_transform_status(
         &ctx.nats_client,
         "dataset",
@@ -345,32 +437,37 @@ async fn handle_failed_status(
         Some(&error_msg),
     )
     .await;
+
+    HandleResult::Success
 }
 
-async fn handle_success_status(
+/// Handle "success" status - batch processing completed successfully
+async fn handle_success_status_atomic(
     result: &DatasetTransformResult,
     embedded_dataset: &crate::embedded_datasets::EmbeddedDataset,
     previous_status: Option<&str>,
     ctx: &DatasetListenerContext,
-) {
+) -> HandleResult {
     // Start a transaction for atomic updates
     let mut tx = match ctx.pool.begin().await {
         Ok(tx) => tx,
         Err(e) => {
             error!("Failed to begin transaction: {}", e);
-            return;
+            return HandleResult::Failed(format!("Transaction begin failed: {}", e));
         }
     };
 
     info!(
-        "Marking batch as completed: {} with {} chunks (ed_id={}, duration_ms={})",
-        result.batch_file_key,
-        result.chunk_count,
-        result.embedded_dataset_id,
-        result.processing_duration_ms.unwrap_or(0)
+        batch_key = %result.batch_file_key,
+        chunk_count = result.chunk_count,
+        embedded_dataset_id = result.embedded_dataset_id,
+        duration_ms = result.processing_duration_ms.unwrap_or(0),
+        "Marking batch as completed"
     );
-    if let Err(e) = embedded_datasets::record_processed_batch(
-        &ctx.pool,
+
+    // Record success in transform_processed_files (in transaction)
+    if let Err(e) = embedded_datasets::record_processed_batch_tx(
+        &mut tx,
         result.embedded_dataset_id,
         &result.batch_file_key,
         result.chunk_count as i32,
@@ -382,12 +479,12 @@ async fn handle_success_status(
     {
         error!("Failed to record batch processing: {}", e);
         let _ = tx.rollback().await;
-        return;
+        return HandleResult::Failed(format!("Record batch failed: {}", e));
     }
 
-    // Also update batch record at transform level
-    if let Err(e) = dataset_transform_batches::update_batch_status(
-        &ctx.pool,
+    // Update batch record at transform level (in transaction)
+    if let Err(e) = update_batch_status_tx(
+        &mut tx,
         embedded_dataset.dataset_transform_id,
         &result.batch_file_key,
         "success",
@@ -399,10 +496,10 @@ async fn handle_success_status(
     {
         error!("Failed to update dataset transform batch status: {}", e);
         let _ = tx.rollback().await;
-        return;
+        return HandleResult::Failed(format!("Update batch status failed: {}", e));
     }
 
-    // If transitioning from processing to success, decrement processing
+    // If transitioning from processing to success, decrement processing counter
     if previous_status == Some("processing")
         && let Err(e) =
             crate::storage::postgres::dataset_transform_stats::decrement_processing_batch(
@@ -414,7 +511,7 @@ async fn handle_success_status(
     {
         error!("Failed to decrement processing stats: {}", e);
         let _ = tx.rollback().await;
-        return;
+        return HandleResult::Failed(format!("Decrement stats failed: {}", e));
     }
 
     // Increment successful stats
@@ -428,15 +525,15 @@ async fn handle_success_status(
     {
         error!("Failed to increment successful stats: {}", e);
         let _ = tx.rollback().await;
-        return;
+        return HandleResult::Failed(format!("Increment success stats failed: {}", e));
     }
 
     if let Err(e) = tx.commit().await {
         error!("Failed to commit transaction: {}", e);
-        return;
+        return HandleResult::Failed(format!("Transaction commit failed: {}", e));
     }
 
-    // Clean up the batch file from S3 after successful processing and database recording
+    // Clean up the batch file from S3 after successful processing and database commit
     // Use single-bucket architecture
     let s3_bucket =
         std::env::var("S3_BUCKET_NAME").unwrap_or_else(|_| "semantic-explorer-local".to_string());
@@ -451,20 +548,20 @@ async fn handle_success_status(
     };
 
     if let Err(e) = delete_file(&ctx.s3_client, &s3_bucket, prefix, file_key).await {
-        // Log the error but don't fail the overall operation
-        // The batch was successfully processed and recorded, cleanup failure is non-critical
+        // Log the error but don't fail - batch was successfully processed and recorded
         warn!(
-            "Failed to cleanup batch file s3://{}/{}: {}. Manual cleanup may be required.",
-            s3_bucket, result.batch_file_key, e
+            batch_key = %result.batch_file_key,
+            error = %e,
+            "Failed to cleanup batch file from S3. Manual cleanup may be required."
         );
     } else {
         info!(
-            "Cleaned up batch file s3://{}/{}",
-            s3_bucket, result.batch_file_key
+            batch_key = %result.batch_file_key,
+            "Cleaned up batch file from S3"
         );
     }
 
-    // Publish completed status for SSE streaming
+    // Publish completed status for SSE streaming (non-critical, after commit)
     publish_transform_status(
         &ctx.nats_client,
         "dataset",
@@ -477,7 +574,10 @@ async fn handle_success_status(
     .await;
 
     info!(
-        "Successfully processed dataset transform batch {} with {} chunks",
-        result.batch_file_key, result.chunk_count
+        batch_key = %result.batch_file_key,
+        chunk_count = result.chunk_count,
+        "Successfully processed dataset transform batch"
     );
+
+    HandleResult::Success
 }

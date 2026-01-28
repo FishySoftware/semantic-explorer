@@ -3,7 +3,7 @@ use async_nats::Client as NatsClient;
 use aws_sdk_s3::Client as S3Client;
 use sqlx::{Pool, Postgres};
 use std::collections::HashSet;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use semantic_explorer_core::encryption::EncryptionService;
@@ -13,6 +13,9 @@ use semantic_explorer_core::storage::{DocumentUpload, upload_document};
 
 use crate::auth::AuthenticatedUser;
 use crate::embedded_datasets::EmbeddedDataset;
+use crate::storage::postgres::dataset_transform_pending_batches::{
+    self as pending_batches, CreatePendingBatch,
+};
 use crate::storage::postgres::dataset_transforms::{
     get_active_dataset_transforms_privileged, get_dataset_transform_privileged,
 };
@@ -280,20 +283,44 @@ async fn process_dataset_transform_scan(
                 nats,
                 "workers.dataset-transform",
                 &msg_id,
-                payload,
+                payload.clone(),
                 3,
             )
             .await
             {
                 semantic_explorer_core::nats::PublishResult::Published => {
                     total_jobs += 1;
+                    // Track dispatched batch for accurate completion detection
+                    // Note: We don't know exact chunk count for existing batches, use 0 as placeholder
+                    if let Err(e) = crate::storage::postgres::dataset_transform_stats::increment_dispatched_batch(
+                        pool,
+                        transform.dataset_transform_id,
+                        0, // Unknown chunk count for existing batches
+                    ).await {
+                        warn!("Failed to track dispatched batch: {}", e);
+                    }
                 }
                 semantic_explorer_core::nats::PublishResult::Failed(e) => {
-                    // TODO: Insert pending record for fallback recovery
+                    // Store in pending_batches for recovery
                     error!(
-                        "Failed to publish job for batch {} after retries: {}",
+                        "Failed to publish job for batch {} after retries: {}. Saving for recovery.",
                         batch_file_key, e
                     );
+                    if let Err(pe) = pending_batches::insert_pending_batch(
+                        pool,
+                        CreatePendingBatch {
+                            batch_type: "dataset".to_string(),
+                            dataset_transform_id: Some(transform.dataset_transform_id),
+                            embedded_dataset_id: Some(embedded_dataset.embedded_dataset_id),
+                            batch_key: batch_file_key.clone(),
+                            s3_bucket: s3_bucket.clone(),
+                            job_payload: serde_json::from_slice(&payload).unwrap_or_default(),
+                        },
+                    )
+                    .await
+                    {
+                        error!("Failed to save pending batch for recovery: {}", pe);
+                    }
                 }
             }
         }
@@ -476,6 +503,7 @@ async fn create_batches_from_dataset_items(
         };
 
         let payload = serde_json::to_vec(&job)?;
+        let chunk_count = batch_chunk.len() as i64;
 
         // Publish with retry (3 attempts with exponential backoff)
         let msg_id = format!("dt-{}-{}", transform.dataset_transform_id, batch_key);
@@ -483,20 +511,48 @@ async fn create_batches_from_dataset_items(
             nats,
             "workers.dataset-transform",
             &msg_id,
-            payload,
+            payload.clone(),
             3,
         )
         .await
         {
             semantic_explorer_core::nats::PublishResult::Published => {
                 jobs_created += 1;
+                // Track dispatched batch for accurate completion detection
+                if let Err(e) =
+                    crate::storage::postgres::dataset_transform_stats::increment_dispatched_batch(
+                        pool,
+                        transform.dataset_transform_id,
+                        chunk_count,
+                    )
+                    .await
+                {
+                    warn!("Failed to track dispatched batch: {}", e);
+                }
             }
             semantic_explorer_core::nats::PublishResult::Failed(e) => {
-                // TODO: Insert pending record for fallback recovery
+                // Store in pending_batches for recovery
                 error!(
-                    "Failed to publish job for batch {} after retries: {}",
-                    batch_key, e
+                    batch_key = %batch_key,
+                    chunk_count = chunk_count,
+                    error = %e,
+                    "Failed to publish job after retries. Saving for recovery."
                 );
+                if let Err(pe) = pending_batches::insert_pending_batch(
+                    pool,
+                    CreatePendingBatch {
+                        batch_type: "dataset".to_string(),
+                        dataset_transform_id: Some(transform.dataset_transform_id),
+                        embedded_dataset_id: Some(embedded_dataset.embedded_dataset_id),
+                        batch_key: batch_key.clone(),
+                        s3_bucket: config.s3_bucket.clone(),
+                        job_payload: serde_json::from_slice(&payload).unwrap_or_default(),
+                    },
+                )
+                .await
+                {
+                    error!("Failed to save pending batch for recovery: {}", pe);
+                }
             }
         }
     }

@@ -5,17 +5,17 @@
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
 	import type {
-		VisualizationConfig,
-		VisualizationTransform,
-		VisualizationStats as Stats,
 		EmbeddedDataset,
+		LLM,
 		PaginatedEmbeddedDatasetList,
 		PaginatedResponse,
-		LLM,
+		VisualizationStats as Stats,
+		VisualizationConfig,
+		VisualizationTransform,
 	} from '../types/models';
-	import { formatError, toastStore } from '../utils/notifications';
-	import { showTooltip, formatDate } from '../utils/ui-helpers';
 	import { InfoIcon } from '../utils/icons';
+	import { formatError, toastStore } from '../utils/notifications';
+	import { formatDate, showTooltip } from '../utils/ui-helpers';
 
 	interface Props {
 		// eslint-disable-next-line no-unused-vars
@@ -54,6 +54,8 @@
 		min_cluster_size: 15,
 		min_samples: 5,
 		topic_naming_llm_id: null,
+		topic_naming_prompt:
+			'These are representative texts from a document cluster:\n\n{{samples}}\n\nProvide a short, concise topic name (2-4 words) that captures the main theme. Respond with ONLY the topic name, nothing else.',
 		// Datamapplot create_interactive_plot parameters
 		inline_data: true,
 		noise_label: 'Unlabelled',
@@ -68,7 +70,7 @@
 		palette_theta_range: 0.19634954084936207, // π/16 - must match backend
 		use_medoids: false,
 		cluster_boundary_polygons: true,
-		polygon_alpha: 0.1,
+		polygon_alpha: 0.5,
 		cvd_safer: false,
 		// Datamapplot render_html parameters
 		title: null,
@@ -102,9 +104,53 @@
 		background_image: null,
 	};
 
+	// Round a number to avoid f32 precision issues (e.g., 0.10000000149011612 -> 0.1)
+	// Uses 6 decimal places which is sufficient for f32 precision
+	function roundFloat(value: number | null | undefined): number | null {
+		if (value === null || value === undefined) return null;
+		// Round to 6 decimal places to clean up f32 precision artifacts
+		return Math.round(value * 1000000) / 1000000;
+	}
+
 	// Merge loaded config with defaults to handle missing fields from older records
+	// Also normalizes float values to avoid f32 precision issues from backend
 	function applyDefaults(loadedConfig: Partial<VisualizationConfig>): VisualizationConfig {
-		return { ...DEFAULT_CONFIG, ...loadedConfig };
+		const merged = { ...DEFAULT_CONFIG, ...loadedConfig };
+
+		// Normalize float fields to clean up f32 precision artifacts
+		merged.min_dist = roundFloat(merged.min_dist) ?? DEFAULT_CONFIG.min_dist;
+		merged.palette_hue_shift =
+			roundFloat(merged.palette_hue_shift) ?? DEFAULT_CONFIG.palette_hue_shift;
+		merged.palette_hue_radius_dependence =
+			roundFloat(merged.palette_hue_radius_dependence) ??
+			DEFAULT_CONFIG.palette_hue_radius_dependence;
+		merged.palette_theta_range =
+			roundFloat(merged.palette_theta_range) ?? DEFAULT_CONFIG.palette_theta_range;
+		merged.polygon_alpha = roundFloat(merged.polygon_alpha) ?? DEFAULT_CONFIG.polygon_alpha;
+		merged.text_collision_size_scale =
+			roundFloat(merged.text_collision_size_scale) ?? DEFAULT_CONFIG.text_collision_size_scale;
+		merged.text_min_pixel_size =
+			roundFloat(merged.text_min_pixel_size) ?? DEFAULT_CONFIG.text_min_pixel_size;
+		merged.text_max_pixel_size =
+			roundFloat(merged.text_max_pixel_size) ?? DEFAULT_CONFIG.text_max_pixel_size;
+		merged.line_spacing = roundFloat(merged.line_spacing) ?? DEFAULT_CONFIG.line_spacing;
+		merged.point_radius_min_pixels =
+			roundFloat(merged.point_radius_min_pixels) ?? DEFAULT_CONFIG.point_radius_min_pixels;
+		merged.point_radius_max_pixels =
+			roundFloat(merged.point_radius_max_pixels) ?? DEFAULT_CONFIG.point_radius_max_pixels;
+		merged.point_line_width_min_pixels =
+			roundFloat(merged.point_line_width_min_pixels) ?? DEFAULT_CONFIG.point_line_width_min_pixels;
+		merged.point_line_width_max_pixels =
+			roundFloat(merged.point_line_width_max_pixels) ?? DEFAULT_CONFIG.point_line_width_max_pixels;
+		merged.point_line_width =
+			roundFloat(merged.point_line_width) ?? DEFAULT_CONFIG.point_line_width;
+		merged.cluster_boundary_line_width =
+			roundFloat(merged.cluster_boundary_line_width) ?? DEFAULT_CONFIG.cluster_boundary_line_width;
+		merged.initial_zoom_fraction =
+			roundFloat(merged.initial_zoom_fraction) ?? DEFAULT_CONFIG.initial_zoom_fraction;
+		merged.point_size_scale = roundFloat(merged.point_size_scale);
+
+		return merged;
 	}
 
 	// Pagination and sort state
@@ -875,7 +921,7 @@
 									onmouseenter={(e) =>
 										showTooltip(
 											e,
-											'Minimum number of points required to form a cluster. Larger values create fewer, more significant clusters. Smaller values find more fine-grained clusters but may include noise. Default: 10'
+											'Minimum number of points required to form a cluster. Larger values create fewer, more significant clusters. Smaller values find more fine-grained clusters but may include noise. Default: 15'
 										)}
 								>
 									{@html InfoIcon}
@@ -969,6 +1015,37 @@
 								</p>
 							{/if}
 						</div>
+
+						<div class="col-span-1">
+							<label
+								for="topic-naming-prompt"
+								class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+							>
+								Topic Naming Prompt
+								<button
+									type="button"
+									class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+									onmouseenter={(e) =>
+										showTooltip(
+											e,
+											'Custom prompt template for LLM topic naming. Use {{samples}} as a placeholder where the representative document texts will be inserted. The LLM should respond with just the topic name.'
+										)}
+								>
+									{@html InfoIcon}
+								</button>
+							</label>
+							<textarea
+								id="topic-naming-prompt"
+								bind:value={config.topic_naming_prompt}
+								rows="5"
+								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
+								placeholder={'These are representative texts from a document cluster:\n\n{{samples}}\n\nProvide a short, concise topic name...'}
+							></textarea>
+							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+								Use <code class="bg-gray-200 dark:bg-gray-600 px-1 rounded">{'{{samples}}'}</code> as
+								placeholder for sample texts
+							</p>
+						</div>
 					</div>
 				</div>
 
@@ -1048,7 +1125,7 @@
 									onmouseenter={(e) =>
 										showTooltip(
 											e,
-											'Font family for labels (e.g., Arial, sans-serif). Default: Arial, sans-serif'
+											'Font family for labels (e.g., Arial, sans-serif). Default: Playfair Display SC'
 										)}
 								>
 									{@html InfoIcon}
@@ -1118,14 +1195,14 @@
 								for="polygon-alpha"
 								class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
 							>
-								Polygon Transparency
+								Polygon Alpha
 								<button
 									type="button"
 									class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
 									onmouseenter={(e) =>
 										showTooltip(
 											e,
-											'Transparency of cluster boundary polygons. 0=invisible, 1=opaque. Default: 0.1'
+											'Alpha-shape parameter controlling how tightly cluster boundary polygons wrap around points. Lower values = tighter boundaries (may fail if too low). Higher values = looser, more convex-hull-like boundaries. Increase this if you get "polygon_alpha was too low" errors. Default: 0.5'
 										)}
 								>
 									{@html InfoIcon}
@@ -1135,12 +1212,14 @@
 								id="polygon-alpha"
 								type="number"
 								bind:value={config.polygon_alpha}
-								min="0.0"
-								max="1.0"
+								min="0.01"
+								max="10.0"
 								step="0.01"
 								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 							/>
-							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Range: 0.0-1.0</p>
+							<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+								Range: 0.01-10.0 (increase if boundaries fail to form)
+							</p>
 						</div>
 
 						<div class="col-span-2">
@@ -1239,9 +1318,20 @@
 								<div>
 									<label
 										for="palette-hue-shift"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
 										Palette Hue Shift (degrees)
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'Rotate the entire color palette around the color wheel. Use to change the overall color scheme. Default: 0'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="palette-hue-shift"
@@ -1256,9 +1346,20 @@
 								<div>
 									<label
 										for="palette-hue-radius-dep"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
 										Hue Radius Dependence
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'How much the hue changes based on distance from center. Higher values create more color variation across the map. Default: 1.0'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="palette-hue-radius-dep"
@@ -1273,9 +1374,20 @@
 								<div>
 									<label
 										for="palette-theta-range"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
-										Palette Theta Range (π/16 ≈ 0.196)
+										Palette Theta Range
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'Angular range for the color palette in radians. Controls how much of the color wheel is used. π/16 ≈ 0.196 (default) uses a narrow range for subtle variation.'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="palette-theta-range"
@@ -1290,9 +1402,20 @@
 								<div>
 									<label
 										for="background-color"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
 										Background Color (hex)
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'Custom background color in hex format (e.g., #1a1a2e). Leave empty to use automatic color based on dark/light mode.'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="background-color"
@@ -1312,6 +1435,17 @@
 										<span class="text-xs font-medium text-gray-700 dark:text-gray-300"
 											>Color Label Text</span
 										>
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'Color cluster label text to match the cluster color. When disabled, labels use a neutral color.'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 								</div>
 								<div class="col-span-2">
@@ -1324,6 +1458,17 @@
 										<span class="text-xs font-medium text-gray-700 dark:text-gray-300"
 											>CVD Safer Palette (Color Vision Deficiency)</span
 										>
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'Use a color palette optimized for users with color vision deficiency (colorblindness). Improves accessibility.'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 								</div>
 							</div>
@@ -1340,9 +1485,17 @@
 								<div>
 									<label
 										for="title"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
 										Plot Title
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(e, 'Main title displayed at the top of the visualization.')}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="title"
@@ -1355,9 +1508,17 @@
 								<div>
 									<label
 										for="sub-title"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
 										Plot Subtitle
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(e, 'Secondary title displayed below the main title.')}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="sub-title"
@@ -1370,9 +1531,17 @@
 								<div>
 									<label
 										for="title-font-size"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
 										Title Font Size (pt)
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(e, 'Font size for the main title in points. Default: 36')}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="title-font-size"
@@ -1387,9 +1556,17 @@
 								<div>
 									<label
 										for="sub-title-font-size"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
 										Subtitle Font Size (pt)
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(e, 'Font size for the subtitle in points. Default: 18')}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="sub-title-font-size"
@@ -1404,9 +1581,20 @@
 								<div>
 									<label
 										for="font-weight"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
-										Font Weight (0-1000)
+										Font Weight
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'Font weight for labels. 100=thin, 400=normal, 700=bold, 900=black. Default: 600'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="font-weight"
@@ -1421,9 +1609,20 @@
 								<div>
 									<label
 										for="line-spacing"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
 										Line Spacing
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'Multiplier for line height in wrapped text. 1.0 = normal, <1 = tighter, >1 = looser. Default: 0.95'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="line-spacing"
@@ -1438,9 +1637,20 @@
 								<div>
 									<label
 										for="text-outline-width"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
 										Text Outline Width
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'Width of the outline/halo around label text for better readability. Default: 8'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="text-outline-width"
@@ -1455,9 +1665,20 @@
 								<div>
 									<label
 										for="text-outline-color"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
 										Text Outline Color
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'Color of the text outline/halo in hex format with optional alpha (e.g., #eeeeeedd). Default: #eeeeeedd'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="text-outline-color"
@@ -1469,9 +1690,20 @@
 								<div>
 									<label
 										for="text-collision-size-scale"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
-										Text Collision Size Scale
+										Text Collision Scale
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'Scale factor for label collision detection. Higher values create more space between labels. Default: 3.0'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="text-collision-size-scale"
@@ -1486,9 +1718,20 @@
 								<div>
 									<label
 										for="text-min-pixel-size"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
 										Text Min Pixel Size
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'Minimum text size in pixels when zoomed out. Labels smaller than this will be hidden. Default: 12'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="text-min-pixel-size"
@@ -1503,9 +1746,20 @@
 								<div>
 									<label
 										for="text-max-pixel-size"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
 										Text Max Pixel Size
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'Maximum text size in pixels when zoomed in. Prevents labels from becoming too large. Default: 36'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="text-max-pixel-size"
@@ -1531,9 +1785,20 @@
 								<div>
 									<label
 										for="tooltip-font-family"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
 										Tooltip Font Family
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'Font family used for point hover tooltips. Default: Playfair Display SC'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="tooltip-font-family"
@@ -1545,9 +1810,20 @@
 								<div>
 									<label
 										for="tooltip-font-weight"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
 										Tooltip Font Weight
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'Font weight for tooltips. 100=thin, 400=normal, 700=bold. Default: 400'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="tooltip-font-weight"
@@ -1573,9 +1849,20 @@
 								<div>
 									<label
 										for="point-hover-color"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
 										Point Hover Color
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'Color shown when hovering over a point. Use hex with alpha (e.g., #aa0000bb). Default: #aa0000bb'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="point-hover-color"
@@ -1587,25 +1874,47 @@
 								<div>
 									<label
 										for="point-size-scale"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
 										Point Size Scale
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'Multiplier for point sizes. Leave empty for automatic sizing based on data density.'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="point-size-scale"
 										type="number"
 										bind:value={config.point_size_scale}
 										step="0.1"
-										placeholder="Auto (leave empty for automatic)"
+										placeholder="Auto"
 										class="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 									/>
 								</div>
 								<div>
 									<label
 										for="point-radius-min-pixels"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
 										Point Radius Min (px)
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'Minimum point radius in pixels when zoomed out. Default: 0.01'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="point-radius-min-pixels"
@@ -1620,9 +1929,20 @@
 								<div>
 									<label
 										for="point-radius-max-pixels"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
 										Point Radius Max (px)
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'Maximum point radius in pixels when zoomed in. Default: 24'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="point-radius-max-pixels"
@@ -1637,9 +1957,20 @@
 								<div>
 									<label
 										for="point-line-width"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
 										Point Line Width
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'Stroke/outline width around each point. 0 = no outline. Default: 0.001'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="point-line-width"
@@ -1654,9 +1985,20 @@
 								<div>
 									<label
 										for="point-line-width-min"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
-										Point Line Width Min (px)
+										Point Line Width Min
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'Minimum point outline width in pixels when zoomed out. Default: 0.001'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="point-line-width-min"
@@ -1671,9 +2013,20 @@
 								<div>
 									<label
 										for="point-line-width-max"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
-										Point Line Width Max (px)
+										Point Line Width Max
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'Maximum point outline width in pixels when zoomed in. Default: 3'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="point-line-width-max"
@@ -1688,9 +2041,20 @@
 								<div>
 									<label
 										for="cluster-boundary-line-width"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
-										Cluster Boundary Line Width
+										Cluster Boundary Width
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'Line width for cluster boundary polygons when enabled. Default: 1.0'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="cluster-boundary-line-width"
@@ -1716,9 +2080,20 @@
 								<div>
 									<label
 										for="width"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
 										Width
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'Width of the visualization. Can be a percentage (e.g., "100%") or pixels. Default: 100%'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="width"
@@ -1730,9 +2105,17 @@
 								<div>
 									<label
 										for="height"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
 										Height (px)
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(e, 'Height of the visualization in pixels. Default: 800')}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="height"
@@ -1747,9 +2130,20 @@
 								<div>
 									<label
 										for="initial-zoom-fraction"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
-										Initial Zoom Fraction
+										Initial Zoom
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'Initial zoom level. 1.0 = fit all points. <1 = zoomed in, >1 = zoomed out. Default: 1.0'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="initial-zoom-fraction"
@@ -1764,9 +2158,20 @@
 								<div>
 									<label
 										for="noise-label"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
 										Noise Label
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'Label displayed for points not assigned to any cluster. Default: Unlabelled'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="noise-label"
@@ -1778,9 +2183,17 @@
 								<div>
 									<label
 										for="logo"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
 										Logo URL
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(e, 'URL of a logo image to display on the visualization.')}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="logo"
@@ -1793,9 +2206,17 @@
 								<div>
 									<label
 										for="logo-width"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
 										Logo Width (px)
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(e, 'Width of the logo in pixels. Default: 256')}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="logo-width"
@@ -1810,9 +2231,17 @@
 								<div>
 									<label
 										for="background-image"
-										class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+										class="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
 									>
 										Background Image URL
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(e, 'URL of an image to use as the visualization background.')}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 									<input
 										id="background-image"
@@ -1830,8 +2259,19 @@
 											class="w-3 h-3 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
 										/>
 										<span class="text-xs font-medium text-gray-700 dark:text-gray-300"
-											>Inline Data (embed data in HTML vs separate files)</span
+											>Inline Data</span
 										>
+										<button
+											type="button"
+											class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+											onmouseenter={(e) =>
+												showTooltip(
+													e,
+													'Embed all data directly in the HTML file vs. loading from separate files. Recommended for portability.'
+												)}
+										>
+											{@html InfoIcon}
+										</button>
 									</label>
 								</div>
 							</div>

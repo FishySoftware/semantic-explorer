@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, Pool, Postgres, Row};
+use sqlx::{FromRow, Pool, Postgres, Row, Transaction};
 use tracing::instrument;
 use utoipa::ToSchema;
 
@@ -99,24 +99,6 @@ pub struct CreateBatchRequest {
 }
 
 #[instrument(skip(pool), err)]
-pub async fn create_batch(
-    pool: &Pool<Postgres>,
-    req: CreateBatchRequest,
-) -> Result<DatasetTransformBatch, sqlx::Error> {
-    let batch = sqlx::query_as::<_, DatasetTransformBatch>(CREATE_BATCH_QUERY)
-        .bind(req.dataset_transform_id)
-        .bind(&req.batch_key)
-        .bind(&req.status)
-        .bind(req.chunk_count)
-        .bind(&req.error_message)
-        .bind(req.processing_duration_ms)
-        .fetch_one(pool)
-        .await?;
-
-    Ok(batch)
-}
-
-#[instrument(skip(pool), err)]
 pub async fn get_batch(
     pool: &Pool<Postgres>,
     batch_id: i32,
@@ -181,29 +163,6 @@ pub async fn list_batches_by_status(
 }
 
 #[instrument(skip(pool), err)]
-pub async fn update_batch_status(
-    pool: &Pool<Postgres>,
-    dataset_transform_id: i32,
-    batch_key: &str,
-    status: &str,
-    error_message: Option<&str>,
-    processing_duration_ms: Option<i64>,
-    chunk_count: i32,
-) -> Result<DatasetTransformBatch, sqlx::Error> {
-    let batch = sqlx::query_as::<_, DatasetTransformBatch>(UPDATE_BATCH_STATUS_QUERY)
-        .bind(dataset_transform_id)
-        .bind(batch_key)
-        .bind(status)
-        .bind(error_message)
-        .bind(processing_duration_ms)
-        .bind(chunk_count)
-        .fetch_one(pool)
-        .await?;
-
-    Ok(batch)
-}
-
-#[instrument(skip(pool), err)]
 pub async fn get_batch_stats(
     pool: &Pool<Postgres>,
     dataset_transform_id: i32,
@@ -238,4 +197,45 @@ pub struct BatchStats {
     pub avg_duration_ms: Option<f64>,
     #[schema(value_type = Option<String>, format = DateTime)]
     pub last_processed_at: Option<DateTime<Utc>>,
+}
+
+#[instrument(skip(tx), err)]
+pub async fn create_batch_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    req: CreateBatchRequest,
+) -> Result<DatasetTransformBatch, sqlx::Error> {
+    let batch = sqlx::query_as::<_, DatasetTransformBatch>(CREATE_BATCH_QUERY)
+        .bind(req.dataset_transform_id)
+        .bind(&req.batch_key)
+        .bind(&req.status)
+        .bind(req.chunk_count)
+        .bind(&req.error_message)
+        .bind(req.processing_duration_ms)
+        .fetch_one(&mut **tx)
+        .await?;
+
+    Ok(batch)
+}
+
+#[instrument(skip(tx), err)]
+pub async fn update_batch_status_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    dataset_transform_id: i32,
+    batch_key: &str,
+    status: &str,
+    error_message: Option<&str>,
+    processing_duration_ms: Option<i64>,
+    chunk_count: i32,
+) -> Result<DatasetTransformBatch, sqlx::Error> {
+    let batch = sqlx::query_as::<_, DatasetTransformBatch>(UPDATE_BATCH_STATUS_QUERY)
+        .bind(dataset_transform_id)
+        .bind(batch_key)
+        .bind(status)
+        .bind(error_message)
+        .bind(processing_duration_ms)
+        .bind(chunk_count)
+        .fetch_one(&mut **tx)
+        .await?;
+
+    Ok(batch)
 }

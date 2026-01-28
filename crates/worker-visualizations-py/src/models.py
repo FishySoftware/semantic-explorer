@@ -78,7 +78,8 @@ class VisualizationConfig(BaseModel):
         default=False, description="Draw alpha-shape boundary lines around clusters"
     )
     polygon_alpha: float = Field(
-        default=0.1, description="Transparency of cluster boundary polygons (0.0-1.0)"
+        default=0.5,
+        description="Alpha-shape parameter controlling boundary tightness (0.01-10.0). Higher = looser boundaries",
     )
     cvd_safer: bool = Field(
         default=False, description="Use color vision deficiency safer palette"
@@ -171,6 +172,10 @@ class VisualizationConfig(BaseModel):
     # Topic naming (only LLM is supported)
     # LLM naming is conditional: only applied if llm_config is provided in the job
     # If no LLM config, numeric cluster labels are used
+    topic_naming_prompt: str = Field(
+        default="These are representative texts from a document cluster:\n\n{{samples}}\n\nProvide a short, concise topic name (2-4 words) that captures the main theme. Respond with ONLY the topic name, nothing else.",
+        description="Custom prompt template for LLM topic naming. Use {{samples}} as placeholder for the sample texts.",
+    )
 
 
 class LLMConfig(BaseModel):

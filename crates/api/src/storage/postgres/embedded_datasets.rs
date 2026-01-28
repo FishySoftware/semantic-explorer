@@ -217,6 +217,20 @@ pub async fn get_embedded_dataset(
     Ok(embedded_dataset)
 }
 
+/// Get embedded dataset by ID without owner check (privileged, for internal use only)
+/// Used by reconciliation job to verify datasets exist
+pub async fn get_embedded_dataset_by_id(
+    pool: &Pool<Postgres>,
+    embedded_dataset_id: i32,
+) -> Result<EmbeddedDataset> {
+    let embedded_dataset = sqlx::query_as::<_, EmbeddedDataset>(GET_EMBEDDED_DATASET_QUERY)
+        .bind(embedded_dataset_id)
+        .fetch_one(pool)
+        .await?;
+
+    Ok(embedded_dataset)
+}
+
 pub async fn get_embedded_datasets_paginated(
     pool: &Pool<Postgres>,
     owner: &str,
@@ -460,8 +474,9 @@ pub async fn get_batch_previous_status(
         .flatten()
 }
 
-pub async fn record_processed_batch(
-    pool: &Pool<Postgres>,
+/// Record a processed batch within a transaction (for atomic updates with stats)
+pub async fn record_processed_batch_tx(
+    tx: &mut Transaction<'_, Postgres>,
     embedded_dataset_id: i32,
     file_key: &str,
     item_count: i32,
@@ -476,7 +491,7 @@ pub async fn record_processed_batch(
         .bind(process_status)
         .bind(process_error)
         .bind(processing_duration_ms)
-        .execute(pool)
+        .execute(&mut **tx)
         .await?;
     Ok(())
 }

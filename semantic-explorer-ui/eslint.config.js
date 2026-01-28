@@ -81,7 +81,7 @@ export default [
 			'svelte/no-at-html-tags': 'warn',
 			'svelte/valid-compile': 'error',
 			'no-empty': 'warn',
-			'no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+			'no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
 			'svelte/require-each-key': 'warn',
 		},
 	},

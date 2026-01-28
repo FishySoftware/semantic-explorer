@@ -765,10 +765,13 @@ class VisualizationProcessor:
                     if tasks:
                         batch_start_time = time.time()
 
+                        # Get custom prompt from visualization config
+                        custom_prompt = job.visualization_config.topic_naming_prompt
+
                         for cluster_id, sample_texts in tasks:
                             try:
                                 result = await llm_provider.generate_topic_name(
-                                    sample_texts, job.llm_config
+                                    sample_texts, job.llm_config, custom_prompt
                                 )
                                 cluster_labels[cluster_id] = result
                                 logger.debug(f"Cluster {cluster_id} -> '{result}'")

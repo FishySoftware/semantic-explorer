@@ -241,6 +241,7 @@ export interface VisualizationConfig {
 	min_cluster_size: number;
 	min_samples: number | null;
 	topic_naming_llm_id: number | null;
+	topic_naming_prompt: string;
 	// Datamapplot create_interactive_plot parameters
 	inline_data: boolean;
 	noise_label: string;

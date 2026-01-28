@@ -56,20 +56,65 @@ pub struct DatasetTransformStats {
     pub total_chunks_processing: i64,
     pub total_chunks_failed: i64,
     pub total_chunks_to_process: i64,
+    /// Total batches dispatched to workers (for completion tracking)
+    #[serde(default)]
+    pub total_batches_dispatched: i64,
+    /// Total chunks dispatched to workers
+    #[serde(default)]
+    pub total_chunks_dispatched: i64,
+    /// Current run ID for tracking which run batches belong to
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_run_id: Option<String>,
+    /// When the current run started
     #[schema(value_type = Option<String>, format = DateTime)]
-    pub last_run_at: Option<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_run_started_at: Option<DateTime<Utc>>,
     #[schema(value_type = Option<String>, format = DateTime)]
-    pub first_processing_at: Option<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>>,
+    pub last_run_at: Option<DateTime<Utc>>,
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub first_processing_at: Option<DateTime<Utc>>,
 }
 
 impl DatasetTransformStats {
     /// Calculate overall status based on processing progress
+    ///
+    /// Status logic considers both batch-level and chunk-level tracking for accuracy:
+    /// - Uses total_batches_dispatched vs (successful + failed) for batch completion
+    /// - Uses total_chunks_dispatched for chunk-level accuracy when available
+    /// - Falls back to total_chunks_to_process for backward compatibility
     pub fn status(&self) -> &'static str {
         // If there are batches currently processing, we're active
         if self.processing_batches > 0 {
             return "processing";
         }
 
+        // Use dispatched counts if available (more accurate)
+        let use_dispatched_tracking = self.total_batches_dispatched > 0;
+
+        if use_dispatched_tracking {
+            // New accurate tracking based on what was actually dispatched
+            let completed_batches = self.successful_batches + self.failed_batches;
+
+            if completed_batches >= self.total_batches_dispatched {
+                // All dispatched batches have been processed
+                if self.failed_batches > 0 && self.successful_batches == 0 {
+                    return "failed";
+                }
+                if self.failed_batches > 0 {
+                    return "completed_with_errors";
+                }
+                return "completed";
+            }
+
+            // Some batches still pending
+            if self.successful_batches > 0 || self.failed_batches > 0 {
+                return "processing"; // Has some activity
+            }
+
+            return "pending"; // Dispatched but not yet started
+        }
+
+        // Fallback: Legacy behavior using total_chunks_to_process
         if self.total_chunks_to_process == 0 {
             // No items to process, check if we have any activity at all
             if self.total_batches_processed > 0 {

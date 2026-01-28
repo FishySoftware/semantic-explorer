@@ -114,6 +114,11 @@ pub async fn trigger_visualization_transform_scan(
                     .get("samples_per_cluster")
                     .and_then(|v| v.as_i64())
                     .unwrap_or(5) as i32,
+                topic_naming_prompt: viz_config
+                    .get("topic_naming_prompt")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("These are representative texts from a document cluster:\n\n{{samples}}\n\nProvide a short, concise topic name (2-4 words) that captures the main theme. Respond with ONLY the topic name, nothing else.")
+                    .to_string(),
                 // Use defaults for all datamapplot parameters
                 inline_data: true,
                 noise_label: "Unlabelled".to_string(),
@@ -128,7 +133,7 @@ pub async fn trigger_visualization_transform_scan(
                 palette_theta_range: 0.196_349_55, // π/16
                 use_medoids: false,
                 cluster_boundary_polygons: true,
-                polygon_alpha: 0.1,
+                polygon_alpha: 0.5,
                 cvd_safer: false,
                 enable_topic_tree: true,
                 title: None,

@@ -19,6 +19,7 @@ The API server orchestrates all system operations:
 - **Real-time Updates**: Server-Sent Events (SSE) for transform progress
 - **Authentication**: OIDC integration
 - **Observability**: Prometheus metrics, OpenTelemetry tracing, structured logging
+- **Reliability**: Reconciliation job for recovering failed batch publishes
 
 ---
 
@@ -45,6 +46,7 @@ graph TD
         SCANNER[Transform Scanners]
         LISTENER[Result Listeners]
         AUDIT[Audit Consumer]
+        RECON[Reconciliation Job]
     end
 
     subgraph "External"
@@ -333,6 +335,7 @@ This service uses shared configuration from `semantic-explorer-core`. See the [r
 | `LLM_INFERENCE_API_URL` | `http://localhost:8091` | Local LLM API |
 | `CORS_ALLOWED_ORIGINS` | - | Comma-separated allowed origins |
 | `LOG_FORMAT` | `json` | `json` or `pretty` |
+| `RECONCILIATION_INTERVAL_SECS` | `300` | Reconciliation job interval (seconds) |
 
 ---
 

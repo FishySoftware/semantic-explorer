@@ -66,6 +66,10 @@ const GET_STATS_QUERY: &str = r#"
         COALESCE(dts.total_chunks_processing, 0)::BIGINT as total_chunks_processing,
         COALESCE(dts.total_chunks_failed, 0)::BIGINT as total_chunks_failed,
         COALESCE(dts.total_chunks_to_process, 0)::BIGINT as total_chunks_to_process,
+        COALESCE(dts.total_batches_dispatched, 0)::BIGINT as total_batches_dispatched,
+        COALESCE(dts.total_chunks_dispatched, 0)::BIGINT as total_chunks_dispatched,
+        dts.current_run_id,
+        dts.current_run_started_at,
         dts.last_processed_at as last_run_at,
         dts.first_processing_at
     FROM dataset_transforms dt
@@ -97,6 +101,10 @@ const GET_BATCH_STATS_QUERY: &str = r#"
         COALESCE(dts.total_chunks_processing, 0)::BIGINT as total_chunks_processing,
         COALESCE(dts.total_chunks_failed, 0)::BIGINT as total_chunks_failed,
         COALESCE(dts.total_chunks_to_process, 0)::BIGINT as total_chunks_to_process,
+        COALESCE(dts.total_batches_dispatched, 0)::BIGINT as total_batches_dispatched,
+        COALESCE(dts.total_chunks_dispatched, 0)::BIGINT as total_chunks_dispatched,
+        dts.current_run_id,
+        dts.current_run_started_at,
         dts.last_processed_at as last_run_at,
         dts.first_processing_at
     FROM dataset_transforms dt
@@ -239,4 +247,36 @@ pub async fn refresh_total_chunks(
 
     tx.commit().await?;
     Ok(result)
+}
+
+const INCREMENT_DISPATCHED_QUERY: &str = r#"
+    INSERT INTO dataset_transform_stats (
+        dataset_transform_id,
+        total_batches_dispatched,
+        total_chunks_dispatched,
+        created_at,
+        updated_at
+    )
+    VALUES ($1, 1, $2, NOW(), NOW())
+    ON CONFLICT (dataset_transform_id) DO UPDATE
+    SET 
+        total_batches_dispatched = dataset_transform_stats.total_batches_dispatched + 1,
+        total_chunks_dispatched = dataset_transform_stats.total_chunks_dispatched + $2,
+        updated_at = NOW()
+"#;
+
+/// Increment the dispatched batch and chunk counters.
+/// Call this when a batch job is successfully published to NATS.
+pub async fn increment_dispatched_batch(
+    pool: &Pool<Postgres>,
+    dataset_transform_id: i32,
+    chunk_count: i64,
+) -> Result<()> {
+    sqlx::query(INCREMENT_DISPATCHED_QUERY)
+        .bind(dataset_transform_id)
+        .bind(chunk_count)
+        .execute(pool)
+        .await
+        .context("Failed to increment dispatched batch stats")?;
+    Ok(())
 }

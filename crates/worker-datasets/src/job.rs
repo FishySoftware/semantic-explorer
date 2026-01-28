@@ -1,15 +1,17 @@
 use anyhow::Result;
+use async_nats::jetstream;
 use qdrant_client::Qdrant;
 use qdrant_client::qdrant::{CreateCollectionBuilder, Distance, VectorParams};
 use qdrant_client::qdrant::{PointStruct, UpsertPointsBuilder};
 use semantic_explorer_core::embedder;
 use semantic_explorer_core::models::{DatasetTransformJob, DatasetTransformResult};
+use semantic_explorer_core::nats::inject_trace_context;
 use semantic_explorer_core::observability::record_worker_job;
 use semantic_explorer_core::storage::get_file;
 use semantic_explorer_core::validation::{validate_bucket_name, validate_s3_key};
 use semantic_explorer_core::worker::WorkerContext;
 use std::time::Instant;
-use tracing::{error, info, instrument};
+use tracing::{error, info, instrument, warn};
 
 #[derive(serde::Deserialize)]
 pub(crate) struct BatchItem {
@@ -320,10 +322,38 @@ async fn send_progress_update(
         job.dataset_transform_id,
     );
     let payload = serde_json::to_vec(&result_msg)?;
-    nats.publish(subject, payload.into()).await?;
+
+    // Use JetStream publish with acknowledgment for reliable delivery
+    let js = jetstream::new(nats.clone());
+    let mut headers = async_nats::HeaderMap::new();
+    let msg_id = format!("prog-{}-{}-{}", job.job_id, job.batch_file_key, status);
+    headers.insert("Nats-Msg-Id", msg_id.as_str());
+    inject_trace_context(&mut headers);
+
+    match js
+        .publish_with_headers(subject.clone(), headers, payload.into())
+        .await
+    {
+        Ok(ack_future) => {
+            if let Err(e) = ack_future.await {
+                warn!(
+                    "JetStream ack failed for progress update on {}: {}",
+                    subject, e
+                );
+                // Progress updates are non-critical, log and continue
+            }
+        }
+        Err(e) => {
+            warn!("Failed to publish progress update to {}: {}", subject, e);
+            // Progress updates are non-critical, log and continue
+        }
+    }
+
     Ok(())
 }
 
+/// Send result with guaranteed delivery using JetStream.
+/// This is critical for accurate stats tracking - results MUST be delivered reliably.
 async fn send_result(
     nats: &async_nats::Client,
     job: &DatasetTransformJob,
@@ -342,7 +372,7 @@ async fn send_result(
         owner_id: job.owner_id.clone(),
         batch_file_key: job.batch_file_key.clone(),
         chunk_count,
-        status,
+        status: status.clone(),
         error,
         processing_duration_ms,
     };
@@ -353,6 +383,60 @@ async fn send_result(
         job.dataset_transform_id,
     );
     let payload = serde_json::to_vec(&result_msg)?;
-    nats.publish(subject, payload.into()).await?;
-    Ok(())
+
+    // Use JetStream publish with acknowledgment for GUARANTEED delivery
+    // This is critical - if the result isn't delivered, stats will be incorrect
+    let js = jetstream::new(nats.clone());
+    let mut headers = async_nats::HeaderMap::new();
+    // Use deterministic message ID for deduplication
+    let msg_id = format!("result-{}-{}-{}", job.job_id, job.batch_file_key, status);
+    headers.insert("Nats-Msg-Id", msg_id.as_str());
+    inject_trace_context(&mut headers);
+
+    // Retry up to 3 times with backoff for critical results
+    let mut last_error = None;
+    for attempt in 1..=3 {
+        match js
+            .publish_with_headers(subject.clone(), headers.clone(), payload.clone().into())
+            .await
+        {
+            Ok(ack_future) => match ack_future.await {
+                Ok(_) => {
+                    if attempt > 1 {
+                        info!("Result published to {} after {} attempts", subject, attempt);
+                    }
+                    return Ok(());
+                }
+                Err(e) => {
+                    warn!(
+                        "JetStream ack failed for result on {} (attempt {}/3): {}",
+                        subject, attempt, e
+                    );
+                    last_error = Some(anyhow::anyhow!("Ack failed: {}", e));
+                }
+            },
+            Err(e) => {
+                warn!(
+                    "Failed to publish result to {} (attempt {}/3): {}",
+                    subject, attempt, e
+                );
+                last_error = Some(anyhow::anyhow!("Publish failed: {}", e));
+            }
+        }
+
+        // Exponential backoff before retry
+        if attempt < 3 {
+            tokio::time::sleep(std::time::Duration::from_millis(
+                100 * 2u64.pow(attempt - 1),
+            ))
+            .await;
+        }
+    }
+
+    // If all retries failed, this is a critical error
+    error!(
+        "CRITICAL: Failed to publish result to {} after 3 attempts. Stats will be incorrect!",
+        subject
+    );
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Unknown publish error")))
 }

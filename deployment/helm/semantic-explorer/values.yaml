@@ -144,6 +144,8 @@ api:
     QDRANT_TIMEOUT_SECS: "30"
     QDRANT_CONNECT_TIMEOUT_SECS: "10"
     NATS_REPLICAS: "3"
+    # Reconciliation job for transform reliability (retries failed batch publishes)
+    RECONCILIATION_INTERVAL_SECS: "300"
   envFrom: []
   nodeSelector: {}
   tolerations: []

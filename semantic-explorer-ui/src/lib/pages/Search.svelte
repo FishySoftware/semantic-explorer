@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import PageHeader from '../components/PageHeader.svelte';
+	import { SearchResultsTable } from '../components/search';
 	import type {
 		Dataset,
 		EmbeddedDataset,
@@ -82,6 +83,14 @@
 	});
 
 	let canSearch = $derived(searchQuery.trim().length > 0 && selectedEmbeddedDatasetIds.size > 0);
+
+	// Auto-select all filtered embedded datasets when the filter changes
+	$effect(() => {
+		const filteredIds = filteredEmbeddedDatasets.map((ed) => ed.embedded_dataset_id);
+		// Clear and re-add all filtered datasets
+		selectedEmbeddedDatasetIds.clear();
+		filteredIds.forEach((id) => selectedEmbeddedDatasetIds.add(id));
+	});
 
 	async function fetchData() {
 		try {
@@ -299,43 +308,40 @@
 				</span>
 
 				<div
-					class="max-h-64 overflow-y-auto border border-gray-200 dark:border-gray-600 rounded-lg p-3 bg-gray-50 dark:bg-gray-900"
+					class="max-h-48 overflow-y-auto border border-gray-200 dark:border-gray-600 rounded-lg p-2 bg-gray-50 dark:bg-gray-900"
 				>
 					{#if filteredEmbeddedDatasets.length === 0}
 						<div class="text-sm text-gray-500 dark:text-gray-400 py-2 text-center">
 							No embedded datasets available.
 						</div>
 					{:else}
-						<div class="space-y-2">
+						<div class="space-y-1">
 							{#each filteredEmbeddedDatasets as embeddedDataset (embeddedDataset.embedded_dataset_id)}
 								{@const dataset = datasetsCache.get(embeddedDataset.source_dataset_id)}
 								{@const embedder = embeddersCache.get(embeddedDataset.embedder_id)}
 								<label
-									class="flex items-start gap-3 cursor-pointer bg-white dark:bg-gray-800 px-3 py-2 rounded border border-gray-200 dark:border-gray-600 hover:border-blue-400 dark:hover:border-blue-500 transition-colors"
+									class="flex items-center gap-2 cursor-pointer bg-white dark:bg-gray-800 px-2 py-1.5 rounded border border-gray-200 dark:border-gray-600 hover:border-blue-400 dark:hover:border-blue-500 transition-colors"
 								>
 									<input
 										type="checkbox"
 										checked={selectedEmbeddedDatasetIds.has(embeddedDataset.embedded_dataset_id)}
 										onchange={() => toggleEmbeddedDataset(embeddedDataset.embedded_dataset_id)}
-										class="mt-1 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+										class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
 									/>
-									<div class="flex-1 flex flex-col gap-2">
-										<button
-											type="button"
-											onclick={(e) => {
-												e.stopPropagation();
-												onViewEmbeddedDataset(embeddedDataset.embedded_dataset_id);
-											}}
-											class="text-sm font-semibold text-blue-600 dark:text-blue-400 hover:underline text-left"
-										>
-											{embeddedDataset.title}
-										</button>
-
-										<div
-											class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-600 dark:text-gray-400"
-										>
-											<div class="flex items-center gap-1">
-												<span class="text-gray-500 dark:text-gray-500">Dataset:</span>
+									<div class="flex-1 min-w-0">
+										<div class="flex items-center gap-2 flex-wrap">
+											<button
+												type="button"
+												onclick={(e) => {
+													e.stopPropagation();
+													onViewEmbeddedDataset(embeddedDataset.embedded_dataset_id);
+												}}
+												class="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline truncate"
+											>
+												{embeddedDataset.title}
+											</button>
+											<span class="text-gray-300 dark:text-gray-600">|</span>
+											<span class="text-[10px] text-gray-500 dark:text-gray-400">
 												{#if dataset}
 													<button
 														type="button"
@@ -343,17 +349,16 @@
 															e.stopPropagation();
 															onViewDataset(dataset.dataset_id);
 														}}
-														class="text-blue-600 dark:text-blue-400 hover:underline font-medium"
+														class="hover:text-blue-600 dark:hover:text-blue-400 hover:underline"
 													>
-														{dataset.title}
+														📊 {dataset.title}
 													</button>
 												{:else}
-													<span class="text-gray-400 dark:text-gray-500">Loading...</span>
+													📊 ...
 												{/if}
-											</div>
-
-											<div class="flex items-center gap-1">
-												<span class="text-gray-500 dark:text-gray-500">Embedder:</span>
+											</span>
+											<span class="text-gray-300 dark:text-gray-600">|</span>
+											<span class="text-[10px] text-gray-500 dark:text-gray-400">
 												{#if embedder}
 													<button
 														type="button"
@@ -361,32 +366,19 @@
 															e.stopPropagation();
 															onViewEmbedder(embedder.embedder_id);
 														}}
-														class="text-blue-600 dark:text-blue-400 hover:underline font-medium"
+														class="hover:text-blue-600 dark:hover:text-blue-400 hover:underline"
 													>
-														{embedder.name}
+														🧠 {embedder.name}
 													</button>
+													{#if embedder.dimensions}
+														<span class="font-mono text-indigo-600 dark:text-indigo-400 ml-1"
+															>({embedder.dimensions}d)</span
+														>
+													{/if}
 												{:else}
-													<span class="text-gray-400 dark:text-gray-500">Loading...</span>
+													🧠 ...
 												{/if}
-											</div>
-
-											{#if embedder?.dimensions}
-												<div class="flex items-center gap-1">
-													<span class="text-gray-500 dark:text-gray-500">Dimensions:</span>
-													<span class="font-mono text-indigo-600 dark:text-indigo-400"
-														>{embedder.dimensions}</span
-													>
-												</div>
-											{/if}
-										</div>
-
-										<div class="flex items-center gap-1 mt-1">
-											<span class="text-gray-500 dark:text-gray-500 text-[10px]">Qdrant:</span>
-											<code
-												class="font-mono text-[10px] text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded"
-											>
-												{embeddedDataset.collection_name}
-											</code>
+											</span>
 										</div>
 									</div>
 								</label>
@@ -513,198 +505,22 @@
 					<span class="text-sm text-gray-600 dark:text-gray-400">
 						{searchResults.search_mode === 'documents'
 							? `${searchResults.results.reduce((sum, r) => sum + (r.documents?.length || 0), 0)} document${searchResults.results.reduce((sum, r) => sum + (r.documents?.length || 0), 0) !== 1 ? 's' : ''}`
-							: `${searchResults.results.length} embedded dataset${searchResults.results.length !== 1 ? 's' : ''}`}
+							: `${searchResults.results.reduce((sum, r) => sum + (r.matches?.length || 0), 0)} chunk${searchResults.results.reduce((sum, r) => sum + (r.matches?.length || 0), 0) !== 1 ? 's' : ''}`}
+						across {searchResults.results.length} embedded dataset{searchResults.results.length !==
+						1
+							? 's'
+							: ''}
 					</span>
 				</div>
 
-				<!-- Results display: side-by-side columns per embedded dataset -->
-				{#if searchResults.search_mode === 'documents'}
-					<div class="overflow-x-auto pb-4">
-						<div class="flex justify-center gap-4 min-w-max">
-							{#each searchResults.results as result (result.embedded_dataset_id)}
-								<div class="w-150 shrink-0 bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
-									<div class="flex items-start justify-between mb-4">
-										<div class="flex-1 min-w-0">
-											<h3
-												class="text-lg font-semibold text-gray-900 dark:text-white wrap-break-word"
-											>
-												{result.embedded_dataset_title}
-											</h3>
-											<p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
-												Source Dataset:
-												<button
-													onclick={() => onViewDataset(result.source_dataset_id)}
-													class="text-blue-600 dark:text-blue-400 hover:underline font-medium"
-												>
-													{result.source_dataset_title}
-												</button>
-											</p>
-											<p class="text-xs text-gray-500 dark:text-gray-500 mt-1">
-												Embedder: <button
-													onclick={() => onViewEmbedder(result.embedder_id)}
-													class="text-blue-600 dark:text-blue-400 hover:underline"
-												>
-													{result.embedder_name}
-												</button>
-											</p>
-										</div>
-									</div>
-
-									{#if result.error}
-										<div
-											class="bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 p-3 rounded text-sm"
-										>
-											{result.error}
-										</div>
-									{:else if !result.documents || result.documents.length === 0}
-										<div class="text-gray-500 dark:text-gray-400 text-center py-4">
-											No results found
-										</div>
-									{:else}
-										<div class="space-y-3">
-											{#each result.documents as document, idx (document.item_id)}
-												<div
-													class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:border-blue-400 dark:hover:border-blue-600 transition-colors"
-												>
-													<div class="flex items-start justify-between gap-4 mb-3">
-														<div class="flex-1 min-w-0">
-															<div class="text-xs font-medium text-gray-500 dark:text-gray-400">
-																Document #{idx + 1}
-															</div>
-															<div
-																class="text-sm font-semibold text-gray-900 dark:text-white mt-1 wrap-break-word break-all"
-															>
-																📄 {document.item_title}
-															</div>
-															<div
-																class="text-xs text-gray-500 dark:text-gray-400 mt-2 flex items-center gap-2"
-															>
-																<span
-																	class="inline-block px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded text-xs font-medium"
-																>
-																	{document.chunk_count} chunk{document.chunk_count !== 1
-																		? 's'
-																		: ''}
-																</span>
-															</div>
-														</div>
-														<div class="text-right">
-															<div class="text-xs text-gray-600 dark:text-gray-400">Best Score</div>
-															<div class="text-lg font-bold text-blue-600 dark:text-blue-400">
-																{document.best_score.toFixed(4)}
-															</div>
-														</div>
-													</div>
-
-													<div
-														class="bg-gray-50 dark:bg-gray-900 rounded p-3 border border-gray-200 dark:border-gray-700"
-													>
-														<div class="text-xs text-gray-600 dark:text-gray-400 mb-2">
-															Best matching chunk:
-														</div>
-														<p
-															class="text-sm text-gray-900 dark:text-gray-100 leading-relaxed whitespace-pre-wrap break-all"
-														>
-															{document.best_chunk.text}
-														</p>
-													</div>
-												</div>
-											{/each}
-										</div>
-									{/if}
-								</div>
-							{/each}
-						</div>
-					</div>
-				{:else}
-					<!-- Chunks Mode: Show side-by-side embedded dataset results -->
-					<div class="overflow-x-auto pb-4">
-						<div class="flex justify-center gap-4 min-w-max">
-							{#each searchResults.results as result (result.embedded_dataset_id)}
-								<div class="w-150 shrink-0 bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
-									<div class="flex items-start justify-between mb-4">
-										<div class="flex-1 min-w-0">
-											<h3
-												class="text-lg font-semibold text-gray-900 dark:text-white wrap-break-word"
-											>
-												{result.embedded_dataset_title}
-											</h3>
-											<p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
-												Source Dataset:
-												<button
-													onclick={() => onViewDataset(result.source_dataset_id)}
-													class="text-blue-600 dark:text-blue-400 hover:underline font-medium"
-												>
-													{result.source_dataset_title}
-												</button>
-											</p>
-											<p class="text-xs text-gray-500 dark:text-gray-500 mt-1">
-												Embedder:
-												<button
-													onclick={() => onViewEmbedder(result.embedder_id)}
-													class="text-blue-600 dark:text-blue-400 hover:underline"
-												>
-													{result.embedder_name}
-												</button>
-											</p>
-										</div>
-									</div>
-
-									{#if result.error}
-										<div
-											class="bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 p-3 rounded text-sm"
-										>
-											{result.error}
-										</div>
-									{:else if result.matches.length === 0}
-										<div class="text-gray-500 dark:text-gray-400 text-center py-4">
-											No results found
-										</div>
-									{:else}
-										<div class="space-y-3">
-											{#each result.matches as match, idx (match.id)}
-												<div
-													class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:border-blue-400 dark:hover:border-blue-600 transition-colors"
-												>
-													<div class="flex items-start justify-between gap-4 mb-3">
-														<div class="flex-1 min-w-0">
-															<div class="text-xs font-medium text-gray-500 dark:text-gray-400">
-																Chunk #{match.metadata.chunk_index || idx + 1}
-															</div>
-															{#if match.metadata.item_title}
-																<div
-																	class="text-sm font-semibold text-gray-900 dark:text-white mt-1 wrap-break-word break-all"
-																>
-																	{match.metadata.item_title}
-																</div>
-															{/if}
-														</div>
-														<div class="text-right">
-															<div class="text-xs text-gray-600 dark:text-gray-400">Score</div>
-															<div class="text-lg font-bold text-blue-600 dark:text-blue-400">
-																{match.score.toFixed(4)}
-															</div>
-														</div>
-													</div>
-
-													<div
-														class="bg-gray-50 dark:bg-gray-900 rounded p-3 border border-gray-200 dark:border-gray-700"
-													>
-														<p
-															class="text-sm text-gray-900 dark:text-gray-100 leading-relaxed whitespace-pre-wrap line-clamp-6 break-all"
-														>
-															{match.text}
-														</p>
-													</div>
-												</div>
-											{/each}
-										</div>
-									{/if}
-								</div>
-							{/each}
-						</div>
-					</div>
-				{/if}
+				<!-- Table-based comparison view -->
+				<SearchResultsTable
+					results={searchResults.results}
+					searchMode={searchResults.search_mode}
+					{onViewDataset}
+					{onViewEmbedder}
+					{onViewEmbeddedDataset}
+				/>
 			</div>
 		{:else if !loading}
 			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-12 text-center">

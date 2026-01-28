@@ -144,6 +144,14 @@ async fn main() -> Result<()> {
     // Initialize audit event infrastructure (database and NATS)
     audit::events::init(pool.clone(), nats_client.clone());
 
+    // Start dataset transform reconciliation job (background reliability worker)
+    let reconciliation_ctx = transforms::dataset::reconciliation::ReconciliationContext {
+        pool: pool.clone(),
+        nats_client: nats_client.clone(),
+        config: transforms::dataset::reconciliation::ReconciliationConfig::default(),
+    };
+    transforms::dataset::reconciliation::start_reconciliation_job(reconciliation_ctx);
+
     let server = HttpServer::new(move || {
         // Build CORS configuration based on allowed origins
         let cors = if cors_origins.is_empty() {

@@ -579,6 +579,12 @@ See [`deployment/DEPLOYMENT_GUIDE.md`](deployment/DEPLOYMENT_GUIDE.md) for detai
 | `RUST_LOG` | - | No | Rust log filter (e.g., `info,semantic_explorer=debug`) |
 | `LOG_LEVEL` | `INFO` | No | Python log level |
 
+### Reconciliation & Reliability
+
+| Variable | Default | Required | Description |
+|-----------|----------|----------|-------------|
+| `RECONCILIATION_INTERVAL_SECS` | `300` | No | Interval for reconciliation job (recovers failed batch publishes) |
+
 ### Inference APIs
 
 | Variable | Default | Required | Description |

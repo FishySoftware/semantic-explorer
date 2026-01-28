@@ -62,7 +62,12 @@ class LLMProvider:
         self.request_count = 0
         logger.info("LLM Provider initialized (clients will be created on-demand)")
 
-    async def generate_topic_name(self, texts: List[str], llm_config: LLMConfig) -> str:
+    async def generate_topic_name(
+        self,
+        texts: List[str],
+        llm_config: LLMConfig,
+        custom_prompt: Optional[str] = None,
+    ) -> str:
         """
         Generate a topic name for cluster texts using the specified LLM.
 
@@ -71,6 +76,7 @@ class LLMProvider:
         Args:
             texts: Sample texts from the cluster (representative documents)
             llm_config: LLM configuration with provider, model, API key, and config params
+            custom_prompt: Optional custom prompt template. Use {{samples}} as placeholder for sample texts.
 
         Returns:
             Generated topic name (2-4 words)
@@ -103,15 +109,30 @@ class LLMProvider:
         try:
             if llm_config.provider.lower() == "cohere":
                 result = await self._generate_cohere(
-                    texts, llm_config, max_tokens, temperature, samples_per_cluster
+                    texts,
+                    llm_config,
+                    max_tokens,
+                    temperature,
+                    samples_per_cluster,
+                    custom_prompt,
                 )
             elif llm_config.provider.lower() == "openai":
                 result = await self._generate_openai(
-                    texts, llm_config, max_tokens, temperature, samples_per_cluster
+                    texts,
+                    llm_config,
+                    max_tokens,
+                    temperature,
+                    samples_per_cluster,
+                    custom_prompt,
                 )
             elif llm_config.provider.lower() == "internal":
                 result = await self._generate_internal(
-                    texts, llm_config, max_tokens, temperature, samples_per_cluster
+                    texts,
+                    llm_config,
+                    max_tokens,
+                    temperature,
+                    samples_per_cluster,
+                    custom_prompt,
                 )
             else:
                 logger.error(f"Unknown LLM provider: {llm_config.provider}")
@@ -137,6 +158,7 @@ class LLMProvider:
         max_tokens: int,
         temperature: float,
         samples_per_cluster: int,
+        custom_prompt: Optional[str] = None,
     ) -> str:
         """
         Generate topic name using Cohere API.
@@ -153,13 +175,16 @@ class LLMProvider:
             sample_texts = texts[:samples_per_cluster]
             samples_text = "\n".join(sample_texts)
 
-            # Build prompt matching SAMPLE style
-            prompt = (
-                f"These are representative texts from a document cluster:\n\n"
-                f"{samples_text}\n\n"
-                f"Provide a short and concise cluster name that captures the main topic. "
-                f"Respond with ONLY the cluster name, no notes or explanation."
-            )
+            # Build prompt - use custom prompt if provided, otherwise use default
+            if custom_prompt and "{{samples}}" in custom_prompt:
+                prompt = custom_prompt.replace("{{samples}}", samples_text)
+            else:
+                prompt = (
+                    f"These are representative texts from a document cluster:\n\n"
+                    f"{samples_text}\n\n"
+                    f"Provide a short and concise cluster name that captures the main topic. "
+                    f"Respond with ONLY the cluster name, no notes or explanation."
+                )
 
             api_call_start = time.time()
             logger.info(
@@ -216,6 +241,7 @@ class LLMProvider:
         max_tokens: int,
         temperature: float,
         samples_per_cluster: int,
+        custom_prompt: Optional[str] = None,
     ) -> str:
         """
         Generate topic name using OpenAI API.
@@ -231,12 +257,16 @@ class LLMProvider:
             sample_texts = texts[:samples_per_cluster]
             samples_text = "\n".join(sample_texts)
 
-            prompt = (
-                f"These are representative texts from a document cluster:\n\n"
-                f"{samples_text}\n\n"
-                f"Provide a short, concise topic name (2-4 words) that captures the main theme. "
-                f"Respond with ONLY the topic name, nothing else."
-            )
+            # Build prompt - use custom prompt if provided, otherwise use default
+            if custom_prompt and "{{samples}}" in custom_prompt:
+                prompt = custom_prompt.replace("{{samples}}", samples_text)
+            else:
+                prompt = (
+                    f"These are representative texts from a document cluster:\n\n"
+                    f"{samples_text}\n\n"
+                    f"Provide a short, concise topic name (2-4 words) that captures the main theme. "
+                    f"Respond with ONLY the topic name, nothing else."
+                )
 
             api_call_start = time.time()
             logger.debug(
@@ -282,6 +312,7 @@ class LLMProvider:
         max_tokens: int,
         temperature: float,
         samples_per_cluster: int,
+        custom_prompt: Optional[str] = None,
     ) -> str:
         """
         Generate topic name using internal LLM inference API.
@@ -299,12 +330,16 @@ class LLMProvider:
             sample_texts = texts[:samples_per_cluster]
             samples_text = "\n".join(sample_texts)
 
-            prompt = (
-                f"These are representative texts from a document cluster:\n\n"
-                f"{samples_text}\n\n"
-                f"Provide a short, concise topic name (2-4 words) that captures the main theme. "
-                f"Respond with ONLY the topic name, nothing else."
-            )
+            # Build prompt - use custom prompt if provided, otherwise use default
+            if custom_prompt and "{{samples}}" in custom_prompt:
+                prompt = custom_prompt.replace("{{samples}}", samples_text)
+            else:
+                prompt = (
+                    f"These are representative texts from a document cluster:\n\n"
+                    f"{samples_text}\n\n"
+                    f"Provide a short, concise topic name (2-4 words) that captures the main theme. "
+                    f"Respond with ONLY the topic name, nothing else."
+                )
 
             api_call_start = time.time()
             logger.info(

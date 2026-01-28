@@ -35,12 +35,6 @@ impl VisualizationUpdate {
         self
     }
 
-    /// Set the started_at timestamp
-    pub fn started_at(mut self, started_at: DateTime<Utc>) -> Self {
-        self.started_at = Some(started_at);
-        self
-    }
-
     /// Set the completed_at timestamp
     pub fn completed_at(mut self, completed_at: DateTime<Utc>) -> Self {
         self.completed_at = Some(completed_at);
@@ -286,11 +280,12 @@ pub async fn update_visualization_to_processing(
     visualization_id: i32,
     started_at: Option<DateTime<Utc>>,
 ) -> Result<Option<Visualization>> {
-    let visualization = sqlx::query_as::<_, Visualization>(UPDATE_VISUALIZATION_TO_PROCESSING_QUERY)
-        .bind(visualization_id)
-        .bind(started_at)
-        .fetch_optional(pool)
-        .await?;
+    let visualization =
+        sqlx::query_as::<_, Visualization>(UPDATE_VISUALIZATION_TO_PROCESSING_QUERY)
+            .bind(visualization_id)
+            .bind(started_at)
+            .fetch_optional(pool)
+            .await?;
     Ok(visualization)
 }
 
