@@ -32,19 +32,23 @@ jobs:
           helm package deployment/helm/semantic-explorer
 
       - name: Push Helm Chart
+        env:
+          REPO_LOWER: ${{ github.repository }}
         run: |
-          helm push semantic-explorer-*.tgz oci://ghcr.io/${{ github.repository }}
+          helm push semantic-explorer-*.tgz oci://ghcr.io/${REPO_LOWER,,}
 
       - name: Generate release notes
+        env:
+          REPO_LOWER: ${{ github.repository }}
         run: |
           echo "# Helm Chart Published" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## Chart Details" >> $GITHUB_STEP_SUMMARY
           echo "- **Chart Name:** semantic-explorer" >> $GITHUB_STEP_SUMMARY
           echo "- **Version:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Repository:** oci://ghcr.io/${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository:** oci://ghcr.io/${REPO_LOWER,,}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## Installation" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "helm install my-release oci://ghcr.io/${{ github.repository }} --version ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "helm install my-release oci://ghcr.io/${REPO_LOWER,,} --version ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
