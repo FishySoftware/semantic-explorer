@@ -28,6 +28,17 @@ pub async fn retrieve_documents(
     let collection_name = dataset_info.collection_name;
     let embedder_id = dataset_info.embedder_id;
 
+    // Check if this is a standalone dataset (embedder_id == 0)
+    if embedder_id == 0 {
+        error!(
+            embedded_dataset_id = embedded_dataset_id,
+            "Cannot use standalone embedded dataset in chat/RAG"
+        );
+        return Err(
+            "This embedded dataset does not support chat (no embedder configured). Standalone datasets can only be used in visualizations.".to_string()
+        );
+    }
+
     // Fetch embedder configuration (api_key is decrypted by storage layer)
     let embedder_config = embedders::get_embedder_config(pool, embedder_id, encryption)
         .await

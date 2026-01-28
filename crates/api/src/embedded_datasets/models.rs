@@ -30,12 +30,15 @@ pub struct PaginatedEmbeddedDatasetList {
 pub struct EmbeddedDataset {
     pub embedded_dataset_id: i32,
     pub title: String,
-    pub dataset_transform_id: i32, // Parent Dataset Transform
-    pub source_dataset_id: i32,
-    pub embedder_id: i32,
+    pub dataset_transform_id: i32, // Parent Dataset Transform (0 for standalone)
+    pub source_dataset_id: i32,    // Source Dataset ID (0 for standalone)
+    pub embedder_id: i32,          // Embedder ID (0 for standalone)
     pub owner_id: String,
     pub owner_display_name: String,
     pub collection_name: String, // Qdrant collection name
+    /// Vector dimensions (required for standalone datasets, optional for transform-based)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dimensions: Option<i32>,
     #[schema(value_type = String, format = DateTime)]
     pub created_at: DateTime<Utc>,
     #[schema(value_type = String, format = DateTime)]
@@ -46,6 +49,7 @@ pub struct EmbeddedDataset {
 }
 
 /// Embedded Dataset with enriched information (joins)
+/// For standalone datasets, source_dataset_title and embedder_name will be "N/A"
 #[derive(Serialize, ToSchema, Debug, Clone, FromRow)]
 pub struct EmbeddedDatasetWithDetails {
     pub embedded_dataset_id: i32,
@@ -58,6 +62,11 @@ pub struct EmbeddedDatasetWithDetails {
     pub owner_id: String,
     pub owner_display_name: String,
     pub collection_name: String,
+    /// Vector dimensions (always present for standalone, derived from embedder for transform-based)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dimensions: Option<i32>,
+    /// Whether this is a standalone embedded dataset (true when dataset_transform_id == 0)
+    pub is_standalone: bool,
     #[schema(value_type = String, format = DateTime)]
     pub created_at: DateTime<Utc>,
     #[schema(value_type = String, format = DateTime)]
@@ -101,4 +110,53 @@ impl EmbeddedDataset {
     pub fn generate_collection_name(embedded_dataset_id: i32, owner: &str) -> String {
         format!("embedded-dataset-{}-{}", embedded_dataset_id, owner)
     }
+
+    /// Check if this is a standalone embedded dataset (not created via transform)
+    /// Standalone datasets have sentinel value 0 for dataset_transform_id, source_dataset_id, and embedder_id
+    pub fn is_standalone(&self) -> bool {
+        self.dataset_transform_id == 0 && self.source_dataset_id == 0 && self.embedder_id == 0
+    }
+}
+
+// =============================================================================
+// Standalone Embedded Dataset Request/Response Models
+// =============================================================================
+
+/// Request to create a standalone embedded dataset
+/// Standalone datasets can receive vectors directly via push, without needing a transform/embedder
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct CreateStandaloneEmbeddedDatasetRequest {
+    /// Title for the embedded dataset
+    pub title: String,
+    /// Vector dimensions (must match the vectors you will push)
+    #[schema(minimum = 1, maximum = 65536)]
+    pub dimensions: i32,
+}
+
+/// A single vector point to be pushed to a standalone embedded dataset
+#[derive(Debug, Deserialize, Serialize, ToSchema, Clone)]
+pub struct VectorPoint {
+    /// Unique identifier for this point (UUID string or numeric string)
+    pub id: String,
+    /// The vector data (must match the dimensions of the dataset)
+    pub vector: Vec<f32>,
+    /// Metadata payload for this point
+    pub payload: serde_json::Value,
+}
+
+/// Request to push vectors to a standalone embedded dataset
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct PushVectorsRequest {
+    /// Array of points to push (max 1000 per request)
+    #[schema(max_items = 1000)]
+    pub points: Vec<VectorPoint>,
+}
+
+/// Response after pushing vectors
+#[derive(Debug, Serialize, ToSchema)]
+pub struct PushVectorsResponse {
+    /// Number of points successfully inserted
+    pub points_inserted: usize,
+    /// Collection name where points were inserted
+    pub collection_name: String,
 }

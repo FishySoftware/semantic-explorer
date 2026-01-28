@@ -1,21 +1,25 @@
 use crate::audit::{ResourceType, events};
 use crate::auth::AuthenticatedUser;
 use crate::embedded_datasets::{
-    EmbeddedDataset, EmbeddedDatasetListQuery, EmbeddedDatasetProcessedBatch, EmbeddedDatasetStats,
-    EmbeddedDatasetWithDetails, PaginatedEmbeddedDatasetList,
+    CreateStandaloneEmbeddedDatasetRequest, EmbeddedDataset, EmbeddedDatasetListQuery,
+    EmbeddedDatasetProcessedBatch, EmbeddedDatasetStats, EmbeddedDatasetWithDetails,
+    PaginatedEmbeddedDatasetList, PushVectorsRequest, PushVectorsResponse,
 };
 use crate::errors::{bad_request, not_found};
 use crate::storage::postgres::embedded_datasets;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{HttpRequest, HttpResponse, Responder, delete, get, patch, post};
 use qdrant_client::Qdrant;
-use qdrant_client::qdrant::GetPointsBuilder;
 use qdrant_client::qdrant::point_id::PointIdOptions;
+use qdrant_client::qdrant::{
+    CreateCollectionBuilder, Distance, GetPointsBuilder, PointStruct, UpsertPointsBuilder,
+    VectorParams,
+};
 use qdrant_client::qdrant::{PointId, ScrollPointsBuilder};
 use semantic_explorer_core::validation;
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use utoipa::ToSchema;
 
 #[derive(Deserialize, ToSchema, Debug)]
@@ -661,4 +665,272 @@ pub async fn update_embedded_dataset(
             not_found("Embedded dataset not found or not owned by this user")
         }
     }
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/embedded-datasets/standalone",
+    tag = "Embedded Datasets",
+    request_body = CreateStandaloneEmbeddedDatasetRequest,
+    responses(
+        (status = 201, description = "Standalone embedded dataset created", body = EmbeddedDataset),
+        (status = 400, description = "Bad request - invalid input"),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error"),
+    ),
+)]
+#[post("/api/embedded-datasets/standalone")]
+#[tracing::instrument(
+    name = "create_standalone_embedded_dataset",
+    skip(user, pool, qdrant_client, req)
+)]
+pub async fn create_standalone_embedded_dataset(
+    user: AuthenticatedUser,
+    req: HttpRequest,
+    pool: Data<Pool<Postgres>>,
+    qdrant_client: Data<Qdrant>,
+    body: Json<CreateStandaloneEmbeddedDatasetRequest>,
+) -> impl Responder {
+    // Validate title
+    if let Err(e) = validation::validate_title(&body.title) {
+        return bad_request(&e);
+    }
+
+    // Validate dimensions
+    if body.dimensions < 1 || body.dimensions > 65536 {
+        return bad_request("Dimensions must be between 1 and 65536");
+    }
+
+    let owner = user.to_owner_info();
+
+    // Create the embedded dataset in the database
+    let embedded_dataset = match embedded_datasets::create_standalone_embedded_dataset(
+        &pool,
+        &owner,
+        body.title.trim(),
+        body.dimensions,
+    )
+    .await
+    {
+        Ok(dataset) => dataset,
+        Err(e) => {
+            error!("Failed to create standalone embedded dataset: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to create embedded dataset: {}", e)
+            }));
+        }
+    };
+
+    // Create the Qdrant collection with the specified dimensions
+    let create_collection = CreateCollectionBuilder::new(&embedded_dataset.collection_name)
+        .vectors_config(VectorParams {
+            size: body.dimensions as u64,
+            distance: Distance::Cosine.into(),
+            on_disk: Some(true),
+            ..Default::default()
+        })
+        .on_disk_payload(true)
+        .build();
+
+    match qdrant_client.create_collection(create_collection).await {
+        Ok(_) => {
+            info!(
+                "Created Qdrant collection {} with {} dimensions",
+                embedded_dataset.collection_name, body.dimensions
+            );
+        }
+        Err(e) => {
+            // If Qdrant collection creation fails, we should clean up the database entry
+            error!(
+                "Failed to create Qdrant collection {}: {}",
+                embedded_dataset.collection_name, e
+            );
+            // Try to delete the database entry
+            if let Err(del_err) = embedded_datasets::delete_embedded_dataset(
+                &pool,
+                &user.as_owner(),
+                embedded_dataset.embedded_dataset_id,
+            )
+            .await
+            {
+                error!(
+                    "Failed to cleanup database entry after Qdrant failure: {}",
+                    del_err
+                );
+            }
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to create Qdrant collection: {}", e)
+            }));
+        }
+    }
+
+    events::resource_created_with_request(
+        &req,
+        &user.as_owner(),
+        &user,
+        ResourceType::Dataset,
+        &embedded_dataset.embedded_dataset_id.to_string(),
+    );
+
+    HttpResponse::Created().json(embedded_dataset)
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/embedded-datasets/{id}/push-vectors",
+    tag = "Embedded Datasets",
+    params(
+        ("id" = i32, Path, description = "Embedded Dataset ID")
+    ),
+    request_body = PushVectorsRequest,
+    responses(
+        (status = 200, description = "Vectors pushed successfully", body = PushVectorsResponse),
+        (status = 400, description = "Bad request - invalid vectors or dimensions mismatch"),
+        (status = 404, description = "Embedded dataset not found"),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error"),
+    ),
+)]
+#[post("/api/embedded-datasets/{id}/push-vectors")]
+#[tracing::instrument(name = "push_vectors_to_embedded_dataset", skip(user, pool, qdrant_client, body), fields(embedded_dataset_id = %path.as_ref()))]
+pub async fn push_vectors_to_embedded_dataset(
+    user: AuthenticatedUser,
+    pool: Data<Pool<Postgres>>,
+    qdrant_client: Data<Qdrant>,
+    path: Path<i32>,
+    body: Json<PushVectorsRequest>,
+) -> impl Responder {
+    let embedded_dataset_id = path.into_inner();
+
+    // Validate request
+    if body.points.is_empty() {
+        return bad_request("At least one point must be provided");
+    }
+
+    if body.points.len() > 1000 {
+        return bad_request("Maximum 1000 points per request");
+    }
+
+    // Get the embedded dataset to verify ownership and get collection info
+    let embedded_dataset =
+        match embedded_datasets::get_embedded_dataset(&pool, &user.as_owner(), embedded_dataset_id)
+            .await
+        {
+            Ok(dataset) => dataset,
+            Err(e) => {
+                error!("Embedded dataset not found: {}", e);
+                return not_found(format!("Embedded dataset not found: {}", e));
+            }
+        };
+
+    // Check if this is a standalone dataset
+    if !embedded_dataset.is_standalone() {
+        return bad_request(
+            "Cannot push vectors to transform-based embedded datasets. Use standalone datasets instead.",
+        );
+    }
+
+    // Get the expected dimensions
+    let expected_dimensions = match embedded_dataset.dimensions {
+        Some(dims) => dims as usize,
+        None => {
+            error!(
+                "Standalone dataset {} has no dimensions set",
+                embedded_dataset_id
+            );
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Dataset dimensions not configured"
+            }));
+        }
+    };
+
+    // Validate all vectors have correct dimensions
+    for (i, point) in body.points.iter().enumerate() {
+        if point.vector.len() != expected_dimensions {
+            return bad_request(format!(
+                "Point {} has {} dimensions, expected {}",
+                i,
+                point.vector.len(),
+                expected_dimensions
+            ));
+        }
+    }
+
+    // Ensure the Qdrant collection exists (create if it doesn't)
+    let collection_exists = qdrant_client
+        .collection_info(&embedded_dataset.collection_name)
+        .await
+        .is_ok();
+
+    if !collection_exists {
+        warn!(
+            "Collection {} not found, creating it",
+            embedded_dataset.collection_name
+        );
+        let create_collection = CreateCollectionBuilder::new(&embedded_dataset.collection_name)
+            .vectors_config(VectorParams {
+                size: expected_dimensions as u64,
+                distance: Distance::Cosine.into(),
+                on_disk: Some(true),
+                ..Default::default()
+            })
+            .on_disk_payload(true)
+            .build();
+
+        if let Err(e) = qdrant_client.create_collection(create_collection).await {
+            let error_str = e.to_string();
+            if !error_str.contains("already exists") {
+                error!(
+                    "Failed to create collection {}: {}",
+                    embedded_dataset.collection_name, e
+                );
+                return HttpResponse::InternalServerError().json(serde_json::json!({
+                    "error": format!("Failed to create collection: {}", e)
+                }));
+            }
+        }
+    }
+
+    // Convert points to Qdrant format
+    let points: Vec<PointStruct> = body
+        .points
+        .iter()
+        .map(|point| {
+            // Convert serde_json::Value to serde_json::Map for Payload
+            let payload_map = match &point.payload {
+                serde_json::Value::Object(map) => map.clone(),
+                _ => serde_json::Map::new(),
+            };
+            PointStruct::new(
+                point.id.clone(),
+                point.vector.clone(),
+                qdrant_client::Payload::from(payload_map),
+            )
+        })
+        .collect();
+
+    let points_count = points.len();
+
+    // Upsert points to Qdrant
+    if let Err(e) = qdrant_client
+        .upsert_points(
+            UpsertPointsBuilder::new(&embedded_dataset.collection_name, points).wait(true),
+        )
+        .await
+    {
+        error!("Failed to upsert points to Qdrant: {}", e);
+        return HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": format!("Failed to push vectors: {}", e)
+        }));
+    }
+
+    info!(
+        "Pushed {} vectors to {}",
+        points_count, embedded_dataset.collection_name
+    );
+
+    HttpResponse::Ok().json(PushVectorsResponse {
+        points_inserted: points_count,
+        collection_name: embedded_dataset.collection_name,
+    })
 }

@@ -105,7 +105,12 @@
 
 			datasets = datasetsResponse.items;
 			embedders = embeddersResponse.items;
-			allEmbeddedDatasets = embeddedDatasetsResponse.embedded_datasets;
+			// Filter out standalone datasets - they don't have embedders and can't be searched
+			allEmbeddedDatasets = embeddedDatasetsResponse.embedded_datasets.filter(
+				(ed) =>
+					!ed.is_standalone &&
+					!(ed.dataset_transform_id === 0 && ed.source_dataset_id === 0 && ed.embedder_id === 0)
+			);
 
 			// Build caches for quick lookup
 			datasetsCache.clear();

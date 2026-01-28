@@ -91,12 +91,38 @@ export interface EmbeddedDataset {
 	embedder_id: number;
 	owner: string;
 	collection_name: string;
+	dimensions?: number; // Vector dimensions (required for standalone, derived from embedder otherwise)
 	created_at: string;
 	updated_at: string;
 	// Optional fields (populated via joins or separate fetches)
 	source_dataset_title?: string;
 	embedder_name?: string;
 	active_point_count?: number;
+	is_standalone?: boolean; // True if dataset_transform_id, source_dataset_id, and embedder_id are 0
+}
+
+// Request to create a standalone embedded dataset
+export interface CreateStandaloneEmbeddedDatasetRequest {
+	title: string;
+	dimensions: number;
+}
+
+// A single vector point for push operations
+export interface VectorPoint {
+	id: string;
+	vector: number[];
+	payload: Record<string, unknown>;
+}
+
+// Request to push vectors to a standalone embedded dataset
+export interface PushVectorsRequest {
+	points: VectorPoint[];
+}
+
+// Response from push vectors operation
+export interface PushVectorsResponse {
+	points_inserted: number;
+	collection_name: string;
 }
 
 // Define the specific list response structure for Embedded Datasets as it uses a different field name

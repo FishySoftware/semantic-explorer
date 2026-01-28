@@ -138,6 +138,22 @@ pub(crate) async fn search(
                     }
                 };
 
+                // Check if this is a standalone dataset (no embedder)
+                if ed_details.is_standalone {
+                    return EmbeddedDatasetSearchResults {
+                        embedded_dataset_id,
+                        embedded_dataset_title: ed_details.title,
+                        source_dataset_id: ed_details.source_dataset_id,
+                        source_dataset_title: ed_details.source_dataset_title,
+                        embedder_id: ed_details.embedder_id,
+                        embedder_name: ed_details.embedder_name,
+                        collection_name: ed_details.collection_name,
+                        matches: Vec::new(),
+                        documents: None,
+                        error: Some("This embedded dataset does not support search (no embedder configured). Standalone datasets can only be used in visualizations.".to_string()),
+                    };
+                }
+
                 // Check if we have the embedder
                 let embedder = match embedder {
                     Some(emb) => emb,

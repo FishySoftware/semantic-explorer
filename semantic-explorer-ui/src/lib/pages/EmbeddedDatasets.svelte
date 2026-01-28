@@ -43,6 +43,12 @@
 	let newTitle = $state('');
 	let renaming = $state(false);
 
+	// Create standalone modal state
+	let showCreateStandaloneModal = $state(false);
+	let standaloneTitle = $state('');
+	let standaloneDimensions = $state(1536); // Default to common embedding size
+	let creatingStandalone = $state(false);
+
 	async function fetchDataset(datasetId: number): Promise<Dataset | null> {
 		if (datasetsCache.has(datasetId)) {
 			return datasetsCache.get(datasetId) || null;
@@ -267,6 +273,64 @@
 		showRenameModal = true;
 	}
 
+	function openCreateStandaloneModal() {
+		standaloneTitle = '';
+		standaloneDimensions = 1536;
+		showCreateStandaloneModal = true;
+	}
+
+	function closeCreateStandaloneModal() {
+		showCreateStandaloneModal = false;
+		standaloneTitle = '';
+		standaloneDimensions = 1536;
+	}
+
+	async function createStandaloneEmbeddedDataset() {
+		if (!standaloneTitle.trim()) {
+			toastStore.error('Title is required');
+			return;
+		}
+
+		if (standaloneDimensions < 1 || standaloneDimensions > 65536) {
+			toastStore.error('Dimensions must be between 1 and 65536');
+			return;
+		}
+
+		try {
+			creatingStandalone = true;
+			const response = await fetch('/api/embedded-datasets/standalone', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					title: standaloneTitle.trim(),
+					dimensions: standaloneDimensions,
+				}),
+			});
+
+			if (!response.ok) {
+				const errorData = await response.json();
+				throw new Error(errorData.error || `Failed to create: ${response.statusText}`);
+			}
+
+			const newDataset = await response.json();
+			toastStore.success(`Successfully created standalone embedded dataset "${standaloneTitle}"`);
+			closeCreateStandaloneModal();
+
+			// Refresh the list
+			await fetchEmbeddedDatasets();
+
+			// Navigate to the new dataset
+			onNavigate(`/embedded-datasets/${newDataset.embedded_dataset_id}/details`);
+		} catch (e) {
+			const message = formatError(e, 'Failed to create standalone embedded dataset');
+			toastStore.error(message);
+		} finally {
+			creatingStandalone = false;
+		}
+	}
+
 	function goToPreviousPage() {
 		if (currentOffset > 0) {
 			currentOffset = Math.max(0, currentOffset - pageSize);
@@ -300,13 +364,27 @@
 			);
 		})
 	);
+
+	function isStandalone(dataset: EmbeddedDataset): boolean {
+		return (
+			dataset.is_standalone === true ||
+			(dataset.dataset_transform_id === 0 &&
+				dataset.source_dataset_id === 0 &&
+				dataset.embedder_id === 0)
+		);
+	}
 </script>
 
 <div class="max-w-7xl mx-auto">
 	<PageHeader
 		title="Embedded Datasets"
-		description="Embedded Datasets contain vector embeddings stored in Qdrant collections. They are automatically created when Dataset Transforms are executed. Each Embedded Dataset represents one embedder applied to a source dataset, ready for semantic search and visualization."
+		description="Embedded Datasets contain vector embeddings stored in Qdrant collections. They can be created automatically via Dataset Transforms, or manually as standalone datasets where you push vectors directly."
 	/>
+
+	<div class="flex justify-between items-center mb-4">
+		<h1 class="text-3xl font-bold text-gray-900 dark:text-white">Embedded Datasets</h1>
+		<button onclick={openCreateStandaloneModal} class="btn-primary">+ Create Standalone</button>
+	</div>
 
 	<div class="mb-4">
 		<input
@@ -351,18 +429,30 @@
 				<TableBody>
 					{#each filteredDatasets as dataset (dataset.embedded_dataset_id)}
 						{@const stats = statsMap.get(dataset.embedded_dataset_id)}
+						{@const standalone = isStandalone(dataset)}
 						<tr class="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50">
 							<TableBodyCell class="px-4 py-3 wrap-break-word whitespace-normal">
-								<button
-									onclick={() =>
-										onNavigate(`/embedded-datasets/${dataset.embedded_dataset_id}/details`)}
-									class="font-semibold text-blue-600 dark:text-blue-400 hover:underline text-left"
-								>
-									{dataset.title}
-								</button>
+								<div class="flex items-center gap-2">
+									<button
+										onclick={() =>
+											onNavigate(`/embedded-datasets/${dataset.embedded_dataset_id}/details`)}
+										class="font-semibold text-blue-600 dark:text-blue-400 hover:underline text-left"
+									>
+										{dataset.title}
+									</button>
+									{#if standalone}
+										<span
+											class="px-1.5 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded text-xs font-medium"
+										>
+											Standalone
+										</span>
+									{/if}
+								</div>
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3 wrap-break-word whitespace-normal">
-								{#if dataset.source_dataset_title}
+								{#if standalone}
+									<span class="text-gray-500 dark:text-gray-400 text-sm italic">N/A</span>
+								{:else if dataset.source_dataset_title}
 									<button
 										onclick={() => onViewDataset(dataset.source_dataset_id)}
 										class="text-blue-600 dark:text-blue-400 hover:underline font-semibold"
@@ -374,7 +464,9 @@
 								{/if}
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3 wrap-break-word whitespace-normal">
-								{#if dataset.embedder_name}
+								{#if standalone}
+									<span class="text-gray-500 dark:text-gray-400 text-sm italic">N/A</span>
+								{:else if dataset.embedder_name}
 									<button
 										onclick={() => onNavigate(`/embedders/${dataset.embedder_id}/details`)}
 										class="text-blue-600 dark:text-blue-400 hover:underline font-semibold text-sm"
@@ -386,19 +478,29 @@
 								{/if}
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3 text-center">
-								{@const embedder = embeddersCache.get(dataset.embedder_id)}
-								{#if embedder?.dimensions}
+								{#if standalone && dataset.dimensions}
 									<span
 										class="inline-block px-2 py-1 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded text-xs font-medium"
 									>
-										{embedder.dimensions}
+										{dataset.dimensions}
 									</span>
 								{:else}
-									<span class="text-gray-500 dark:text-gray-400 text-xs">—</span>
+									{@const embedder = embeddersCache.get(dataset.embedder_id)}
+									{#if embedder?.dimensions}
+										<span
+											class="inline-block px-2 py-1 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded text-xs font-medium"
+										>
+											{embedder.dimensions}
+										</span>
+									{:else}
+										<span class="text-gray-500 dark:text-gray-400 text-xs">—</span>
+									{/if}
 								{/if}
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3 text-center">
-								{#if stats}
+								{#if standalone}
+									<span class="text-gray-500 dark:text-gray-400 text-xs italic">Push via API</span>
+								{:else if stats}
 									<div class="flex gap-1 justify-center flex-wrap">
 										<span
 											class="inline-block px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded text-xs font-medium"
@@ -602,6 +704,81 @@
 				</button>
 				<button onclick={renameEmbeddedDataset} class="btn-primary" disabled={renaming}>
 					{renaming ? 'Renaming...' : 'Rename'}
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+<!-- Create Standalone Modal -->
+{#if showCreateStandaloneModal}
+	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-lg max-w-md w-full mx-4">
+			<div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+				<h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+					Create Standalone Embedded Dataset
+				</h2>
+				<p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+					Standalone datasets allow you to push vectors directly. They can be used in visualizations
+					but not in search/chat.
+				</p>
+			</div>
+
+			<div class="px-6 py-4 space-y-4">
+				<div>
+					<label
+						for="standalone-title"
+						class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+					>
+						Title
+					</label>
+					<input
+						id="standalone-title"
+						type="text"
+						bind:value={standaloneTitle}
+						placeholder="My Embedded Dataset"
+						class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+						disabled={creatingStandalone}
+					/>
+				</div>
+
+				<div>
+					<label
+						for="standalone-dimensions"
+						class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+					>
+						Vector Dimensions
+					</label>
+					<input
+						id="standalone-dimensions"
+						type="number"
+						bind:value={standaloneDimensions}
+						min="1"
+						max="65536"
+						class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+						disabled={creatingStandalone}
+					/>
+					<p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+						Common sizes: 384 (MiniLM), 768 (BERT), 1024 (Cohere), 1536 (OpenAI Ada), 3072 (OpenAI
+						Large)
+					</p>
+				</div>
+			</div>
+
+			<div class="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-3">
+				<button
+					onclick={closeCreateStandaloneModal}
+					class="btn-secondary"
+					disabled={creatingStandalone}
+				>
+					Cancel
+				</button>
+				<button
+					onclick={createStandaloneEmbeddedDataset}
+					class="btn-primary"
+					disabled={creatingStandalone}
+				>
+					{creatingStandalone ? 'Creating...' : 'Create'}
 				</button>
 			</div>
 		</div>

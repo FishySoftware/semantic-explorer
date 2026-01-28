@@ -16,7 +16,7 @@ pub struct EmbeddedDatasetInfo {
 
 const GET_EMBEDDED_DATASET_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner_id, owner_display_name, collection_name, created_at, updated_at, last_processed_at
+           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at
     FROM embedded_datasets
     WHERE embedded_dataset_id = $1
 "#;
@@ -34,7 +34,7 @@ const COUNT_EMBEDDED_DATASETS_SEARCH_QUERY: &str = r#"
 
 const GET_EMBEDDED_DATASETS_PAGINATED_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner_id, owner_display_name, collection_name, created_at, updated_at, last_processed_at
+           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at
     FROM embedded_datasets
     ORDER BY created_at DESC
     LIMIT $1 OFFSET $2
@@ -42,7 +42,7 @@ const GET_EMBEDDED_DATASETS_PAGINATED_QUERY: &str = r#"
 
 const GET_EMBEDDED_DATASETS_WITH_SEARCH_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner_id, owner_display_name, collection_name, created_at, updated_at, last_processed_at
+           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at
     FROM embedded_datasets
     WHERE title ILIKE $1
     ORDER BY created_at DESC
@@ -51,7 +51,7 @@ const GET_EMBEDDED_DATASETS_WITH_SEARCH_QUERY: &str = r#"
 
 const GET_EMBEDDED_DATASETS_FOR_DATASET_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner_id, owner_display_name, collection_name, created_at, updated_at, last_processed_at
+           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at
     FROM embedded_datasets
     WHERE source_dataset_id = $1
     ORDER BY created_at DESC
@@ -59,7 +59,7 @@ const GET_EMBEDDED_DATASETS_FOR_DATASET_QUERY: &str = r#"
 
 const GET_EMBEDDED_DATASETS_FOR_TRANSFORM_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner_id, owner_display_name, collection_name, created_at, updated_at, last_processed_at
+           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at
     FROM embedded_datasets
     WHERE dataset_transform_id = $1
     ORDER BY created_at DESC
@@ -71,25 +71,27 @@ const GET_EMBEDDED_DATASET_WITH_DETAILS_QUERY: &str = r#"
         ed.title,
         ed.dataset_transform_id,
         ed.source_dataset_id,
-        d.title as source_dataset_title,
+        COALESCE(d.title, 'N/A') as source_dataset_title,
         ed.embedder_id,
-        e.name as embedder_name,
+        COALESCE(e.name, 'N/A') as embedder_name,
         ed.owner_id,
         ed.owner_display_name,
         ed.collection_name,
+        COALESCE(ed.dimensions, e.dimensions) as dimensions,
+        (ed.dataset_transform_id = 0 AND ed.source_dataset_id = 0 AND ed.embedder_id = 0) as is_standalone,
         ed.created_at,
         ed.updated_at
     FROM embedded_datasets ed
-    INNER JOIN datasets d ON d.dataset_id = ed.source_dataset_id
-    INNER JOIN embedders e ON e.embedder_id = ed.embedder_id
+    LEFT JOIN datasets d ON d.dataset_id = ed.source_dataset_id AND ed.source_dataset_id != 0
+    LEFT JOIN embedders e ON e.embedder_id = ed.embedder_id AND ed.embedder_id != 0
     WHERE ed.owner_id = $1 AND ed.embedded_dataset_id = $2
 "#;
 
 const CREATE_EMBEDDED_DATASET_QUERY: &str = r#"
-    INSERT INTO embedded_datasets (title, dataset_transform_id, source_dataset_id, embedder_id, owner_id, owner_display_name, collection_name)
-    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    INSERT INTO embedded_datasets (title, dataset_transform_id, source_dataset_id, embedder_id, owner_id, owner_display_name, collection_name, dimensions)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
     RETURNING embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-              owner_id, owner_display_name, collection_name, created_at, updated_at, last_processed_at
+              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at
 "#;
 
 const UPDATE_EMBEDDED_DATASET_COLLECTION_NAME_QUERY: &str = r#"
@@ -98,7 +100,7 @@ const UPDATE_EMBEDDED_DATASET_COLLECTION_NAME_QUERY: &str = r#"
         updated_at = NOW()
     WHERE embedded_dataset_id = $1
     RETURNING embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-              owner_id, owner_display_name, collection_name, created_at, updated_at, last_processed_at
+              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at
 "#;
 
 const UPDATE_EMBEDDED_DATASET_TITLE_QUERY: &str = r#"
@@ -107,7 +109,7 @@ const UPDATE_EMBEDDED_DATASET_TITLE_QUERY: &str = r#"
         updated_at = NOW()
     WHERE embedded_dataset_id = $1 AND owner_id = $3
     RETURNING embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-              owner_id, owner_display_name, collection_name, created_at, updated_at, last_processed_at
+              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at
 "#;
 
 const DELETE_EMBEDDED_DATASET_QUERY: &str = r#"
@@ -185,20 +187,30 @@ const GET_EMBEDDED_DATASET_WITH_DETAILS_BATCH: &str = r#"
             ed.title,
             ed.dataset_transform_id,
             ed.source_dataset_id,
-            d.title as source_dataset_title,
+            COALESCE(d.title, 'N/A') as source_dataset_title,
             ed.embedder_id,
-            e.name as embedder_name,
+            COALESCE(e.name, 'N/A') as embedder_name,
             ed.owner_id,
             ed.owner_display_name,
             ed.collection_name,
+            COALESCE(ed.dimensions, e.dimensions) as dimensions,
+            (ed.dataset_transform_id = 0 AND ed.source_dataset_id = 0 AND ed.embedder_id = 0) as is_standalone,
             ed.created_at,
             ed.updated_at
         FROM embedded_datasets ed
-        INNER JOIN datasets d ON d.dataset_id = ed.source_dataset_id
-        INNER JOIN embedders e ON e.embedder_id = ed.embedder_id
+        LEFT JOIN datasets d ON d.dataset_id = ed.source_dataset_id AND ed.source_dataset_id != 0
+        LEFT JOIN embedders e ON e.embedder_id = ed.embedder_id AND ed.embedder_id != 0
         WHERE ed.owner_id = $1 AND ed.embedded_dataset_id = ANY($2)
         ORDER BY ed.embedded_dataset_id
         "#;
+
+// Standalone embedded dataset queries
+const CREATE_STANDALONE_EMBEDDED_DATASET_QUERY: &str = r#"
+    INSERT INTO embedded_datasets (title, dataset_transform_id, source_dataset_id, embedder_id, owner_id, owner_display_name, collection_name, dimensions)
+    VALUES ($1, 0, 0, 0, $2, $3, $4, $5)
+    RETURNING embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
+              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at
+"#;
 
 pub async fn get_embedded_dataset(
     pool: &Pool<Postgres>,
@@ -511,6 +523,7 @@ pub async fn update_embedded_dataset_last_processed_at_to(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn create_embedded_dataset_in_transaction(
     tx: &mut Transaction<'_, Postgres>,
     title: &str,
@@ -519,6 +532,7 @@ pub async fn create_embedded_dataset_in_transaction(
     embedder_id: i32,
     owner: &OwnerInfo,
     collection_name: &str,
+    dimensions: Option<i32>,
 ) -> Result<EmbeddedDataset> {
     let mut embedded_dataset = sqlx::query_as::<_, EmbeddedDataset>(CREATE_EMBEDDED_DATASET_QUERY)
         .bind(title)
@@ -528,6 +542,7 @@ pub async fn create_embedded_dataset_in_transaction(
         .bind(&owner.owner_id)
         .bind(&owner.owner_display_name)
         .bind(collection_name)
+        .bind(dimensions)
         .fetch_one(&mut **tx)
         .await?;
 
@@ -577,4 +592,43 @@ pub async fn get_embedded_dataset_info(
         .fetch_one(pool)
         .await?;
     Ok(info)
+}
+
+/// Create a standalone embedded dataset (without transform/dataset/embedder)
+/// These datasets are created with sentinel value 0 for all FK fields
+/// and require dimensions to be specified upfront
+pub async fn create_standalone_embedded_dataset(
+    pool: &Pool<Postgres>,
+    owner: &OwnerInfo,
+    title: &str,
+    dimensions: i32,
+) -> Result<EmbeddedDataset> {
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, &owner.owner_id).await?;
+
+    // Create with placeholder collection name, will update after we have the ID
+    let mut embedded_dataset =
+        sqlx::query_as::<_, EmbeddedDataset>(CREATE_STANDALONE_EMBEDDED_DATASET_QUERY)
+            .bind(title)
+            .bind(&owner.owner_id)
+            .bind(&owner.owner_display_name)
+            .bind("placeholder") // Will be updated below
+            .bind(dimensions)
+            .fetch_one(&mut *tx)
+            .await?;
+
+    // Update with actual collection name using the generated ID
+    let actual_collection_name = EmbeddedDataset::generate_collection_name(
+        embedded_dataset.embedded_dataset_id,
+        &owner.owner_id,
+    );
+    embedded_dataset =
+        sqlx::query_as::<_, EmbeddedDataset>(UPDATE_EMBEDDED_DATASET_COLLECTION_NAME_QUERY)
+            .bind(embedded_dataset.embedded_dataset_id)
+            .bind(&actual_collection_name)
+            .fetch_one(&mut *tx)
+            .await?;
+
+    tx.commit().await?;
+    Ok(embedded_dataset)
 }

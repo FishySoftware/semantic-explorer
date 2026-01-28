@@ -455,6 +455,7 @@ async fn create_embedded_dataset_internal(
         embedder_id,
         owner,
         &collection_name,
+        None, // dimensions will be derived from embedder for transform-based datasets
     )
     .await
 }

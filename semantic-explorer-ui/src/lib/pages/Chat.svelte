@@ -92,7 +92,12 @@
 				throw new Error(`Failed to fetch embedded datasets: ${response.statusText}`);
 			}
 			const data = (await response.json()) as { embedded_datasets: EmbeddedDataset[] };
-			embeddedDatasets = data.embedded_datasets;
+			// Filter out standalone datasets - they don't have embedders and can't be used for RAG
+			embeddedDatasets = data.embedded_datasets.filter(
+				(ed) =>
+					!ed.is_standalone &&
+					!(ed.dataset_transform_id === 0 && ed.source_dataset_id === 0 && ed.embedder_id === 0)
+			);
 		} catch (e) {
 			console.error('Failed to fetch embedded datasets:', e);
 		}

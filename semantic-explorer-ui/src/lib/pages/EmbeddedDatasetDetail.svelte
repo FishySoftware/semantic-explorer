@@ -3,13 +3,14 @@
 	import { PlusIcon } from '$lib/utils/icons';
 	import { Button, Spinner } from 'flowbite-svelte';
 	import { onDestroy, onMount } from 'svelte';
+	import ApiExamples from '../ApiExamples.svelte';
 	import TabPanel from '../components/TabPanel.svelte';
 	import TransformsList from '../components/TransformsList.svelte';
 	import type {
-		VisualizationTransform,
 		EmbeddedDataset,
 		EmbeddedDatasetStats,
 		Embedder,
+		VisualizationTransform,
 	} from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { createSSEConnection, type SSEConnection } from '../utils/sse';
@@ -230,11 +231,28 @@
 	}
 
 	function navigateToChat() {
+		if (isStandalone()) {
+			toastStore.error('Standalone datasets cannot be used for chat (no embedder configured)');
+			return;
+		}
 		window.location.hash = `#/chat?embedded_dataset_id=${embeddedDatasetId}`;
 	}
 
 	function navigateToSearch() {
+		if (isStandalone()) {
+			toastStore.error('Standalone datasets cannot be used for search (no embedder configured)');
+			return;
+		}
 		window.location.hash = `#/search?embedded_dataset_ids=${embeddedDatasetId}`;
+	}
+
+	function isStandalone(): boolean {
+		return (
+			embeddedDataset?.is_standalone === true ||
+			(embeddedDataset?.dataset_transform_id === 0 &&
+				embeddedDataset?.source_dataset_id === 0 &&
+				embeddedDataset?.embedder_id === 0)
+		);
 	}
 
 	function handleCreateVisualizationTransform() {
@@ -352,16 +370,37 @@
 			</button>
 			<div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
 				<div class="flex-1">
-					<h1 class="text-3xl font-bold text-gray-900 dark:text-white mb-2">
-						{embeddedDataset.title}
-					</h1>
+					<div class="flex items-center gap-2 mb-2">
+						<h1 class="text-3xl font-bold text-gray-900 dark:text-white">
+							{embeddedDataset.title}
+						</h1>
+						{#if isStandalone()}
+							<span
+								class="px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded text-xs font-medium"
+							>
+								Standalone
+							</span>
+						{/if}
+					</div>
 					<p class="text-gray-600 dark:text-gray-400">
 						Embedded Dataset #{embeddedDataset.embedded_dataset_id}
+						{#if isStandalone()}
+							<span class="text-sm"> · Push vectors directly via API</span>
+						{/if}
 					</p>
 				</div>
 				<div class="flex gap-2">
-					<Button color="blue" onclick={navigateToChat}>💬 Chat</Button>
-					<Button color="purple" onclick={navigateToSearch}>🔍 Search</Button>
+					{#if isStandalone()}
+						<Button color="light" disabled title="Standalone datasets cannot be used for chat"
+							>💬 Chat</Button
+						>
+						<Button color="light" disabled title="Standalone datasets cannot be used for search"
+							>🔍 Search</Button
+						>
+					{:else}
+						<Button color="blue" onclick={navigateToChat}>💬 Chat</Button>
+						<Button color="purple" onclick={navigateToSearch}>🔍 Search</Button>
+					{/if}
 				</div>
 			</div>
 		</div>
@@ -370,40 +409,55 @@
 		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
 			<h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-4">Metadata</h2>
 			<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-				<div>
-					<p class="text-sm text-gray-600 dark:text-gray-400">Source Dataset</p>
-					<button
-						onclick={() =>
-							embeddedDataset &&
-							(window.location.hash = `#/datasets/${embeddedDataset.source_dataset_id}`)}
-						class="text-lg font-medium text-blue-600 dark:text-blue-400 hover:underline text-left"
-					>
-						{embeddedDataset.source_dataset_title ||
-							`Dataset #${embeddedDataset.source_dataset_id}`}
-					</button>
-				</div>
-				<div>
-					<p class="text-sm text-gray-600 dark:text-gray-400">Embedder</p>
-					<button
-						onclick={() =>
-							embeddedDataset &&
-							(window.location.hash = `#/embedders/${embeddedDataset.embedder_id}/details`)}
-						class="text-lg font-medium text-blue-600 dark:text-blue-400 hover:underline text-left"
-					>
-						{embeddedDataset.embedder_name || `Embedder #${embeddedDataset.embedder_id}`}
-					</button>
-				</div>
-				{#if embedder}
+				{#if isStandalone()}
 					<div>
-						<p class="text-sm text-gray-600 dark:text-gray-400">Dimension</p>
-						<p class="text-lg font-medium text-gray-900 dark:text-white">{embedder.dimensions}</p>
-					</div>
-					<div>
-						<p class="text-sm text-gray-600 dark:text-gray-400">Embedding Model</p>
-						<p class="text-lg font-medium text-gray-900 dark:text-white">
-							{embedder.config?.model || embedder.name}
+						<p class="text-sm text-gray-600 dark:text-gray-400">Type</p>
+						<p class="text-lg font-medium text-purple-600 dark:text-purple-400">
+							Standalone Dataset
 						</p>
 					</div>
+					<div>
+						<p class="text-sm text-gray-600 dark:text-gray-400">Dimensions</p>
+						<p class="text-lg font-medium text-gray-900 dark:text-white">
+							{embeddedDataset.dimensions || 'N/A'}
+						</p>
+					</div>
+				{:else}
+					<div>
+						<p class="text-sm text-gray-600 dark:text-gray-400">Source Dataset</p>
+						<button
+							onclick={() =>
+								embeddedDataset &&
+								(window.location.hash = `#/datasets/${embeddedDataset.source_dataset_id}`)}
+							class="text-lg font-medium text-blue-600 dark:text-blue-400 hover:underline text-left"
+						>
+							{embeddedDataset.source_dataset_title ||
+								`Dataset #${embeddedDataset.source_dataset_id}`}
+						</button>
+					</div>
+					<div>
+						<p class="text-sm text-gray-600 dark:text-gray-400">Embedder</p>
+						<button
+							onclick={() =>
+								embeddedDataset &&
+								(window.location.hash = `#/embedders/${embeddedDataset.embedder_id}/details`)}
+							class="text-lg font-medium text-blue-600 dark:text-blue-400 hover:underline text-left"
+						>
+							{embeddedDataset.embedder_name || `Embedder #${embeddedDataset.embedder_id}`}
+						</button>
+					</div>
+					{#if embedder}
+						<div>
+							<p class="text-sm text-gray-600 dark:text-gray-400">Dimension</p>
+							<p class="text-lg font-medium text-gray-900 dark:text-white">{embedder.dimensions}</p>
+						</div>
+						<div>
+							<p class="text-sm text-gray-600 dark:text-gray-400">Embedding Model</p>
+							<p class="text-lg font-medium text-gray-900 dark:text-white">
+								{embedder.config?.model || embedder.name}
+							</p>
+						</div>
+					{/if}
 				{/if}
 				<div>
 					<p class="text-sm text-gray-600 dark:text-gray-400">Collection Name</p>
@@ -464,40 +518,165 @@
 		<TabPanel {tabs} activeTabId={activeTab} onChange={handleTabChange}>
 			{#snippet children(tabId)}
 				{#if tabId === 'overview'}
-					<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
-						<h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Overview</h3>
-						<p class="text-gray-600 dark:text-gray-400 mb-4">
-							Embedded datasets contain vector embeddings generated from a source dataset using a
-							specified embedder.
-						</p>
+					{#if isStandalone()}
+						<!-- Standalone Dataset: Show prominent API integration instructions -->
+						<div
+							class="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg p-6 mb-6"
+						>
+							<div class="flex items-start gap-3">
+								<div class="shrink-0 mt-0.5">
+									<span class="text-2xl">🚀</span>
+								</div>
+								<div class="flex-1">
+									<h3 class="text-lg font-semibold text-purple-900 dark:text-purple-100 mb-2">
+										How to Populate This Dataset
+									</h3>
+									<p class="text-sm text-purple-800 dark:text-purple-200 mb-4">
+										This is a <strong>standalone embedded dataset</strong>. Unlike transform-based
+										datasets, you populate it by pushing vectors directly via the API. This is the
+										only way to add data to this dataset.
+									</p>
+								</div>
+							</div>
+						</div>
 
-						<div class="space-y-4">
-							<div>
-								<p class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-									Created: {embeddedDataset ? formatDate(embeddedDataset.created_at) : 'N/A'}
+						<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
+							<h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+								Push Vectors API
+							</h3>
+
+							<p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+								Send a POST request with an array of vector points. Each point must contain:
+							</p>
+
+							<ul
+								class="list-disc list-inside text-sm text-gray-600 dark:text-gray-400 space-y-1 mb-4"
+							>
+								<li>
+									<strong>id</strong>: String - Unique identifier for this point (UUID or any
+									string)
+								</li>
+								<li>
+									<strong>vector</strong>: Array of floats - The embedding vector (must be {embeddedDataset?.dimensions ||
+										'N/A'} dimensions)
+								</li>
+								<li>
+									<strong>payload</strong>: Object - Metadata for this point (any JSON object)
+								</li>
+							</ul>
+
+							<ApiExamples
+								endpoint={`/api/embedded-datasets/${embeddedDatasetId}/push-vectors`}
+								method="POST"
+								body={{
+									points: [
+										{
+											id: 'unique-id-1',
+											vector: Array(Math.min(embeddedDataset?.dimensions || 4, 4))
+												.fill(0.1)
+												.concat(
+													embeddedDataset?.dimensions && embeddedDataset.dimensions > 4
+														? ['... (' + (embeddedDataset.dimensions - 4) + ' more values)']
+														: []
+												),
+											payload: {
+												title: 'Example Document',
+												text: 'The text content of this document',
+												category: 'example',
+											},
+										},
+									],
+								}}
+							/>
+						</div>
+
+						<div
+							class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4 mb-6"
+						>
+							<h4 class="text-sm font-semibold text-yellow-900 dark:text-yellow-300 mb-2">
+								Important Notes
+							</h4>
+							<ul
+								class="list-disc list-inside text-sm text-yellow-800 dark:text-yellow-400 space-y-1"
+							>
+								<li>
+									Each vector must have exactly <strong
+										>{embeddedDataset?.dimensions || 'N/A'}</strong
+									> dimensions
+								</li>
+								<li>Maximum 1000 points per request</li>
+								<li>Points with existing IDs will be updated (upsert behavior)</li>
+								<li>Authentication is required via the access_token cookie</li>
+								<li>
+									Standalone datasets cannot be used for Search or Chat (no embedder for query
+									embedding)
+								</li>
+								<li>Use Visualization Transforms to visualize the data in 2D/3D</li>
+							</ul>
+						</div>
+
+						<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+							<h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Dataset Info</h3>
+							<div class="space-y-2">
+								<p class="text-sm text-gray-700 dark:text-gray-300">
+									<span class="font-medium">Created:</span>
+									{embeddedDataset ? formatDate(embeddedDataset.created_at) : 'N/A'}
 								</p>
-								<p class="text-sm font-medium text-gray-700 dark:text-gray-300">
-									Last Updated: {embeddedDataset ? formatDate(embeddedDataset.updated_at) : 'N/A'}
+								<p class="text-sm text-gray-700 dark:text-gray-300">
+									<span class="font-medium">Last Updated:</span>
+									{embeddedDataset ? formatDate(embeddedDataset.updated_at) : 'N/A'}
+								</p>
+								<p class="text-sm text-gray-700 dark:text-gray-300">
+									<span class="font-medium">Dimensions:</span>
+									{embeddedDataset?.dimensions || 'N/A'}
+								</p>
+								<p class="text-sm text-gray-700 dark:text-gray-300">
+									<span class="font-medium">Collection:</span>
+									<code class="bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded text-xs"
+										>{embeddedDataset?.collection_name}</code
+									>
 								</p>
 							</div>
-
-							{#if stats?.last_run_at}
-								<div>
-									<p class="text-sm font-medium text-gray-700 dark:text-gray-300">
-										Last Processed: {formatDate(stats.last_run_at)}
-									</p>
-								</div>
-							{/if}
-
-							{#if stats && stats.avg_processing_duration_ms}
-								<div>
-									<p class="text-sm font-medium text-gray-700 dark:text-gray-300">
-										Average Processing Time: {(stats.avg_processing_duration_ms / 1000).toFixed(2)}s
-									</p>
-								</div>
-							{/if}
 						</div>
-					</div>
+					{:else}
+						<!-- Transform-based Dataset: Show original overview -->
+						<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+							<h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Overview</h3>
+							<p class="text-gray-600 dark:text-gray-400 mb-4">
+								Embedded datasets contain vector embeddings generated from a source dataset using a
+								specified embedder.
+							</p>
+
+							<div class="space-y-4">
+								<div>
+									<p class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+										Created: {embeddedDataset ? formatDate(embeddedDataset.created_at) : 'N/A'}
+									</p>
+									<p class="text-sm font-medium text-gray-700 dark:text-gray-300">
+										Last Updated: {embeddedDataset ? formatDate(embeddedDataset.updated_at) : 'N/A'}
+									</p>
+								</div>
+
+								{#if stats?.last_run_at}
+									<div>
+										<p class="text-sm font-medium text-gray-700 dark:text-gray-300">
+											Last Processed: {formatDate(stats.last_run_at)}
+										</p>
+									</div>
+								{/if}
+
+								{#if stats && stats.avg_processing_duration_ms}
+									<div>
+										<p class="text-sm font-medium text-gray-700 dark:text-gray-300">
+											Average Processing Time: {(stats.avg_processing_duration_ms / 1000).toFixed(
+												2
+											)}s
+										</p>
+									</div>
+								{/if}
+							</div>
+						</div>
+					{/if}
 				{:else if tabId === 'transforms'}
 					<div>
 						{#if transformsLoading}

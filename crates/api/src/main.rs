@@ -249,6 +249,8 @@ async fn main() -> Result<()> {
             .service(api::embedded_datasets::get_point_vector)
             .service(api::embedded_datasets::get_processed_batches)
             .service(api::embedded_datasets::get_embedded_datasets_for_dataset)
+            .service(api::embedded_datasets::create_standalone_embedded_dataset)
+            .service(api::embedded_datasets::push_vectors_to_embedded_dataset)
             .service(api::embedders::get_embedder)
             .service(api::embedders::get_embedders)
             .service(api::embedders::create_embedder)
