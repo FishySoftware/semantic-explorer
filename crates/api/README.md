@@ -1,9 +1,16 @@
 # Semantic Explorer API Server
 
-![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)
-![Actix-web](https://img.shields.io/badge/actix--web-4.x-blue.svg)
+<div align="center">
 
-The main REST API server for Semantic Explorer. Provides endpoints for collection management, dataset processing, embedding generation, search, chat and visualizations.
+![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)
+![Actix-web](https://img.shields.io/badge/actix--web-4.x-blue.svg)
+![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
+
+**The main REST API server for Semantic Explorer**
+
+</div>
+
+Provides endpoints for collection management, dataset processing, embedding generation, search, chat, and visualizations.
 
 ---
 
@@ -175,7 +182,6 @@ graph TD
 | `GET` | `/api/embedding-inference/models` | List available embedding models |
 | `GET` | `/api/llm-inference/models` | List available LLM models (supports quantized GGUF) |
 
-> 💡 **Note**: The LLM inference API supports pre-quantized GGUF models for faster loading and reduced memory usage. See [crates/llm-inference-api/QUANTIZATION.md](../llm-inference-api/QUANTIZATION.md).
 
 </details>
 

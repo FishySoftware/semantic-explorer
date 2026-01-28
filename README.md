@@ -1,11 +1,22 @@
 # Semantic Explorer
 
+<div align="center">
+
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
-![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)
+![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)
 ![Docker](https://img.shields.io/badge/docker-compose%20v2%2B-blue.svg)
+![CUDA](https://img.shields.io/badge/CUDA-12.x-76B900.svg)
 
-A distributed platform for document processing, vector embedding generation, interactive visualization, and semantic search with RAG-enabled chat capabilities.
+**A distributed platform for document processing, vector embedding generation, interactive visualization, and semantic search with RAG-enabled chat capabilities.**
+
+[Features](#overview) •
+[Architecture](#architecture) •
+[Quick Start](#deployment) •
+[API Reference](#api-endpoints) •
+[Configuration](#environment-variables)
+
+</div>
 
 ---
 
@@ -21,7 +32,7 @@ Semantic Explorer is a microservices-based platform that enables organizations t
 6. **Chat with documents** via RAG (Retrieval-Augmented Generation) with streaming responses
 7. **Share resources** through a public marketplace for collaboration
 
-The platform uses a message-driven architecture with NATS JetStream for job orchestration, PostgreSQL for metadata, Qdrant for vector storage, and MinIO for file storage.
+The platform uses a message-driven architecture with NATS JetStream for job orchestration, PostgreSQL for metadata, Qdrant for vector storage, and S3 for file storage.
 
 ---
 
@@ -192,17 +203,16 @@ sequenceDiagram
 
 | Provider | Description |
 |-----------|-------------|
-| **Local** | FastEmbed/ONNX models via [`embedding-inference-api`](crates/embedding-inference-api/) |
+| **Internal** | FastEmbed/ONNX models via [`embedding-inference-api`](crates/embedding-inference-api/) |
 | **OpenAI** | OpenAI embedding API |
 | **Cohere** | Cohere embedding API |
-| **Custom** | HTTP-based embedding services |
 
 ### LLM Providers
 
 | Provider | Description |
 |-----------|-------------|
-| **Local** | mistral.rs engine with GGUF/GPTQ quantization support via [`llm-inference-api`](crates/llm-inference-api/) |
-| **OpenAI** | OpenAI chat/completion API |
+| **Internal** | mistral.rs engine with GGUF/GPTQ quantization support via [`llm-inference-api`](crates/llm-inference-api/) |
+| **OpenAI** | OpenAI chat API |
 | **Cohere** | Cohere chat API |
 
 ### Vector Database
@@ -439,8 +449,8 @@ semantic-explorer/
 ### Prerequisites
 
 - **Docker & Docker Compose** v2.0+
-- **NVIDIA GPU** (optional, for local inference APIs.  CUDA 13 required.)
-- **Rust** 1.75+ (for development)
+- **NVIDIA GPU** (optional, for local inference APIs — CUDA 12.x required)
+- **Rust** 1.85+ (for development — Edition 2024)
 - **Python** 3.11+ (for visualization worker development)
 - **Node.js** 20+ (for UI development)
 
@@ -612,7 +622,7 @@ See [`deployment/DEPLOYMENT_GUIDE.md`](deployment/DEPLOYMENT_GUIDE.md) for detai
 |-----------|----------|----------|-------------|
 | `LLM_INFERENCE_HOSTNAME` | `0.0.0.0` | No | Server bind address |
 | `LLM_INFERENCE_PORT` | `8091` | No | Server port |
-| `LLM_ALLOWED_MODELS` | - | **Yes** | Comma-separated model list or `*` for all |
+| `LLM_ALLOWED_MODELS` | - | **Yes** | Comma-separated list of allowed model IDs |
 | `LLM_MAX_CONCURRENT_REQUESTS` | `2` | No | Concurrent request limit |
 | `LLM_DEFAULT_TEMPERATURE` | `0.7` | No | Default sampling temperature |
 | `LLM_DEFAULT_TOP_P` | `0.9` | No | Default top-p sampling |

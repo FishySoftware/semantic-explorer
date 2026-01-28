@@ -1,8 +1,15 @@
 # Collections Worker
 
-![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)
+<div align="center">
 
-Document extraction and chunking worker for Semantic Explorer. Processes files from the `COLLECTION_TRANSFORMS` NATS stream.
+![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)
+![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
+
+**Document extraction and chunking worker for Semantic Explorer**
+
+</div>
+
+Processes files from the `COLLECTION_TRANSFORMS` NATS stream.
 
 ---
 

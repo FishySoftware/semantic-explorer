@@ -1,0 +1,50 @@
+name: Publish Helm Chart
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  publish-helm-chart:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.16.1'
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package Helm Chart
+        run: |
+          helm package deployment/helm/semantic-explorer
+
+      - name: Push Helm Chart
+        run: |
+          helm push semantic-explorer-*.tgz oci://ghcr.io/${{ github.repository }}
+
+      - name: Generate release notes
+        run: |
+          echo "# Helm Chart Published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Chart Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **Chart Name:** semantic-explorer" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository:** oci://ghcr.io/${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Installation" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "helm install my-release oci://ghcr.io/${{ github.repository }} --version ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

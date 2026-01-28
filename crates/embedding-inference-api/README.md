@@ -1,9 +1,16 @@
 # Embedding Inference API
 
-![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)
-![CUDA](https://img.shields.io/badge/CUDA-optional-green.svg)
+<div align="center">
 
-Local embedding and reranking server using FastEmbed with ONNX Runtime. Provides on-premise inference without external API calls.
+![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)
+![CUDA](https://img.shields.io/badge/CUDA-12.x_(optional)-76B900.svg)
+![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
+
+**Local embedding and reranking server using FastEmbed with ONNX Runtime**
+
+</div>
+
+Provides on-premise inference without external API calls.
 
 ---
 

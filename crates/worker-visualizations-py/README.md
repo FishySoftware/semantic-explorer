@@ -1,6 +1,15 @@
-# worker-visualizations-py
+# Visualizations Worker
 
-Python worker service for generating interactive visualizations of embedded vector datasets using UMAP dimensionality reduction, HDBSCAN clustering, and datamapplot rendering.
+<div align="center">
+
+![Python](https://img.shields.io/badge/python-3.12%2B-blue.svg)
+![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
+
+**Python worker for generating interactive visualizations of embedded vector datasets**
+
+</div>
+
+Uses UMAP dimensionality reduction, HDBSCAN clustering, and datamapplot rendering.
 
 ## Overview
 

@@ -1,8 +1,15 @@
 # Datasets Worker
 
-![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)
+<div align="center">
 
-Embedding generation worker for Semantic Explorer. Processes dataset chunks, generates vector embeddings, and uploads to Qdrant.
+![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)
+![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
+
+**Embedding generation worker for Semantic Explorer**
+
+</div>
+
+Processes dataset chunks, generates vector embeddings, and uploads to Qdrant.
 
 ---
 

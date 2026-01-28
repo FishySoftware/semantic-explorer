@@ -1,9 +1,16 @@
 # LLM Inference API
 
-![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)
-![CUDA](https://img.shields.io/badge/CUDA-optional-green.svg)
+<div align="center">
 
-Local LLM inference server using [mistral.rs](https://github.com/EricLBuehler/mistral.rs). Provides on-premise text generation without external API calls.
+![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)
+![CUDA](https://img.shields.io/badge/CUDA-12.x_(optional)-76B900.svg)
+![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
+
+**Local LLM inference server using [mistral.rs](https://github.com/EricLBuehler/mistral.rs)**
+
+</div>
+
+Provides on-premise text generation without external API calls.
 
 ---
 
@@ -25,10 +32,10 @@ Optional service for local LLM inference:
 | `GET` | `/health/live` | Liveness probe |
 | `GET` | `/health/ready` | Readiness probe |
 | `GET` | `/api/llms` | List available models |
-| `POST` | `/api/generate` | **Completion-style** text generation (raw prompt) |
-| `POST` | `/api/generate/stream` | **Completion-style** streaming generation (SSE) |
-| `POST` | `/api/chat` | **Chat-style** completion (conversation messages) |
-| `POST` | `/api/chat/stream` | **Chat-style** streaming completion (SSE) |
+| `POST` | `/api/generate` | Text generation from a prompt |
+| `POST` | `/api/generate/stream` | Streaming text generation (SSE) |
+| `POST` | `/api/chat` | Chat with message history |
+| `POST` | `/api/chat/stream` | Streaming chat (SSE) |
 | `GET` | `/swagger-ui` | Interactive API documentation |
 | `GET` | `/metrics` | Prometheus metrics |
 
@@ -36,20 +43,20 @@ Optional service for local LLM inference:
 
 ## API Endpoints
 
-### Completion vs Chat
+### Text Generation vs Chat
 
-- **`/api/generate`**: Uses **completion-style** requests with a single prompt string (OpenAI-compatible completion endpoint)
-- **`/api/chat`**: Uses **chat-style** requests with structured message arrays (OpenAI-compatible chat endpoint)
+- **`/api/generate`**: Generates a response from a provided prompt
+- **`/api/chat`**: Chat with message history (structured message arrays)
 
-Both work with instruction-tuned models, but use different internal request formats.
+Both work with instruction-tuned models, but use different request formats.
 
 ---
 
 ## API Examples
 
-### Text Generation (Completion)
+### Text Generation
 
-Completion-style generation with a raw text prompt:
+Generate a response from a prompt:
 
 ```bash
 curl -X POST http://localhost:8091/api/generate \
@@ -62,9 +69,9 @@ curl -X POST http://localhost:8091/api/generate \
   }'
 ```
 
-### Streaming Generation (Completion)
+### Streaming Text Generation
 
-Streaming completion-style generation:
+Stream a response token-by-token:
 
 ```bash
 curl -X POST http://localhost:8091/api/generate/stream \
@@ -75,9 +82,9 @@ curl -X POST http://localhost:8091/api/generate/stream \
   }'
 ```
 
-### Chat Completion
+### Chat
 
-Chat-style generation with message history:
+Chat with message history:
 
 ```bash
 curl -X POST http://localhost:8091/api/chat \
@@ -99,7 +106,7 @@ curl -X POST http://localhost:8091/api/chat \
 
 | Variable | Description |
 |----------|-------------|
-| `LLM_ALLOWED_MODELS` | Comma-separated model list or `*` for all |
+| `LLM_ALLOWED_MODELS` | Comma-separated list of allowed model IDs |
 
 ### Optional - Server
 
@@ -126,7 +133,7 @@ curl -X POST http://localhost:8091/api/chat \
 | `LLM_MODEL_PATH` | - | Custom model directory |
 | `HF_HOME` | - | HuggingFace cache directory |
 | `HF_ENDPOINT` | - | HuggingFace mirror URL (for air-gapped) |
-| `LLM_ENABLE_ISQ` | `false` | Enable runtime quantization (slow, see [QUANTIZATION.md](QUANTIZATION.md)) |
+| `LLM_ENABLE_ISQ` | `false` | Enable in-situ runtime quantization (slow, not cached) |
 | `LLM_ISQ_TYPE` | - | ISQ quantization type (Q4_K, Q8_0, etc.) |
 
 ### Observability
@@ -149,11 +156,40 @@ curl -X POST http://localhost:8091/api/chat \
 
 ## Supported Models
 
-Models compatible with [mistral.rs](https://github.com/EricLBuehler/mistral.rs):
+This service uses [mistral.rs](https://github.com/EricLBuehler/mistral.rs) as the inference engine, which supports a wide range of model architectures and quantization formats.
+
+### Supported Model Architectures
+
+| Architecture | Examples |
+|-------------|----------|
+| **Llama** | Llama 2, Llama 3, Code Llama, TinyLlama |
+| **Mistral** | Mistral 7B, Mixtral 8x7B (MoE) |
+| **Phi** | Phi-2, Phi-3, Phi-3.5 |
+| **Qwen** | Qwen, Qwen2 |
+| **Gemma** | Gemma, Gemma 2 |
+| **StableLM** | StableLM, StableLM 2 |
+
+### Quantization Formats
+
+| Format | Hardware | Description |
+|--------|----------|-------------|
+| **GGUF** | CPU, CUDA, Metal | Universal format, many quantization levels (Q4_K_M, Q5_K_M, Q8_0, etc.) |
+| **GPTQ** | CUDA only | GPU-optimized 4-bit quantization |
+| **AWQ** | CUDA only | Activation-aware weight quantization |
+| **Standard** | CPU, CUDA | Full precision HuggingFace models (FP16/BF16) |
+
+### Where to Find Models
+
+| Source | URL | Notes |
+|--------|-----|-------|
+| **HuggingFace Hub** | [huggingface.co/models](https://huggingface.co/models) | Primary source for all model types |
+| **TheBloke** | [huggingface.co/TheBloke](https://huggingface.co/TheBloke) | Large collection of GGUF/GPTQ quantized models |
+| **bartowski** | [huggingface.co/bartowski](https://huggingface.co/bartowski) | High-quality GGUF quantizations |
+| **Unsloth** | [huggingface.co/unsloth](https://huggingface.co/unsloth) | Optimized fine-tuned models |
 
 ### Pre-quantized Models (RECOMMENDED)
 
-Pre-quantized models load faster and use less memory. See [QUANTIZATION.md](QUANTIZATION.md) for details.
+Pre-quantized models load faster and use less memory.
 
 **GGUF Models** (CPU, CUDA, Metal):
 
@@ -190,13 +226,23 @@ Examples:
 | `mistralai/Mistral-7B-Instruct-v0.2` | 7B instruction-tuned |
 | `meta-llama/Llama-2-7b-chat-hf` | Meta Llama 2 |
 
-**💡 Tip**: Use pre-quantized models for faster loading and lower memory usage:
-- **GGUF models**: Work on any device (CPU, CUDA, Metal) from [TheBloke](https://huggingface.co/TheBloke)
-- **GPTQ models**: CUDA-only, optimized for NVIDIA GPUs from [TheBloke](https://huggingface.co/TheBloke) and [kaitchup](https://huggingface.co/kaitchup)
+**💡 Choosing the Right Model**:
 
-See [QUANTIZATION.md](QUANTIZATION.md) for a complete guide.
+| Use Case | Recommendation |
+|----------|---------------|
+| **Development/Testing** | TinyLlama (1.1B) - Fast, low memory |
+| **General Use** | Mistral 7B, Llama 3 8B - Good balance |
+| **High Quality** | Llama 3 70B, Mixtral 8x7B - Best results |
+| **Low VRAM (< 8GB)** | Q4_K_M quantized 7B models |
+| **CPU Only** | GGUF format with Q4_K_M or smaller |
 
-See mistral.rs documentation for full model compatibility.
+**💡 Tips**:
+- **GGUF models** work on any device (CPU, CUDA, Metal) - most flexible
+- **GPTQ/AWQ models** require NVIDIA GPU but are faster for inference
+- Use **instruction-tuned** models (names contain "Instruct", "Chat") for chat use cases
+- Check model card on HuggingFace for license and usage restrictions
+
+For full model compatibility, see [mistral.rs supported models](https://github.com/EricLBuehler/mistral.rs#supported-models).
 
 ---
 

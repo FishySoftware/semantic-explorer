@@ -1,6 +1,17 @@
-# semantic-explorer-ui
+# Semantic Explorer UI
 
-Modern single-page application (SPA) for the Semantic Explorer platform, providing an intuitive interface for document management, semantic search, and interactive data visualizations.
+<div align="center">
+
+![Svelte](https://img.shields.io/badge/svelte-5.x-FF3E00.svg)
+![TypeScript](https://img.shields.io/badge/typescript-5.9-3178C6.svg)
+![Tailwind CSS](https://img.shields.io/badge/tailwindcss-4.x-06B6D4.svg)
+![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
+
+**Modern single-page application for the Semantic Explorer platform**
+
+</div>
+
+Provides an intuitive interface for document management, semantic search, and interactive data visualizations.
 
 ## Overview
 

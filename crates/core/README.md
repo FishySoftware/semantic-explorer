@@ -1,8 +1,15 @@
 # Semantic Explorer Core Library
 
-![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)
+<div align="center">
 
-Shared library providing common functionality for all Semantic Explorer services: configuration, observability, NATS JetStream, encryption, storage utilities, and worker implementations.
+![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)
+![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
+
+**Shared library providing common functionality for all Semantic Explorer services**
+
+</div>
+
+Configuration, observability, NATS JetStream, encryption, storage utilities, and worker implementations.
 
 ---
 
