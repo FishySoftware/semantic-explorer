@@ -9,14 +9,11 @@ This directory contains the Helm chart for deploying Semantic Explorer to Kubern
 The Helm chart is automatically published to GitHub Packages when a new version tag is pushed.
 
 ```bash
-# Add the repository (optional, for listing available versions)
-helm repo add semantic-explorer oci://ghcr.io/FishySoftware/semantic-explorer
-
-# Install the chart
-helm install my-release oci://ghcr.io/FishySoftware/semantic-explorer --version 1.1.0
+# Install a specific version
+helm install my-release oci://ghcr.io/fishysoftware/semantic-explorer/semantic-explorer --version 1.1.0
 
 # Or install the latest version
-helm install my-release oci://ghcr.io/FishySoftware/semantic-explorer
+helm install my-release oci://ghcr.io/fishysoftware/semantic-explorer/semantic-explorer
 ```
 
 ### From Local Source
@@ -34,7 +31,7 @@ helm install my-release ./deployment/helm/semantic-explorer
 View the default configuration values:
 
 ```bash
-helm show values oci://ghcr.io/FishySoftware/semantic-explorer --version 1.1.0
+helm show values oci://ghcr.io/fishysoftware/semantic-explorer/semantic-explorer --version 1.1.0
 ```
 
 ### Custom Values
@@ -42,13 +39,13 @@ helm show values oci://ghcr.io/FishySoftware/semantic-explorer --version 1.1.0
 Create a custom values file and use it during installation:
 
 ```bash
-helm install my-release oci://ghcr.io/FishySoftware/semantic-explorer --version 1.1.0 -f custom-values.yaml
+helm install my-release oci://ghcr.io/fishysoftware/semantic-explorer/semantic-explorer --version 1.1.0 -f custom-values.yaml
 ```
 
 Or override specific values:
 
 ```bash
-helm install my-release oci://ghcr.io/FishySoftware/semantic-explorer --version 1.1.0 --set image.tag=latest
+helm install my-release oci://ghcr.io/fishysoftware/semantic-explorer/semantic-explorer --version 1.1.0 --set image.tag=latest
 ```
 
 ## Upgrading
@@ -56,7 +53,7 @@ helm install my-release oci://ghcr.io/FishySoftware/semantic-explorer --version 
 To upgrade an existing release:
 
 ```bash
-helm upgrade my-release oci://ghcr.io/FishySoftware/semantic-explorer --version 1.1.0
+helm upgrade my-release oci://ghcr.io/fishysoftware/semantic-explorer/semantic-explorer --version 1.1.0
 ```
 
 ## Uninstalling
@@ -69,10 +66,14 @@ helm uninstall my-release
 
 ## Listing Available Versions
 
-To list all available chart versions:
+To list all available chart versions in the GitHub Container Registry:
 
 ```bash
-helm search repo oci://ghcr.io/FishySoftware/semantic-explorer --list-repo
+# Using the GitHub CLI
+gh api /users/fishysoftware/packages/container/semantic-explorer%2Fsemantic-explorer/versions --jq '.[].metadata.container.tags[]'
+
+# Or view in browser
+# https://github.com/FishySoftware/semantic-explorer/pkgs/container/semantic-explorer%2Fsemantic-explorer
 ```
 
 ## Publishing New Versions
@@ -126,7 +127,7 @@ helm history my-release
 ### Debug Installation
 
 ```bash
-helm install my-release oci://ghcr.io/FishySoftware/semantic-explorer --version 1.1.0 --dry-run --debug
+helm install my-release oci://ghcr.io/fishysoftware/semantic-explorer --version 1.1.0 --dry-run --debug
 ```
 
 ## Support
