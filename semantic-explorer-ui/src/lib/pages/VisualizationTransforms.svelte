@@ -13,7 +13,7 @@
 		VisualizationConfig,
 		VisualizationTransform,
 	} from '../types/models';
-	import { InfoIcon } from '../utils/icons';
+	import { InfoCircleSolid } from 'flowbite-svelte-icons';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { formatDate, showTooltip } from '../utils/ui-helpers';
 
@@ -822,7 +822,7 @@
 											'Controls local vs global structure. Low values (2-5) focus on fine detail, high values (50-200) capture broader structure. Default: 15'
 										)}
 								>
-									{@html InfoIcon}
+									<InfoCircleSolid class="w-4 h-4" />
 								</button>
 							</label>
 							<input
@@ -852,7 +852,7 @@
 											'Minimum distance between points in the low dimensional space. Low values (0.0-0.1) create clumpier embeddings good for clustering. Higher values (0.5-0.99) spread points out and preserve global structure. Default: 0.1'
 										)}
 								>
-									{@html InfoIcon}
+									<InfoCircleSolid class="w-4 h-4" />
 								</button>
 							</label>
 							<input
@@ -882,7 +882,7 @@
 											'Distance metric for measuring similarity. Cosine: best for text/embeddings (angle-based). Euclidean: standard distance. Manhattan: city-block distance. Default: cosine'
 										)}
 								>
-									{@html InfoIcon}
+									<InfoCircleSolid class="w-4 h-4" />
 								</button>
 							</label>
 							<select
@@ -924,7 +924,7 @@
 											'Minimum number of points required to form a cluster. Larger values create fewer, more significant clusters. Smaller values find more fine-grained clusters but may include noise. Default: 15'
 										)}
 								>
-									{@html InfoIcon}
+									<InfoCircleSolid class="w-4 h-4" />
 								</button>
 							</label>
 							<input
@@ -954,7 +954,7 @@
 											'Controls how conservative the clustering is. Higher values make clusters more conservative (fewer outliers classified as cluster members). Default: 5'
 										)}
 								>
-									{@html InfoIcon}
+									<InfoCircleSolid class="w-4 h-4" />
 								</button>
 							</label>
 							<input
@@ -994,7 +994,7 @@
 											'Select which LLM to use for generating topic names. The LLM will receive document samples from each cluster and generate descriptive labels.'
 										)}
 								>
-									{@html InfoIcon}
+									<InfoCircleSolid class="w-4 h-4" />
 								</button>
 							</label>
 							<select
@@ -1031,7 +1031,7 @@
 											'Custom prompt template for LLM topic naming. Use {{samples}} as a placeholder where the representative document texts will be inserted. The LLM should respond with just the topic name.'
 										)}
 								>
-									{@html InfoIcon}
+									<InfoCircleSolid class="w-4 h-4" />
 								</button>
 							</label>
 							<textarea
@@ -1069,7 +1069,7 @@
 									onmouseenter={(e) =>
 										showTooltip(e, 'Minimum font size for cluster labels in points. Default: 12')}
 								>
-									{@html InfoIcon}
+									<InfoCircleSolid class="w-4 h-4" />
 								</button>
 							</label>
 							<input
@@ -1096,7 +1096,7 @@
 									onmouseenter={(e) =>
 										showTooltip(e, 'Maximum font size for cluster labels in points. Default: 24')}
 								>
-									{@html InfoIcon}
+									<InfoCircleSolid class="w-4 h-4" />
 								</button>
 							</label>
 							<input
@@ -1128,7 +1128,7 @@
 											'Font family for labels (e.g., Arial, sans-serif). Default: Playfair Display SC'
 										)}
 								>
-									{@html InfoIcon}
+									<InfoCircleSolid class="w-4 h-4" />
 								</button>
 							</label>
 							<input
@@ -1151,7 +1151,7 @@
 									onmouseenter={(e) =>
 										showTooltip(e, 'Hex color for unclustered (noise) points. Default: #999999')}
 								>
-									{@html InfoIcon}
+									<InfoCircleSolid class="w-4 h-4" />
 								</button>
 							</label>
 							<input
@@ -1175,7 +1175,7 @@
 									onmouseenter={(e) =>
 										showTooltip(e, 'Character count before wrapping labels. Default: 16')}
 								>
-									{@html InfoIcon}
+									<InfoCircleSolid class="w-4 h-4" />
 								</button>
 							</label>
 							<input
@@ -1205,7 +1205,7 @@
 											'Alpha-shape parameter controlling how tightly cluster boundary polygons wrap around points. Lower values = tighter boundaries (may fail if too low). Higher values = looser, more convex-hull-like boundaries. Increase this if you get "polygon_alpha was too low" errors. Default: 0.5'
 										)}
 								>
-									{@html InfoIcon}
+									<InfoCircleSolid class="w-4 h-4" />
 								</button>
 							</label>
 							<input
@@ -1239,7 +1239,7 @@
 									onmouseenter={(e) =>
 										showTooltip(e, 'Use dark background theme for the visualization')}
 								>
-									{@html InfoIcon}
+									<InfoCircleSolid class="w-4 h-4" />
 								</button>
 							</label>
 						</div>
@@ -1264,7 +1264,7 @@
 											'Use actual data points (medoids) instead of calculated centroids for cluster center positions'
 										)}
 								>
-									{@html InfoIcon}
+									<InfoCircleSolid class="w-4 h-4" />
 								</button>
 							</label>
 						</div>
@@ -1289,7 +1289,7 @@
 											'Draw alpha-shape boundary lines around clusters to visually separate them'
 										)}
 								>
-									{@html InfoIcon}
+									<InfoCircleSolid class="w-4 h-4" />
 								</button>
 							</label>
 						</div>
@@ -1330,7 +1330,7 @@
 													'Rotate the entire color palette around the color wheel. Use to change the overall color scheme. Default: 0'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -1358,7 +1358,7 @@
 													'How much the hue changes based on distance from center. Higher values create more color variation across the map. Default: 1.0'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -1386,7 +1386,7 @@
 													'Angular range for the color palette in radians. Controls how much of the color wheel is used. π/16 ≈ 0.196 (default) uses a narrow range for subtle variation.'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -1414,7 +1414,7 @@
 													'Custom background color in hex format (e.g., #1a1a2e). Leave empty to use automatic color based on dark/light mode.'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -1444,7 +1444,7 @@
 													'Color cluster label text to match the cluster color. When disabled, labels use a neutral color.'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 								</div>
@@ -1467,7 +1467,7 @@
 													'Use a color palette optimized for users with color vision deficiency (colorblindness). Improves accessibility.'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 								</div>
@@ -1494,7 +1494,7 @@
 											onmouseenter={(e) =>
 												showTooltip(e, 'Main title displayed at the top of the visualization.')}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -1517,7 +1517,7 @@
 											onmouseenter={(e) =>
 												showTooltip(e, 'Secondary title displayed below the main title.')}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -1540,7 +1540,7 @@
 											onmouseenter={(e) =>
 												showTooltip(e, 'Font size for the main title in points. Default: 36')}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -1565,7 +1565,7 @@
 											onmouseenter={(e) =>
 												showTooltip(e, 'Font size for the subtitle in points. Default: 18')}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -1593,7 +1593,7 @@
 													'Font weight for labels. 100=thin, 400=normal, 700=bold, 900=black. Default: 600'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -1621,7 +1621,7 @@
 													'Multiplier for line height in wrapped text. 1.0 = normal, <1 = tighter, >1 = looser. Default: 0.95'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -1649,7 +1649,7 @@
 													'Width of the outline/halo around label text for better readability. Default: 8'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -1677,7 +1677,7 @@
 													'Color of the text outline/halo in hex format with optional alpha (e.g., #eeeeeedd). Default: #eeeeeedd'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -1702,7 +1702,7 @@
 													'Scale factor for label collision detection. Higher values create more space between labels. Default: 3.0'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -1730,7 +1730,7 @@
 													'Minimum text size in pixels when zoomed out. Labels smaller than this will be hidden. Default: 12'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -1758,7 +1758,7 @@
 													'Maximum text size in pixels when zoomed in. Prevents labels from becoming too large. Default: 36'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -1797,7 +1797,7 @@
 													'Font family used for point hover tooltips. Default: Playfair Display SC'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -1822,7 +1822,7 @@
 													'Font weight for tooltips. 100=thin, 400=normal, 700=bold. Default: 400'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -1861,7 +1861,7 @@
 													'Color shown when hovering over a point. Use hex with alpha (e.g., #aa0000bb). Default: #aa0000bb'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -1886,7 +1886,7 @@
 													'Multiplier for point sizes. Leave empty for automatic sizing based on data density.'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -1913,7 +1913,7 @@
 													'Minimum point radius in pixels when zoomed out. Default: 0.01'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -1941,7 +1941,7 @@
 													'Maximum point radius in pixels when zoomed in. Default: 24'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -1969,7 +1969,7 @@
 													'Stroke/outline width around each point. 0 = no outline. Default: 0.001'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -1997,7 +1997,7 @@
 													'Minimum point outline width in pixels when zoomed out. Default: 0.001'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -2025,7 +2025,7 @@
 													'Maximum point outline width in pixels when zoomed in. Default: 3'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -2053,7 +2053,7 @@
 													'Line width for cluster boundary polygons when enabled. Default: 1.0'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -2092,7 +2092,7 @@
 													'Width of the visualization. Can be a percentage (e.g., "100%") or pixels. Default: 100%'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -2114,7 +2114,7 @@
 											onmouseenter={(e) =>
 												showTooltip(e, 'Height of the visualization in pixels. Default: 800')}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -2142,7 +2142,7 @@
 													'Initial zoom level. 1.0 = fit all points. <1 = zoomed in, >1 = zoomed out. Default: 1.0'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -2170,7 +2170,7 @@
 													'Label displayed for points not assigned to any cluster. Default: Unlabelled'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -2192,7 +2192,7 @@
 											onmouseenter={(e) =>
 												showTooltip(e, 'URL of a logo image to display on the visualization.')}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -2215,7 +2215,7 @@
 											onmouseenter={(e) =>
 												showTooltip(e, 'Width of the logo in pixels. Default: 256')}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -2240,7 +2240,7 @@
 											onmouseenter={(e) =>
 												showTooltip(e, 'URL of an image to use as the visualization background.')}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 									<input
@@ -2270,7 +2270,7 @@
 													'Embed all data directly in the HTML file vs. loading from separate files. Recommended for portability.'
 												)}
 										>
-											{@html InfoIcon}
+											<InfoCircleSolid class="w-4 h-4" />
 										</button>
 									</label>
 								</div>

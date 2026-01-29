@@ -1,14 +1,14 @@
 <script lang="ts">
-	/* eslint-disable svelte/no-at-html-tags */
 	import { onDestroy, onMount } from 'svelte';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import ApiIntegrationModal from '../components/ApiIntegrationModal.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import CreateCollectionTransformModal from '../components/CreateCollectionTransformModal.svelte';
+	import LoadingState from '../components/LoadingState.svelte';
 	import TabPanel from '../components/TabPanel.svelte';
 	import TransformsList from '../components/TransformsList.svelte';
 	import UploadProgressPanel from '../components/UploadProgressPanel.svelte';
-	import { ArrowLeftIcon, ArrowsExpandIcon, UploadIcon } from '../utils/icons';
+	import { ArrowLeftOutline, ExpandOutline, UploadOutline } from 'flowbite-svelte-icons';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { createSSEConnection, type SSEConnection } from '../utils/sse';
 	import { formatDate, formatFileSize } from '../utils/ui-helpers';
@@ -594,14 +594,12 @@
 <div class="max-w-7xl mx-auto">
 	<div class="mb-2">
 		<button onclick={onBack} class="mb-2 btn-secondary inline-flex items-center gap-2">
-			{@html ArrowLeftIcon}
+			<ArrowLeftOutline class="w-5 h-5" />
 			Back to Collections
 		</button>
 
 		{#if pageLoading}
-			<div class="flex items-center justify-center py-12">
-				<div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-			</div>
+			<LoadingState message="Loading collection..." />
 		{:else if collection}
 			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
 				<div class="flex justify-between items-start mb-2">
@@ -719,7 +717,7 @@
 											<span class="animate-spin">⏳</span>
 											Uploading...
 										{:else}
-											{@html UploadIcon}
+											<UploadOutline class="w-5 h-5" />
 											Upload Files
 										{/if}
 									</button>
@@ -792,9 +790,7 @@
 						{/if}
 
 						{#if filesLoading}
-							<div class="flex items-center justify-center py-12">
-								<div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-							</div>
+							<LoadingState message="Loading files..." />
 						{:else if error}
 							<div class="p-4">
 								<div
@@ -1004,7 +1000,7 @@
 											class="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
 											title="Process files from this collection into a dataset"
 										>
-											{@html ArrowsExpandIcon}
+											<ExpandOutline class="w-5 h-5" />
 											Create Collection Transform
 										</button>
 									</div>
@@ -1017,7 +1013,7 @@
 										class="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
 										title="Process files from this collection into a dataset"
 									>
-										{@html ArrowsExpandIcon}
+										<ExpandOutline class="w-5 h-5" />
 										Create Collection Transform
 									</button>
 								</div>

@@ -23,10 +23,10 @@ pub(crate) async fn search_collection(
     collection_name: &str,
     query_vector: &[f32],
     request: &SearchRequest,
+    search_batch_size: u64,
 ) -> Result<Vec<SearchMatch>> {
     // In document mode, fetch chunks in batches until we have enough unique documents
     if matches!(request.search_mode, SearchMode::Documents) {
-        const BATCH_SIZE: u64 = 200; //TODO: make configurable
         let target_documents = request.limit as usize;
         let mut all_matches = Vec::new();
         let mut unique_item_ids = HashSet::new();
@@ -39,7 +39,7 @@ pub(crate) async fn search_collection(
                 collection_name,
                 query_vector,
                 request,
-                BATCH_SIZE,
+                search_batch_size,
                 offset,
             )
             .await?;
@@ -62,10 +62,10 @@ pub(crate) async fn search_collection(
                 break;
             }
 
-            offset += BATCH_SIZE;
+            offset += search_batch_size;
 
-            // Safety check: don't fetch more than 50 batches (10000 chunks)
-            if offset >= BATCH_SIZE * 50 {
+            // Safety check: don't fetch more than 50 batches (10000 chunks by default)
+            if offset >= search_batch_size * 50 {
                 tracing::warn!(
                     "Reached maximum batch limit for collection '{}', stopping at {} chunks",
                     collection_name,

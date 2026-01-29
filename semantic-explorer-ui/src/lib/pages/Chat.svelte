@@ -39,6 +39,7 @@
 	// LLM Configuration
 	let temperature = $state(0.7);
 	let maxTokens = $state(2000);
+	let systemPrompt = $state('');
 
 	// Chat stream state
 	let chatStream = $state<ReturnType<typeof useChatStream> | null>(null);
@@ -258,10 +259,13 @@
 		if (!chatStream) {
 			chatStream = useChatStream({
 				sessionId: currentSession.session_id,
-				maxChunks,
-				minSimilarityScore,
-				temperature,
-				maxTokens,
+				getSettings: () => ({
+					maxChunks,
+					minSimilarityScore,
+					temperature,
+					maxTokens,
+					systemPrompt,
+				}),
 				callbacks: {
 					onComplete: () => {
 						// Refresh messages after completion
@@ -303,10 +307,13 @@
 				}
 				chatStream = useChatStream({
 					sessionId: session.session_id,
-					maxChunks,
-					minSimilarityScore,
-					temperature,
-					maxTokens,
+					getSettings: () => ({
+						maxChunks,
+						minSimilarityScore,
+						temperature,
+						maxTokens,
+						systemPrompt,
+					}),
 					callbacks: {
 						onComplete: () => {
 							fetchMessagesForCurrentSession();
@@ -489,10 +496,12 @@
 								{minSimilarityScore}
 								{temperature}
 								{maxTokens}
+								{systemPrompt}
 								onMaxChunksChange={(v) => (maxChunks = v)}
 								onMinSimilarityScoreChange={(v) => (minSimilarityScore = v)}
 								onTemperatureChange={(v) => (temperature = v)}
 								onMaxTokensChange={(v) => (maxTokens = v)}
+								onSystemPromptChange={(v) => (systemPrompt = v)}
 							/>
 						</div>
 					{/if}

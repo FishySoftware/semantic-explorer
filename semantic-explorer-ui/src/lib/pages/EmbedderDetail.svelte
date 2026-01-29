@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
+	import LoadingState from '../components/LoadingState.svelte';
 	import TabPanel from '../components/TabPanel.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { formatDate } from '../utils/ui-helpers';
@@ -363,9 +364,7 @@
 	</div>
 
 	{#if loading}
-		<div class="flex justify-center items-center py-12">
-			<div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-		</div>
+		<LoadingState message="Loading embedder..." />
 	{:else if error}
 		<div class="bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 p-4 rounded-lg">
 			<p>{error}</p>
@@ -576,17 +575,19 @@
 									</div>
 
 									<div class="flex gap-2">
-										<button
-											onclick={testConnection}
-											disabled={testStatus === 'testing'}
-											class="flex-1 btn-secondary disabled:opacity-50"
-										>
-											{#if testStatus === 'testing'}
-												Testing...
-											{:else}
-												Test Connection
-											{/if}
-										</button>
+										{#if embedder?.provider !== 'internal'}
+											<button
+												onclick={testConnection}
+												disabled={testStatus === 'testing'}
+												class="flex-1 btn-secondary disabled:opacity-50"
+											>
+												{#if testStatus === 'testing'}
+													Testing...
+												{:else}
+													Test Connection
+												{/if}
+											</button>
+										{/if}
 										<button
 											onclick={saveEdit}
 											disabled={editLoading}

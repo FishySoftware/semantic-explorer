@@ -9,7 +9,14 @@ use crate::{chat::models::ChatMessage, storage::postgres::chat as chat_storage};
 /// Type alias for streaming LLM response results
 type LLMStreamResult = Result<Pin<Box<dyn Stream<Item = Result<String, String>> + Send>>, String>;
 
-const SYSTEM_PROMPT: &str = "You are a helpful assistant that answers questions based on the provided context. When answering, always cite the specific chunk number (e.g., 'According to Chunk 1' or 'As mentioned in Chunk 2 and Chunk 3') to reference where your information comes from. If the context doesn't contain relevant information to answer the question, say so explicitly.";
+/// Default system prompt for RAG chat
+/// Uses {{chunks}} placeholder which gets replaced with retrieved document chunks
+pub const DEFAULT_SYSTEM_PROMPT: &str = "You are a helpful assistant that answers questions based on the provided context.
+
+Context:
+{{chunks}}
+
+When answering, always cite the specific chunk number (e.g., 'According to Chunk 1' or 'As mentioned in Chunk 2 and Chunk 3') to reference where your information comes from. If the context doesn't contain relevant information to answer the question, say so explicitly.";
 
 /// Configuration for LLM API requests
 #[derive(Debug, Clone)]
@@ -21,18 +28,34 @@ struct LLMRequestConfig {
     max_tokens: i32,
 }
 
+/// Build the effective system prompt from custom prompt or default
+/// Replaces {{chunks}} placeholder with the actual context
+fn build_system_prompt(custom_prompt: Option<&str>, context: &str) -> String {
+    let prompt = match custom_prompt {
+        Some(p) if !p.trim().is_empty() => p,
+        _ => DEFAULT_SYSTEM_PROMPT,
+    };
+    // Replace {{chunks}} placeholder with actual context
+    prompt.replace("{{chunks}}", context)
+}
+
 /// Generate an LLM response with RAG context
-#[tracing::instrument(name = "generate_llm_response", skip(pool, query, context, encryption))]
+#[tracing::instrument(
+    name = "generate_llm_response",
+    skip(pool, query, context, encryption, system_prompt)
+)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn generate_response(
     pool: &Pool<Postgres>,
     encryption: &EncryptionService,
+    llm_inference_url: &str,
     llm_id: i32,
     session_id: &str,
     query: &str,
     context: &str,
     temperature: Option<f32>,
     max_tokens: Option<i32>,
+    system_prompt: Option<&str>,
 ) -> Result<String, String> {
     let llm_start = std::time::Instant::now();
 
@@ -65,10 +88,13 @@ pub(crate) async fn generate_response(
     // Sanitize user input to prevent injection
     let sanitized_query = crate::chat::prompt_injection::sanitize_user_input(query);
 
-    // Build the prompt with RAG context
+    // Build the effective system prompt (with {{chunks}} replaced)
+    let effective_system_prompt = build_system_prompt(system_prompt, context);
+
+    // Build the user prompt - chunks are in the system prompt via {{chunks}} placeholder
     let user_prompt = format!(
-        "{}\n---\n\nQuestion: {}\n\nPlease provide a helpful answer based on the context above. Remember to cite specific chunk numbers when referencing information.",
-        context, sanitized_query
+        "Question: {}\n\nPlease provide a helpful answer based on the context provided.",
+        sanitized_query
     );
 
     let temperature = temperature.unwrap_or(0.7).clamp(0.0, 2.0);
@@ -82,8 +108,9 @@ pub(crate) async fn generate_response(
                 .await
                 .unwrap_or_default();
             call_internal_llm_api(
+                llm_inference_url,
                 &model,
-                SYSTEM_PROMPT,
+                &effective_system_prompt,
                 &user_prompt,
                 &history,
                 temperature,
@@ -96,7 +123,7 @@ pub(crate) async fn generate_response(
                 &base_url,
                 api_key.as_deref(),
                 &model,
-                SYSTEM_PROMPT,
+                &effective_system_prompt,
                 &user_prompt,
                 temperature,
                 max_tokens,
@@ -193,6 +220,7 @@ async fn call_openai_api(
 
 /// Call internal LLM inference API for chat completion
 async fn call_internal_llm_api(
+    llm_inference_url: &str,
     model: &str,
     system_prompt: &str,
     user_prompt: &str,
@@ -226,6 +254,7 @@ async fn call_internal_llm_api(
 
     // Use the llm_client to call the internal inference API
     let response = crate::llms::client::chat_completion(
+        llm_inference_url,
         model,
         messages,
         Some(temperature),
@@ -241,6 +270,7 @@ async fn call_internal_llm_api(
 
 /// Call internal LLM inference API for streaming chat completion
 async fn call_internal_llm_api_stream(
+    llm_inference_url: &str,
     model: &str,
     system_prompt: &str,
     user_prompt: &str,
@@ -274,6 +304,7 @@ async fn call_internal_llm_api_stream(
 
     // Use the llm_client to call the local inference API streaming endpoint
     let stream = crate::llms::client::chat_completion_stream(
+        llm_inference_url,
         model,
         messages,
         Some(temperature),
@@ -360,18 +391,20 @@ async fn call_cohere_api(
 /// Generate a streaming LLM response with RAG context
 #[tracing::instrument(
     name = "generate_llm_response_stream",
-    skip(pool, query, context, encryption)
+    skip(pool, query, context, encryption, system_prompt)
 )]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn generate_response_stream(
     pool: &Pool<Postgres>,
     encryption: &EncryptionService,
+    llm_inference_url: &str,
     llm_id: i32,
     session_id: &str,
     query: &str,
     context: &str,
     temperature: Option<f32>,
     max_tokens: Option<i32>,
+    system_prompt: Option<&str>,
 ) -> LLMStreamResult {
     // Fetch LLM details from database
     let (name, provider, base_url, model, api_key) =
@@ -379,10 +412,13 @@ pub(crate) async fn generate_response_stream(
             .await
             .map_err(|e| format!("database error: {e}"))?;
 
-    // Build the prompt with RAG context
+    // Build the effective system prompt (with {{chunks}} replaced)
+    let effective_system_prompt = build_system_prompt(system_prompt, context);
+
+    // Build the user prompt - chunks are in the system prompt via {{chunks}} placeholder
     let user_prompt = format!(
-        "{}\n---\n\nQuestion: {}\n\nPlease provide a helpful answer based on the context above. Remember to cite specific chunk numbers when referencing information.",
-        context, query
+        "Question: {}\n\nPlease provide a helpful answer based on the context provided.",
+        query
     );
 
     let temperature = temperature.unwrap_or(0.7).clamp(0.0, 2.0);
@@ -398,8 +434,9 @@ pub(crate) async fn generate_response_stream(
             .unwrap_or_default();
         // Use internal LLM inference API streaming
         let stream = call_internal_llm_api_stream(
+            llm_inference_url,
             &model,
-            SYSTEM_PROMPT,
+            &effective_system_prompt,
             &user_prompt,
             &history,
             temperature,
@@ -419,8 +456,14 @@ pub(crate) async fn generate_response_stream(
     };
 
     let response = match provider.to_lowercase().as_str() {
-        "openai" => make_streaming_request(&config, SYSTEM_PROMPT, &user_prompt, "openai").await?,
-        "cohere" => make_streaming_request(&config, SYSTEM_PROMPT, &user_prompt, "cohere").await?,
+        "openai" => {
+            make_streaming_request(&config, &effective_system_prompt, &user_prompt, "openai")
+                .await?
+        }
+        "cohere" => {
+            make_streaming_request(&config, &effective_system_prompt, &user_prompt, "cohere")
+                .await?
+        }
         _ => return Err(format!("unsupported LLM provider: {}", provider)),
     };
 

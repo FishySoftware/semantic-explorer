@@ -294,6 +294,7 @@ pub(crate) async fn store_retrieved_documents(
     pool: &Pool<Postgres>,
     message_id: i32,
     documents: &[RetrievedDocument],
+    batch_size: usize,
 ) -> Result<()> {
     let start = Instant::now();
 
@@ -301,16 +302,7 @@ pub(crate) async fn store_retrieved_documents(
         return Ok(());
     }
 
-    // Batch insert using UNNEST for better performance
-    // NOTE: Batch size (500) tuned for PostgreSQL parameter limits and performance.
-    // - PostgreSQL max parameters: 65,535 (we use ~5 per document)
-    // - Larger batches = fewer round trips but more memory
-    // - Smaller batches = more round trips but less memory per batch
-    // - 500 is a good balance: ~2,500 params, allows ~26 full batches per max
-    // TODO: Make configurable via ChatConfig if workload characteristics change
-    const BATCH_SIZE: usize = 500;
-
-    for chunk in documents.chunks(BATCH_SIZE) {
+    for chunk in documents.chunks(batch_size) {
         let mut document_ids: Vec<Option<String>> = Vec::with_capacity(chunk.len());
         let mut texts: Vec<String> = Vec::with_capacity(chunk.len());
         let mut scores: Vec<f32> = Vec::with_capacity(chunk.len());
@@ -323,7 +315,6 @@ pub(crate) async fn store_retrieved_documents(
             item_titles.push(doc.item_title.clone());
         }
 
-        // Use UNNEST for efficient batch insert
         sqlx::query(BATCH_INSERT_RETRIEVED_DOCUMENTS_QUERY)
             .bind(message_id)
             .bind(&document_ids)

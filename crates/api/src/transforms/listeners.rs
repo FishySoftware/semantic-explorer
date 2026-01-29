@@ -77,12 +77,14 @@ pub(crate) async fn publish_transform_status(
 pub(crate) async fn start_result_listeners(
     pool: Pool<Postgres>,
     s3_client: S3Client,
+    s3_bucket_name: String,
     nats_client: NatsClient,
 ) -> Result<()> {
     // Start collection transform result listener
     collection_listener::start(collection_listener::CollectionListenerContext {
         pool: pool.clone(),
         s3_client: s3_client.clone(),
+        s3_bucket_name: s3_bucket_name.clone(),
         nats_client: nats_client.clone(),
     });
 
@@ -90,6 +92,7 @@ pub(crate) async fn start_result_listeners(
     dataset_listener::start_result_listener(dataset_listener::DatasetListenerContext {
         pool: pool.clone(),
         s3_client: s3_client.clone(),
+        s3_bucket_name: s3_bucket_name.clone(),
         nats_client: nats_client.clone(),
     });
 

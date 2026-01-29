@@ -52,6 +52,12 @@ pub struct ModelConfig {
     pub paged_attention_block_size: usize,
     /// Paged attention GPU memory context size (default: 1024)
     pub paged_attention_context_size: usize,
+    /// Paged attention cache type: "auto" (native dtype) or "f8e4m3" (FP8 KV cache)
+    /// FP8 KV cache reduces memory usage and improves performance on Hopper+ GPUs (H100/H200)
+    pub paged_cache_type: PagedCacheType,
+    /// Enable prefix caching for multi-turn conversations and RAG workloads
+    /// Significantly accelerates repeated prompts by reusing KV cache for shared prefixes
+    pub enable_prefix_caching: bool,
 }
 
 /// Text generation configuration
@@ -80,6 +86,16 @@ pub struct ObservabilityConfig {
 pub enum LogFormat {
     Json,
     Pretty,
+}
+
+/// Paged attention cache type for KV cache storage
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum PagedCacheType {
+    /// Use native dtype (fp16/bf16) - compatible with all GPUs
+    #[default]
+    Auto,
+    /// Use FP8 E4M3 format - reduces memory ~50%, faster on Hopper+ (H100/H200)
+    F8E4M3,
 }
 
 impl LlmInferenceConfig {
@@ -190,6 +206,18 @@ impl ModelConfig {
                 .unwrap_or_else(|_| "1024".to_string())
                 .parse()
                 .context("LLM_PAGED_ATTENTION_CONTEXT_SIZE must be a number")?,
+            paged_cache_type: match env::var("LLM_PAGED_CACHE_TYPE")
+                .unwrap_or_else(|_| "auto".to_string())
+                .to_lowercase()
+                .as_str()
+            {
+                "f8e4m3" | "fp8" => PagedCacheType::F8E4M3,
+                _ => PagedCacheType::Auto,
+            },
+            enable_prefix_caching: env::var("LLM_ENABLE_PREFIX_CACHING")
+                .unwrap_or_else(|_| "false".to_string())
+                .parse()
+                .context("LLM_ENABLE_PREFIX_CACHING must be true or false")?,
         })
     }
 }
@@ -281,6 +309,8 @@ mod tests {
             paged_attention_block_size: 32,
             paged_attention_context_size: 1024,
             queue_timeout_ms: 30000,
+            paged_cache_type: PagedCacheType::Auto,
+            enable_prefix_caching: false,
         };
 
         assert_eq!(model.allowed_models.len(), 2);
@@ -301,6 +331,8 @@ mod tests {
             paged_attention_block_size: 32,
             paged_attention_context_size: 1024,
             queue_timeout_ms: 30000,
+            paged_cache_type: PagedCacheType::F8E4M3,
+            enable_prefix_caching: true,
         };
         assert_eq!(config_restricted.allowed_models.len(), 1);
         assert!(

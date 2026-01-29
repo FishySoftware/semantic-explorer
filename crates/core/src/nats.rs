@@ -72,7 +72,13 @@ pub async fn initialize_jetstream(client: &Client, nats_config: &NatsConfig) -> 
     let jetstream = jetstream::new(client.clone());
     let num_replicas = nats_config.replicas as usize;
 
-    //TODO: Extract hardcoded values into environment variables or configuration files
+    // Stream max age in days, configurable via environment variable
+    let stream_max_age_days: u64 = std::env::var("NATS_STREAM_MAX_AGE_DAYS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(7);
+    let stream_max_age = Duration::from_secs(stream_max_age_days * 24 * 60 * 60);
+
     ensure_stream(
         &jetstream,
         "COLLECTION_TRANSFORMS",
@@ -80,7 +86,7 @@ pub async fn initialize_jetstream(client: &Client, nats_config: &NatsConfig) -> 
             name: "COLLECTION_TRANSFORMS".to_string(),
             subjects: vec!["workers.collection-transform".to_string()],
             retention: RetentionPolicy::WorkQueue,
-            max_age: Duration::from_secs(7 * 24 * 60 * 60), // 7 days
+            max_age: stream_max_age,
             duplicate_window: Duration::from_secs(60 * 60), // 60 minutes for deduplication
             num_replicas,
             ..Default::default()
@@ -95,7 +101,7 @@ pub async fn initialize_jetstream(client: &Client, nats_config: &NatsConfig) -> 
             name: "DATASET_TRANSFORMS".to_string(),
             subjects: vec!["workers.dataset-transform".to_string()],
             retention: RetentionPolicy::WorkQueue,
-            max_age: Duration::from_secs(7 * 24 * 60 * 60), // 7 days
+            max_age: stream_max_age,
             duplicate_window: Duration::from_secs(60 * 60), // 60 minutes for deduplication
             num_replicas,
             ..Default::default()
@@ -110,7 +116,7 @@ pub async fn initialize_jetstream(client: &Client, nats_config: &NatsConfig) -> 
             name: "VISUALIZATION_TRANSFORMS".to_string(),
             subjects: vec!["workers.visualization-transform".to_string()],
             retention: RetentionPolicy::WorkQueue,
-            max_age: Duration::from_secs(7 * 24 * 60 * 60), // 7 days
+            max_age: stream_max_age,
             duplicate_window: Duration::from_secs(60 * 60), // 60 minutes for deduplication
             num_replicas,
             ..Default::default()
@@ -130,7 +136,7 @@ pub async fn initialize_jetstream(client: &Client, nats_config: &NatsConfig) -> 
                 "dlq.visualization-transforms".to_string(),
             ],
             retention: RetentionPolicy::Limits, // Keep for investigation
-            max_age: Duration::from_secs(30 * 24 * 60 * 60), // 30 days
+            max_age: Duration::from_secs(30 * 24 * 60 * 60), // 30 days for DLQ
             num_replicas,
             ..Default::default()
         },

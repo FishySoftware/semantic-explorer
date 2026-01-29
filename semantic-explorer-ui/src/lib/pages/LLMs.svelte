@@ -1,6 +1,7 @@
 <script lang="ts">
 	import ActionMenu from '$lib/components/ActionMenu.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import LoadingState from '$lib/components/LoadingState.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import type {
 		LLM,
@@ -685,9 +686,7 @@
 	{/if}
 
 	{#if loading}
-		<div class="flex items-center justify-center py-12">
-			<div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-		</div>
+		<LoadingState message="Loading LLMs..." />
 	{:else if error}
 		<div
 			class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4"

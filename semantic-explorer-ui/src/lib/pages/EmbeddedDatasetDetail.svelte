@@ -1,7 +1,6 @@
 <script lang="ts">
-	/* eslint-disable svelte/no-at-html-tags */
-	import { PlusIcon } from '$lib/utils/icons';
 	import { Button, Spinner } from 'flowbite-svelte';
+	import { PlusOutline } from 'flowbite-svelte-icons';
 	import { onDestroy, onMount } from 'svelte';
 	import ApiExamples from '../ApiExamples.svelte';
 	import TabPanel from '../components/TabPanel.svelte';
@@ -704,7 +703,7 @@
 									onclick={handleCreateVisualizationTransform}
 									class="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
 								>
-									{@html PlusIcon}
+									<PlusOutline class="w-4 h-4" />
 									Create Visualization Transform
 								</button>
 							</div>

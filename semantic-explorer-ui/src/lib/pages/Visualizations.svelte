@@ -1,5 +1,4 @@
 <script lang="ts">
-	/* eslint-disable svelte/no-at-html-tags */
 	import {
 		Badge,
 		Spinner,
@@ -13,9 +12,11 @@
 	import { SvelteMap, SvelteURLSearchParams } from 'svelte/reactivity';
 	import ActionMenu from '../components/ActionMenu.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
+	import LoadingState from '../components/LoadingState.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
+	import SearchInput from '../components/SearchInput.svelte';
 	import type { Visualization, VisualizationTransform, PaginatedResponse } from '../types/models';
-	import { InfoIcon } from '../utils/icons';
+	import { InfoCircleSolid } from 'flowbite-svelte-icons';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { formatDate } from '../utils/ui-helpers';
 
@@ -362,7 +363,7 @@
 				class="bg-blue-50 dark:bg-blue-900/10 px-6 py-3 text-sm text-blue-700 dark:text-blue-300"
 			>
 				<span class="inline-flex items-center gap-1">
-					{@html InfoIcon}
+					<InfoCircleSolid class="w-4 h-4" />
 					Visualizations will appear in the list below once generation is complete.
 				</span>
 			</div>
@@ -370,33 +371,18 @@
 	{/if}
 
 	{#if !loading}
-		<div class="mb-4 flex gap-3 items-center">
-			<div class="relative flex-1">
-				<input
-					type="text"
+		<div class="flex gap-3 items-start">
+			<div class="flex-1">
+				<SearchInput
 					bind:value={searchQuery}
 					placeholder="Search visualization transforms by title, owner, or embedded dataset..."
-					class="w-full px-4 py-2 pl-10 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
 				/>
-				<svg
-					class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400"
-					fill="none"
-					stroke="currentColor"
-					viewBox="0 0 24 24"
-				>
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width="2"
-						d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-					/>
-				</svg>
 			</div>
 			<button
 				onclick={() => {
 					window.location.hash = '/visualization-transforms?create=true';
 				}}
-				class="btn-primary whitespace-nowrap"
+				class="btn-primary whitespace-nowrap mt-0"
 			>
 				Create Visualization
 			</button>
@@ -404,9 +390,7 @@
 	{/if}
 
 	{#if loading}
-		<div class="flex items-center justify-center py-12">
-			<div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-		</div>
+		<LoadingState message="Loading visualizations..." />
 	{:else if error}
 		<div
 			class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4"

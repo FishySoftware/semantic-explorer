@@ -1,5 +1,4 @@
 <script lang="ts">
-	/* eslint-disable svelte/no-at-html-tags */
 	import {
 		Badge,
 		Button,
@@ -10,10 +9,10 @@
 		TableHead,
 		TableHeadCell,
 	} from 'flowbite-svelte';
-	import { DownloadOutline, EyeOutline } from 'flowbite-svelte-icons';
+	import { DownloadOutline, EyeOutline, ArrowLeftOutline } from 'flowbite-svelte-icons';
 	import { onDestroy, onMount } from 'svelte';
+	import LoadingState from '../components/LoadingState.svelte';
 	import type { Visualization, VisualizationTransform } from '../types/models';
-	import { ArrowLeftIcon } from '../utils/icons';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { createSSEConnection, type SSEConnection } from '../utils/sse';
 	import { formatDate, formatNumber } from '../utils/ui-helpers';
@@ -234,14 +233,12 @@
 <div class="max-w-7xl mx-auto">
 	<div class="mb-4">
 		<button onclick={onBack} class="mb-4 btn-secondary inline-flex items-center gap-2">
-			{@html ArrowLeftIcon}
+			<ArrowLeftOutline class="w-5 h-5" />
 			Back to Visualizations
 		</button>
 
 		{#if loading && !transform}
-			<div class="flex items-center justify-center py-12">
-				<div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-			</div>
+			<LoadingState message="Loading visualization..." />
 		{:else if error}
 			<div
 				class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4"

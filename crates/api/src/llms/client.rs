@@ -43,25 +43,21 @@ pub struct ChatRequest {
 pub struct ChatResponse {
     /// Generated message
     pub message: ChatMessage,
-    /// Model used
+    /// Model used (kept for API compatibility and logging)
     #[allow(dead_code)]
     pub model: String,
-    /// Number of tokens generated
+    /// Number of tokens generated (kept for API compatibility and metrics)
     #[allow(dead_code)]
     pub tokens_generated: usize,
-    /// Reason generation stopped (length, stop, eos, error)
+    /// Reason generation stopped (length, stop, eos, error) (kept for API compatibility)
     #[allow(dead_code)]
     pub finish_reason: String,
-}
-
-/// Get the LLM inference API URL from config
-fn get_llm_inference_api_url() -> String {
-    std::env::var("LLM_INFERENCE_API_URL").unwrap_or_else(|_| "http://localhost:8091".to_string())
 }
 
 /// Generate a chat completion
 ///
 /// # Arguments
+/// * `llm_inference_url` - Base URL for the LLM inference API
 /// * `model` - Model to use (e.g., "mistralai/Mistral-7B-Instruct-v0.2")
 /// * `messages` - Conversation history
 /// * `temperature` - Optional temperature for sampling (0.0-2.0)
@@ -70,6 +66,7 @@ fn get_llm_inference_api_url() -> String {
 /// * `stop` - Optional stop sequences
 #[tracing::instrument(name = "llm_client_chat", skip(messages))]
 pub async fn chat_completion(
+    llm_inference_url: &str,
     model: &str,
     messages: Vec<ChatMessage>,
     temperature: Option<f32>,
@@ -77,7 +74,7 @@ pub async fn chat_completion(
     max_tokens: Option<usize>,
     stop: Option<Vec<String>>,
 ) -> Result<ChatResponse> {
-    let url = format!("{}/api/chat", get_llm_inference_api_url());
+    let url = format!("{}/api/chat", llm_inference_url.trim_end_matches('/'));
 
     let request = ChatRequest {
         model: model.to_string(),
@@ -117,18 +114,23 @@ pub async fn chat_completion(
 /// Returns a stream of text chunks as they are generated.
 ///
 /// # Arguments
+/// * `llm_inference_url` - Base URL for the LLM inference API
 /// * `model` - Model to use (e.g., "mistralai/Mistral-7B-Instruct-v0.2")
 /// * `messages` - Conversation history
 /// * `temperature` - Optional temperature for sampling (0.0-2.0)
 /// * `max_tokens` - Optional maximum number of tokens to generate
 #[tracing::instrument(name = "llm_client_chat_stream", skip(messages))]
 pub async fn chat_completion_stream(
+    llm_inference_url: &str,
     model: &str,
     messages: Vec<ChatMessage>,
     temperature: Option<f32>,
     max_tokens: Option<usize>,
 ) -> Result<Pin<Box<dyn Stream<Item = Result<String>> + Send>>> {
-    let url = format!("{}/api/chat/stream", get_llm_inference_api_url());
+    let url = format!(
+        "{}/api/chat/stream",
+        llm_inference_url.trim_end_matches('/')
+    );
 
     let request = ChatRequest {
         model: model.to_string(),

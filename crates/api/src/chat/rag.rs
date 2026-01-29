@@ -16,6 +16,7 @@ pub async fn retrieve_documents(
     query: &str,
     config: &RAGConfig,
     encryption: &EncryptionService,
+    internal_inference_url: &str,
 ) -> Result<Vec<RetrievedDocument>, String> {
     // Fetch embedded dataset info (collection name and embedder ID)
     let dataset_info = embedded_datasets::get_embedded_dataset_info(pool, embedded_dataset_id)
@@ -71,6 +72,7 @@ pub async fn retrieve_documents(
         embedder_api_key.as_deref(),
         &embedder_config_value,
         query,
+        Some(internal_inference_url),
     )
     .await
     {

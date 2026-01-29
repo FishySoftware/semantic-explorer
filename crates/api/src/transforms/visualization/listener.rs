@@ -6,7 +6,7 @@ use async_nats::{Client as NatsClient, jetstream};
 use futures_util::StreamExt;
 use sqlx::{Pool, Postgres};
 use std::time::Duration;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::storage::postgres::visualization_transforms::{self, VisualizationUpdate};
 use crate::transforms::visualization::models::VisualizationTransform;
@@ -126,14 +126,16 @@ async fn handle_result(result: VisualizationTransformResult, ctx: &Visualization
     {
         Ok(Some(t)) => t,
         Ok(None) => {
-            error!(
-                "Visualization transform {} not found",
+            // Transform was deleted while job was in progress - this is expected when
+            // a dataset or embedded dataset is deleted. Log at info level and return.
+            info!(
+                "Visualization transform {} not found (likely deleted), discarding result",
                 result.visualization_transform_id
             );
             return;
         }
         Err(e) => {
-            error!(
+            warn!(
                 "Failed to fetch visualization transform {}: {}",
                 result.visualization_transform_id, e
             );

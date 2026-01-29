@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import LoadingState from '../components/LoadingState.svelte';
 	import type {
 		Collection,
 		Dataset,
@@ -306,9 +307,7 @@
 	</div>
 
 	{#if loading}
-		<div class="flex items-center justify-center py-12 min-content-height">
-			<div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-		</div>
+		<LoadingState message="Loading dashboard..." />
 	{:else if error}
 		<div
 			class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg compact-p min-content-height"

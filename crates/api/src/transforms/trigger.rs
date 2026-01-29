@@ -261,6 +261,7 @@ async fn process_trigger(ctx: &ScannerContext, msg: &Message) -> Result<()> {
                 &ctx.pool,
                 &ctx.nats,
                 &ctx.s3,
+                &ctx.s3_bucket_name,
                 transform_id,
                 &ctx.encryption,
                 &ctx.qdrant_config,
@@ -277,6 +278,7 @@ async fn process_trigger(ctx: &ScannerContext, msg: &Message) -> Result<()> {
                 &ctx.pool,
                 &ctx.nats,
                 &ctx.s3,
+                &ctx.s3_bucket_name,
                 &ctx.encryption,
                 &ctx.qdrant_config,
             )

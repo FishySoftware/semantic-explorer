@@ -8,25 +8,26 @@
 //! - Chat completion with message history
 //! - Backpressure control via semaphore with queue timeout
 //! - GPU memory pressure monitoring
+//! - FP8 KV cache support for Hopper+ GPUs (H100/H200)
+//! - Prefix caching for multi-turn and RAG workloads
 
 use futures::stream::Stream;
 use mistralrs::{
-    GgufModelBuilder, IsqType, MemoryGpuConfig, Model as MistralRsModel, PagedAttentionConfig,
-    PagedAttentionMetaBuilder, RequestBuilder, TextMessageRole, TextMessages, TextModelBuilder,
-    TokenSource,
+    core::PagedCacheType as MistralPagedCacheType, GgufModelBuilder, IsqType, MemoryGpuConfig,
+    Model as MistralRsModel, PagedAttentionConfig, PagedAttentionMetaBuilder, RequestBuilder,
+    TextMessageRole, TextMessages, TextModelBuilder, TokenSource,
 };
-use once_cell::sync::OnceCell;
 use semantic_explorer_core::observability::gpu_monitor;
 use std::collections::HashMap;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, Semaphore};
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
 
-use crate::config::{GenerationConfig, ModelConfig};
+use crate::config::{GenerationConfig, ModelConfig, PagedCacheType};
 use crate::errors::InferenceError;
 
 /// Type alias for the LLM model cache
@@ -34,13 +35,13 @@ use crate::errors::InferenceError;
 type LlmCache = Arc<tokio::sync::Mutex<HashMap<String, Arc<MistralRsModel>>>>;
 
 /// Global LLM model cache - using per-model mutexes for concurrent access
-static LLM_MODELS: OnceCell<LlmCache> = OnceCell::new();
+static LLM_MODELS: OnceLock<LlmCache> = OnceLock::new();
 
 /// Global semaphore for limiting concurrent LLM requests (backpressure)
-static LLM_SEMAPHORE: OnceCell<Arc<Semaphore>> = OnceCell::new();
+static LLM_SEMAPHORE: OnceLock<Arc<Semaphore>> = OnceLock::new();
 
 /// Semaphore queue timeout - how long to wait for a permit
-static SEMAPHORE_QUEUE_TIMEOUT: OnceCell<Duration> = OnceCell::new();
+static SEMAPHORE_QUEUE_TIMEOUT: OnceLock<Duration> = OnceLock::new();
 
 /// Cached GPU memory pressure state (updated by background monitor)
 static GPU_MEMORY_PRESSURE_HIGH: AtomicBool = AtomicBool::new(false);
@@ -228,16 +229,44 @@ async fn load_model(
         return Err(InferenceError::ModelLoad("Empty model ID".to_string()));
     }
 
+    // Convert config cache type to mistral.rs cache type
+    let cache_type = match config.paged_cache_type {
+        PagedCacheType::Auto => MistralPagedCacheType::Auto,
+        PagedCacheType::F8E4M3 => MistralPagedCacheType::F8E4M3,
+    };
+
+    // Log FP8 and prefix caching configuration
+    if matches!(config.paged_cache_type, PagedCacheType::F8E4M3) {
+        info!(
+            model_id = %model_id,
+            "Using FP8 E4M3 KV cache for reduced memory usage (Hopper+ optimized)"
+        );
+    }
+    if config.enable_prefix_caching {
+        info!(
+            model_id = %model_id,
+            "Prefix caching enabled for multi-turn/RAG acceleration"
+        );
+    }
+
     let page_attention_result = PagedAttentionMetaBuilder::default()
         .with_block_size(config.paged_attention_block_size)
         .with_gpu_memory(MemoryGpuConfig::ContextSize(
             config.paged_attention_context_size,
         ))
+        .with_paged_cache_type(cache_type)
         .build();
+
+    // Prefix caching is configured on the model builder, not PagedAttention
+    let prefix_cache_n = if config.enable_prefix_caching {
+        Some(16) // Default number of sequences to hold in prefix cache
+    } else {
+        None
+    };
 
     // Check if this is a GGUF model
     if is_gguf_model(model_id) {
-        return load_gguf_model(model_id, config, page_attention_result).await;
+        return load_gguf_model(model_id, config, page_attention_result, prefix_cache_n).await;
     }
 
     // GPTQ models are auto-detected by mistral.rs and work out-of-the-box
@@ -250,6 +279,7 @@ async fn load_model(
     let mut builder = TextModelBuilder::new(model_id)
         .with_token_source(TokenSource::CacheToken)
         .with_logging()
+        .with_prefix_cache_n(prefix_cache_n)
         .with_paged_attn(|| page_attention_result)
         .map_err(|e| {
             InferenceError::ModelLoad(format!(
@@ -320,6 +350,7 @@ async fn load_gguf_model(
     model_id: &str,
     config: &ModelConfig,
     page_attention_result: anyhow::Result<PagedAttentionConfig>,
+    prefix_cache_n: Option<usize>,
 ) -> Result<MistralRsModel, InferenceError> {
     info!(model_id = %model_id, "Loading GGUF model (pre-quantized)");
 
@@ -336,7 +367,8 @@ async fn load_gguf_model(
     // Use GgufModelBuilder to load GGUF with tokenizer
     let mut builder = GgufModelBuilder::new(&repo_id, vec![gguf_filename.clone()])
         .with_tok_model_id(&tokenizer_repo)
-        .with_logging();
+        .with_logging()
+        .with_prefix_cache_n(prefix_cache_n);
 
     // Configure token source if specified
     if config.hf_home.is_some() {
@@ -521,8 +553,6 @@ pub struct GenerationParams {
     pub temperature: f32,
     pub top_p: f32,
     pub max_tokens: usize,
-    #[allow(dead_code)]
-    pub stop_sequences: Vec<String>,
 }
 
 /// Response from text generation
@@ -536,7 +566,6 @@ pub struct GenerationResponse {
 
 /// Reason why generation stopped
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
 pub enum FinishReason {
     /// Reached max tokens limit
     Length,
@@ -707,8 +736,10 @@ pub async fn generate_text(
 
     // Determine finish reason
     let finish_reason = match response.choices[0].finish_reason.as_str() {
-        "stop" => FinishReason::Eos,
+        "stop" => FinishReason::Stop,
+        "eos" | "eos_token" => FinishReason::Eos,
         "length" => FinishReason::Length,
+        "error" => FinishReason::Error,
         _ => FinishReason::Eos,
     };
 
@@ -1116,8 +1147,10 @@ pub async fn text_completion(
 
     // Determine finish reason
     let finish_reason = match response.choices[0].finish_reason.as_str() {
-        "stop" => FinishReason::Eos,
+        "stop" => FinishReason::Stop,
+        "eos" | "eos_token" => FinishReason::Eos,
         "length" => FinishReason::Length,
+        "error" => FinishReason::Error,
         _ => FinishReason::Eos,
     };
 
@@ -1257,12 +1290,10 @@ mod tests {
             temperature: 0.7,
             top_p: 0.9,
             max_tokens: 100,
-            stop_sequences: vec!["STOP".to_string()],
         };
 
         assert_eq!(params.temperature, 0.7);
         assert_eq!(params.top_p, 0.9);
         assert_eq!(params.max_tokens, 100);
-        assert_eq!(params.stop_sequences.len(), 1);
     }
 }

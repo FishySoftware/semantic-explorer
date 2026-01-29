@@ -3,14 +3,15 @@
 <div align="center">
 
 ![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)
-![CUDA](https://img.shields.io/badge/CUDA-12.x_(optional)-76B900.svg)
+![CUDA](https://img.shields.io/badge/CUDA-12.x%2F13.x-76B900.svg)
+![mistral.rs](https://img.shields.io/badge/mistral.rs-v0.7.0-blue.svg)
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
 
-**Local LLM inference server using [mistral.rs](https://github.com/EricLBuehler/mistral.rs)**
+**Local LLM inference server using [mistral.rs v0.7.0](https://github.com/EricLBuehler/mistral.rs)**
 
 </div>
 
-Provides on-premise text generation without external API calls.
+Provides on-premise text generation with FP8 optimizations for H100/H200 GPUs.
 
 ---
 
@@ -136,6 +137,15 @@ curl -X POST http://localhost:8091/api/chat \
 | `LLM_ENABLE_ISQ` | `false` | Enable in-situ runtime quantization (slow, not cached) |
 | `LLM_ISQ_TYPE` | - | ISQ quantization type (Q4_K, Q8_0, etc.) |
 
+### Optional - Paged Attention (v0.7.0+)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LLM_PAGED_ATTENTION_BLOCK_SIZE` | `32` | Paged attention block size |
+| `LLM_PAGED_ATTENTION_CONTEXT_SIZE` | `1024` | GPU memory context size |
+| `LLM_PAGED_CACHE_TYPE` | `auto` | KV cache type: `auto` (native dtype) or `f8e4m3` (FP8, H100/H200 optimized) |
+| `LLM_ENABLE_PREFIX_CACHING` | `false` | Enable prefix caching for multi-turn/RAG acceleration |
+
 ### Observability
 
 | Variable | Default | Description |
@@ -154,20 +164,122 @@ curl -X POST http://localhost:8091/api/chat \
 
 ---
 
-## Supported Models
+## Supported Models (mistral.rs v0.7.0)
 
-This service uses [mistral.rs](https://github.com/EricLBuehler/mistral.rs) as the inference engine, which supports a wide range of model architectures and quantization formats.
+This service uses [mistral.rs v0.7.0](https://github.com/EricLBuehler/mistral.rs) as the inference engine with FP8 optimizations for H100/H200 GPUs.
 
 ### Supported Model Architectures
 
-| Architecture | Examples |
-|-------------|----------|
-| **Llama** | Llama 2, Llama 3, Code Llama, TinyLlama |
-| **Mistral** | Mistral 7B, Mixtral 8x7B (MoE) |
-| **Phi** | Phi-2, Phi-3, Phi-3.5 |
-| **Qwen** | Qwen, Qwen2 |
-| **Gemma** | Gemma, Gemma 2 |
-| **StableLM** | StableLM, StableLM 2 |
+| Architecture | New in v0.7.0 | Examples |
+|-------------|---------------|----------|
+| **Llama** | | Llama 2, Llama 3.x, Code Llama, TinyLlama |
+| **Mistral/Mixtral** | | Mistral 7B, Mixtral 8x7B/8x22B (MoE) |
+| **Phi** | | Phi-2, Phi-3, Phi-3.5, Phi-4 |
+| **Qwen** | ✅ Qwen 3 | Qwen, Qwen 2.5, Qwen 3 |
+| **Gemma** | ✅ Gemma 3n | Gemma, Gemma 2, Gemma 3n (vision) |
+| **GLM** | ✅ GLM-4 | GLM-4, GLM-4.7 Flash |
+| **DeepSeek** | | DeepSeek v2, DeepSeek v3 |
+| **SmolLM** | ✅ SmolLM3 | SmolLM, SmolLM3 |
+| **Ministral** | ✅ Ministral 3 | Ministral 3 |
+| **Granite** | ✅ Hybrid MoE | Granite Hybrid MoE |
+| **StableLM** | | StableLM, StableLM 2 |
+
+### Copy-Paste Ready Model IDs
+
+Below are HuggingFace model IDs you can directly use in `LLM_ALLOWED_MODELS`:
+
+#### GGUF Models (Recommended - Fast Loading)
+
+**Format**: `repo:filename.gguf` or `repo:filename.gguf@tokenizer-repo`
+
+```bash
+# Llama 3.x (Meta)
+bartowski/Meta-Llama-3.1-8B-Instruct-GGUF:Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf
+bartowski/Meta-Llama-3.1-70B-Instruct-GGUF:Meta-Llama-3.1-70B-Instruct-Q4_K_M.gguf
+bartowski/Llama-3.2-3B-Instruct-GGUF:Llama-3.2-3B-Instruct-Q4_K_M.gguf
+
+# Mistral/Mixtral
+bartowski/Mistral-7B-Instruct-v0.3-GGUF:Mistral-7B-Instruct-v0.3-Q4_K_M.gguf
+bartowski/Mixtral-8x7B-Instruct-v0.1-GGUF:Mixtral-8x7B-Instruct-v0.1-Q4_K_M.gguf
+
+# Qwen 2.5/3
+Qwen/Qwen2.5-7B-Instruct-GGUF:qwen2.5-7b-instruct-q4_k_m.gguf
+Qwen/Qwen2.5-32B-Instruct-GGUF:qwen2.5-32b-instruct-q4_k_m.gguf
+Qwen/Qwen2.5-72B-Instruct-GGUF:qwen2.5-72b-instruct-q4_k_m.gguf
+
+# Phi-3/4 (Microsoft)
+microsoft/Phi-3-mini-4k-instruct-gguf:Phi-3-mini-4k-instruct-q4.gguf
+bartowski/Phi-3.5-mini-instruct-GGUF:Phi-3.5-mini-instruct-Q4_K_M.gguf
+bartowski/phi-4-GGUF:phi-4-Q4_K_M.gguf
+
+# Gemma 2/3 (Google)
+bartowski/gemma-2-9b-it-GGUF:gemma-2-9b-it-Q4_K_M.gguf
+bartowski/gemma-2-27b-it-GGUF:gemma-2-27b-it-Q4_K_M.gguf
+
+# GLM-4 (NEW in v0.7.0)
+bartowski/glm-4-9b-chat-GGUF:glm-4-9b-chat-Q4_K_M.gguf
+
+# DeepSeek
+bartowski/DeepSeek-V2.5-GGUF:DeepSeek-V2.5-Q4_K_M.gguf
+bartowski/DeepSeek-R1-Distill-Qwen-7B-GGUF:DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf
+
+# SmolLM (Small & Fast)
+bartowski/SmolLM2-1.7B-Instruct-GGUF:SmolLM2-1.7B-Instruct-Q4_K_M.gguf
+
+# TinyLlama (Development/Testing)
+TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF:tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
+```
+
+#### Standard HuggingFace Models (Full Precision)
+
+```bash
+# Llama 3.x
+meta-llama/Meta-Llama-3.1-8B-Instruct
+meta-llama/Meta-Llama-3.1-70B-Instruct
+
+# Mistral
+mistralai/Mistral-7B-Instruct-v0.3
+mistralai/Mixtral-8x7B-Instruct-v0.1
+
+# Qwen 2.5/3
+Qwen/Qwen2.5-7B-Instruct
+Qwen/Qwen2.5-72B-Instruct
+
+# Phi-3/4
+microsoft/Phi-3-mini-4k-instruct
+microsoft/Phi-3.5-mini-instruct
+microsoft/phi-4
+
+# Gemma
+google/gemma-2-9b-it
+google/gemma-2-27b-it
+
+# GLM-4 (NEW in v0.7.0)
+THUDM/glm-4-9b-chat
+
+# DeepSeek
+deepseek-ai/DeepSeek-V2.5
+deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
+
+# Development/Testing
+TinyLlama/TinyLlama-1.1B-Chat-v1.0
+```
+
+#### Vision Models (NEW in v0.7.0)
+
+```bash
+# Qwen3 VL (Vision-Language)
+Qwen/Qwen2.5-VL-7B-Instruct
+
+# Gemma 3n (Vision)
+google/gemma-3n-E4B-it
+
+# LLaVA
+llava-hf/llava-v1.6-mistral-7b-hf
+
+# Phi-3.5 Vision
+microsoft/Phi-3.5-vision-instruct
+```
 
 ### Quantization Formats
 
@@ -178,71 +290,35 @@ This service uses [mistral.rs](https://github.com/EricLBuehler/mistral.rs) as th
 | **AWQ** | CUDA only | Activation-aware weight quantization |
 | **Standard** | CPU, CUDA | Full precision HuggingFace models (FP16/BF16) |
 
-### Where to Find Models
+### Model Selection Guide
 
-| Source | URL | Notes |
-|--------|-----|-------|
-| **HuggingFace Hub** | [huggingface.co/models](https://huggingface.co/models) | Primary source for all model types |
-| **TheBloke** | [huggingface.co/TheBloke](https://huggingface.co/TheBloke) | Large collection of GGUF/GPTQ quantized models |
-| **bartowski** | [huggingface.co/bartowski](https://huggingface.co/bartowski) | High-quality GGUF quantizations |
-| **Unsloth** | [huggingface.co/unsloth](https://huggingface.co/unsloth) | Optimized fine-tuned models |
+| Use Case | Recommended Model | VRAM Required |
+|----------|------------------|---------------|
+| **Development/Testing** | TinyLlama-1.1B, SmolLM2-1.7B | 2-4 GB |
+| **General Chat** | Llama-3.1-8B, Qwen2.5-7B, Mistral-7B | 6-8 GB (Q4) |
+| **High Quality** | Llama-3.1-70B, Qwen2.5-72B | 40+ GB (Q4) |
+| **Reasoning** | DeepSeek-R1-Distill, Phi-4 | 8-16 GB |
+| **Vision Tasks** | Qwen2.5-VL, Phi-3.5-vision | 8-16 GB |
+| **Low VRAM (< 8GB)** | Q4_K_M quantized 7B models | 4-6 GB |
+| **CPU Only** | GGUF Q4_K_M or Q4_K_S | N/A |
 
-### Pre-quantized Models (RECOMMENDED)
+### v0.7.0 Performance Features
 
-Pre-quantized models load faster and use less memory.
-
-**GGUF Models** (CPU, CUDA, Metal):
-
-| Model | Notes |
-|-------|-------|
-| `TheBloke/Mistral-7B-Instruct-v0.2-GGUF` | 7B instruction-tuned, quantized |
-| `TheBloke/Llama-2-7B-Chat-GGUF` | Meta Llama 2, quantized |
-| `TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF` | Small, fast, quantized |
-| `microsoft/Phi-3-mini-4k-instruct-gguf` | Microsoft Phi-3, quantized |
-
-**Specifying GGUF Files**:
-- Always use explicit format: `repo:filename.gguf`
-- Optional tokenizer override: `repo:filename.gguf@tokenizer-repo`
-- Browse files at: `https://huggingface.co/{repo}/tree/main`
-
-Examples:
-- `TheBloke/Mistral-7B-Instruct-v0.2-GGUF:mistral-7b-instruct-v0.2.Q4_K_M.gguf`
-- `microsoft/Phi-3-mini-4k-instruct-gguf:Phi-3-mini-4k-instruct-q4.gguf`
-- `bartowski/Llama-3-8B-GGUF:Llama-3-8B-Q8_0.gguf@meta-llama/Meta-Llama-3-8B`
-
-**GPTQ Models** (CUDA only):
-
-| Model | Notes |
-|-------|-------|
-| `TheBloke/Mistral-7B-Instruct-v0.2-GPTQ` | 7B instruction-tuned, GPTQ quantized |
-| `kaitchup/Phi-3-mini-4k-instruct-gptq-4bit` | Phi-3 mini, 4-bit GPTQ |
-| `TheBloke/Llama-2-7B-Chat-GPTQ` | Meta Llama 2, GPTQ quantized |
-
-### Standard HuggingFace Models
-
-| Model | Notes |
-|-------|-------|
-| `TinyLlama/TinyLlama-1.1B-Chat-v1.0` | Small, fast |
-| `mistralai/Mistral-7B-Instruct-v0.2` | 7B instruction-tuned |
-| `meta-llama/Llama-2-7b-chat-hf` | Meta Llama 2 |
-
-**💡 Choosing the Right Model**:
-
-| Use Case | Recommendation |
-|----------|---------------|
-| **Development/Testing** | TinyLlama (1.1B) - Fast, low memory |
-| **General Use** | Mistral 7B, Llama 3 8B - Good balance |
-| **High Quality** | Llama 3 70B, Mixtral 8x7B - Best results |
-| **Low VRAM (< 8GB)** | Q4_K_M quantized 7B models |
-| **CPU Only** | GGUF format with Q4_K_M or smaller |
+| Feature | Description | How to Enable |
+|---------|-------------|---------------|
+| **FP8 KV Cache** | ~50% memory reduction on Hopper+ GPUs | `LLM_PAGED_CACHE_TYPE=f8e4m3` |
+| **Prefix Caching** | Faster multi-turn & RAG via KV cache reuse | `LLM_ENABLE_PREFIX_CACHING=true` |
+| **Fused Kernels** | GEMV, GLU, MoE fusion for ~2x speedup | Automatic on CUDA |
+| **MLA Decode** | Optimized for DeepSeek v2/v3, GLM-4.7 | Automatic |
 
 **💡 Tips**:
 - **GGUF models** work on any device (CPU, CUDA, Metal) - most flexible
 - **GPTQ/AWQ models** require NVIDIA GPU but are faster for inference
-- Use **instruction-tuned** models (names contain "Instruct", "Chat") for chat use cases
+- Use **instruction-tuned** models (names contain "Instruct", "Chat") for chat
+- Enable **FP8 + prefix caching** on H100/H200 for best performance
 - Check model card on HuggingFace for license and usage restrictions
 
-For full model compatibility, see [mistral.rs supported models](https://github.com/EricLBuehler/mistral.rs#supported-models).
+For full model compatibility, see [mistral.rs v0.7.0 release notes](https://github.com/EricLBuehler/mistral.rs/releases/tag/v0.7.0).
 
 ---
 

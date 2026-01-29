@@ -26,6 +26,7 @@ use crate::storage::postgres::embedded_datasets;
 use crate::storage::s3::delete_file;
 use semantic_explorer_core::models::DatasetTransformResult;
 use semantic_explorer_core::nats::extract_otel_context;
+use semantic_explorer_core::storage::delete_file_by_key;
 
 use super::super::listeners::publish_transform_status;
 
@@ -34,6 +35,7 @@ use super::super::listeners::publish_transform_status;
 pub(crate) struct DatasetListenerContext {
     pub pool: Pool<Postgres>,
     pub s3_client: S3Client,
+    pub s3_bucket_name: String,
     pub nats_client: NatsClient,
 }
 
@@ -43,6 +45,8 @@ enum HandleResult {
     Success,
     /// Skipped due to idempotency (already processed)
     Skipped,
+    /// Resource was deleted - ACK and discard (don't retry)
+    ResourceDeleted,
     /// Failed - should NAK for retry
     Failed(String),
 }
@@ -140,7 +144,7 @@ pub(crate) fn start_result_listener(context: DatasetListenerContext) {
 
             // ACK/NAK based on result - CRITICAL: only after transaction commits
             match handle_result {
-                HandleResult::Success | HandleResult::Skipped => {
+                HandleResult::Success | HandleResult::Skipped | HandleResult::ResourceDeleted => {
                     if let Err(e) = msg.ack().await {
                         error!("Failed to acknowledge message: {}", e);
                     }
@@ -185,11 +189,26 @@ async fn handle_result_atomic(
     {
         Ok(ed) => ed,
         Err(e) => {
+            // Check if this is a "not found" error (resource deleted) vs transient error.
+            // When a dataset or transform is deleted, the embedded_dataset is also deleted
+            // via CASCADE. Jobs already in the queue will fail here - we should ACK and
+            // clean up rather than retry forever.
+            let error_str = e.to_string().to_lowercase();
+            if error_str.contains("no rows") || error_str.contains("not found") {
+                info!(
+                    "Embedded dataset {} not found (likely deleted), discarding batch {}: {}",
+                    result.embedded_dataset_id, result.batch_file_key, e
+                );
+                // Clean up S3 batch file since the transform is gone
+                cleanup_orphaned_batch(ctx, &result).await;
+                return HandleResult::ResourceDeleted;
+            }
+            // For other errors (connection issues, etc.), retry
             error!(
-                "Embedded dataset {} not found or access denied for owner {}: {}",
+                "Failed to fetch embedded dataset {} for owner {}: {}",
                 result.embedded_dataset_id, result.owner_id, e
             );
-            return HandleResult::Failed(format!("Embedded dataset not found: {}", e));
+            return HandleResult::Failed(format!("Embedded dataset fetch error: {}", e));
         }
     };
 
@@ -534,10 +553,6 @@ async fn handle_success_status_atomic(
     }
 
     // Clean up the batch file from S3 after successful processing and database commit
-    // Use single-bucket architecture
-    let s3_bucket =
-        std::env::var("S3_BUCKET_NAME").unwrap_or_else(|_| "semantic-explorer-local".to_string());
-
     // Extract prefix and file key from batch_file_key
     // Format: embedded-datasets/embedded-dataset-{id}/batch-{uuid}.jsonl
     let parts: Vec<&str> = result.batch_file_key.rsplitn(2, '/').collect();
@@ -547,7 +562,7 @@ async fn handle_success_status_atomic(
         ("", result.batch_file_key.as_str())
     };
 
-    if let Err(e) = delete_file(&ctx.s3_client, &s3_bucket, prefix, file_key).await {
+    if let Err(e) = delete_file(&ctx.s3_client, &ctx.s3_bucket_name, prefix, file_key).await {
         // Log the error but don't fail - batch was successfully processed and recorded
         warn!(
             batch_key = %result.batch_file_key,
@@ -580,4 +595,29 @@ async fn handle_success_status_atomic(
     );
 
     HandleResult::Success
+}
+
+/// Clean up orphaned batch files from S3 when a transform has been deleted.
+/// This prevents accumulating orphan files when datasets/transforms are deleted
+/// while jobs are still processing.
+async fn cleanup_orphaned_batch(ctx: &DatasetListenerContext, result: &DatasetTransformResult) {
+    if result.batch_file_key.is_empty() {
+        return;
+    }
+
+    // Best-effort cleanup using the full batch file key
+    if let Err(e) =
+        delete_file_by_key(&ctx.s3_client, &ctx.s3_bucket_name, &result.batch_file_key).await
+    {
+        warn!(
+            batch_key = %result.batch_file_key,
+            error = %e,
+            "Failed to clean up orphaned batch file from S3 (non-critical)"
+        );
+    } else {
+        info!(
+            batch_key = %result.batch_file_key,
+            "Cleaned up orphaned batch file from S3"
+        );
+    }
 }

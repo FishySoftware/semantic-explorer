@@ -25,8 +25,9 @@ pub struct GenerateRequest {
     /// Maximum number of tokens to generate (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<usize>,
-    /// Stop sequences (optional)
+    /// Stop sequences (optional, kept for OpenAI API compatibility)
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[allow(dead_code)]
     pub stop: Option<Vec<String>>,
 }
 
@@ -97,7 +98,6 @@ pub async fn generate(
         temperature: body.temperature.unwrap_or(gen_config.default_temperature),
         top_p: body.top_p.unwrap_or(gen_config.default_top_p),
         max_tokens: body.max_tokens.unwrap_or(gen_config.default_max_tokens),
-        stop_sequences: body.stop.clone().unwrap_or_default(),
     };
 
     let start = std::time::Instant::now();

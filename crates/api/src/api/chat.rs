@@ -1,5 +1,7 @@
 use actix_web::{
-    HttpRequest, HttpResponse, Responder, ResponseError, delete, get, post,
+    HttpRequest, HttpResponse, Responder, ResponseError, delete, get,
+    http::header,
+    post,
     web::{Data, Json, Path, Query},
 };
 use futures_util::StreamExt;
@@ -23,7 +25,10 @@ use crate::{
     errors::ApiError,
     storage::postgres::chat,
 };
-use semantic_explorer_core::encryption::EncryptionService;
+use semantic_explorer_core::{
+    config::{EmbeddingInferenceConfig, LlmInferenceConfig, WorkerConfig},
+    encryption::EncryptionService,
+};
 
 #[utoipa::path(
     responses(
@@ -230,15 +235,19 @@ pub(crate) async fn get_chat_messages(
 #[post("/api/chat/sessions/{session_id}/messages")]
 #[tracing::instrument(
     name = "send_chat_message",
-    skip(user, pool, request, qdrant_client, req, encryption),
+    skip(user, pool, request, qdrant_client, req, encryption, inference_config, llm_inference_config, worker_config),
     fields(session_id = %session_id, content_len = request.content.len())
 )]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn send_chat_message(
     user: AuthenticatedUser,
     req: HttpRequest,
     pool: Data<Pool<Postgres>>,
     qdrant_client: Data<Qdrant>,
     encryption: Data<EncryptionService>,
+    inference_config: Data<EmbeddingInferenceConfig>,
+    llm_inference_config: Data<LlmInferenceConfig>,
+    worker_config: Data<WorkerConfig>,
     session_id: Path<String>,
     request: Json<CreateChatMessageRequest>,
 ) -> impl Responder {
@@ -289,6 +298,7 @@ pub(crate) async fn send_chat_message(
         &request.content,
         &rag_config,
         &encryption,
+        &inference_config.url,
     )
     .await
     {
@@ -308,12 +318,14 @@ pub(crate) async fn send_chat_message(
     let response_content = match llm::generate_response(
         &pool,
         &encryption,
+        &llm_inference_config.url,
         session.llm_id,
         &session_id,
         &request.content,
         &context,
         request.temperature,
         request.max_tokens,
+        request.system_prompt.as_deref(),
     )
     .await
     {
@@ -348,9 +360,13 @@ pub(crate) async fn send_chat_message(
     };
 
     // Store retrieved documents for this message
-    if let Err(e) =
-        chat::store_retrieved_documents(&pool, assistant_message.message_id, &retrieved_documents)
-            .await
+    if let Err(e) = chat::store_retrieved_documents(
+        &pool,
+        assistant_message.message_id,
+        &retrieved_documents,
+        worker_config.chat_batch_size,
+    )
+    .await
     {
         tracing::error!(error = %e, "failed to store retrieved documents");
         // Continue anyway - this is not critical
@@ -388,20 +404,22 @@ pub(crate) async fn send_chat_message(
 #[post("/api/chat/sessions/{session_id}/messages/stream")]
 #[tracing::instrument(
     name = "stream_chat_message",
-    skip(user, pool, qdrant_client, request, req, encryption),
+    skip(user, pool, qdrant_client, request, req, encryption, inference_config, llm_inference_config, worker_config),
     fields(session_id = %session_id, content_len = request.content.len())
 )]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn stream_chat_message(
     user: AuthenticatedUser,
     req: HttpRequest,
     pool: Data<Pool<Postgres>>,
     qdrant_client: Data<Qdrant>,
     encryption: Data<EncryptionService>,
+    inference_config: Data<EmbeddingInferenceConfig>,
+    llm_inference_config: Data<LlmInferenceConfig>,
+    worker_config: Data<WorkerConfig>,
     session_id: Path<String>,
     request: Json<CreateChatMessageRequest>,
 ) -> impl Responder {
-    use actix_web::http::header;
-
     // Verify session ownership
     let session = match chat::get_chat_session(&pool, &session_id, &user.as_owner()).await {
         Ok(s) => s,
@@ -449,6 +467,7 @@ pub(crate) async fn stream_chat_message(
         &request.content,
         &rag_config,
         &encryption,
+        &inference_config.url,
     )
     .await
     {
@@ -482,9 +501,13 @@ pub(crate) async fn stream_chat_message(
     };
 
     // Store retrieved documents
-    if let Err(e) =
-        chat::store_retrieved_documents(&pool, assistant_message.message_id, &retrieved_documents)
-            .await
+    if let Err(e) = chat::store_retrieved_documents(
+        &pool,
+        assistant_message.message_id,
+        &retrieved_documents,
+        worker_config.chat_batch_size,
+    )
+    .await
     {
         tracing::error!(error = %e, "failed to store retrieved documents");
     }
@@ -493,6 +516,7 @@ pub(crate) async fn stream_chat_message(
     let owner = user.0.clone();
     let postgres_pool_clone = pool.clone();
     let encryption_clone = encryption.clone();
+    let llm_inference_url = llm_inference_config.url.clone();
 
     // Create SSE stream
     let stream = async_stream::stream! {
@@ -521,12 +545,14 @@ pub(crate) async fn stream_chat_message(
         let llm_stream = match llm::generate_response_stream(
             &postgres_pool_clone,
             &encryption_clone,
+            &llm_inference_url,
             session.llm_id,
             session_id.as_ref(),
             &request.content,
             &context,
             request.temperature,
             request.max_tokens,
+            request.system_prompt.as_deref(),
         )
         .await
         {
@@ -675,12 +701,16 @@ pub(crate) struct RegenerateMessageQuery {
     ),
 )]
 #[post("/api/chat/messages/{message_id}/regenerate")]
-#[tracing::instrument(name = "regenerate_chat_message", skip(user, pool, req, encryption))]
+#[tracing::instrument(
+    name = "regenerate_chat_message",
+    skip(user, pool, req, encryption, llm_inference_config)
+)]
 pub(crate) async fn regenerate_chat_message(
     user: AuthenticatedUser,
     req: HttpRequest,
     pool: Data<Pool<Postgres>>,
     encryption: Data<EncryptionService>,
+    llm_inference_config: Data<LlmInferenceConfig>,
     message_id: Path<i32>,
     query: Query<RegenerateMessageQuery>,
 ) -> impl Responder {
@@ -765,12 +795,14 @@ pub(crate) async fn regenerate_chat_message(
     let response_content = match llm::generate_response(
         &pool,
         &encryption,
+        &llm_inference_config.url,
         session.llm_id,
         &message.session_id,
         user_query,
         &context,
         None,
         None,
+        None, // Use default system prompt for regeneration
     )
     .await
     {

@@ -30,10 +30,13 @@ export interface RetrievedDocument {
 
 export interface UseChatStreamOptions {
 	sessionId: string;
-	maxChunks: number;
-	minSimilarityScore: number;
-	temperature: number;
-	maxTokens: number;
+	getSettings: () => {
+		maxChunks: number;
+		minSimilarityScore: number;
+		temperature: number;
+		maxTokens: number;
+		systemPrompt: string;
+	};
 	callbacks: StreamingCallbacks;
 }
 
@@ -47,7 +50,7 @@ export interface UseChatStreamResult {
 }
 
 export function useChatStream(options: UseChatStreamOptions): UseChatStreamResult {
-	const { sessionId, maxChunks, minSimilarityScore, temperature, maxTokens, callbacks } = options;
+	const { sessionId, getSettings, callbacks } = options;
 
 	// State
 	let messages = $state<ChatMessage[]>([]);
@@ -208,6 +211,9 @@ export function useChatStream(options: UseChatStreamOptions): UseChatStreamResul
 		];
 
 		try {
+			// Get current settings at the time of sending
+			const { maxChunks, minSimilarityScore, temperature, maxTokens, systemPrompt } = getSettings();
+
 			const response = await fetch(`/api/chat/sessions/${sessionId}/messages/stream`, {
 				method: 'POST',
 				headers: {
@@ -219,6 +225,7 @@ export function useChatStream(options: UseChatStreamOptions): UseChatStreamResul
 					min_similarity_score: minSimilarityScore,
 					temperature,
 					max_tokens: maxTokens,
+					system_prompt: systemPrompt || null,
 				}),
 			});
 

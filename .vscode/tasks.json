@@ -64,9 +64,9 @@
         {
             "label": "Run LLM Inference API",
             "type": "shell",
-            "command": "set -a && source crates/llm-inference-api/.env && set +a && ${workspaceFolder}/cargo_cuda.sh run -p llm-inference-api --release",
+            "command": "set -a && source .env && set +a && CUDA_COMPUTE_CAP=${CUDA_COMPUTE_CAP:-89} cargo run --release",
             "options": {
-                "cwd": "${workspaceFolder}"
+                "cwd": "${workspaceFolder}/crates/llm-inference-api"
             },
             "presentation": {
                 "reveal": "always",

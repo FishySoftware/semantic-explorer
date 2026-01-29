@@ -63,6 +63,9 @@ pub(crate) struct CreateChatMessageRequest {
     pub temperature: Option<f32>,
     #[serde(default)]
     pub max_tokens: Option<i32>,
+    /// Custom system prompt. Use {{chunks}} as placeholder for retrieved document chunks.
+    #[serde(default)]
+    pub system_prompt: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, ToSchema, Debug)]

@@ -146,6 +146,19 @@ api:
     NATS_REPLICAS: "3"
     # Reconciliation job for transform reliability (retries failed batch publishes)
     RECONCILIATION_INTERVAL_SECS: "300"
+    # Worker batch sizes and NATS timeouts
+    WORKER_SEARCH_BATCH_SIZE: "200"
+    WORKER_CHAT_BATCH_SIZE: "500"
+    WORKER_DATASET_BATCH_SIZE: "1000"
+    WORKER_S3_DELETE_BATCH_SIZE: "1000"
+    WORKER_QDRANT_UPLOAD_CHUNK_SIZE: "200"
+    WORKER_EMBEDDING_MAX_RETRIES: "5"
+    NATS_CONNECTION_TIMEOUT_SECS: "10"
+    NATS_PING_INTERVAL_SECS: "15"
+    NATS_STREAM_MAX_AGE_DAYS: "7"
+    NATS_ACK_WAIT_SECS: "600"
+    NATS_VISUALIZATION_ACK_WAIT_SECS: "1800"
+    NATS_DATASET_TRANSFORM_ACK_WAIT_SECS: "600"
   envFrom: []
   nodeSelector: {}
   tolerations: []
@@ -212,6 +225,13 @@ workerCollections:
     LOG_FORMAT: "json"
     NATS_REPLICAS: "3"
     MAX_CONCURRENT_JOBS: "10"
+    # Worker batch sizes and NATS timeouts
+    WORKER_QDRANT_UPLOAD_CHUNK_SIZE: "200"
+    WORKER_EMBEDDING_MAX_RETRIES: "5"
+    NATS_CONNECTION_TIMEOUT_SECS: "10"
+    NATS_PING_INTERVAL_SECS: "15"
+    NATS_STREAM_MAX_AGE_DAYS: "7"
+    NATS_ACK_WAIT_SECS: "600"
   envFrom: []
   nodeSelector: {}
   tolerations: []
@@ -278,6 +298,13 @@ workerDatasets:
     LOG_FORMAT: "json"
     NATS_REPLICAS: "3"
     MAX_CONCURRENT_JOBS: "10"
+    # Worker batch sizes and NATS timeouts
+    WORKER_DATASET_BATCH_SIZE: "1000"
+    WORKER_QDRANT_UPLOAD_CHUNK_SIZE: "200"
+    NATS_CONNECTION_TIMEOUT_SECS: "10"
+    NATS_PING_INTERVAL_SECS: "15"
+    NATS_STREAM_MAX_AGE_DAYS: "7"
+    NATS_DATASET_TRANSFORM_ACK_WAIT_SECS: "600"
   envFrom: []
   nodeSelector: {}
   tolerations: []
@@ -629,6 +656,11 @@ llmInferenceApi:
     LLM_DEFAULT_TOP_P: "0.9"
     LLM_DEFAULT_MAX_TOKENS: "512"
     LLM_MAX_TOKENS_LIMIT: "4096"
+    # Paged attention configuration
+    # FP8 KV cache for H100/H200 GPUs - reduces memory ~50% and improves performance
+    LLM_PAGED_CACHE_TYPE: "f8e4m3"
+    # Prefix caching for multi-turn chat and RAG acceleration
+    LLM_ENABLE_PREFIX_CACHING: "true"
     # HuggingFace cache directory - mounted from PVC
     HF_HOME: "/models"
     # Home directory for appuser (used by mistral.rs for ~/.cache/huggingface)

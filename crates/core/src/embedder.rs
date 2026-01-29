@@ -171,8 +171,11 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
         }
     }
 
-    //TODO: make configurable with environment variable
-    let max_retries = 5;
+    // Max retries for embedding operations, configurable via environment variable
+    let max_retries: u32 = std::env::var("WORKER_EMBEDDING_MAX_RETRIES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5);
     let mut last_error = None;
 
     for attempt in 0..=max_retries {

@@ -20,6 +20,7 @@ use crate::{
     },
     storage::postgres::{embedded_datasets, embedders},
 };
+use semantic_explorer_core::config::{EmbeddingInferenceConfig, WorkerConfig};
 use semantic_explorer_core::encryption::EncryptionService;
 
 //TODO: Refactor this mess properly.
@@ -36,14 +37,26 @@ use semantic_explorer_core::encryption::EncryptionService;
 #[post("/api/search")]
 #[tracing::instrument(
     name = "search",
-    skip(user, qdrant_client, pool, search_request, req, encryption)
+    skip(
+        user,
+        qdrant_client,
+        pool,
+        search_request,
+        req,
+        encryption,
+        worker_config,
+        inference_config
+    )
 )]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn search(
     user: AuthenticatedUser,
     req: HttpRequest,
     qdrant_client: Data<Qdrant>,
     pool: Data<Pool<Postgres>>,
     encryption: Data<EncryptionService>,
+    worker_config: Data<WorkerConfig>,
+    inference_config: Data<EmbeddingInferenceConfig>,
     Json(search_request): Json<SearchRequest>,
 ) -> impl Responder {
     let start_time = std::time::Instant::now();
@@ -111,6 +124,8 @@ pub(crate) async fn search(
         .map(|embedded_dataset_id| {
             let qdrant_client = qdrant_client.clone();
             let search_request = search_request.clone();
+            let worker_config = worker_config.clone();
+            let inference_config = inference_config.clone();
             let ed_details = embedded_datasets_map.get(embedded_dataset_id).cloned();
             let embedder = ed_details
                 .as_ref()
@@ -192,6 +207,7 @@ pub(crate) async fn search(
                     embedder.api_key.as_deref(),
                     &embedder.config,
                     &search_request.query,
+                    Some(&inference_config.url),
                 )
                 .await
                 {
@@ -226,11 +242,13 @@ pub(crate) async fn search(
                 };
 
                 // Perform the search
+                let search_batch_size = worker_config.search_batch_size;
                 let matches = match search_collection(
                     &qdrant_client,
                     &ed_details.collection_name,
                     &query_vector,
                     &search_request,
+                    search_batch_size,
                 )
                 .await
                 {

@@ -1,7 +1,6 @@
 <script lang="ts">
-	/* eslint-disable svelte/no-at-html-tags */
+	import { CodeOutline } from 'flowbite-svelte-icons';
 	import { onMount } from 'svelte';
-	import { CodeIcon } from './utils/icons';
 	import { copyToClipboard } from './utils/ui-helpers';
 
 	let {
@@ -102,7 +101,7 @@
 		onclick={() => (showExamples = !showExamples)}
 		class="inline-flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400 hover:underline"
 	>
-		{@html CodeIcon}
+		<CodeOutline class="w-4 h-4" />
 		{showExamples ? 'Hide' : 'Show'} API Examples
 	</button>
 

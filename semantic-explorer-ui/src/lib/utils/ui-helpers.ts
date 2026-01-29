@@ -95,17 +95,6 @@ export function formatNumber(num: number | null | undefined): string {
 }
 
 /**
- * Truncate text with ellipsis
- * @param text Text to truncate
- * @param maxLength Maximum length before truncation
- * @returns Truncated text with ellipsis if needed
- */
-export function truncateText(text: string, maxLength: number = 50): string {
-	if (!text || text.length <= maxLength) return text;
-	return text.substring(0, maxLength) + '...';
-}
-
-/**
  * Show a tooltip on hover
  * @param event Mouse event from hover
  * @param text Tooltip text
@@ -137,25 +126,6 @@ export function showTooltip(event: MouseEvent, text: string): void {
 }
 
 /**
- * Debounce a function call
- * @param func Function to debounce
- * @param wait Wait time in milliseconds
- * @returns Debounced function
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function debounce<T extends (...args: any[]) => any>(
-	func: T,
-	wait: number
-): (...args: Parameters<T>) => void {
-	let timeout: ReturnType<typeof setTimeout> | null = null;
-
-	return (...args: Parameters<T>) => {
-		if (timeout) clearTimeout(timeout);
-		timeout = setTimeout(() => func(...args), wait);
-	};
-}
-
-/**
  * Copy text to clipboard
  * @param text Text to copy
  * @returns Promise that resolves when copied
@@ -177,31 +147,4 @@ export async function copyToClipboard(text: string): Promise<void> {
 			document.body.removeChild(textArea);
 		}
 	}
-}
-
-/**
- * Get status badge color class
- * @param status Status string
- * @returns Tailwind CSS color classes
- */
-export function getStatusColor(status: string): string {
-	const normalized = status.toLowerCase();
-
-	if (normalized === 'completed' || normalized === 'success' || normalized === 'active') {
-		return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300';
-	}
-
-	if (normalized === 'processing' || normalized === 'pending' || normalized === 'in_progress') {
-		return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300';
-	}
-
-	if (normalized === 'failed' || normalized === 'error') {
-		return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300';
-	}
-
-	if (normalized === 'cancelled' || normalized === 'disabled') {
-		return 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300';
-	}
-
-	return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300';
 }

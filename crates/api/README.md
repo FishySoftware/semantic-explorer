@@ -343,6 +343,19 @@ This service uses shared configuration from `semantic-explorer-core`. See the [r
 | `LOG_FORMAT` | `json` | `json` or `pretty` |
 | `RECONCILIATION_INTERVAL_SECS` | `300` | Reconciliation job interval (seconds) |
 
+### Worker Configuration Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WORKER_SEARCH_BATCH_SIZE` | `200` | Batch size for search operations |
+| `WORKER_CHAT_BATCH_SIZE` | `500` | Batch size for chat document inserts |
+| `WORKER_DATASET_BATCH_SIZE` | `1000` | Batch size for dataset processing |
+| `WORKER_S3_DELETE_BATCH_SIZE` | `1000` | Batch size for S3 delete operations |
+| `WORKER_QDRANT_UPLOAD_CHUNK_SIZE` | `200` | Chunk size for Qdrant uploads |
+| `WORKER_EMBEDDING_MAX_RETRIES` | `5` | Max retries for embedding operations |
+| `NATS_REQUEST_TIMEOUT_SECS` | `30` | NATS request timeout in seconds |
+| `NATS_BATCH_TIMEOUT_SECS` | `300` | NATS batch operation timeout in seconds |
+
 ---
 
 ## Building

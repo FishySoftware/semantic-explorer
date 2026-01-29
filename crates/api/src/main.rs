@@ -105,6 +105,7 @@ async fn main() -> Result<()> {
     transforms::listeners::start_result_listeners(
         pool.clone(),
         s3_client.clone(),
+        config.s3.bucket_name.clone(),
         nats_client.clone(),
     )
     .await?;
@@ -117,6 +118,7 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|| address.clone());
     let inference_config = config.inference.clone();
     let llm_inference_config = config.llm_inference.clone();
+    let worker_config = config.worker.clone();
     let max_upload_size = config.s3.max_upload_size_bytes as usize;
 
     // Build QdrantConnectionConfig from QdrantConfig (reused across scanners and API)
@@ -210,12 +212,13 @@ async fn main() -> Result<()> {
             .app_data(web::Data::new(qdrant_connection_config.clone()))
             .app_data(
                 MultipartFormConfig::default()
-                    .total_limit(max_upload_size) //TODO fix this with proper vars
+                    .total_limit(max_upload_size)
                     .memory_limit(max_upload_size),
             )
             .app_data(web::Data::new(static_files_directory.clone()))
             .app_data(web::Data::new(inference_config.clone()))
             .app_data(web::Data::new(llm_inference_config.clone()))
+            .app_data(web::Data::new(worker_config.clone()))
             .into_utoipa_app()
             .openapi(ApiDoc::openapi())
             .service(api::collections::get_collection)

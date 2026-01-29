@@ -78,7 +78,8 @@ jobs:
               echo "worker-visualizations-py=false" >> $GITHUB_OUTPUT
             fi
             
-            if git diff --name-only $LAST_TAG HEAD | grep -q "^crates/llm-inference-api/\|^Cargo."; then
+            # llm-inference-api is excluded from workspace - check its own files and core dependency
+            if git diff --name-only $LAST_TAG HEAD | grep -q "^crates/llm-inference-api/\|^crates/core/"; then
               echo "llm-inference-api=true" >> $GITHUB_OUTPUT
             else
               echo "llm-inference-api=false" >> $GITHUB_OUTPUT
@@ -474,7 +475,7 @@ jobs:
           done
 
 
-  # Build LLM Inference API CUDA images (matrix build for different GPU architectures)
+  # Build LLM Inference API CUDA images (matrix build for different GPU architectures and CUDA versions)
   build-llm-inference-api-cuda:
     needs: detect-changes
     if: needs.detect-changes.outputs.llm-inference-api-changed == 'true'
@@ -484,13 +485,26 @@ jobs:
       packages: write
     strategy:
       matrix:
-        # Build separate optimized images for each CUDA compute capability
-        # 75: Turing (RTX 20xx, T4)
-        # 80: Ampere (RTX 30xx, A100, A10)
-        # 86: Ampere (A40, A100 80GB)
+        # Build separate optimized images for each CUDA version and compute capability
+        # CUDA 13.1.1: Latest with FP8 optimizations for Hopper+ (H100/H200)
+        # CUDA 12.9.1: Backward compatibility for older deployments
         # 89: Ada Lovelace (RTX 40xx, L40/L40S)
-        # 90: Hopper (H100, H200)
-        cuda_compute_cap: ['86', '89', '90']
+        # 90: Hopper (H100, H200) - FP8 KV cache supported
+        include:
+          # CUDA 13.1.1 builds (primary, with FP8 support)
+          - cuda_version: '13.1.1'
+            cuda_compute_cap: '89'
+            cuda_tag: 'cuda13'
+          - cuda_version: '13.1.1'
+            cuda_compute_cap: '90'
+            cuda_tag: 'cuda13'
+          # CUDA 12.9.1 builds (backward compatibility)
+          - cuda_version: '12.9.1'
+            cuda_compute_cap: '89'
+            cuda_tag: 'cuda12'
+          - cuda_version: '12.9.1'
+            cuda_compute_cap: '90'
+            cuda_tag: 'cuda12'
     steps:
       - name: Free disk space
         uses: jlumbroso/free-disk-space@main
@@ -521,13 +535,13 @@ jobs:
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/llm-inference-api
           flavor: |
-            suffix=-cuda12-sm${{ matrix.cuda_compute_cap }}
+            suffix=-${{ matrix.cuda_tag }}-sm${{ matrix.cuda_compute_cap }}
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=raw,value=latest-sm${{ matrix.cuda_compute_cap }},enable={{is_default_branch}}
+            type=raw,value=latest-${{ matrix.cuda_tag }}-sm${{ matrix.cuda_compute_cap }},enable={{is_default_branch}}
 
       - name: Build and push
         id: docker_build
@@ -538,10 +552,11 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=llm-inference-api-cuda-sm${{ matrix.cuda_compute_cap }}
-          cache-to: type=gha,mode=max,scope=llm-inference-api-cuda-sm${{ matrix.cuda_compute_cap }}
+          cache-from: type=gha,scope=llm-inference-api-${{ matrix.cuda_tag }}-sm${{ matrix.cuda_compute_cap }}
+          cache-to: type=gha,mode=max,scope=llm-inference-api-${{ matrix.cuda_tag }}-sm${{ matrix.cuda_compute_cap }}
           build-args: |
             BUILDKIT_INLINE_CACHE=1
+            CUDA_VERSION=${{ matrix.cuda_version }}
             CUDA_COMPUTE_CAP=${{ matrix.cuda_compute_cap }}
 
   # Tag existing LLM Inference API images if no changes
@@ -554,7 +569,20 @@ jobs:
       packages: write
     strategy:
       matrix:
-        cuda_compute_cap: ['86', '89', '90']
+        # Mirror the build matrix for tagging
+        include:
+          - cuda_version: '13.1.1'
+            cuda_compute_cap: '89'
+            cuda_tag: 'cuda13'
+          - cuda_version: '13.1.1'
+            cuda_compute_cap: '90'
+            cuda_tag: 'cuda13'
+          - cuda_version: '12.9.1'
+            cuda_compute_cap: '89'
+            cuda_tag: 'cuda12'
+          - cuda_version: '12.9.1'
+            cuda_compute_cap: '90'
+            cuda_tag: 'cuda12'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -585,7 +613,7 @@ jobs:
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/llm-inference-api
           flavor: |
-            suffix=-cuda12-sm${{ matrix.cuda_compute_cap }}
+            suffix=-${{ matrix.cuda_tag }}-sm${{ matrix.cuda_compute_cap }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -594,8 +622,8 @@ jobs:
       - name: Tag existing image
         run: |
           echo "${{ steps.meta.outputs.tags }}" | while IFS= read -r tag; do
-            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/llm-inference-api:${{ steps.prev-version.outputs.version }}-cuda12-sm${{ matrix.cuda_compute_cap }}
-            docker tag ${{ secrets.DOCKERHUB_USERNAME }}/llm-inference-api:${{ steps.prev-version.outputs.version }}-cuda12-sm${{ matrix.cuda_compute_cap }} "$tag"
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/llm-inference-api:${{ steps.prev-version.outputs.version }}-${{ matrix.cuda_tag }}-sm${{ matrix.cuda_compute_cap }}
+            docker tag ${{ secrets.DOCKERHUB_USERNAME }}/llm-inference-api:${{ steps.prev-version.outputs.version }}-${{ matrix.cuda_tag }}-sm${{ matrix.cuda_compute_cap }} "$tag"
             docker push "$tag"
           done
 

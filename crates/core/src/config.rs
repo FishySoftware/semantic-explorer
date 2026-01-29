@@ -20,6 +20,7 @@ pub struct AppConfig {
     pub oidc_session: OidcSessionConfig,
     pub inference: EmbeddingInferenceConfig,
     pub llm_inference: LlmInferenceConfig,
+    pub worker: WorkerConfig,
 }
 
 /// Database configuration
@@ -157,6 +158,40 @@ pub struct LlmInferenceConfig {
     pub timeout_secs: u64,
 }
 
+/// Worker and batch processing configuration
+#[derive(Debug, Clone)]
+pub struct WorkerConfig {
+    // Batch sizes
+    /// Batch size for search operations (default: 200)
+    pub search_batch_size: u64,
+    /// Batch size for chat document inserts (default: 500)
+    pub chat_batch_size: usize,
+    /// Batch size for dataset processing (default: 1000)
+    pub dataset_batch_size: usize,
+    /// Batch size for S3 delete operations (default: 1000)
+    pub s3_delete_batch_size: usize,
+    /// Chunk size for Qdrant uploads (default: 200)
+    pub qdrant_upload_chunk_size: usize,
+
+    // Retries
+    /// Maximum retries for embedding operations (default: 5)
+    pub embedding_max_retries: u32,
+
+    // NATS timeouts
+    /// NATS connection timeout in seconds (default: 10)
+    pub nats_connection_timeout_secs: u64,
+    /// NATS ping interval in seconds (default: 15)
+    pub nats_ping_interval_secs: u64,
+    /// NATS stream max age in days (default: 7)
+    pub nats_stream_max_age_days: u64,
+    /// NATS ack wait in seconds (default: 600 = 10 min)
+    pub nats_ack_wait_secs: u64,
+    /// NATS visualization ack wait in seconds (default: 1800 = 30 min)
+    pub nats_visualization_ack_wait_secs: u64,
+    /// NATS dataset transform ack wait in seconds (default: 600 = 10 min)
+    pub nats_dataset_transform_ack_wait_secs: u64,
+}
+
 impl AppConfig {
     /// Load configuration from environment variables.
     ///
@@ -174,6 +209,7 @@ impl AppConfig {
             oidc_session: OidcSessionConfig::from_env()?,
             inference: EmbeddingInferenceConfig::from_env()?,
             llm_inference: LlmInferenceConfig::from_env()?,
+            worker: WorkerConfig::from_env()?,
         })
     }
 }
@@ -482,6 +518,66 @@ impl LlmInferenceConfig {
                 .unwrap_or_else(|_| "120".to_string())
                 .parse()
                 .context("LLM_INFERENCE_API_TIMEOUT_SECS must be a number")?,
+        })
+    }
+}
+
+impl WorkerConfig {
+    pub fn from_env() -> Result<Self> {
+        Ok(Self {
+            // Batch sizes
+            search_batch_size: env::var("WORKER_SEARCH_BATCH_SIZE")
+                .unwrap_or_else(|_| "200".to_string())
+                .parse()
+                .context("WORKER_SEARCH_BATCH_SIZE must be a number")?,
+            chat_batch_size: env::var("WORKER_CHAT_BATCH_SIZE")
+                .unwrap_or_else(|_| "500".to_string())
+                .parse()
+                .context("WORKER_CHAT_BATCH_SIZE must be a number")?,
+            dataset_batch_size: env::var("WORKER_DATASET_BATCH_SIZE")
+                .unwrap_or_else(|_| "1000".to_string())
+                .parse()
+                .context("WORKER_DATASET_BATCH_SIZE must be a number")?,
+            s3_delete_batch_size: env::var("WORKER_S3_DELETE_BATCH_SIZE")
+                .unwrap_or_else(|_| "1000".to_string())
+                .parse()
+                .context("WORKER_S3_DELETE_BATCH_SIZE must be a number")?,
+            qdrant_upload_chunk_size: env::var("WORKER_QDRANT_UPLOAD_CHUNK_SIZE")
+                .unwrap_or_else(|_| "200".to_string())
+                .parse()
+                .context("WORKER_QDRANT_UPLOAD_CHUNK_SIZE must be a number")?,
+
+            // Retries
+            embedding_max_retries: env::var("WORKER_EMBEDDING_MAX_RETRIES")
+                .unwrap_or_else(|_| "5".to_string())
+                .parse()
+                .context("WORKER_EMBEDDING_MAX_RETRIES must be a number")?,
+
+            // NATS timeouts
+            nats_connection_timeout_secs: env::var("NATS_CONNECTION_TIMEOUT_SECS")
+                .unwrap_or_else(|_| "10".to_string())
+                .parse()
+                .context("NATS_CONNECTION_TIMEOUT_SECS must be a number")?,
+            nats_ping_interval_secs: env::var("NATS_PING_INTERVAL_SECS")
+                .unwrap_or_else(|_| "15".to_string())
+                .parse()
+                .context("NATS_PING_INTERVAL_SECS must be a number")?,
+            nats_stream_max_age_days: env::var("NATS_STREAM_MAX_AGE_DAYS")
+                .unwrap_or_else(|_| "7".to_string())
+                .parse()
+                .context("NATS_STREAM_MAX_AGE_DAYS must be a number")?,
+            nats_ack_wait_secs: env::var("NATS_ACK_WAIT_SECS")
+                .unwrap_or_else(|_| "600".to_string())
+                .parse()
+                .context("NATS_ACK_WAIT_SECS must be a number")?,
+            nats_visualization_ack_wait_secs: env::var("NATS_VISUALIZATION_ACK_WAIT_SECS")
+                .unwrap_or_else(|_| "1800".to_string())
+                .parse()
+                .context("NATS_VISUALIZATION_ACK_WAIT_SECS must be a number")?,
+            nats_dataset_transform_ack_wait_secs: env::var("NATS_DATASET_TRANSFORM_ACK_WAIT_SECS")
+                .unwrap_or_else(|_| "600".to_string())
+                .parse()
+                .context("NATS_DATASET_TRANSFORM_ACK_WAIT_SECS must be a number")?,
         })
     }
 }

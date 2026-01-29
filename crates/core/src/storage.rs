@@ -316,3 +316,20 @@ pub async fn count_files(client: &Client, bucket: &str) -> Result<i64> {
 
     Ok(count)
 }
+
+/// Delete a file from S3 by its full key (no prefix manipulation)
+/// Use this for cleaning up orphaned files when resources are deleted.
+#[tracing::instrument(name = "s3.delete_file_by_key", skip(client), fields(storage.system = "s3", bucket = %bucket, key = %key))]
+pub async fn delete_file_by_key(client: &Client, bucket: &str, key: &str) -> Result<()> {
+    let start = Instant::now();
+
+    let result = client.delete_object().bucket(bucket).key(key).send().await;
+
+    let duration = start.elapsed().as_secs_f64();
+    let success = result.is_ok();
+    record_storage_operation("delete", duration, None, success);
+    crate::observability::record_storage_delete(bucket, duration, success);
+
+    result?;
+    Ok(())
+}

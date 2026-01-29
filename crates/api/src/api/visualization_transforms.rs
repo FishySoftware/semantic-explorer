@@ -7,6 +7,8 @@ use crate::transforms::visualization::models::{
     VisualizationTransform, VisualizationTransformStats,
 };
 use crate::transforms::visualization::scanner::trigger_visualization_transform_scan;
+use aws_sdk_s3::Client;
+use semantic_explorer_core::config::S3Config;
 use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::models::{PaginatedResponse, QdrantConnectionConfig};
 use semantic_explorer_core::validation;
@@ -742,11 +744,12 @@ pub async fn get_visualizations_by_dataset(
     ),
 )]
 #[get("/api/visualization-transforms/{id}/visualizations/{visualization_id}/download")]
-#[tracing::instrument(name = "download_visualization_html", skip(user, pool, s3_client), fields(visualization_transform_id = %path.0, visualization_id = %path.1))]
+#[tracing::instrument(name = "download_visualization_html", skip(user, pool, s3_client, s3_config), fields(visualization_transform_id = %path.0, visualization_id = %path.1))]
 pub async fn download_visualization_html(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
-    s3_client: Data<aws_sdk_s3::Client>,
+    s3_client: Data<Client>,
+    s3_config: Data<S3Config>,
     path: Path<(i32, i32)>,
 ) -> impl Responder {
     let (transform_id, visualization_id) = path.into_inner();
@@ -808,15 +811,11 @@ pub async fn download_visualization_html(
         }
     };
 
-    // Bucket name - using single-bucket architecture (configured via env or default)
-    let bucket =
-        std::env::var("S3_BUCKET_NAME").unwrap_or_else(|_| "semantic-explorer-local".to_string());
-
     // Download the file from S3
     // html_s3_key is the full path including 'visualizations/{transform_id}/...'
     match semantic_explorer_core::storage::get_file_with_size_check(
         &s3_client,
-        &bucket,
+        &s3_config.bucket_name,
         &html_s3_key,
     )
     .await

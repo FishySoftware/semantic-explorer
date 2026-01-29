@@ -7,12 +7,12 @@ use aws_sdk_s3::Client as S3Client;
 use futures_util::StreamExt;
 use sqlx::{Pool, Postgres};
 use std::time::Duration;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::datasets::models::ChunkWithMetadata;
 use crate::storage::postgres::{collection_transforms, datasets};
 use semantic_explorer_core::models::CollectionTransformResult;
-use semantic_explorer_core::storage::get_file_with_size_check;
+use semantic_explorer_core::storage::{delete_file_by_key, get_file_with_size_check};
 
 use super::super::listeners::publish_transform_status;
 
@@ -21,6 +21,7 @@ use super::super::listeners::publish_transform_status;
 pub(crate) struct CollectionListenerContext {
     pub pool: Pool<Postgres>,
     pub s3_client: S3Client,
+    pub s3_bucket_name: String,
     pub nats_client: NatsClient,
 }
 
@@ -123,10 +124,14 @@ async fn handle_result(result: CollectionTransformResult, ctx: &CollectionListen
     {
         Ok(t) => t,
         Err(e) => {
-            error!(
-                "Failed to get collection transform {} for owner {}: {}",
-                result.collection_transform_id, result.owner_id, e
+            // Transform was deleted while job was in progress - this is expected when
+            // a collection or dataset is deleted. Log at info level and clean up.
+            info!(
+                "Collection transform {} not found (likely deleted), discarding result for file {}: {}",
+                result.collection_transform_id, result.source_file_key, e
             );
+            // Clean up any S3 artifacts from the worker
+            cleanup_orphaned_chunks(ctx, &result).await;
             return;
         }
     };
@@ -266,21 +271,14 @@ async fn handle_result(result: CollectionTransformResult, ctx: &CollectionListen
 
     info!("Downloading chunks for: {}", result.source_file_key);
 
-    let s3_bucket_name = match std::env::var("S3_BUCKET_NAME") {
-        Ok(bucket) => bucket,
-        Err(_) => {
-            error!("S3_BUCKET_NAME environment variable not set");
-            return;
-        }
-    };
-
     let full_chunks_key = format!(
         "transforms/collection-transforms/{}/{}",
         result.collection_transform_id, result.chunks_file_key
     );
 
     let chunks_content =
-        match get_file_with_size_check(&ctx.s3_client, &s3_bucket_name, &full_chunks_key).await {
+        match get_file_with_size_check(&ctx.s3_client, &ctx.s3_bucket_name, &full_chunks_key).await
+        {
             Ok(c) => c,
             Err(e) => {
                 error!(
@@ -384,4 +382,32 @@ async fn handle_result(result: CollectionTransformResult, ctx: &CollectionListen
         "Successfully processed file {} with {} chunks",
         result.source_file_key, chunk_count
     );
+}
+
+/// Clean up orphaned chunk files from S3 when a transform has been deleted.
+/// This prevents accumulating orphan files when collections/datasets are deleted
+/// while transforms are still processing.
+async fn cleanup_orphaned_chunks(
+    ctx: &CollectionListenerContext,
+    result: &CollectionTransformResult,
+) {
+    if result.chunks_file_key.is_empty() {
+        return;
+    }
+
+    let full_chunks_key = format!(
+        "transforms/collection-transforms/{}/{}",
+        result.collection_transform_id, result.chunks_file_key
+    );
+
+    // Best-effort cleanup - don't fail if this doesn't work
+    if let Err(e) = delete_file_by_key(&ctx.s3_client, &ctx.s3_bucket_name, &full_chunks_key).await
+    {
+        warn!(
+            "Failed to clean up orphaned chunks file {}: {} (non-critical)",
+            full_chunks_key, e
+        );
+    } else {
+        info!("Cleaned up orphaned chunks file: {}", full_chunks_key);
+    }
 }

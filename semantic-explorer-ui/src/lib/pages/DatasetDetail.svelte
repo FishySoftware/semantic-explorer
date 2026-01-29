@@ -1,14 +1,14 @@
 <script lang="ts">
-	/* eslint-disable svelte/no-at-html-tags */
 	import { onDestroy, onMount } from 'svelte';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import ApiIntegrationModal from '../components/ApiIntegrationModal.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import CreateDatasetTransformModal from '../components/CreateDatasetTransformModal.svelte';
 	import DatasetTransformProgressPanel from '../components/DatasetTransformProgressPanel.svelte';
+	import LoadingState from '../components/LoadingState.svelte';
 	import TabPanel from '../components/TabPanel.svelte';
 	import TransformsList from '../components/TransformsList.svelte';
-	import { ArrowLeftIcon, ArrowsExpandIcon } from '../utils/icons';
+	import { ArrowLeftOutline, ExpandOutline } from 'flowbite-svelte-icons';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { createPollingInterval } from '../utils/polling';
 	import { createSSEConnection, type SSEConnection } from '../utils/sse';
@@ -646,14 +646,12 @@
 <div class="max-w-7xl mx-auto">
 	<div class="mb-4">
 		<button onclick={onBack} class="mb-4 btn-secondary inline-flex items-center gap-2">
-			{@html ArrowLeftIcon}
+			<ArrowLeftOutline class="w-5 h-5" />
 			Back to Datasets
 		</button>
 
 		{#if loading}
-			<div class="flex items-center justify-center py-12">
-				<div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-			</div>
+			<LoadingState message="Loading dataset..." />
 		{:else if error}
 			<div
 				class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4"
@@ -797,11 +795,7 @@
 								{/if}
 
 								{#if itemsLoading}
-									<div class="flex items-center justify-center py-12">
-										<div
-											class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"
-										></div>
-									</div>
+									<LoadingState message="Loading items..." />
 								{:else if itemsError}
 									<div class="p-4">
 										<div
@@ -1106,7 +1100,7 @@
 													class="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
 													title="Create a transform to embed items from this dataset"
 												>
-													{@html ArrowsExpandIcon}
+													<ExpandOutline class="w-5 h-5" />
 													Create Dataset Transform
 												</button>
 											</div>
@@ -1119,7 +1113,7 @@
 												class="inline-flex items-center gap-2 px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
 												title="Create a transform to embed items from this dataset"
 											>
-												{@html ArrowsExpandIcon}
+												<ExpandOutline class="w-5 h-5" />
 												Create Dataset Transform
 											</button>
 										</div>

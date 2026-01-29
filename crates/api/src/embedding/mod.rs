@@ -7,6 +7,7 @@ pub async fn generate_embedding(
     api_key: Option<&str>,
     config: &serde_json::Value,
     query: &str,
+    internal_inference_url: Option<&str>,
 ) -> Result<Vec<f32>> {
     let client = &*HTTP_CLIENT;
 
@@ -47,13 +48,12 @@ pub async fn generate_embedding(
             (endpoint, body, true)
         }
         "internal" => {
-            // Internal inference via embedding-inference-api service uses EMBEDDING_INFERENCE_API_URL environment variable
+            // Internal inference via embedding-inference-api service
             let model = config
                 .get("model")
                 .and_then(|v| v.as_str())
                 .unwrap_or("BAAI/bge-small-en-v1.5");
-            let inference_url = std::env::var("EMBEDDING_INFERENCE_API_URL")
-                .unwrap_or_else(|_| "http://localhost:8090".to_string());
+            let inference_url = internal_inference_url.unwrap_or("http://localhost:8090");
             let endpoint = format!("{}/api/embed", inference_url.trim_end_matches('/'));
             tracing::debug!(
                 provider = "internal",

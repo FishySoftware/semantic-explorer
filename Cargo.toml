@@ -4,9 +4,11 @@ members = [
     "crates/api",
     "crates/core",
     "crates/embedding-inference-api",
-    "crates/llm-inference-api",
     "crates/worker-collections",
     "crates/worker-datasets"
+]
+exclude = [
+    "crates/llm-inference-api"
 ]
 
 [workspace.dependencies]
@@ -20,7 +22,7 @@ actix-web-prom = {version = "0.10.0", features = ["process"]}
 async-nats = { version = "0.46.0" }
 async-stream = { version = "0.3.6" }
 futures-util = { version = "0.3.31" }
-aws-sdk-s3 = {version = "1.120.0", features = ["behavior-version-latest"] }
+aws-sdk-s3 = {version = "1.121.0", features = ["behavior-version-latest"] }
 aws-config = { version = "1.8.12", features = ["rustls", "behavior-version-latest"] }
 qdrant-client = { version = "1.16.0"}
 sqlx = { version = "0.8.6", features = ["runtime-tokio-rustls", "postgres", "chrono", "time", "migrate", "macros", "json"], default-features = false }
@@ -73,7 +75,7 @@ mail-parser = { version = "0.11.1" }
 image = { version = "0.25.9", default-features = false, features = ["png", "jpeg", "tiff", "bmp", "webp"] }
 rtf-parser = { version = "0.4.2" }
 epub = { version = "2.1.5" }
-cfb = { version = "0.12.1" }
+cfb = { version = "0.13.0" }
 tree-sitter = { version = "0.26.3" }
 tree-sitter-rust = { version = "0.24.0" }
 tree-sitter-python = { version = "0.25.0" }
@@ -100,6 +102,3 @@ incremental = true
 opt-level = 3
 strip = "debuginfo"
 lto = true
-
-
-# Force rebuild

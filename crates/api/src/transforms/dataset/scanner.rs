@@ -40,6 +40,7 @@ pub(crate) async fn scan_active_dataset_transforms(
     pool: &Pool<Postgres>,
     nats: &NatsClient,
     s3: &S3Client,
+    s3_bucket_name: &str,
     encryption: &EncryptionService,
     qdrant_config: &QdrantConnectionConfig,
 ) -> Result<()> {
@@ -47,9 +48,16 @@ pub(crate) async fn scan_active_dataset_transforms(
     info!("Scanning {} active dataset transforms", transforms.len());
 
     for transform in transforms {
-        if let Err(e) =
-            process_dataset_transform_scan(pool, nats, s3, &transform, encryption, qdrant_config)
-                .await
+        if let Err(e) = process_dataset_transform_scan(
+            pool,
+            nats,
+            s3,
+            s3_bucket_name,
+            &transform,
+            encryption,
+            qdrant_config,
+        )
+        .await
         {
             error!(
                 "Failed to process dataset transform scan for {}: {}",
@@ -70,6 +78,7 @@ pub(crate) async fn scan_dataset_transform(
     pool: &Pool<Postgres>,
     nats: &NatsClient,
     s3: &S3Client,
+    s3_bucket_name: &str,
     dataset_transform_id: i32,
     encryption: &EncryptionService,
     qdrant_config: &QdrantConnectionConfig,
@@ -84,7 +93,16 @@ pub(crate) async fn scan_dataset_transform(
         return Ok(());
     }
 
-    process_dataset_transform_scan(pool, nats, s3, &transform, encryption, qdrant_config).await
+    process_dataset_transform_scan(
+        pool,
+        nats,
+        s3,
+        s3_bucket_name,
+        &transform,
+        encryption,
+        qdrant_config,
+    )
+    .await
 }
 
 #[tracing::instrument(
@@ -96,6 +114,7 @@ async fn process_dataset_transform_scan(
     pool: &Pool<Postgres>,
     nats: &NatsClient,
     s3: &S3Client,
+    s3_bucket_name: &str,
     transform: &DatasetTransform,
     encryption: &EncryptionService,
     qdrant_config: &QdrantConnectionConfig,
@@ -182,8 +201,7 @@ async fn process_dataset_transform_scan(
         let embedding_batch_size = embedder.batch_size as usize;
 
         // Use single-bucket architecture with embedded-datasets prefix
-        let s3_bucket = std::env::var("S3_BUCKET_NAME")
-            .unwrap_or_else(|_| "semantic-explorer-local".to_string());
+        let s3_bucket = s3_bucket_name.to_string();
         let embedded_dataset_prefix = format!(
             "embedded-datasets/embedded-dataset-{}",
             embedded_dataset.embedded_dataset_id

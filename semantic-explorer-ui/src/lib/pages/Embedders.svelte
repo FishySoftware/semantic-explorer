@@ -1,6 +1,7 @@
 <script lang="ts">
 	import ActionMenu from '$lib/components/ActionMenu.svelte';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import LoadingState from '$lib/components/LoadingState.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import type { Embedder, PaginatedResponse, ProviderDefaultConfig } from '$lib/types/models';
 	import { toastStore } from '$lib/utils/notifications';
@@ -990,14 +991,16 @@
 							<button type="submit" class="btn-primary">
 								{editingEmbedder ? 'Update' : 'Create'}
 							</button>
-							<button
-								type="button"
-								onclick={testEmbedderConnection}
-								class="px-4 py-2 bg-yellow-500 hover:bg-yellow-600 text-white font-semibold rounded-lg shadow-md transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:ring-offset-2 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed"
-								disabled={testStatus === 'testing'}
-							>
-								Test Connection
-							</button>
+							{#if formProvider !== 'internal'}
+								<button
+									type="button"
+									onclick={testEmbedderConnection}
+									class="px-4 py-2 bg-yellow-500 hover:bg-yellow-600 text-white font-semibold rounded-lg shadow-md transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:ring-offset-2 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed"
+									disabled={testStatus === 'testing'}
+								>
+									Test Connection
+								</button>
+							{/if}
 							<button
 								type="button"
 								onclick={() => {
@@ -1044,9 +1047,7 @@
 	{/if}
 
 	{#if loading}
-		<div class="flex items-center justify-center py-12">
-			<div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-		</div>
+		<LoadingState message="Loading embedders..." />
 	{:else if error}
 		<div
 			class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4"

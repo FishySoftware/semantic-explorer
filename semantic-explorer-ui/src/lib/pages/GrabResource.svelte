@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import LoadingState from '../components/LoadingState.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
 
 	interface Props {
@@ -61,10 +62,7 @@
 
 <div class="max-w-md mx-auto">
 	{#if loading}
-		<div class="flex flex-col items-center justify-center py-12">
-			<div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
-			<p class="text-gray-600 dark:text-gray-400">Grabbing {resourceType}...</p>
-		</div>
+		<LoadingState message="Grabbing {resourceType}..." />
 	{:else if error}
 		<div
 			class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4"

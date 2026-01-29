@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+	import LoadingState from '../components/LoadingState.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
 	import { SearchResultsTable } from '../components/search';
 	import type {
@@ -233,9 +234,7 @@
 	/>
 
 	{#if loading}
-		<div class="flex justify-center items-center py-12">
-			<div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-		</div>
+		<LoadingState message="Loading search configuration..." />
 	{:else if error}
 		<div class="bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 p-4 rounded-lg">
 			{error}
