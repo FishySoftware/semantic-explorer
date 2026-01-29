@@ -11,39 +11,106 @@ data:
   datasources.yaml: |
     apiVersion: 1
     datasources:
+      # Prometheus - Primary metrics datasource
       {{- if .Values.prometheus.enabled }}
       - name: Prometheus
         type: prometheus
-        # Points to Prometheus server
+        uid: prometheus
         url: http://{{ .Release.Name }}-prometheus-server:80
         access: proxy
         isDefault: true
+        editable: false
       {{- else if and .Values.observability .Values.observability.prometheus .Values.observability.prometheus.external .Values.observability.prometheus.external.enabled }}
       - name: Prometheus
         type: prometheus
+        uid: prometheus
         url: {{ .Values.observability.prometheus.external.url }}
         access: proxy
         isDefault: true
+        editable: false
       {{- else }}
       # Fallback to OTEL collector's Prometheus exporter (no historical data)
       - name: Prometheus
         type: prometheus
+        uid: prometheus
         url: http://{{ include "semantic-explorer.fullname" . }}-otel-collector:8889
         access: proxy
         isDefault: true
+        editable: false
       {{- end }}
+
+      # Quickwit datasources for logs and traces
       {{- if .Values.observability.quickwit.enabled }}
       - name: Quickwit-Traces
         type: quickwit-quickwit-datasource
+        uid: quickwit-traces
         url: http://{{ include "semantic-explorer.fullname" . }}-quickwit:7280
         access: proxy
+        editable: false
         jsonData:
           index: otel-traces-v0_7
       - name: Quickwit-Logs
         type: quickwit-quickwit-datasource
+        uid: quickwit-logs
         url: http://{{ include "semantic-explorer.fullname" . }}-quickwit:7280
         access: proxy
+        editable: false
         jsonData:
           index: otel-logs-v0_7
+      - name: Quickwit
+        type: quickwit-quickwit-datasource
+        uid: quickwit
+        url: http://{{ include "semantic-explorer.fullname" . }}-quickwit:7280
+        access: proxy
+        editable: false
+        jsonData:
+          index: otel-logs-v0_7
+      - name: Quickwit-Traces-Data
+        type: quickwit-quickwit-datasource
+        uid: quickwit-traces-data
+        url: http://{{ include "semantic-explorer.fullname" . }}-quickwit:7280
+        access: proxy
+        editable: false
+        jsonData:
+          index: otel-traces-v0_7
+      {{- end }}
+
+      # PostgreSQL datasource for Audit Events dashboard
+      {{- if .Values.postgresql.enabled }}
+      - name: Postgres-Audit
+        type: postgres
+        uid: postgres-audit
+        url: {{ include "semantic-explorer.fullname" . }}-postgresql:5432
+        access: proxy
+        editable: false
+        jsonData:
+          database: {{ .Values.postgresql.auth.database | default "semantic_explorer" }}
+          sslmode: {{ .Values.grafana.customDatasources.postgresAudit.sslmode | default "disable" }}
+          maxOpenConns: {{ .Values.grafana.customDatasources.postgresAudit.maxOpenConns | default 5 }}
+          maxIdleConns: {{ .Values.grafana.customDatasources.postgresAudit.maxIdleConns | default 2 }}
+          connMaxLifetime: {{ .Values.grafana.customDatasources.postgresAudit.connMaxLifetime | default 14400 }}
+          postgresVersion: {{ .Values.grafana.customDatasources.postgresAudit.postgresVersion | default 1500 }}
+          timescaledb: false
+        secureJsonData:
+          user: {{ .Values.grafana.customDatasources.postgresAudit.user | default .Values.postgresql.auth.username | default "semantic_explorer" }}
+          password: {{ .Values.grafana.customDatasources.postgresAudit.password | default .Values.postgresql.auth.password | default "changeme" }}
+      {{- else if .Values.grafana.customDatasources.postgresAudit.enabled }}
+      - name: Postgres-Audit
+        type: postgres
+        uid: postgres-audit
+        url: {{ .Values.grafana.customDatasources.postgresAudit.host }}:{{ .Values.grafana.customDatasources.postgresAudit.port | default 5432 }}
+        access: proxy
+        editable: false
+        jsonData:
+          database: {{ .Values.grafana.customDatasources.postgresAudit.database }}
+          sslmode: {{ .Values.grafana.customDatasources.postgresAudit.sslmode | default "disable" }}
+          maxOpenConns: {{ .Values.grafana.customDatasources.postgresAudit.maxOpenConns | default 5 }}
+          maxIdleConns: {{ .Values.grafana.customDatasources.postgresAudit.maxIdleConns | default 2 }}
+          connMaxLifetime: {{ .Values.grafana.customDatasources.postgresAudit.connMaxLifetime | default 14400 }}
+          postgresVersion: {{ .Values.grafana.customDatasources.postgresAudit.postgresVersion | default 1500 }}
+          timescaledb: {{ .Values.grafana.customDatasources.postgresAudit.timescaledb | default false }}
+        secureJsonData:
+          user: {{ .Values.grafana.customDatasources.postgresAudit.user }}
+          password: {{ .Values.grafana.customDatasources.postgresAudit.password }}
       {{- end }}
 {{- end }}

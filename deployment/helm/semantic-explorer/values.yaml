@@ -831,9 +831,9 @@ qdrant:
     # GPU provides 3-10x faster indexing for large collections (>1M vectors)
     tag: "v1.16.3"
     pullPolicy: IfNotPresent
+  # Replica count: 3+ recommended for production (enables raft consensus)
+  # 2 replicas provide basic HA but cannot recover from single node loss
   replicaCount: 3
-  cluster:
-    enabled: true
   # GPU support for accelerated indexing
   # To enable GPU mode:
   # 1. Set image.tag to "gpu-nvidia-latest"
@@ -848,28 +848,136 @@ qdrant:
       count: 1
     # Environment variable for GPU indexing (QDRANT__GPU__INDEXING=1)
     indexing: true
+  
+  # =============================================================================
+  # PERFORMANCE TUNING - Qdrant
+  # =============================================================================
+  # These settings help prevent connection refusals and improve throughput
+  # See: https://qdrant.tech/documentation/guides/configuration/
+  
+  # Qdrant server configuration (passed to subchart's config: key)
+  # These map directly to Qdrant's YAML configuration
+  config:
+    cluster:
+      enabled: true
+      p2p:
+        port: 6335
+      consensus:
+        # Lower tick period for faster failure detection (default: 100)
+        tick_period_ms: 100
+    
+    service:
+      # Maximum POST request size in MB (default: 32)
+      max_request_size_mb: 64
+      # Number of parallel workers for serving API (0 = auto based on CPU cores)
+      max_workers: 0
+      # gRPC port - critical for high-throughput operations
+      grpc_port: 6334
+      # Enable CORS for web clients
+      enable_cors: true
+    
+    storage:
+      # Performance settings
+      performance:
+        # Number of parallel threads for search operations (0 = auto)
+        max_search_threads: 0
+        # CPU budget for optimization jobs (0 = auto, negative = leave N CPUs free)
+        optimizer_cpu_budget: 0
+        # Rate limit for concurrent updates in distributed mode (null = auto)
+        # Prevents overload during bulk operations - set to lower value if seeing connection issues
+        update_rate_limit: null
+        # Limit incoming automatic shard transfers (prevents resource exhaustion)
+        incoming_shard_transfers_limit: 1
+        # Limit outgoing automatic shard transfers
+        outgoing_shard_transfers_limit: 1
+      
+      # HNSW index settings (affects search speed vs memory tradeoff)
+      hnsw_index:
+        # Edges per node in index graph (higher = more accurate, more memory)
+        m: 16
+        # Neighbours considered during index building (higher = better quality, slower build)
+        ef_construct: 100
+        # Maximum threads for background index building (0 = auto, 8-16 recommended)
+        max_indexing_threads: 0
+        # Store HNSW index on disk (saves RAM, slightly slower searches)
+        on_disk: false
+      
+      # Optimizer settings (affects write performance and segment management)
+      optimizers:
+        # Target number of segments (0 = auto based on CPU count)
+        default_segment_number: 0
+        # Flush interval in seconds (lower = more durable, higher write load)
+        flush_interval_sec: 5
+        # Threshold for triggering vector indexing (in KB, 1KB ≈ 1 vector of size 256)
+        indexing_threshold_kb: 20000
+        # Maximum optimization threads per shard (null = auto)
+        max_optimization_threads: null
+      
+      # Collection defaults for new collections
+      collection:
+        # Default replication factor (2+ for HA)
+        replication_factor: 2
+        # Number of replicas that must acknowledge writes
+        write_consistency_factor: 1
+  
+  # Environment variables for Qdrant container (alternative to config file)
+  # Use QDRANT__ prefix with double underscores for nested config
+  env: {}
+  # Example:
+  #   QDRANT__LOG_LEVEL: "INFO"
+  #   QDRANT__STORAGE__PERFORMANCE__MAX_SEARCH_THREADS: "0"
+  
+  # Resource allocation - INCREASED for production workloads
+  # Qdrant is memory-intensive; allocate generously for large collections
   resources:
     requests:
-      cpu: 1000m
-      memory: 2Gi
+      cpu: 2000m
+      memory: 4Gi
       # Uncomment for GPU mode:
       # nvidia.com/gpu: 1
     limits:
-      cpu: 4000m
-      memory: 8Gi
+      cpu: 8000m
+      memory: 16Gi
       # Uncomment for GPU mode:
       # nvidia.com/gpu: 1
+  
   persistence:
     enabled: true
     storageClass: ""  # Defaults to global.storageClass
     accessMode: ReadWriteOnce
-    size: 50Gi
+    size: 100Gi
   service:
     type: ClusterIP
     http:
       port: 6333
     grpc:
       port: 6334
+  
+  # Horizontal Pod Autoscaling (requires metrics-server)
+  autoscaling:
+    enabled: false
+    minReplicas: 3
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  
+  # Pod Disruption Budget for HA
+  podDisruptionBudget:
+    enabled: true
+    # At least 2 pods must be available (for 3-replica cluster)
+    minAvailable: 2
+  
+  # Anti-affinity to spread pods across nodes
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/component: qdrant
+            topologyKey: kubernetes.io/hostname
+  
   updateVolumeFsOwnership: false
   podSecurityContext:
     runAsNonRoot: true
@@ -1003,18 +1111,68 @@ minio:
     tag: "latest"
     pullPolicy: IfNotPresent
   # MinIO mode: standalone or distributed
+  # distributed mode requires 4+ replicas for erasure coding
   mode: distributed
   replicas: 4
+  # Drives per server (for distributed mode with multiple drives per node)
+  drivesPerNode: 1
   rootUser: admin
   rootPassword: ""  # Generate random if empty
   existingSecret: ""
+  
+  # =============================================================================
+  # PERFORMANCE TUNING - MinIO
+  # =============================================================================
+  # These settings optimize throughput and reduce latency for object storage
+  # See: https://min.io/docs/minio/linux/reference/minio-server/settings/
+  
+  # Environment variables for MinIO (passed to subchart's environment: key)
+  # These are the actual MinIO server environment variables
+  environment:
+    # API Performance Settings
+    # Maximum number of concurrent requests per server (0 = unlimited)
+    # Increase if seeing "connection refused" or "too many requests" errors  
+    MINIO_API_REQUESTS_MAX: "0"
+    # Deadline for completing requests (0s = disabled)
+    MINIO_API_REQUESTS_DEADLINE: "0s"
+    # Enable cluster readiness check (helps load balancers)
+    MINIO_API_CLUSTER_DEADLINE: "10s"
+    # Remote transport deadline for distributed operations
+    MINIO_API_REMOTE_TRANSPORT_DEADLINE: "2h"
+    # Transition workers for ILM tier moves
+    MINIO_API_TRANSITION_WORKERS: "100"
+    # Replication workers for bucket replication
+    MINIO_API_REPLICATION_WORKERS: "100"
+    # Maximum replication workers
+    MINIO_API_REPLICATION_MAX_WORKERS: "500"
+    
+    # Scanner Settings (affects background healing and lifecycle)
+    # Scanner speed: default, slow, fast, or fastest
+    # "slow" reduces CPU usage, "fastest" prioritizes quick scans
+    MINIO_SCANNER_SPEED: "default"
+    
+    # Healing Settings for data integrity
+    # Maximum sleep between heal operations
+    MINIO_HEAL_MAX_SLEEP: "1s"
+    # Maximum delay between heal operations
+    MINIO_HEAL_MAX_DELAY: "0"
+    
+    # Prometheus metrics (public access for Grafana)
+    MINIO_PROMETHEUS_AUTH_TYPE: "public"
+    
+    # Drive synchronization - helps with NVMe/SSD performance
+    # MINIO_DRIVE_SYNC: "on"
+  
+  # Resource allocation - INCREASED for production workloads
+  # MinIO benefits from high memory for caching and CPU for erasure coding
   resources:
     requests:
-      cpu: 2000m
-      memory: 4Gi
+      cpu: 4000m      # Increased from 2000m
+      memory: 8Gi     # Increased from 4Gi
     limits:
       cpu: 8000m
-      memory: 8Gi
+      memory: 16Gi    # Increased from 8Gi
+  
   persistence:
     enabled: true
     storageClass: ""  # Defaults to global.storageClass
@@ -1378,6 +1536,57 @@ grafana:
     tag: "11.6.1"
   adminUser: admin
   adminPassword: ""  # Generate random if empty
+  
+  # Custom Semantic Explorer datasource configuration
+  # These settings are used by templates/grafana-datasources-configmap.yaml
+  # Note: This is separate from grafana.datasources which is reserved by the Grafana subchart
+  customDatasources:
+    # PostgreSQL datasource for audit events dashboard
+    # Automatically enabled when postgresql.enabled=true, or configure manually for external DB
+    postgresAudit:
+      enabled: false  # Set to true when using external PostgreSQL
+      # External PostgreSQL connection settings (used when postgresql.enabled=false)
+      host: ""  # e.g., "postgres.database.svc.cluster.local"
+      port: 5432
+      database: "semantic_explorer"
+      user: ""  # PostgreSQL username
+      password: ""  # PostgreSQL password
+      # Connection pool settings
+      sslmode: "disable"  # disable, require, verify-ca, verify-full
+      maxOpenConns: 5  # Maximum open connections
+      maxIdleConns: 2  # Maximum idle connections
+      connMaxLifetime: 14400  # Connection max lifetime in seconds
+      postgresVersion: 1500  # 1500 = PostgreSQL 15, 1400 = PostgreSQL 14, etc.
+      timescaledb: false  # Enable TimescaleDB features if applicable
+    
+    # Prometheus datasource configuration
+    prometheus:
+      # Use external Prometheus instead of the bundled one
+      external:
+        enabled: false
+        url: ""  # e.g., "http://prometheus.monitoring:9090"
+    
+    # Quickwit datasource configuration for logs and traces
+    quickwit:
+      # Log index name
+      logsIndex: "otel-logs-v0_7"
+      # Traces index name  
+      tracesIndex: "otel-traces-v0_7"
+  
+  # Dashboard toggles to enable/disable specific dashboards
+  # Note: Uses customDashboards to avoid conflict with Grafana subchart's dashboards key
+  customDashboards:
+    services:
+      enabled: true  # Service health and HTTP metrics
+    infrastructure:
+      enabled: true  # PostgreSQL, Qdrant, NATS, MinIO, Quickwit, OTEL
+    audit:
+      enabled: true  # Audit events dashboard (requires postgres-audit datasource)
+    logsTraces:
+      enabled: true  # Logs and traces exploration (requires Quickwit)
+    gpu:
+      enabled: true  # GPU & Inference monitoring (requires embedding-inference-api or llm-inference-api)
+  
   # RBAC configuration - use namespaced permissions only
   rbac:
     namespaced: true
