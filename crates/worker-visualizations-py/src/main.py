@@ -518,22 +518,38 @@ async def main():
                     f"Creating pull subscriber for {NATS_SUBJECT} (attempt {attempt}/{NATS_STREAM_RETRY_ATTEMPTS})"
                 )
 
-                # Create a pull subscription with the durable consumer name
-                # Multiple workers can pull from the same durable consumer
-                psub = await js.pull_subscribe(
-                    subject=NATS_SUBJECT,
-                    durable=NATS_DURABLE_CONSUMER,
-                    config=ConsumerConfig(
-                        ack_wait=1800,  # 30 minutes
-                        max_deliver=3,
-                        max_ack_pending=10,
-                    ),
-                )
-                sub_elapsed = time.time() - sub_start
-                logger.info(
-                    f"Pull subscribed to {NATS_SUBJECT} with durable consumer {NATS_DURABLE_CONSUMER} "
-                    f"(worker_id: {WORKER_ID}) in {sub_elapsed:.3f}s"
-                )
+                # First, try to bind to an existing consumer (created by API or another worker)
+                # This avoids race conditions when multiple workers start simultaneously
+                try:
+                    psub = await js.pull_subscribe_bind(
+                        consumer=NATS_DURABLE_CONSUMER,
+                        stream="VISUALIZATION_TRANSFORMS",
+                    )
+                    sub_elapsed = time.time() - sub_start
+                    logger.info(
+                        f"Bound to existing consumer {NATS_DURABLE_CONSUMER} on stream VISUALIZATION_TRANSFORMS "
+                        f"(worker_id: {WORKER_ID}) in {sub_elapsed:.3f}s"
+                    )
+                    break
+                except Exception as bind_error:
+                    logger.debug(f"Could not bind to existing consumer: {bind_error}, will try to create it")
+                    
+                    # Consumer doesn't exist yet - create it with our config
+                    # Only one worker should succeed in creating; others will bind on retry
+                    psub = await js.pull_subscribe(
+                        subject=NATS_SUBJECT,
+                        durable=NATS_DURABLE_CONSUMER,
+                        config=ConsumerConfig(
+                            ack_wait=1800,  # 30 minutes
+                            max_deliver=3,
+                            max_ack_pending=10,
+                        ),
+                    )
+                    sub_elapsed = time.time() - sub_start
+                    logger.info(
+                        f"Created and subscribed to consumer {NATS_DURABLE_CONSUMER} on {NATS_SUBJECT} "
+                        f"(worker_id: {WORKER_ID}) in {sub_elapsed:.3f}s"
+                    )
                 break  # Success, exit retry loop
             except Exception as e:
                 if attempt < NATS_STREAM_RETRY_ATTEMPTS:
@@ -556,12 +572,15 @@ async def main():
         logger.info("Worker started, waiting for jobs...")
         batch_size = int(os.getenv("NATS_BATCH_SIZE", "1"))
         fetch_timeout = float(os.getenv("NATS_FETCH_TIMEOUT", "5.0"))
+        consecutive_errors = 0
+        max_backoff = 30  # Maximum backoff in seconds
 
         while not shutdown_event.is_set():
             try:
                 # Fetch messages from the pull subscription
                 # This allows multiple workers to compete for messages
                 messages = await psub.fetch(batch=batch_size, timeout=fetch_timeout)
+                consecutive_errors = 0  # Reset on success
 
                 for msg in messages:
                     if shutdown_event.is_set():
@@ -577,13 +596,28 @@ async def main():
 
             except asyncio.TimeoutError:
                 # No messages available, continue polling
+                consecutive_errors = 0
                 continue
             except Exception as e:
-                if "timeout" in str(e).lower():
+                error_str = str(e).lower()
+                if "timeout" in error_str:
                     # Fetch timeout is expected when no messages are available
+                    consecutive_errors = 0
                     continue
-                logger.warning(f"Error fetching messages: {e}")
-                await asyncio.sleep(1)  # Brief pause before retrying
+                
+                consecutive_errors += 1
+                
+                # Handle transient NATS cluster errors with exponential backoff
+                if "serviceunavailable" in error_str or "no responders" in error_str:
+                    backoff = min(2 ** consecutive_errors, max_backoff)
+                    if consecutive_errors <= 3:
+                        logger.debug(f"NATS cluster temporarily unavailable, retrying in {backoff}s...")
+                    else:
+                        logger.warning(f"Error fetching messages: {e}, retrying in {backoff}s (attempt {consecutive_errors})")
+                    await asyncio.sleep(backoff)
+                else:
+                    logger.warning(f"Error fetching messages: {e}")
+                    await asyncio.sleep(min(consecutive_errors, 5))  # Brief pause with mild backoff
 
     except KeyboardInterrupt:
         logger.info("Received shutdown signal (SIGINT)")

@@ -503,17 +503,12 @@ embeddingInferenceApi:
     LOG_FORMAT: "json"
     INFERENCE_HOSTNAME: "0.0.0.0"
     INFERENCE_PORT: "8090"
-    # GPU/CUDA configuration - let Kubernetes manage device allocation
-    INFERENCE_CUDA_ENABLED: "true"
     # INFERENCE_CUDA_DEVICE_ID is not set - use CUDA_VISIBLE_DEVICES from k8s
     INFERENCE_CUDA_MEMORY_LIMIT: "0"  # 0 = no limit
     INFERENCE_CUDA_GRAPH: "false"
     # Model configuration - use '*' to allow all models or comma-separated list
     INFERENCE_ALLOWED_EMBEDDING_MODELS: "*"
     INFERENCE_ALLOWED_RERANKER_MODELS: "*"
-    INFERENCE_PRELOAD_MODELS: "BAAI/bge-small-en-v1.5,BAAI/bge-reranker-base"
-    INFERENCE_DEFAULT_EMBEDDING_MODEL: "BAAI/bge-small-en-v1.5"
-    INFERENCE_DEFAULT_RERANKER_MODEL: "BAAI/bge-reranker-base"
     INFERENCE_MAX_BATCH_SIZE: "256"
     # Concurrency and model restrictions (security)
     INFERENCE_MAX_CONCURRENT_REQUESTS: "100"
@@ -963,13 +958,13 @@ qdrant:
   # Qdrant is memory-intensive; allocate generously for large collections
   resources:
     requests:
-      cpu: 2000m
-      memory: 4Gi
+      cpu: 6000m
+      memory: 8Gi
       # Uncomment for GPU mode:
       # nvidia.com/gpu: 1
     limits:
       cpu: 8000m
-      memory: 16Gi
+      memory: 8Gi
       # Uncomment for GPU mode:
       # nvidia.com/gpu: 1
   
@@ -1189,8 +1184,7 @@ minio:
     # Maximum delay between heal operations
     MINIO_HEAL_MAX_DELAY: "0"
     
-    # Prometheus metrics (public access for Grafana)
-    MINIO_PROMETHEUS_AUTH_TYPE: "public"
+    # Note: MINIO_PROMETHEUS_AUTH_TYPE is set automatically by metrics.serviceMonitor.public
     
     # Drive synchronization - helps with NVMe/SSD performance
     # MINIO_DRIVE_SYNC: "on"
@@ -1199,12 +1193,11 @@ minio:
   # MinIO benefits from high memory for caching and CPU for erasure coding
   resources:
     requests:
-      cpu: 4000m      # Increased from 2000m
-      memory: 8Gi     # Increased from 4Gi
+      cpu: 6000m
+      memory: 8Gi
     limits:
-      cpu: 8000m
-      memory: 16Gi    # Increased from 8Gi
-  
+      cpu: 6000m
+      memory: 8Gi
   persistence:
     enabled: true
     storageClass: ""  # Defaults to global.storageClass
@@ -1503,7 +1496,7 @@ prometheus:
   serverFiles:
     prometheus.yml:
       scrape_configs:
-        # Prometheus self-scrape
+        # Prometheus self-scrape (internal metrics, no namespace needed)
         - job_name: prometheus
           static_configs:
             - targets:
@@ -1522,8 +1515,11 @@ prometheus:
             - source_labels: [__meta_kubernetes_endpoint_port_name]
               regex: metrics
               action: keep
-        # API service metrics
-        - job_name: api
+            # Add namespace label from kubernetes metadata
+            - source_labels: [__meta_kubernetes_namespace]
+              target_label: namespace
+        # API service metrics - uses service name as job label
+        - job_name: semantic-explorer-api
           scrape_interval: 15s
           kubernetes_sd_configs:
             - role: endpoints
@@ -1536,9 +1532,12 @@ prometheus:
             - source_labels: [__meta_kubernetes_endpoint_port_name]
               regex: http
               action: keep
+            # Add namespace label from kubernetes metadata
+            - source_labels: [__meta_kubernetes_namespace]
+              target_label: namespace
           metrics_path: /metrics
-        # Worker services metrics
-        - job_name: workers
+        # Worker Collections metrics
+        - job_name: worker-collections
           scrape_interval: 15s
           kubernetes_sd_configs:
             - role: endpoints
@@ -1546,11 +1545,86 @@ prometheus:
                 own_namespace: true
           relabel_configs:
             - source_labels: [__meta_kubernetes_service_name]
-              regex: .*-worker-.*
+              regex: .*-worker-collections
+              action: keep
+            - source_labels: [__meta_kubernetes_endpoint_port_name]
+              regex: metrics
+              action: keep
+            # Add namespace label from kubernetes metadata
+            - source_labels: [__meta_kubernetes_namespace]
+              target_label: namespace
+          metrics_path: /metrics
+        # Worker Datasets metrics
+        - job_name: worker-datasets
+          scrape_interval: 15s
+          kubernetes_sd_configs:
+            - role: endpoints
+              namespaces:
+                own_namespace: true
+          relabel_configs:
+            - source_labels: [__meta_kubernetes_service_name]
+              regex: .*-worker-datasets
+              action: keep
+            - source_labels: [__meta_kubernetes_endpoint_port_name]
+              regex: metrics
+              action: keep
+            # Add namespace label from kubernetes metadata
+            - source_labels: [__meta_kubernetes_namespace]
+              target_label: namespace
+          metrics_path: /metrics
+        # Worker Visualizations (Python) metrics
+        - job_name: worker-visualizations-py
+          scrape_interval: 15s
+          kubernetes_sd_configs:
+            - role: endpoints
+              namespaces:
+                own_namespace: true
+          relabel_configs:
+            - source_labels: [__meta_kubernetes_service_name]
+              regex: .*-worker-visualizations-py
+              action: keep
+            - source_labels: [__meta_kubernetes_endpoint_port_name]
+              regex: metrics
+              action: keep
+            # Add namespace label from kubernetes metadata
+            - source_labels: [__meta_kubernetes_namespace]
+              target_label: namespace
+          metrics_path: /metrics
+        # Embedding Inference API metrics (GPU)
+        - job_name: embedding-inference-api
+          scrape_interval: 15s
+          kubernetes_sd_configs:
+            - role: endpoints
+              namespaces:
+                own_namespace: true
+          relabel_configs:
+            - source_labels: [__meta_kubernetes_service_name]
+              regex: .*-embedding-inference-api
               action: keep
             - source_labels: [__meta_kubernetes_endpoint_port_name]
               regex: http
               action: keep
+            # Add namespace label from kubernetes metadata
+            - source_labels: [__meta_kubernetes_namespace]
+              target_label: namespace
+          metrics_path: /metrics
+        # LLM Inference API metrics (GPU)
+        - job_name: llm-inference-api
+          scrape_interval: 15s
+          kubernetes_sd_configs:
+            - role: endpoints
+              namespaces:
+                own_namespace: true
+          relabel_configs:
+            - source_labels: [__meta_kubernetes_service_name]
+              regex: .*-llm-inference-api
+              action: keep
+            - source_labels: [__meta_kubernetes_endpoint_port_name]
+              regex: http
+              action: keep
+            # Add namespace label from kubernetes metadata
+            - source_labels: [__meta_kubernetes_namespace]
+              target_label: namespace
           metrics_path: /metrics
   service:
     type: ClusterIP
