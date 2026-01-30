@@ -532,8 +532,10 @@ async def main():
                     )
                     break
                 except Exception as bind_error:
-                    logger.debug(f"Could not bind to existing consumer: {bind_error}, will try to create it")
-                    
+                    logger.debug(
+                        f"Could not bind to existing consumer: {bind_error}, will try to create it"
+                    )
+
                     # Consumer doesn't exist yet - create it with our config
                     # Only one worker should succeed in creating; others will bind on retry
                     psub = await js.pull_subscribe(
@@ -604,20 +606,26 @@ async def main():
                     # Fetch timeout is expected when no messages are available
                     consecutive_errors = 0
                     continue
-                
+
                 consecutive_errors += 1
-                
+
                 # Handle transient NATS cluster errors with exponential backoff
                 if "serviceunavailable" in error_str or "no responders" in error_str:
-                    backoff = min(2 ** consecutive_errors, max_backoff)
+                    backoff = min(2**consecutive_errors, max_backoff)
                     if consecutive_errors <= 3:
-                        logger.debug(f"NATS cluster temporarily unavailable, retrying in {backoff}s...")
+                        logger.debug(
+                            f"NATS cluster temporarily unavailable, retrying in {backoff}s..."
+                        )
                     else:
-                        logger.warning(f"Error fetching messages: {e}, retrying in {backoff}s (attempt {consecutive_errors})")
+                        logger.warning(
+                            f"Error fetching messages: {e}, retrying in {backoff}s (attempt {consecutive_errors})"
+                        )
                     await asyncio.sleep(backoff)
                 else:
                     logger.warning(f"Error fetching messages: {e}")
-                    await asyncio.sleep(min(consecutive_errors, 5))  # Brief pause with mild backoff
+                    await asyncio.sleep(
+                        min(consecutive_errors, 5)
+                    )  # Brief pause with mild backoff
 
     except KeyboardInterrupt:
         logger.info("Received shutdown signal (SIGINT)")
