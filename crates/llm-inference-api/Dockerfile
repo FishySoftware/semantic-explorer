@@ -69,9 +69,7 @@ FROM chef AS builder
 ARG CUDA_COMPUTE_CAP=90
 ENV CUDA_COMPUTE_CAP=${CUDA_COMPUTE_CAP}
 
-# Copy recipe and build dependencies (cached if Cargo.toml/Cargo.lock unchanged)
 COPY --from=planner /usr/src/app/recipe.json recipe.json
-# Copy the core crate (dependency) and llm-inference-api structure required for chef cook
 COPY crates/core ./crates/core
 COPY crates/llm-inference-api/Cargo.toml crates/llm-inference-api/Cargo.lock ./crates/llm-inference-api/
 RUN mkdir -p ./crates/llm-inference-api/src && echo "" > ./crates/llm-inference-api/src/main.rs
