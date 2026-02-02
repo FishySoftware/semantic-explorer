@@ -1,3 +1,4 @@
+pub mod circuit_breaker;
 pub mod config;
 pub mod embedder;
 pub mod encryption;
@@ -6,10 +7,13 @@ pub mod models;
 pub mod nats;
 pub mod observability;
 pub mod owner_info;
+pub mod retry;
 pub mod storage;
 pub mod subjects;
 pub mod tls;
 pub mod validation;
 pub mod worker;
 
+pub use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, with_circuit_breaker};
+pub use retry::{RetryPolicy, RetryableError, retry_with_policy};
 pub use subjects::{consumers, dlq, jobs, status};

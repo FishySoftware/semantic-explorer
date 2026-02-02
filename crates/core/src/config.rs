@@ -39,6 +39,14 @@ pub struct DatabaseConfig {
 pub struct NatsConfig {
     pub url: String,
     pub replicas: u32,
+    /// Maximum pending acknowledgments for consumers (backpressure limit)
+    pub max_ack_pending: i64,
+    /// Ack wait timeout for collection transforms (seconds)
+    pub collection_ack_wait_secs: u64,
+    /// Ack wait timeout for dataset transforms (seconds)
+    pub dataset_ack_wait_secs: u64,
+    /// Ack wait timeout for visualization transforms (seconds)
+    pub visualization_ack_wait_secs: u64,
 }
 
 /// Qdrant vector database configuration
@@ -256,6 +264,22 @@ impl NatsConfig {
                 .unwrap_or_else(|_| "3".to_string())
                 .parse()
                 .context("NATS_REPLICAS must be a number")?,
+            max_ack_pending: env::var("NATS_MAX_ACK_PENDING")
+                .unwrap_or_else(|_| "100".to_string())
+                .parse()
+                .context("NATS_MAX_ACK_PENDING must be a number")?,
+            collection_ack_wait_secs: env::var("NATS_COLLECTION_ACK_WAIT_SECS")
+                .unwrap_or_else(|_| "600".to_string())
+                .parse()
+                .context("NATS_COLLECTION_ACK_WAIT_SECS must be a number")?,
+            dataset_ack_wait_secs: env::var("NATS_DATASET_ACK_WAIT_SECS")
+                .unwrap_or_else(|_| "600".to_string())
+                .parse()
+                .context("NATS_DATASET_ACK_WAIT_SECS must be a number")?,
+            visualization_ack_wait_secs: env::var("NATS_VISUALIZATION_ACK_WAIT_SECS")
+                .unwrap_or_else(|_| "1800".to_string())
+                .parse()
+                .context("NATS_VISUALIZATION_ACK_WAIT_SECS must be a number")?,
         })
     }
 }

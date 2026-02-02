@@ -27,6 +27,7 @@ The API server orchestrates all system operations:
 - **Authentication**: OIDC integration
 - **Observability**: Prometheus metrics, OpenTelemetry tracing, structured logging
 - **Reliability**: Reconciliation job for recovering failed batch publishes
+- **Circuit Breakers**: Automatic failure isolation for external services
 
 ---
 
@@ -355,6 +356,35 @@ This service uses shared configuration from `semantic-explorer-core`. See the [r
 | `WORKER_EMBEDDING_MAX_RETRIES` | `5` | Max retries for embedding operations |
 | `NATS_REQUEST_TIMEOUT_SECS` | `30` | NATS request timeout in seconds |
 | `NATS_BATCH_TIMEOUT_SECS` | `300` | NATS batch operation timeout in seconds |
+
+### NATS Consumer Tuning Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NATS_MAX_ACK_PENDING` | `100` | Max unacknowledged messages per consumer |
+| `NATS_COLLECTION_ACK_WAIT_SECS` | `600` | Ack wait for collection transforms |
+| `NATS_DATASET_ACK_WAIT_SECS` | `600` | Ack wait for dataset transforms |
+| `NATS_VISUALIZATION_ACK_WAIT_SECS` | `1800` | Ack wait for visualization jobs |
+| `NATS_VISUALIZATION_MAX_ACK_PENDING` | `10` | Max pending for visualization |
+
+### Circuit Breaker Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `QDRANT_CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `5` | Failures before circuit opens |
+| `QDRANT_CIRCUIT_BREAKER_SUCCESS_THRESHOLD` | `3` | Successes to close from half-open |
+| `QDRANT_CIRCUIT_BREAKER_TIMEOUT_SECS` | `30` | How long circuit stays open |
+| `S3_CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `5` | S3 failure threshold |
+| `INFERENCE_CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `5` | Inference API failure threshold |
+
+### Retry Policy Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RETRY_MAX_ATTEMPTS` | `3` | Maximum retry attempts |
+| `RETRY_INITIAL_DELAY_MS` | `100` | Initial delay between retries (ms) |
+| `RETRY_MAX_DELAY_MS` | `10000` | Maximum delay between retries (ms) |
+| `RETRY_BACKOFF_MULTIPLIER` | `2.0` | Exponential backoff multiplier |
 
 ---
 

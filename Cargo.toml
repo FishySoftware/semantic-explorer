@@ -76,7 +76,7 @@ image = { version = "0.25.9", default-features = false, features = ["png", "jpeg
 rtf-parser = { version = "0.4.2" }
 epub = { version = "2.1.5" }
 cfb = { version = "0.13.0" }
-tree-sitter = { version = "0.26.3" }
+tree-sitter = { version = "0.26.5" }
 tree-sitter-rust = { version = "0.24.0" }
 tree-sitter-python = { version = "0.25.0" }
 tree-sitter-javascript = { version = "0.25.0" }

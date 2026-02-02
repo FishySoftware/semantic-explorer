@@ -19,9 +19,16 @@ The collections worker:
 
 1. Consumes jobs from `COLLECTION_TRANSFORMS` NATS stream
 2. Downloads files from S3
-3. Extracts text using format-specific parsers
+3. Extracts text using format-specific parsers (runs in blocking thread pool)
 4. Chunks content using configurable strategies
 5. Uploads results back to S3 as JSON documents
+
+### Performance Features
+
+- **Non-blocking extraction**: CPU-intensive extraction runs in `spawn_blocking` thread pool
+- **Circuit breakers**: S3 operations protected by circuit breaker pattern
+- **Configurable retries**: Exponential backoff for transient failures
+- **Tunable NATS consumers**: Configurable ack pending and wait times
 
 ---
 
@@ -180,6 +187,29 @@ Rust, Python, JavaScript, TypeScript, Go, Java, C, C++, Bash, HTML, CSS, JSON, Y
 |----------|---------|-------------|
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` | OTLP collector |
 | `RUST_LOG` | `info` | Log level |
+
+### NATS Consumer Tuning
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NATS_MAX_ACK_PENDING` | `100` | Max unacknowledged messages per consumer |
+| `NATS_COLLECTION_ACK_WAIT_SECS` | `600` | Ack wait for collection transforms |
+
+### Circuit Breaker Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `S3_CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `5` | Failures before circuit opens |
+| `S3_CIRCUIT_BREAKER_SUCCESS_THRESHOLD` | `3` | Successes to close from half-open |
+| `S3_CIRCUIT_BREAKER_TIMEOUT_SECS` | `30` | How long circuit stays open |
+
+### Retry Policy Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RETRY_MAX_ATTEMPTS` | `3` | Maximum retry attempts |
+| `RETRY_INITIAL_DELAY_MS` | `100` | Initial delay between retries (ms) |
+| `S3_RETRY_MAX_ATTEMPTS` | `3` | S3-specific retry attempts |
 
 ---
 

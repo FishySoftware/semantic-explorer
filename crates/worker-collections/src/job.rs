@@ -110,10 +110,20 @@ pub(crate) async fn process_file_job(
     );
 
     let extraction_start = Instant::now();
-    let extraction_result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        ExtractionService::extract(&mime_type, &file_content, &extraction_config)
-    })) {
-        Ok(Ok(result)) => {
+    // Move extraction to blocking thread pool to avoid blocking the async runtime
+    // PDF parsing, XML processing, and other extraction operations are CPU-intensive
+    let extraction_mime = mime_type.clone();
+    let extraction_content = file_content.clone();
+    let extraction_cfg = extraction_config.clone();
+    let extraction_result = tokio::task::spawn_blocking(move || {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            ExtractionService::extract(&extraction_mime, &extraction_content, &extraction_cfg)
+        }))
+    })
+    .await;
+
+    let extraction_result = match extraction_result {
+        Ok(Ok(Ok(result))) => {
             let extraction_duration = extraction_start.elapsed().as_secs_f64();
             semantic_explorer_core::observability::record_document_extraction(
                 "collection",
@@ -122,7 +132,7 @@ pub(crate) async fn process_file_job(
             );
             result
         }
-        Ok(Err(e)) => {
+        Ok(Ok(Err(e))) => {
             let extraction_duration = extraction_start.elapsed().as_secs_f64();
             semantic_explorer_core::observability::record_document_extraction(
                 "collection",
@@ -141,7 +151,7 @@ pub(crate) async fn process_file_job(
             .await?;
             return Ok(());
         }
-        Err(_) => {
+        Ok(Err(_)) => {
             let extraction_duration = extraction_start.elapsed().as_secs_f64();
             semantic_explorer_core::observability::record_document_extraction(
                 "collection",
@@ -155,6 +165,26 @@ pub(crate) async fn process_file_job(
                 &ctx.nats_client,
                 &job,
                 Err("Extraction panicked".to_string()),
+                Some((duration * 1000.0) as i64),
+            )
+            .await?;
+            return Ok(());
+        }
+        Err(e) => {
+            // spawn_blocking task was cancelled/panicked
+            let extraction_duration = extraction_start.elapsed().as_secs_f64();
+            semantic_explorer_core::observability::record_document_extraction(
+                "collection",
+                extraction_duration,
+                false,
+            );
+            let duration = start_time.elapsed().as_secs_f64();
+            record_worker_job("transform-file", duration, "failed_extraction");
+            error!(error = %e, mime_type = %mime_type, "Extraction task failed");
+            send_result(
+                &ctx.nats_client,
+                &job,
+                Err(format!("Extraction task failed: {}", e)),
                 Some((duration * 1000.0) as i64),
             )
             .await?;

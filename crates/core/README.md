@@ -30,6 +30,8 @@ Configuration, observability, NATS JetStream, encryption, storage utilities, and
 | `worker` | Base worker loop and job processing |
 | `validation` | Input validation utilities |
 | `owner_info` | Owner identification helpers |
+| `retry` | Configurable retry policies with exponential backoff |
+| `circuit_breaker` | Circuit breaker pattern for external service resilience |
 
 ---
 
@@ -86,6 +88,11 @@ All configuration is loaded from environment variables at startup. See the [root
 |----------|---------|-------------|
 | `NATS_URL` | `nats://localhost:4222` | NATS server URL |
 | `NATS_REPLICAS` | `3` | Stream replica count |
+| `NATS_MAX_ACK_PENDING` | `100` | Max unacknowledged messages per consumer |
+| `NATS_COLLECTION_ACK_WAIT_SECS` | `600` | Ack wait for collection transforms |
+| `NATS_DATASET_ACK_WAIT_SECS` | `600` | Ack wait for dataset transforms |
+| `NATS_VISUALIZATION_ACK_WAIT_SECS` | `1800` | Ack wait for visualization jobs |
+| `NATS_VISUALIZATION_MAX_ACK_PENDING` | `10` | Max pending for visualization |
 
 </details>
 
@@ -201,6 +208,67 @@ The `embedder` module supports these providers:
 | OpenAI | `openai` | 2048 | Requires `api_key` |
 | Cohere | `cohere` | 96 | Requires `api_key`, supports `input_type` |
 | Internal | `internal` | 256 | Uses `EMBEDDING_INFERENCE_API_URL` |
+
+---
+
+## Retry Policies
+
+The `retry` module provides configurable retry with exponential backoff:
+
+```rust
+use semantic_explorer_core::retry::{RetryPolicy, retry_with_policy};
+
+let policy = RetryPolicy::from_env_with_prefix("QDRANT_RETRY");
+let result = retry_with_policy(&policy, "qdrant_upsert", || async {
+    qdrant_client.upsert_points(...).await
+}).await?;
+```
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RETRY_MAX_ATTEMPTS` | `3` | Maximum retry attempts |
+| `RETRY_INITIAL_DELAY_MS` | `100` | Initial delay between retries |
+| `RETRY_MAX_DELAY_MS` | `10000` | Maximum delay between retries |
+| `RETRY_BACKOFF_MULTIPLIER` | `2.0` | Exponential backoff multiplier |
+| `RETRY_JITTER_FACTOR` | `0.1` | Jitter factor (0.0 to 1.0) |
+
+Service-specific overrides use prefixes: `QDRANT_RETRY_*`, `S3_RETRY_*`, `INFERENCE_RETRY_*`
+
+---
+
+## Circuit Breakers
+
+The `circuit_breaker` module implements the circuit breaker pattern:
+
+```rust
+use semantic_explorer_core::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
+
+let config = CircuitBreakerConfig::from_env_with_prefix("QDRANT");
+let breaker = CircuitBreaker::new(config);
+
+let result = breaker.call("operation", || async {
+    external_service.call().await
+}).await?;
+```
+
+### States
+
+- **Closed**: Normal operation, requests pass through
+- **Open**: Service failing, requests fail immediately (fast-fail)
+- **Half-Open**: Testing recovery, limited requests allowed
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `{PREFIX}_CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `5` | Failures before opening |
+| `{PREFIX}_CIRCUIT_BREAKER_SUCCESS_THRESHOLD` | `3` | Successes to close from half-open |
+| `{PREFIX}_CIRCUIT_BREAKER_TIMEOUT_SECS` | `30` | How long circuit stays open |
+| `{PREFIX}_CIRCUIT_BREAKER_FAILURE_WINDOW_SECS` | `60` | Window for counting failures |
+
+Prefixes: `QDRANT`, `S3`, `INFERENCE`
 
 ---
 

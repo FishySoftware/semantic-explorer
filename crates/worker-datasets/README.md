@@ -23,6 +23,13 @@ The datasets worker:
 4. Creates/updates Qdrant collections
 5. Upserts vectors with metadata to Qdrant
 
+### Performance Features
+
+- **Qdrant client caching**: Clients cached by URL to avoid connection overhead
+- **Circuit breakers**: Qdrant, S3, and inference API operations protected
+- **Configurable retries**: Exponential backoff for transient failures
+- **Tunable NATS consumers**: Configurable ack pending and wait times
+
 ---
 
 ## Supported Embedders
@@ -91,6 +98,33 @@ Embedder configuration comes from the job payload, not environment variables.
 |----------|---------|-------------|
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` | OTLP collector |
 | `RUST_LOG` | `info` | Log level |
+
+### NATS Consumer Tuning
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NATS_MAX_ACK_PENDING` | `100` | Max unacknowledged messages per consumer |
+| `NATS_DATASET_ACK_WAIT_SECS` | `600` | Ack wait for dataset transforms |
+
+### Circuit Breaker Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `QDRANT_CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `5` | Qdrant failures before circuit opens |
+| `S3_CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `5` | S3 failures before circuit opens |
+| `INFERENCE_CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `5` | Inference API failures before circuit opens |
+| `{PREFIX}_CIRCUIT_BREAKER_SUCCESS_THRESHOLD` | `3` | Successes to close from half-open |
+| `{PREFIX}_CIRCUIT_BREAKER_TIMEOUT_SECS` | `30` | How long circuit stays open |
+
+### Retry Policy Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RETRY_MAX_ATTEMPTS` | `3` | Maximum retry attempts |
+| `RETRY_INITIAL_DELAY_MS` | `100` | Initial delay between retries (ms) |
+| `QDRANT_RETRY_MAX_ATTEMPTS` | `3` | Qdrant-specific retry attempts |
+| `S3_RETRY_MAX_ATTEMPTS` | `3` | S3-specific retry attempts |
+| `INFERENCE_RETRY_MAX_ATTEMPTS` | `3` | Inference API retry attempts |
 
 ---
 

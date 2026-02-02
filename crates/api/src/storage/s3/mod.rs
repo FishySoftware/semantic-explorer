@@ -581,25 +581,48 @@ pub(crate) async fn empty_collection(
 
         // Delete objects in batches
         for batch in keys.chunks(BATCH_SIZE) {
-            let delete_objects: Vec<_> = batch
+            let delete_objects: Result<Vec<_>, _> = batch
                 .iter()
                 .map(|key| {
                     aws_sdk_s3::types::ObjectIdentifier::builder()
                         .key(key)
                         .build()
-                        .expect("Failed to build ObjectIdentifier")
                 })
                 .collect();
+
+            let delete_objects = match delete_objects {
+                Ok(objects) => objects,
+                Err(e) => {
+                    tracing::error!(
+                        error = %e,
+                        bucket = %bucket_name,
+                        collection_id = %collection_id,
+                        "Failed to build ObjectIdentifier for batch deletion"
+                    );
+                    continue;
+                }
+            };
+
+            let delete_request = match aws_sdk_s3::types::Delete::builder()
+                .set_objects(Some(delete_objects))
+                .build()
+            {
+                Ok(request) => request,
+                Err(e) => {
+                    tracing::error!(
+                        error = %e,
+                        bucket = %bucket_name,
+                        collection_id = %collection_id,
+                        "Failed to build Delete request for batch deletion"
+                    );
+                    continue;
+                }
+            };
 
             match client
                 .delete_objects()
                 .bucket(bucket_name)
-                .delete(
-                    aws_sdk_s3::types::Delete::builder()
-                        .set_objects(Some(delete_objects))
-                        .build()
-                        .expect("Failed to build Delete request"),
-                )
+                .delete(delete_request)
                 .send()
                 .await
             {

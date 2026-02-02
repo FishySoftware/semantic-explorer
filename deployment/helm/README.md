@@ -98,6 +98,42 @@ semantic-explorer/
 └── .helmignore        # Files to exclude from packaging
 ```
 
+## Performance & Scalability Configuration
+
+The chart includes configuration for high-availability deployments (100K+ users):
+
+### Circuit Breakers
+
+```yaml
+api:
+  env:
+    QDRANT_CIRCUIT_BREAKER_FAILURE_THRESHOLD: "5"
+    QDRANT_CIRCUIT_BREAKER_TIMEOUT_SECS: "30"
+    S3_CIRCUIT_BREAKER_FAILURE_THRESHOLD: "5"
+    INFERENCE_CIRCUIT_BREAKER_FAILURE_THRESHOLD: "5"
+```
+
+### NATS Consumer Tuning
+
+```yaml
+api:
+  env:
+    NATS_MAX_ACK_PENDING: "100"
+    NATS_COLLECTION_ACK_WAIT_SECS: "600"
+    NATS_DATASET_ACK_WAIT_SECS: "600"
+    NATS_VISUALIZATION_ACK_WAIT_SECS: "1800"
+```
+
+### Retry Policies
+
+```yaml
+workerDatasets:
+  env:
+    RETRY_MAX_ATTEMPTS: "3"
+    RETRY_INITIAL_DELAY_MS: "100"
+    QDRANT_RETRY_MAX_ATTEMPTS: "3"
+```
+
 ## Dependencies
 
 The chart includes the following optional dependencies:

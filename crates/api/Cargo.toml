@@ -42,6 +42,7 @@ regex = { workspace = true }
 infer = { workspace = true }
 sha2 = { workspace = true }
 tracing-opentelemetry = { workspace = true }
+once_cell = { workspace = true }
 
 [target.'cfg(target_env = "musl")'.dependencies]
 mimalloc = { version = "0.1.48", features = ["v3"], default-features = false }

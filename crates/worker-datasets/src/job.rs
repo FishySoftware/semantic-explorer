@@ -1,6 +1,5 @@
 use anyhow::Result;
 use async_nats::jetstream;
-use qdrant_client::Qdrant;
 use qdrant_client::qdrant::{CreateCollectionBuilder, Distance, VectorParams};
 use qdrant_client::qdrant::{PointStruct, UpsertPointsBuilder};
 use semantic_explorer_core::embedder;
@@ -184,11 +183,12 @@ pub(crate) async fn process_dataset_transform_job(
         return Ok(());
     }
 
-    // Create and reuse client instead of recreating for each job
-    let qdrant_client = Qdrant::from_url(&job.qdrant_config.url)
-        .api_key(job.qdrant_config.api_key.clone())
-        .build()
-        .map_err(|e| anyhow::anyhow!("Failed to build Qdrant client: {e}"))?;
+    // Get cached Qdrant client instead of recreating for each job
+    let qdrant_client = crate::qdrant_cache::get_or_create_client(
+        &job.qdrant_config.url,
+        job.qdrant_config.api_key.clone(),
+    )
+    .await?;
 
     let embedding_size = embeddings
         .first()

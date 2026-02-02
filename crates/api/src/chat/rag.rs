@@ -1,12 +1,18 @@
 use crate::chat::models::{RAGConfig, RetrievedDocument};
 use crate::embedding::generate_embedding;
 use crate::storage::postgres::{embedded_datasets, embedders};
+use once_cell::sync::Lazy;
 use qdrant_client::qdrant::SearchPointsBuilder;
 use qdrant_client::qdrant::value::Kind;
 use qdrant_client::{Qdrant, qdrant::point_id::PointIdOptions};
+use regex::Regex;
 use semantic_explorer_core::encryption::EncryptionService;
 use sqlx::{Pool, Postgres};
 use tracing::{debug, error, instrument, warn};
+
+/// Regex pattern for matching "Chunk N" references in LLM responses
+static CHUNK_REFERENCE_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"Chunk (\d+)").expect("Invalid chunk reference regex pattern"));
 
 #[instrument(name = "retrieve_documents", skip(pool, qdrant_client, encryption), fields(embedded_dataset_id, query_len = query.len()))]
 pub async fn retrieve_documents(
@@ -211,8 +217,6 @@ pub fn build_context(documents: &[RetrievedDocument]) -> String {
 /// Replace "Chunk N" references in LLM response with actual document titles
 /// This transforms the response from using generic chunk numbers to user-facing document titles
 pub fn replace_chunk_references(content: &str, documents: &[RetrievedDocument]) -> String {
-    use regex::Regex;
-
     // Create a mapping from chunk number to item title
     let chunk_to_title: std::collections::HashMap<usize, String> = documents
         .iter()
@@ -224,10 +228,9 @@ pub fn replace_chunk_references(content: &str, documents: &[RetrievedDocument]) 
         })
         .collect();
 
-    // Replace "Chunk N" with actual titles using regex
+    // Replace "Chunk N" with actual titles using pre-compiled regex
     // Matches patterns like "Chunk 1", "Chunk 2", etc.
-    let re = Regex::new(r"Chunk (\d+)").unwrap();
-    let result = re.replace_all(content, |caps: &regex::Captures| {
+    let result = CHUNK_REFERENCE_REGEX.replace_all(content, |caps: &regex::Captures| {
         let chunk_num_str = &caps[1];
         if let Ok(chunk_num) = chunk_num_str.parse::<usize>() {
             chunk_to_title

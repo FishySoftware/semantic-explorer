@@ -245,14 +245,25 @@ fn stream_config_differs(current: &StreamConfig, desired: &StreamConfig) -> bool
         || current.duplicate_window != desired.duplicate_window
 }
 
+/// Create consumer config for collection transforms with configurable parameters.
+/// Falls back to environment variables or defaults if not provided.
 pub fn create_transform_file_consumer_config() -> ConsumerConfig {
+    let max_ack_pending = std::env::var("NATS_MAX_ACK_PENDING")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(100);
+    let ack_wait_secs = std::env::var("NATS_COLLECTION_ACK_WAIT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(600); // 10 minutes default
+
     ConsumerConfig {
         durable_name: Some("collection-transform-workers".to_string()),
         description: Some("Consumer for file transformation jobs".to_string()),
         ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
-        ack_wait: Duration::from_secs(10 * 60), // 10 minutes to process
-        max_deliver: 5,                         // Retry up to 5 times
-        max_ack_pending: 100,                   // Backpressure limit
+        ack_wait: Duration::from_secs(ack_wait_secs),
+        max_deliver: 5, // Retry up to 5 times
+        max_ack_pending,
         backoff: vec![
             Duration::from_secs(30),
             Duration::from_secs(60),
@@ -263,14 +274,25 @@ pub fn create_transform_file_consumer_config() -> ConsumerConfig {
     }
 }
 
+/// Create consumer config for dataset transforms with configurable parameters.
+/// Falls back to environment variables or defaults if not provided.
 pub fn create_dataset_transform_consumer_config() -> ConsumerConfig {
+    let max_ack_pending = std::env::var("NATS_MAX_ACK_PENDING")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(100);
+    let ack_wait_secs = std::env::var("NATS_DATASET_ACK_WAIT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(600); // 10 minutes default
+
     ConsumerConfig {
         durable_name: Some("dataset-transform-workers".to_string()),
         description: Some("Consumer for dataset transform embedding jobs".to_string()),
         ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
-        ack_wait: Duration::from_secs(10 * 60), // 10 minutes to process
-        max_deliver: 5,                         // Retry up to 5 times
-        max_ack_pending: 100,                   // Backpressure limit
+        ack_wait: Duration::from_secs(ack_wait_secs),
+        max_deliver: 5, // Retry up to 5 times
+        max_ack_pending,
         backoff: vec![
             Duration::from_secs(30),
             Duration::from_secs(60),
@@ -281,14 +303,26 @@ pub fn create_dataset_transform_consumer_config() -> ConsumerConfig {
     }
 }
 
+/// Create consumer config for visualization transforms with configurable parameters.
+/// Falls back to environment variables or defaults if not provided.
 pub fn create_visualization_consumer_config() -> ConsumerConfig {
+    // Visualization has lower max_ack_pending by default (resource-intensive)
+    let max_ack_pending = std::env::var("NATS_VISUALIZATION_MAX_ACK_PENDING")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10);
+    let ack_wait_secs = std::env::var("NATS_VISUALIZATION_ACK_WAIT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1800); // 30 minutes default
+
     ConsumerConfig {
         durable_name: Some("visualization-transform-workers".to_string()),
         description: Some("Consumer for visualization transform jobs (UMAP/HDBSCAN)".to_string()),
         ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
-        ack_wait: Duration::from_secs(30 * 60), // 30 minutes - visualization can be slow
-        max_deliver: 3,                         // Retry up to 3 times
-        max_ack_pending: 10,                    // Lower limit - these are resource-intensive
+        ack_wait: Duration::from_secs(ack_wait_secs),
+        max_deliver: 3, // Retry up to 3 times
+        max_ack_pending,
         ..Default::default()
     }
 }

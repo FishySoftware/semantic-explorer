@@ -4,6 +4,7 @@ use semantic_explorer_core::worker::WorkerContext;
 use semantic_explorer_core::{storage::initialize_client, worker};
 
 mod job;
+mod qdrant_cache;
 
 #[tokio::main]
 async fn main() -> Result<()> {

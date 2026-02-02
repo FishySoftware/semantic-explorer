@@ -595,6 +595,48 @@ See [`deployment/DEPLOYMENT_GUIDE.md`](deployment/DEPLOYMENT_GUIDE.md) for detai
 |-----------|----------|----------|-------------|
 | `RECONCILIATION_INTERVAL_SECS` | `300` | No | Interval for reconciliation job (recovers failed batch publishes) |
 
+### Scalability & Performance
+
+The platform includes several features for high-availability deployments (100K+ users).
+
+
+#### NATS Consumer Tuning
+
+| Variable | Default | Required | Description |
+|-----------|----------|----------|-------------|
+| `NATS_MAX_ACK_PENDING` | `100` | No | Max unacknowledged messages per consumer |
+| `NATS_COLLECTION_ACK_WAIT_SECS` | `600` | No | Ack wait for collection transforms |
+| `NATS_DATASET_ACK_WAIT_SECS` | `600` | No | Ack wait for dataset transforms |
+| `NATS_VISUALIZATION_ACK_WAIT_SECS` | `1800` | No | Ack wait for visualization jobs |
+| `NATS_VISUALIZATION_MAX_ACK_PENDING` | `10` | No | Max pending for visualization (lower due to long jobs) |
+
+#### Circuit Breakers
+
+Protect external services from cascading failures:
+
+| Variable | Default | Required | Description |
+|-----------|----------|----------|-------------|
+| `QDRANT_CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `5` | No | Failures before circuit opens |
+| `QDRANT_CIRCUIT_BREAKER_SUCCESS_THRESHOLD` | `3` | No | Successes to close from half-open |
+| `QDRANT_CIRCUIT_BREAKER_TIMEOUT_SECS` | `30` | No | How long circuit stays open |
+| `S3_CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `5` | No | S3 failure threshold |
+| `INFERENCE_CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `5` | No | Inference API failure threshold |
+
+#### Retry Policies
+
+Exponential backoff with jitter for transient failures:
+
+| Variable | Default | Required | Description |
+|-----------|----------|----------|-------------|
+| `RETRY_MAX_ATTEMPTS` | `3` | No | Maximum retry attempts |
+| `RETRY_INITIAL_DELAY_MS` | `100` | No | Initial delay between retries (ms) |
+| `RETRY_MAX_DELAY_MS` | `10000` | No | Maximum delay between retries (ms) |
+| `RETRY_BACKOFF_MULTIPLIER` | `2.0` | No | Exponential backoff multiplier |
+| `RETRY_JITTER_FACTOR` | `0.1` | No | Jitter factor (0.0 to 1.0) |
+| `QDRANT_RETRY_MAX_ATTEMPTS` | `3` | No | Qdrant-specific retry attempts |
+| `S3_RETRY_MAX_ATTEMPTS` | `3` | No | S3-specific retry attempts |
+| `INFERENCE_RETRY_MAX_ATTEMPTS` | `3` | No | Inference API retry attempts |
+
 ### Inference APIs
 
 | Variable | Default | Required | Description |
