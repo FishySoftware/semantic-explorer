@@ -174,35 +174,50 @@ pub(crate) async fn get_chat_messages(
     match chat::get_chat_session(&pool, &session_id, &user.as_owner()).await {
         Ok(_) => match chat::get_chat_messages(&pool, &session_id).await {
             Ok(messages) => {
-                let mut messages_response: Vec<ChatMessageResponse> = Vec::new();
-                for message in messages {
-                    let retrieved_documents = if message.role == "assistant" {
-                        match chat::get_retrieved_documents(&pool, message.message_id).await {
-                            Ok(docs) => {
-                                if docs.is_empty() {
-                                    None
-                                } else {
-                                    Some(docs)
-                                }
-                            }
-                            Err(e) => {
-                                tracing::warn!(error = %e, message_id = message.message_id, "failed to fetch retrieved documents");
-                                None
-                            }
+                // Collect all assistant message IDs for batch fetch
+                let assistant_message_ids: Vec<i32> = messages
+                    .iter()
+                    .filter(|m| m.role == "assistant")
+                    .map(|m| m.message_id)
+                    .collect();
+
+                // Fetch all retrieved documents in a single query (eliminates N+1)
+                let docs_map = match chat::get_batch_retrieved_documents(
+                    &pool,
+                    &assistant_message_ids,
+                )
+                .await
+                {
+                    Ok(map) => map,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "failed to fetch batch retrieved documents");
+                        std::collections::HashMap::new()
+                    }
+                };
+
+                // Build response using the docs map
+                let messages_response: Vec<ChatMessageResponse> = messages
+                    .into_iter()
+                    .map(|message| {
+                        let retrieved_documents = if message.role == "assistant" {
+                            docs_map
+                                .get(&message.message_id)
+                                .filter(|docs| !docs.is_empty())
+                                .cloned()
+                        } else {
+                            None
+                        };
+                        ChatMessageResponse {
+                            message_id: message.message_id,
+                            role: message.role,
+                            content: message.content,
+                            documents_retrieved: message.documents_retrieved,
+                            status: message.status,
+                            retrieved_documents,
+                            created_at: message.created_at,
                         }
-                    } else {
-                        None
-                    };
-                    messages_response.push(ChatMessageResponse {
-                        message_id: message.message_id,
-                        role: message.role,
-                        content: message.content,
-                        documents_retrieved: message.documents_retrieved,
-                        status: message.status,
-                        retrieved_documents,
-                        created_at: message.created_at,
-                    });
-                }
+                    })
+                    .collect();
 
                 HttpResponse::Ok().json(ChatMessagesResponse {
                     messages: messages_response,

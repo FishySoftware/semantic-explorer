@@ -413,15 +413,29 @@ pub async fn get_batch_collection_transform_stats(
 ) -> impl Responder {
     let transform_ids = &body.collection_transform_ids;
 
-    // Verify ownership of all transforms
-    for &id in transform_ids {
-        match collection_transforms::get_collection_transform(&pool, &user.as_owner(), id).await {
-            Ok(_) => {}
-            Err(_) => {
-                return HttpResponse::NotFound().json(serde_json::json!({
-                    "error": format!("Collection transform {} not found", id)
-                }));
-            }
+    // Verify ownership of all transforms in a single query (eliminates N+1)
+    let owned_ids = match collection_transforms::verify_collection_transforms_ownership_batch(
+        &pool,
+        &user.as_owner(),
+        transform_ids,
+    )
+    .await
+    {
+        Ok(ids) => ids,
+        Err(e) => {
+            error!("Failed to verify ownership: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to verify ownership"
+            }));
+        }
+    };
+
+    // Check if any requested IDs are not owned by the user
+    for id in transform_ids {
+        if !owned_ids.contains(id) {
+            return HttpResponse::NotFound().json(serde_json::json!({
+                "error": format!("Collection transform {} not found", id)
+            }));
         }
     }
 

@@ -1,6 +1,7 @@
 use anyhow::Result;
 use sqlx::types::chrono::Utc;
 use sqlx::{Pool, Postgres};
+use std::collections::HashMap;
 use std::time::Instant;
 use uuid::Uuid;
 
@@ -91,6 +92,18 @@ const GET_RETRIEVED_DOCUMENTS_QUERY: &str = r#"
     FROM chat_message_retrieved_documents
     WHERE message_id = $1
     ORDER BY similarity_score DESC
+"#;
+
+const GET_BATCH_RETRIEVED_DOCUMENTS_QUERY: &str = r#"
+    SELECT
+        message_id,
+        document_id,
+        text,
+        similarity_score,
+        item_title
+    FROM chat_message_retrieved_documents
+    WHERE message_id = ANY($1)
+    ORDER BY message_id, similarity_score DESC
 "#;
 
 #[tracing::instrument(name = "database.create_chat_session", skip(pool), fields(database.system = "postgresql", database.operation = "INSERT", owner_id = %owner_id))]
@@ -361,6 +374,45 @@ pub(crate) async fn get_retrieved_documents(
     record_database_query("SELECT", "chat_message_retrieved_documents", duration, true);
 
     Ok(documents)
+}
+
+/// Batch fetch retrieved documents for multiple messages in a single query (eliminates N+1)
+#[tracing::instrument(name = "database.get_batch_retrieved_documents", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", count = message_ids.len()))]
+pub(crate) async fn get_batch_retrieved_documents(
+    pool: &Pool<Postgres>,
+    message_ids: &[i32],
+) -> Result<HashMap<i32, Vec<RetrievedDocument>>> {
+    if message_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let start = Instant::now();
+
+    let rows = sqlx::query_as::<_, (i32, Option<String>, String, f32, Option<String>)>(
+        GET_BATCH_RETRIEVED_DOCUMENTS_QUERY,
+    )
+    .bind(message_ids)
+    .fetch_all(pool)
+    .await?;
+
+    let mut docs_map: HashMap<i32, Vec<RetrievedDocument>> = HashMap::new();
+
+    for (message_id, document_id, text, similarity_score, item_title) in rows {
+        docs_map
+            .entry(message_id)
+            .or_default()
+            .push(RetrievedDocument {
+                document_id,
+                text,
+                similarity_score,
+                item_title,
+            });
+    }
+
+    let duration = start.elapsed().as_secs_f64();
+    record_database_query("SELECT", "chat_message_retrieved_documents", duration, true);
+
+    Ok(docs_map)
 }
 
 #[tracing::instrument(name = "database.update_message_content_and_status", skip(pool), fields(database.system = "postgresql", database.operation = "UPDATE", owner = %owner))]

@@ -299,13 +299,27 @@ pub async fn get_batch_embedded_dataset_stats(
 ) -> impl Responder {
     let embedded_dataset_ids = &body.embedded_dataset_ids;
 
-    // Verify all embedded datasets belong to the user
-    for &id in embedded_dataset_ids {
-        match embedded_datasets::get_embedded_dataset(&pool, &user.as_owner(), id).await {
-            Ok(_) => {}
-            Err(_) => {
-                return not_found(format!("Embedded dataset {} not found", id));
-            }
+    // Verify all embedded datasets belong to the user in a single query (eliminates N+1)
+    let owned_ids = match embedded_datasets::verify_embedded_datasets_ownership_batch(
+        &pool,
+        &user.as_owner(),
+        embedded_dataset_ids,
+    )
+    .await
+    {
+        Ok(ids) => ids,
+        Err(e) => {
+            error!("Failed to verify ownership: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to verify ownership"
+            }));
+        }
+    };
+
+    // Check if any requested IDs are not owned by the user
+    for id in embedded_dataset_ids {
+        if !owned_ids.contains(id) {
+            return not_found(format!("Embedded dataset {} not found", id));
         }
     }
 

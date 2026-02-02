@@ -375,13 +375,9 @@
 	function handleClose() {
 		open = false;
 		error = null;
+		// Reset selectedCollectionId so next open properly syncs with collectionId prop
+		selectedCollectionId = null;
 	}
-
-	$effect(() => {
-		if (collectionId && !selectedCollectionId) {
-			selectedCollectionId = collectionId;
-		}
-	});
 </script>
 
 <Modal bind:open onclose={handleClose}>

@@ -627,12 +627,29 @@ pub async fn get_dataset_transform_detailed_stats(
             }
         };
 
-    // Get stats for each embedded dataset
-    let mut per_embedder_stats = Vec::new();
-    for ed in &embedded_datasets_list {
-        match embedded_datasets::get_embedded_dataset_stats(&pool, ed.embedded_dataset_id).await {
-            Ok(stats) => {
-                per_embedder_stats.push(serde_json::json!({
+    // Get stats for all embedded datasets in a single batch query (eliminates N+1)
+    let embedded_dataset_ids: Vec<i32> = embedded_datasets_list
+        .iter()
+        .map(|ed| ed.embedded_dataset_id)
+        .collect();
+
+    let stats_map =
+        match embedded_datasets::get_batch_embedded_dataset_stats(&pool, &embedded_dataset_ids)
+            .await
+        {
+            Ok(map) => map,
+            Err(e) => {
+                error!("Failed to get batch embedded dataset stats: {}", e);
+                std::collections::HashMap::new()
+            }
+        };
+
+    // Build per-embedder stats using the batch-fetched data
+    let per_embedder_stats: Vec<serde_json::Value> = embedded_datasets_list
+        .iter()
+        .map(|ed| {
+            if let Some(stats) = stats_map.get(&ed.embedded_dataset_id) {
+                serde_json::json!({
                     "embedded_dataset_id": ed.embedded_dataset_id,
                     "embedder_id": ed.embedder_id,
                     "collection_name": ed.collection_name,
@@ -648,23 +665,18 @@ pub async fn get_dataset_transform_detailed_stats(
                     "first_processing_at": stats.first_processing_at,
                     "avg_processing_duration_ms": stats.avg_processing_duration_ms,
                     "is_processing": stats.processing_batches > 0,
-                }));
-            }
-            Err(e) => {
-                error!(
-                    "Failed to get stats for embedded dataset {}: {}",
-                    ed.embedded_dataset_id, e
-                );
-                per_embedder_stats.push(serde_json::json!({
+                })
+            } else {
+                serde_json::json!({
                     "embedded_dataset_id": ed.embedded_dataset_id,
                     "embedder_id": ed.embedder_id,
                     "collection_name": ed.collection_name,
                     "title": ed.title,
-                    "error": format!("Failed to get stats: {}", e),
-                }));
+                    "error": "Stats not available",
+                })
             }
-        }
-    }
+        })
+        .collect();
 
     // Also get the aggregate stats
     let aggregate_stats = match dataset_transforms::get_dataset_transform_stats(

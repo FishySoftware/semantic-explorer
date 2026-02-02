@@ -13,9 +13,9 @@
 
 use futures::stream::Stream;
 use mistralrs::{
-    core::PagedCacheType as MistralPagedCacheType, GgufModelBuilder, IsqType, MemoryGpuConfig,
-    Model as MistralRsModel, PagedAttentionConfig, PagedAttentionMetaBuilder, RequestBuilder,
-    TextMessageRole, TextMessages, TextModelBuilder, TokenSource,
+    GgufModelBuilder, IsqType, MemoryGpuConfig, Model as MistralRsModel, PagedAttentionConfig,
+    PagedAttentionMetaBuilder, RequestBuilder, TextMessageRole, TextMessages, TextModelBuilder,
+    TokenSource, core::PagedCacheType as MistralPagedCacheType,
 };
 use semantic_explorer_core::observability::gpu_monitor;
 use std::collections::HashMap;

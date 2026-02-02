@@ -6,13 +6,13 @@
 	import type {
 		Dataset,
 		EmbeddedDataset,
-		PaginatedEmbeddedDatasetList,
 		Embedder,
-		EmbeddedDatasetStats as Stats,
+		PaginatedEmbeddedDatasetList,
 		ProcessedBatch,
+		EmbeddedDatasetStats as Stats,
 	} from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
-	import { formatNumber, formatDate } from '../utils/ui-helpers';
+	import { formatDate, formatNumber } from '../utils/ui-helpers';
 
 	let { onNavigate, onViewDataset } = $props<{
 		onNavigate: (_path: string) => void;
@@ -49,7 +49,7 @@
 	let standaloneDimensions = $state(1536); // Default to common embedding size
 	let creatingStandalone = $state(false);
 
-	async function fetchDataset(datasetId: number): Promise<Dataset | null> {
+	async function fetchDataset(datasetId: number): Promise<Dataset | 'not_found' | null> {
 		if (datasetsCache.has(datasetId)) {
 			return datasetsCache.get(datasetId) || null;
 		}
@@ -61,10 +61,13 @@
 				datasetsCache = datasetsCache; // Trigger reactivity
 				return dataset;
 			}
+			if (response.status === 404) {
+				return 'not_found';
+			}
 		} catch (e) {
 			console.error(`Failed to fetch dataset ${datasetId}:`, e);
 		}
-		return null;
+		return 'not_found';
 	}
 
 	async function fetchEmbedder(embedderId: number): Promise<Embedder | null> {
@@ -115,14 +118,29 @@
 
 			// Fetch related datasets and embedders
 			for (const dataset of embeddedDatasets) {
-				const sourceDataset = await fetchDataset(dataset.source_dataset_id);
-				if (sourceDataset) {
-					dataset.source_dataset_title = sourceDataset.title;
-				}
+				// Skip fetching for standalone embedded datasets
+				const standalone =
+					dataset.is_standalone === true ||
+					(dataset.dataset_transform_id === 0 &&
+						dataset.source_dataset_id === 0 &&
+						dataset.embedder_id === 0);
 
-				const embedder = await fetchEmbedder(dataset.embedder_id);
-				if (embedder) {
-					dataset.embedder_name = embedder.name;
+				if (!standalone) {
+					const sourceDataset = await fetchDataset(dataset.source_dataset_id);
+					if (sourceDataset && sourceDataset !== 'not_found') {
+						dataset.source_dataset_title = sourceDataset.title;
+					} else {
+						// Dataset was deleted or doesn't exist
+						dataset.source_dataset_title = 'N/A (deleted)';
+					}
+
+					const embedder = await fetchEmbedder(dataset.embedder_id);
+					if (embedder) {
+						dataset.embedder_name = embedder.name;
+					} else {
+						// Embedder was deleted or doesn't exist
+						dataset.embedder_name = 'N/A (deleted)';
+					}
 				}
 			}
 
@@ -452,6 +470,8 @@
 							<TableBodyCell class="px-4 py-3 wrap-break-word whitespace-normal">
 								{#if standalone}
 									<span class="text-gray-500 dark:text-gray-400 text-sm italic">N/A</span>
+								{:else if dataset.source_dataset_title === 'N/A (deleted)'}
+									<span class="text-gray-500 dark:text-gray-400 text-sm italic">N/A (deleted)</span>
 								{:else if dataset.source_dataset_title}
 									<button
 										onclick={() => onViewDataset(dataset.source_dataset_id)}
@@ -466,6 +486,8 @@
 							<TableBodyCell class="px-4 py-3 wrap-break-word whitespace-normal">
 								{#if standalone}
 									<span class="text-gray-500 dark:text-gray-400 text-sm italic">N/A</span>
+								{:else if dataset.embedder_name === 'N/A (deleted)'}
+									<span class="text-gray-500 dark:text-gray-400 text-sm italic">N/A (deleted)</span>
 								{:else if dataset.embedder_name}
 									<button
 										onclick={() => onNavigate(`/embedders/${dataset.embedder_id}/details`)}
