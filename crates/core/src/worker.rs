@@ -362,13 +362,20 @@ where
         let permit = match semaphore.clone().try_acquire_owned() {
             Ok(p) => p,
             Err(_) => {
+                // Get configurable NAK delay (default 30s to match consumer backoff schedule)
+                let nak_delay_secs: u64 = std::env::var("WORKER_BACKPRESSURE_NAK_DELAY_SECS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(30);
+
                 warn!(
-                    "Semaphore limit reached, workers are at capacity. Message will be redelivered after short delay."
+                    nak_delay_secs = nak_delay_secs,
+                    "Semaphore limit reached, workers are at capacity. Message will be redelivered."
                 );
-                // Negative acknowledgment with short delay for quick recovery
+                // Negative acknowledgment with longer delay to reduce churn
                 if let Err(e) = msg
                     .ack_with(async_nats::jetstream::AckKind::Nak(Some(
-                        Duration::from_secs(10),
+                        Duration::from_secs(nak_delay_secs),
                     )))
                     .await
                 {

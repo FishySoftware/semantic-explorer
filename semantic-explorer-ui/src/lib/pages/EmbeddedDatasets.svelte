@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { Table, TableBody, TableBodyCell, TableHead, TableHeadCell } from 'flowbite-svelte';
-	import { SvelteURLSearchParams } from 'svelte/reactivity';
+	import { SvelteSet, SvelteURLSearchParams } from 'svelte/reactivity';
 	import ActionMenu from '../components/ActionMenu.svelte';
+	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
 	import type {
 		Dataset,
@@ -48,6 +49,11 @@
 	let standaloneTitle = $state('');
 	let standaloneDimensions = $state(1536); // Default to common embedding size
 	let creatingStandalone = $state(false);
+
+	// Selection state for bulk operations
+	let selected = new SvelteSet<number>();
+	let selectAll = $state(false);
+	let datasetsPendingBulkDelete = $state<EmbeddedDataset[]>([]);
 
 	async function fetchDataset(datasetId: number): Promise<Dataset | 'not_found' | null> {
 		if (datasetsCache.has(datasetId)) {
@@ -391,6 +397,73 @@
 				dataset.embedder_id === 0)
 		);
 	}
+
+	function toggleSelectAll() {
+		selectAll = !selectAll;
+		if (selectAll) {
+			selected.clear();
+			for (const d of filteredDatasets) {
+				selected.add(d.embedded_dataset_id);
+			}
+		} else {
+			selected.clear();
+		}
+	}
+
+	function toggleSelect(id: number) {
+		if (selected.has(id)) {
+			selected.delete(id);
+			selectAll = false;
+		} else {
+			selected.add(id);
+		}
+	}
+
+	function bulkDelete() {
+		const toDelete: EmbeddedDataset[] = [];
+		for (const id of selected) {
+			const dataset = embeddedDatasets.find((d) => d.embedded_dataset_id === id);
+			if (dataset) {
+				toDelete.push(dataset);
+			}
+		}
+		if (toDelete.length > 0) {
+			datasetsPendingBulkDelete = toDelete;
+		}
+	}
+
+	async function confirmBulkDelete() {
+		const toDelete = datasetsPendingBulkDelete;
+		datasetsPendingBulkDelete = [];
+
+		for (const dataset of toDelete) {
+			try {
+				const response = await fetch(`/api/embedded-datasets/${dataset.embedded_dataset_id}`, {
+					method: 'DELETE',
+				});
+
+				if (!response.ok) {
+					const errorData = await response.json();
+					throw new Error(errorData.error || `Failed to delete: ${response.statusText}`);
+				}
+
+				// Remove from local list
+				embeddedDatasets = embeddedDatasets.filter(
+					(d) => d.embedded_dataset_id !== dataset.embedded_dataset_id
+				);
+				statsMap.delete(dataset.embedded_dataset_id);
+			} catch (e) {
+				toastStore.error(formatError(e, `Failed to delete "${dataset.title}"`));
+			}
+		}
+
+		statsMap = statsMap; // Trigger reactivity
+		selected.clear();
+		selectAll = false;
+		toastStore.success(
+			`Deleted ${toDelete.length} embedded dataset${toDelete.length !== 1 ? 's' : ''}`
+		);
+	}
 </script>
 
 <div class="max-w-7xl mx-auto">
@@ -432,9 +505,41 @@
 			</p>
 		</div>
 	{:else}
+		{#if selected.size > 0}
+			<div
+				class="mb-4 flex items-center gap-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4"
+			>
+				<span class="text-sm text-blue-700 dark:text-blue-300 flex-1">
+					{selected.size} embedded dataset{selected.size !== 1 ? 's' : ''} selected
+				</span>
+				<button
+					onclick={() => bulkDelete()}
+					class="text-sm px-3 py-1 rounded bg-red-600 hover:bg-red-700 text-white transition-colors"
+				>
+					Delete
+				</button>
+				<button
+					onclick={() => {
+						selected.clear();
+						selectAll = false;
+					}}
+					class="text-sm px-3 py-1 rounded bg-gray-300 hover:bg-gray-400 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-900 dark:text-white transition-colors"
+				>
+					Clear
+				</button>
+			</div>
+		{/if}
 		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
 			<Table hoverable striped>
 				<TableHead>
+					<TableHeadCell class="px-4 py-3 w-12">
+						<input
+							type="checkbox"
+							checked={selectAll}
+							onchange={() => toggleSelectAll()}
+							class="cursor-pointer"
+						/>
+					</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Title</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Source Dataset</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Embedder</TableHeadCell>
@@ -449,6 +554,14 @@
 						{@const stats = statsMap.get(dataset.embedded_dataset_id)}
 						{@const standalone = isStandalone(dataset)}
 						<tr class="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50">
+							<TableBodyCell class="px-4 py-3 w-12">
+								<input
+									type="checkbox"
+									checked={selected.has(dataset.embedded_dataset_id)}
+									onchange={() => toggleSelect(dataset.embedded_dataset_id)}
+									class="cursor-pointer"
+								/>
+							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3 wrap-break-word whitespace-normal">
 								<div class="flex items-center gap-2">
 									<button
@@ -806,3 +919,13 @@
 		</div>
 	</div>
 {/if}
+
+<ConfirmDialog
+	open={datasetsPendingBulkDelete.length > 0}
+	title="Delete Embedded Datasets"
+	message={`Are you sure you want to delete ${datasetsPendingBulkDelete.length} embedded dataset${datasetsPendingBulkDelete.length !== 1 ? 's' : ''}? This will permanently delete the database records and Qdrant collections. This action cannot be undone.`}
+	confirmLabel="Delete All"
+	variant="danger"
+	onConfirm={confirmBulkDelete}
+	onCancel={() => (datasetsPendingBulkDelete = [])}
+/>

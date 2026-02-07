@@ -2,7 +2,7 @@ use anyhow::Result;
 use sqlx::{Pool, Postgres};
 
 use crate::transforms::collection::models::{
-    CollectionTransform, CollectionTransformStats, ProcessedFile,
+    CollectionTransform, CollectionTransformStats, FailedFileWithTransform, ProcessedFile,
 };
 use semantic_explorer_core::models::PaginatedResponse;
 use semantic_explorer_core::owner_info::OwnerInfo;
@@ -110,6 +110,28 @@ const VERIFY_COLLECTION_TRANSFORMS_OWNERSHIP_BATCH_QUERY: &str = r#"
     SELECT collection_transform_id
     FROM collection_transforms
     WHERE collection_transform_id = ANY($1) AND owner_id = $2
+"#;
+
+const GET_FAILED_FILES_FOR_COLLECTION_QUERY: &str = r#"
+    SELECT tpf.id, tpf.transform_type, tpf.transform_id, tpf.file_key, tpf.processed_at,
+           tpf.item_count, tpf.process_status, tpf.process_error, tpf.processing_duration_ms,
+           ct.title as transform_title
+    FROM transform_processed_files tpf
+    INNER JOIN collection_transforms ct ON ct.collection_transform_id = tpf.transform_id
+    WHERE tpf.transform_type = 'collection'
+      AND ct.collection_id = $1
+      AND tpf.process_status = 'failed'
+    ORDER BY tpf.processed_at DESC
+    LIMIT $2 OFFSET $3
+"#;
+
+const COUNT_FAILED_FILES_FOR_COLLECTION_QUERY: &str = r#"
+    SELECT COUNT(*)::BIGINT as count
+    FROM transform_processed_files tpf
+    INNER JOIN collection_transforms ct ON ct.collection_transform_id = tpf.transform_id
+    WHERE tpf.transform_type = 'collection'
+      AND ct.collection_id = $1
+      AND tpf.process_status = 'failed'
 "#;
 
 const GET_PROCESSED_FILES_QUERY: &str = r#"
@@ -460,6 +482,39 @@ pub async fn get_processed_files(
         .fetch_all(pool)
         .await?;
     Ok(files)
+}
+
+pub async fn get_failed_files_for_collection(
+    pool: &Pool<Postgres>,
+    owner: &str,
+    collection_id: i32,
+    limit: i64,
+    offset: i64,
+) -> Result<PaginatedResponse<FailedFileWithTransform>> {
+    let mut tx = pool.begin().await?;
+    super::rls::set_rls_user_tx(&mut tx, owner).await?;
+
+    let count_result: (i64,) = sqlx::query_as(COUNT_FAILED_FILES_FOR_COLLECTION_QUERY)
+        .bind(collection_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    let total_count = count_result.0;
+
+    let files = sqlx::query_as::<_, FailedFileWithTransform>(GET_FAILED_FILES_FOR_COLLECTION_QUERY)
+        .bind(collection_id)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+
+    Ok(PaginatedResponse {
+        items: files,
+        total_count,
+        limit,
+        offset,
+    })
 }
 
 pub async fn record_processed_file(

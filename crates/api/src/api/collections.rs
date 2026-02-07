@@ -5,15 +5,15 @@ use actix_web::{
 };
 use aws_sdk_s3::{Client, primitives::ByteStream};
 use sqlx::{Pool, Postgres};
-use std::collections::HashMap;
-use tracing::{error, warn};
+use std::{collections::HashMap, time::Instant};
+use tracing::{error, info, warn};
 
 use crate::{
     audit::{ResourceType, events},
     auth::AuthenticatedUser,
     collections::models::{
         Collection, CollectionSearchQuery, CollectionUpload, CollectionUploadResponse,
-        CreateCollection, FileListQuery, PaginatedCollections, UpdateCollection,
+        CreateCollection, FailedUploadFile, FileListQuery, PaginatedCollections, UpdateCollection,
     },
     errors::ApiError,
     storage::{
@@ -409,10 +409,10 @@ pub(crate) async fn upload_to_collection(
     };
 
     let mut completed = Vec::with_capacity(payload.files.len());
-    let mut failed = Vec::new();
+    let mut failed: Vec<FailedUploadFile> = Vec::new();
 
     for (idx, temp_file) in payload.files.iter().enumerate() {
-        let item_start = std::time::Instant::now();
+        let item_start = Instant::now();
         let file_name = temp_file
             .file_name
             .as_ref()
@@ -432,7 +432,10 @@ pub(crate) async fn upload_to_collection(
                     item_duration,
                     false,
                 );
-                failed.push(file_name);
+                failed.push(FailedUploadFile {
+                    name: file_name,
+                    error: format!("Failed to read file: {}", e),
+                });
                 continue;
             }
         };
@@ -454,7 +457,11 @@ pub(crate) async fn upload_to_collection(
                 item_duration,
                 false,
             );
-            failed.push(file_name.clone());
+            let validation_error = validation_result.validation_errors.join("; ");
+            failed.push(FailedUploadFile {
+                name: file_name.clone(),
+                error: format!("Validation failed: {}", validation_error),
+            });
 
             crate::audit::events::file_validation_failed(
                 &user.as_owner(),
@@ -466,44 +473,84 @@ pub(crate) async fn upload_to_collection(
             continue;
         }
 
-        // Create stream from file path
-        let content_stream = match ByteStream::from_path(&file_path).await {
-            Ok(stream) => stream,
-            Err(e) => {
-                tracing::error!(file_name = %file_name, error = %e, "Failed to create stream from file");
-                let item_duration = item_start.elapsed().as_secs_f64();
-                semantic_explorer_core::observability::record_document_upload(
-                    "collection",
-                    item_duration,
-                    false,
+        // Upload to S3 with retries for transient failures
+        let retry_policy = semantic_explorer_core::retry::s3_retry_policy();
+        let max_attempts = retry_policy.max_attempts + 1;
+        let mut upload_result = Ok(());
+
+        for attempt in 0..max_attempts {
+            if attempt > 0 {
+                let delay = retry_policy.delay_for_attempt(attempt);
+                info!(
+                    file_name = %file_name,
+                    attempt = attempt + 1,
+                    max_attempts = max_attempts,
+                    delay_ms = delay.as_millis() as u64,
+                    "Retrying S3 upload after transient failure"
                 );
-                failed.push(file_name);
-                continue;
+                tokio::time::sleep(delay).await;
             }
-        };
 
-        let document = DocumentUpload {
-            collection_id: collection.collection_id.to_string(),
-            name: file_name.clone(),
-            content: content_stream,
-            mime_type: validation_result
-                .mime_type
-                .unwrap_or_else(|| "application/octet-stream".to_string()),
-            size: file_size as u64,
-        };
+            // Re-create the stream from file path for each attempt
+            let content_stream = match ByteStream::from_path(&file_path).await {
+                Ok(stream) => stream,
+                Err(e) => {
+                    upload_result = Err(anyhow::anyhow!("Failed to read file: {}", e));
+                    break; // Not retryable
+                }
+            };
 
-        if let Err(e) = upload_document(&s3_client, &s3_config.bucket_name, document).await {
+            let document = DocumentUpload {
+                collection_id: collection.collection_id.to_string(),
+                name: file_name.clone(),
+                content: content_stream,
+                mime_type: validation_result
+                    .mime_type
+                    .clone()
+                    .unwrap_or_else(|| "application/octet-stream".to_string()),
+                size: file_size as u64,
+            };
+
+            match upload_document(&s3_client, &s3_config.bucket_name, document).await {
+                Ok(()) => {
+                    upload_result = Ok(());
+                    if attempt > 0 {
+                        info!(
+                            file_name = %file_name,
+                            attempt = attempt + 1,
+                            "S3 upload succeeded after retry"
+                        );
+                    }
+                    break;
+                }
+                Err(e) => {
+                    warn!(
+                        file_name = %file_name,
+                        attempt = attempt + 1,
+                        max_attempts = max_attempts,
+                        error = %e,
+                        "S3 upload attempt failed"
+                    );
+                    upload_result = Err(e);
+                }
+            }
+        }
+
+        if let Err(e) = upload_result {
             let item_duration = item_start.elapsed().as_secs_f64();
             semantic_explorer_core::observability::record_document_upload(
                 "collection",
                 item_duration,
                 false,
             );
-            failed.push(file_name.clone());
-            tracing::error!(
+            failed.push(FailedUploadFile {
+                name: file_name.clone(),
+                error: format!("Upload to storage failed: {}", e),
+            });
+            error!(
                 file_name = %file_name,
                 error = %e,
-                "Failed to upload file to S3"
+                "Failed to upload file to S3 after all retry attempts"
             );
             continue;
         }

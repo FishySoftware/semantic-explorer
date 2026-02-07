@@ -1,7 +1,8 @@
 use anyhow::Result;
 use async_nats::jetstream;
-use qdrant_client::qdrant::{CreateCollectionBuilder, Distance, VectorParams};
-use qdrant_client::qdrant::{PointStruct, UpsertPointsBuilder};
+use futures_util::stream::{self, StreamExt};
+use qdrant_client::qdrant::PointStruct;
+use qdrant_client::qdrant::UpsertPointsBuilder;
 use semantic_explorer_core::embedder;
 use semantic_explorer_core::models::{DatasetTransformJob, DatasetTransformResult};
 use semantic_explorer_core::nats::inject_trace_context;
@@ -9,8 +10,11 @@ use semantic_explorer_core::observability::record_worker_job;
 use semantic_explorer_core::storage::get_file;
 use semantic_explorer_core::validation::{validate_bucket_name, validate_s3_key};
 use semantic_explorer_core::worker::WorkerContext;
+use std::sync::Arc;
 use std::time::Instant;
 use tracing::{error, info, instrument, warn};
+
+const QDRANT_CHUNK_SIZE: usize = 1000;
 
 #[derive(serde::Deserialize)]
 pub(crate) struct BatchItem {
@@ -195,46 +199,14 @@ pub(crate) async fn process_dataset_transform_job(
         .map(|e| e.len() as u64)
         .ok_or_else(|| anyhow::anyhow!("No embeddings to determine vector size"))?;
 
-    info!(vector_size = embedding_size, "Checking collection");
-    let collection_exists = qdrant_client
-        .collection_info(&job.collection_name)
-        .await
-        .is_ok();
-
-    if !collection_exists {
-        info!(
-            vector_size = embedding_size,
-            distance = "Cosine",
-            "Creating collection"
-        );
-        let create_collection = CreateCollectionBuilder::new(&job.collection_name)
-            .vectors_config(VectorParams {
-                size: embedding_size,
-                distance: Distance::Cosine.into(),
-                on_disk: Some(true), // Store vectors on disk for large collections
-                ..Default::default()
-            })
-            .on_disk_payload(true) // Store payloads on disk to reduce memory usage
-            .build();
-
-        match qdrant_client.create_collection(create_collection).await {
-            Ok(_) => {
-                info!("Collection created successfully");
-            }
-            Err(e) => {
-                // Handle race condition: collection may have been created by another worker
-                // or the previous create succeeded but response timed out
-                let error_str = e.to_string();
-                if error_str.contains("already exists") {
-                    info!(
-                        "Collection already exists (created by another worker or previous attempt), continuing"
-                    );
-                } else {
-                    return Err(anyhow::anyhow!("Failed to create collection: {}", e));
-                }
-            }
-        }
-    }
+    // Ensure collection exists using cached check (avoids redundant API calls)
+    crate::qdrant_cache::ensure_collection_exists(
+        &qdrant_client,
+        &job.qdrant_config.url,
+        &job.collection_name,
+        embedding_size,
+    )
+    .await?;
 
     let points: Vec<PointStruct> = items
         .iter()
@@ -250,23 +222,52 @@ pub(crate) async fn process_dataset_transform_job(
         })
         .collect();
 
-    const QDRANT_CHUNK_SIZE: usize = 1000;
-    let point_chunks: Vec<_> = points.chunks(QDRANT_CHUNK_SIZE).collect();
+    let point_chunks: Vec<Vec<PointStruct>> = points
+        .chunks(QDRANT_CHUNK_SIZE)
+        .map(|c| c.to_vec())
+        .collect();
+
+    // Get parallel upload count from env (default 4)
+    let parallel_uploads: usize = std::env::var("QDRANT_PARALLEL_UPLOADS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(4);
+
     info!(
         point_count = points.len(),
         chunk_count = point_chunks.len(),
         chunk_size = QDRANT_CHUNK_SIZE,
-        "Upserting points to Qdrant in chunks"
+        parallel_uploads = parallel_uploads,
+        "Upserting points to Qdrant in parallel chunks"
     );
 
     let upsert_start = Instant::now();
-    for (idx, chunk) in point_chunks.into_iter().enumerate() {
-        if let Err(e) = qdrant_client
-            .upsert_points(
-                UpsertPointsBuilder::new(&job.collection_name, chunk.to_vec()).wait(true),
-            )
-            .await
-        {
+    let collection_name = job.collection_name.clone();
+    let client = Arc::clone(&qdrant_client);
+
+    // Parallel upsert with bounded concurrency
+    let results: Vec<Result<usize, (usize, String)>> =
+        stream::iter(point_chunks.into_iter().enumerate())
+            .map(|(idx, chunk)| {
+                let client = Arc::clone(&client);
+                let collection = collection_name.clone();
+                async move {
+                    match client
+                        .upsert_points(UpsertPointsBuilder::new(&collection, chunk).wait(true))
+                        .await
+                    {
+                        Ok(_) => Ok(idx),
+                        Err(e) => Err((idx, e.to_string())),
+                    }
+                }
+            })
+            .buffer_unordered(parallel_uploads)
+            .collect()
+            .await;
+
+    // Check for any failures
+    for result in results {
+        if let Err((idx, e)) = result {
             let duration = start_time.elapsed().as_secs_f64();
             record_worker_job("dataset-transform", duration, "failed_upsert");
             error!(error = %e, chunk_index = idx, "Qdrant upsert chunk failed");

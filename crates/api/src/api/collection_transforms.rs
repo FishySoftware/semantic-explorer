@@ -3,8 +3,8 @@ use crate::auth::AuthenticatedUser;
 use crate::errors::{bad_request, not_found};
 use crate::storage::postgres::collection_transforms;
 use crate::transforms::collection::models::{
-    CollectionTransform, CollectionTransformStats, CreateCollectionTransform, ProcessedFile,
-    UpdateCollectionTransform,
+    CollectionTransform, CollectionTransformStats, CreateCollectionTransform,
+    FailedFileWithTransform, ProcessedFile, UpdateCollectionTransform,
 };
 use crate::transforms::collection::scanner::trigger_collection_transform_scan;
 use semantic_explorer_core::models::PaginatedResponse;
@@ -510,6 +510,53 @@ pub async fn get_processed_files(
         Err(e) => {
             error!("Collection transform not found: {}", e);
             not_found(format!("Collection transform not found: {}", e))
+        }
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/collections/{collection_id}/failed-files",
+    tag = "Collection Transforms",
+    params(
+        ("collection_id" = i32, Path, description = "Collection ID"),
+        ("limit" = i64, Query, description = "Number of results per page", example = 50),
+        ("offset" = i64, Query, description = "Number of results to skip", example = 0),
+    ),
+    responses(
+        (status = 200, description = "Failed files for the collection", body = PaginatedResponse<FailedFileWithTransform>),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[get("/api/collections/{collection_id}/failed-files")]
+#[tracing::instrument(name = "get_failed_files_for_collection", skip(user, pool), fields(collection_id = %path.as_ref()))]
+pub async fn get_failed_files_for_collection(
+    user: AuthenticatedUser,
+    pool: Data<Pool<Postgres>>,
+    path: Path<i32>,
+    params: Query<SortParams>,
+) -> impl Responder {
+    let collection_id = path.into_inner();
+    let limit = if params.limit > 0 { params.limit } else { 50 };
+
+    match collection_transforms::get_failed_files_for_collection(
+        &pool,
+        &user.as_owner(),
+        collection_id,
+        limit,
+        params.offset,
+    )
+    .await
+    {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => {
+            error!(
+                "Failed to get failed files for collection {}: {}",
+                collection_id, e
+            );
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to get failed files: {}", e)
+            }))
         }
     }
 }

@@ -3,10 +3,16 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use utoipa::ToSchema;
 
+#[derive(Serialize, ToSchema, Clone)]
+pub(crate) struct FailedUploadFile {
+    pub(crate) name: String,
+    pub(crate) error: String,
+}
+
 #[derive(Serialize, ToSchema)]
 pub(crate) struct CollectionUploadResponse {
     pub(crate) completed: Vec<String>,
-    pub(crate) failed: Vec<String>,
+    pub(crate) failed: Vec<FailedUploadFile>,
 }
 
 #[derive(Serialize, Deserialize, ToSchema)]

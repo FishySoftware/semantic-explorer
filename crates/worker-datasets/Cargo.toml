@@ -13,3 +13,4 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 qdrant-client = { workspace = true }
 once_cell = { workspace = true }
+futures-util = { workspace = true }

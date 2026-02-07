@@ -71,6 +71,22 @@ pub struct ProcessedFile {
     pub processing_duration_ms: Option<i64>,
 }
 
+/// A failed processed file with the transform title included
+#[derive(Serialize, ToSchema, FromRow, Debug, Clone)]
+pub struct FailedFileWithTransform {
+    pub id: i32,
+    pub transform_type: String,
+    pub transform_id: i32,
+    pub file_key: String,
+    #[schema(value_type = String, format = DateTime)]
+    pub processed_at: DateTime<Utc>,
+    pub item_count: i32,
+    pub process_status: String,
+    pub process_error: Option<String>,
+    pub processing_duration_ms: Option<i64>,
+    pub transform_title: String,
+}
+
 fn default_chunk_size() -> i32 {
     200
 }

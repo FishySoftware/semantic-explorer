@@ -15,9 +15,10 @@
 		} | null;
 		fileStatuses?: FileStatus[];
 		isUploading: boolean;
+		onDismiss?: () => void;
 	}
 
-	let { uploadProgress, fileStatuses = [], isUploading }: Props = $props();
+	let { uploadProgress, fileStatuses = [], isUploading, onDismiss }: Props = $props();
 
 	// Calculate overall metrics
 	const overallProgress = $derived(
@@ -69,7 +70,7 @@
 			</div>
 			<div>
 				<h3 class="text-sm font-semibold text-blue-900 dark:text-blue-100">
-					{isUploading ? 'Uploading Files' : 'Upload Complete'}
+					{isUploading ? 'Uploading Files' : failedFiles > 0 ? 'Upload Completed with Errors' : 'Upload Complete'}
 				</h3>
 				{#if uploadProgress}
 					<p class="text-xs text-blue-700 dark:text-blue-300">
@@ -78,6 +79,19 @@
 				{/if}
 			</div>
 		</div>
+
+		<!-- Dismiss button (shown after upload with failures) -->
+		{#if !isUploading && failedFiles > 0 && onDismiss}
+			<button
+				onclick={onDismiss}
+				class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+				title="Dismiss"
+			>
+				<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+				</svg>
+			</button>
+		{/if}
 
 		<!-- Summary stats -->
 		<div class="text-right">
@@ -176,7 +190,7 @@
 						<div class="flex-1 min-w-0">
 							<p class="text-gray-900 dark:text-white truncate font-medium">{file.name}</p>
 							{#if file.error}
-								<p class="text-red-600 dark:text-red-400 truncate">{file.error}</p>
+								<p class="text-red-600 dark:text-red-400 text-wrap wrap-break-word">{file.error}</p>
 							{:else if file.status === 'uploading'}
 								<p class="text-blue-600 dark:text-blue-400">{file.progress}%</p>
 							{:else if file.status === 'pending'}

@@ -177,9 +177,11 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
         .and_then(|v| v.parse().ok())
         .unwrap_or(5);
     let mut last_error = None;
+    let mut used_server_retry_delay = false; // Track if we already waited per server's Retry-After
 
     for attempt in 0..=max_retries {
-        if attempt > 0 {
+        // Apply exponential backoff only if we didn't already use server's Retry-After delay
+        if attempt > 0 && !used_server_retry_delay {
             let delay = Duration::from_secs(1 << (attempt - 1).min(4)); // Cap at 16 seconds
             tracing::warn!(
                 attempt = attempt,
@@ -188,6 +190,7 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
             );
             sleep(delay).await;
         }
+        used_server_retry_delay = false; // Reset for this attempt
 
         // Acquire permit from global semaphore to limit concurrent embedding requests
         let _permit = EMBEDDING_SEMAPHORE
@@ -248,9 +251,10 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
                         "Embedding service at capacity (503), backing off"
                     );
 
-                    // Use the server-suggested retry delay
+                    // Use the server-suggested retry delay (skip exponential backoff on next iteration)
                     if attempt < max_retries {
                         sleep(Duration::from_secs(retry_after)).await;
+                        used_server_retry_delay = true; // Skip exponential backoff on next attempt
                     }
 
                     last_error = Some(anyhow::anyhow!(

@@ -69,6 +69,22 @@
 		last_run_stats?: Record<string, any>;
 	}
 
+	interface ProcessedFile {
+		id: number;
+		transform_type: string;
+		transform_id: number;
+		file_key: string;
+		processed_at: string;
+		item_count: number;
+		process_status: string;
+		process_error: string | null;
+		processing_duration_ms: number | null;
+	}
+
+	interface FailedFileWithTransform extends ProcessedFile {
+		transform_title: string;
+	}
+
 	interface Props {
 		collectionId: number;
 		onBack: () => void;
@@ -94,10 +110,27 @@
 	let activeTab = $state('files');
 	let apiIntegrationModalOpen = $state(false);
 
-	const tabs = [
+	// Failed files state (transform processing failures from API)
+	let failedFiles = $state<FailedFileWithTransform[]>([]);
+	let failedFilesLoading = $state(false);
+	let failedFilesTotalCount = $state(0);
+	let failedFilesPage = $state(0);
+	let failedFilesPageSize = $state(25);
+
+	// Upload failures (files that failed during upload, not stored server-side)
+	let uploadFailures = $state<{ name: string; error: string; timestamp: string }[]>([]);
+
+	let failedFilesCount = $derived(failedFilesTotalCount + uploadFailures.length);
+
+	const tabs = $derived([
 		{ id: 'files', label: 'Files', icon: '📁' },
 		{ id: 'transforms', label: 'Transforms', icon: '🔄' },
-	];
+		{
+			id: 'failed',
+			label: `Failed Files${failedFilesCount > 0 ? ` (${failedFilesCount})` : ''}`,
+			icon: '⚠️',
+		},
+	]);
 
 	let paginationHistory = $state<(string | null)[]>([null]);
 	let currentPageIndex = $state(0);
@@ -146,6 +179,7 @@
 			fetchCollection(),
 			fetchFiles(),
 			fetchCollectionTransforms(),
+			fetchFailedFiles(),
 			fetchAllowedFileTypes(),
 		]);
 		connectSSE();
@@ -179,6 +213,8 @@
 				if (status.collection_transform_id) {
 					// Refresh stats for this transform
 					fetchCollectionTransformStats(status.collection_transform_id);
+					// Refresh failed files in case the status changed
+					fetchFailedFiles();
 				}
 			},
 			onMaxRetriesReached: () => {
@@ -192,13 +228,12 @@
 	async function fetchCollectionTransforms() {
 		try {
 			transformsLoading = true;
-			const response = await fetch('/api/collection-transforms');
+			const response = await fetch(`/api/collections/${collectionId}/transforms`);
 			if (response.ok) {
-				const data = (await response.json()) as PaginatedResponse<CollectionTransform>;
-				const allTransforms = data.items;
-				collectionTransforms = allTransforms
-					.filter((t) => t.collection_id === collectionId)
-					.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+				const transforms: CollectionTransform[] = await response.json();
+				collectionTransforms = transforms.sort(
+					(a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+				);
 
 				// Fetch stats for each collection transform
 				for (const transform of collectionTransforms) {
@@ -222,6 +257,25 @@
 			}
 		} catch (e) {
 			console.error(e);
+		}
+	}
+
+	async function fetchFailedFiles() {
+		try {
+			failedFilesLoading = true;
+			const offset = failedFilesPage * failedFilesPageSize;
+			const response = await fetch(
+				`/api/collections/${collectionId}/failed-files?limit=${failedFilesPageSize}&offset=${offset}`
+			);
+			if (response.ok) {
+				const data = (await response.json()) as PaginatedResponse<FailedFileWithTransform>;
+				failedFiles = data.items;
+				failedFilesTotalCount = data.total_count;
+			}
+		} catch (e) {
+			console.error('Failed to fetch failed files:', e);
+		} finally {
+			failedFilesLoading = false;
 		}
 	}
 
@@ -463,7 +517,7 @@
 
 		const fileArray = Array.from(files);
 		const completedFiles: string[] = [];
-		const failedFiles: string[] = [];
+		const uploadFailedFiles: { name: string; error: string }[] = [];
 
 		try {
 			// Upload files in batches of 25 to balance performance and real-time feedback
@@ -502,15 +556,19 @@
 								fileStatuses[fileIndex].status = 'completed';
 								fileStatuses[fileIndex].progress = 100;
 							}
-						} else if (result.failed && result.failed.length > 0) {
-							failedFiles.push(...result.failed);
+						}
+						if (result.failed && result.failed.length > 0) {
+							for (const f of result.failed) {
+								uploadFailedFiles.push({ name: f.name, error: f.error });
+							}
 							if (fileIndex >= 0) {
 								fileStatuses[fileIndex].status = 'failed';
-								fileStatuses[fileIndex].error = 'Upload failed';
+								fileStatuses[fileIndex].error =
+									result.failed[0]?.error || 'Upload failed';
 							}
 						}
 					} catch (e) {
-						failedFiles.push(file.name);
+						uploadFailedFiles.push({ name: file.name, error: formatError(e, 'Upload error') });
 						if (fileIndex >= 0) {
 							fileStatuses[fileIndex].status = 'failed';
 							fileStatuses[fileIndex].error = formatError(e, 'Upload error');
@@ -526,7 +584,7 @@
 
 				// Update progress after batch completes
 				uploadProgress = {
-					completed: completedFiles.length + failedFiles.length,
+					completed: completedFiles.length + uploadFailedFiles.length,
 					total: fileArray.length,
 					currentBatch: currentBatch,
 					totalBatches: Math.ceil(fileArray.length / batchSize),
@@ -558,20 +616,35 @@
 				);
 			}
 
-			if (failedFiles.length > 0) {
+			if (uploadFailedFiles.length > 0) {
+				// Add upload failures to the persistent list
+				const now = new Date().toISOString();
+				uploadFailures = [
+					...uploadFailedFiles.map((f) => ({
+						name: f.name,
+						error: f.error,
+						timestamp: now,
+					})),
+					...uploadFailures,
+				];
+				// Switch to the Failed tab so the user sees the failures
+				activeTab = 'failed';
 				toastStore.warning(
-					`Failed to upload ${failedFiles.length} file${failedFiles.length === 1 ? '' : 's'}`
+					`Failed to upload ${uploadFailedFiles.length} file${uploadFailedFiles.length === 1 ? '' : 's'} — see Failed Files tab for details`
 				);
 			}
 		} catch (e) {
 			toastStore.error(formatError(e, 'Failed to upload files'));
 		} finally {
 			uploading = false;
-			// Keep the status panel visible for a moment after completion
-			setTimeout(() => {
-				uploadProgress = null;
-				fileStatuses = [];
-			}, 2000);
+			// Keep the status panel visible longer if there are failures so user can see errors
+			const hasFailures = fileStatuses.some((f) => f.status === 'failed');
+			if (!hasFailures) {
+				setTimeout(() => {
+					uploadProgress = null;
+					fileStatuses = [];
+				}, 2000);
+			}
 		}
 	}
 
@@ -759,7 +832,15 @@
 							</div>
 
 							{#if uploadProgress}
-								<UploadProgressPanel {uploadProgress} {fileStatuses} isUploading={uploading} />
+								<UploadProgressPanel
+									{uploadProgress}
+									{fileStatuses}
+									isUploading={uploading}
+									onDismiss={() => {
+										uploadProgress = null;
+										fileStatuses = [];
+									}}
+								/>
 							{/if}
 						</div>
 
@@ -1040,6 +1121,185 @@
 										loading={transformsLoading}
 									/>
 								</div>
+							{/if}
+						</div>
+					</div>
+				{:else if tabId === 'failed'}
+					<div id="failed-files-panel" role="tabpanel" class="animate-fadeIn">
+						<div class="p-4">
+							<div class="flex justify-between items-center mb-6">
+								<h2 class="text-2xl font-bold text-gray-900 dark:text-white">Failed Files</h2>
+								{#if failedFilesCount > 0}
+									<span
+										class="px-3 py-1 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded-full text-sm font-medium"
+									>
+										{failedFilesCount} failed
+									</span>
+								{/if}
+							</div>
+
+							<!-- Upload failures (client-side, from this session) -->
+							{#if uploadFailures.length > 0}
+								<div class="mb-6">
+									<div class="flex justify-between items-center mb-3">
+										<h3 class="text-lg font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-2">
+											<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-xs font-bold">
+												{uploadFailures.length}
+											</span>
+											Upload Failures
+										</h3>
+										<button
+											onclick={() => { uploadFailures = []; }}
+											class="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300 underline"
+										>
+											Clear
+										</button>
+									</div>
+									<p class="text-sm text-gray-500 dark:text-gray-400 mb-3">
+										These files failed to upload to storage. They were not added to the collection.
+									</p>
+									<div class="overflow-x-auto">
+										<table class="w-full text-sm text-left text-gray-600 dark:text-gray-400">
+											<thead class="bg-red-50 dark:bg-red-900/10 border-b border-red-200 dark:border-red-800">
+												<tr>
+													<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">File</th>
+													<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Error</th>
+													<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Time</th>
+												</tr>
+											</thead>
+											<tbody>
+												{#each uploadFailures as file, i (file.name + '-' + i)}
+													<tr class="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+														<td class="px-4 py-3 font-medium text-gray-900 dark:text-white">
+															<div class="flex items-center gap-2">
+																<span class="text-red-500">❌</span>
+																<span class="truncate max-w-xs" title={file.name}>{file.name}</span>
+															</div>
+														</td>
+														<td class="px-4 py-3">
+															<div class="text-red-600 dark:text-red-400 text-xs bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded max-w-md wrap-break-word whitespace-pre-wrap">
+																{file.error}
+															</div>
+														</td>
+														<td class="px-4 py-3 text-gray-500 dark:text-gray-400 whitespace-nowrap">
+															{formatDate(file.timestamp)}
+														</td>
+													</tr>
+												{/each}
+											</tbody>
+										</table>
+									</div>
+								</div>
+							{/if}
+
+							<!-- Transform processing failures (server-side) -->
+							{#if failedFilesLoading}
+								<div class="flex items-center justify-center py-8">
+									<div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+								</div>
+							{:else if failedFiles.length === 0 && failedFilesTotalCount === 0 && uploadFailures.length === 0}
+								<div
+									class="text-center py-8 bg-gray-50 dark:bg-gray-900/30 rounded-lg border border-dashed border-gray-300 dark:border-gray-700"
+								>
+									<div class="text-4xl mb-3">✅</div>
+									<p class="text-gray-500 dark:text-gray-400 mb-2">
+										No failed files!
+									</p>
+									<p class="text-sm text-gray-400 dark:text-gray-500">
+										All files have been uploaded and processed successfully.
+									</p>
+								</div>
+							{:else if failedFiles.length > 0}
+								<div class="mb-3">
+									<h3 class="text-lg font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-2">
+										<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-xs font-bold">
+											{failedFilesTotalCount}
+										</span>
+										Transform Processing Failures
+									</h3>
+									<p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+										These files were uploaded but failed during transform processing.
+									</p>
+								</div>
+								<div class="overflow-x-auto">
+									<table class="w-full text-sm text-left text-gray-600 dark:text-gray-400">
+										<thead
+											class="bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700"
+										>
+											<tr>
+												<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">File</th>
+												<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Transform</th>
+												<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Error</th>
+												<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Failed At</th>
+											</tr>
+										</thead>
+										<tbody>
+											{#each failedFiles as file (file.id)}
+												<tr
+													class="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
+												>
+													<td class="px-4 py-3 font-medium text-gray-900 dark:text-white">
+														<div class="flex items-center gap-2">
+															<span class="text-red-500">❌</span>
+															<span class="truncate max-w-xs" title={file.file_key}>{file.file_key}</span>
+														</div>
+													</td>
+													<td class="px-4 py-3">
+														<span
+															class="px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded text-xs font-medium"
+														>
+															{file.transform_title}
+														</span>
+													</td>
+													<td class="px-4 py-3">
+														{#if file.process_error}
+															<div
+																class="text-red-600 dark:text-red-400 text-xs bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded max-w-md wrap-break-word whitespace-pre-wrap"
+															>
+																{file.process_error}
+															</div>
+														{:else}
+															<span class="text-gray-400 italic">Unknown error</span>
+														{/if}
+													</td>
+													<td class="px-4 py-3 text-gray-500 dark:text-gray-400 whitespace-nowrap">
+														{formatDate(file.processed_at)}
+													</td>
+												</tr>
+											{/each}
+										</tbody>
+									</table>
+								</div>
+
+								<!-- Pagination -->
+								{#if failedFilesTotalCount > failedFilesPageSize}
+									<div class="px-6 py-4 border-t border-gray-200 dark:border-gray-700">
+										<div class="flex items-center justify-between">
+											<span class="text-sm text-gray-700 dark:text-gray-300">
+												Showing {failedFilesPage * failedFilesPageSize + 1}-{Math.min((failedFilesPage + 1) * failedFilesPageSize, failedFilesTotalCount)} of {failedFilesTotalCount}
+											</span>
+											<div class="flex gap-2">
+												<button
+													onclick={() => { failedFilesPage--; fetchFailedFiles(); }}
+													disabled={failedFilesPage === 0}
+													class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm text-gray-700 dark:text-gray-300"
+												>
+													Previous
+												</button>
+												<span class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">
+													Page {failedFilesPage + 1} of {Math.ceil(failedFilesTotalCount / failedFilesPageSize)}
+												</span>
+												<button
+													onclick={() => { failedFilesPage++; fetchFailedFiles(); }}
+													disabled={(failedFilesPage + 1) * failedFilesPageSize >= failedFilesTotalCount}
+													class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm text-gray-700 dark:text-gray-300"
+												>
+													Next
+												</button>
+											</div>
+										</div>
+									</div>
+								{/if}
 							{/if}
 						</div>
 					</div>

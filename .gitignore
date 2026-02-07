@@ -22,3 +22,5 @@ deployment/helm/semantic-explorer/values-custom.yaml
 **/.onnxruntime-cuda
 
 crates/worker-visualizations-py/fonts
+
+plans/

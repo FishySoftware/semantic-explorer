@@ -2,8 +2,13 @@ pub(crate) mod models;
 
 use anyhow::{Context, Result, bail};
 use aws_sdk_s3::Client;
+use aws_sdk_s3::error::{DisplayErrorContext, SdkError};
+use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use semantic_explorer_core::observability::record_storage_operation;
 
+use std::error::Error;
+use std::fmt::Debug;
 use std::time::Instant;
 use tracing::warn;
 
@@ -15,8 +20,17 @@ pub(crate) async fn initialize_client() -> Result<aws_sdk_s3::Client> {
     semantic_explorer_core::storage::initialize_client().await
 }
 
-/// Upload document to collection using single-bucket architecture
+/// Multipart upload threshold: files larger than 8 MiB use multipart upload.
+/// MinIO rejects single-part uploads with chunks > 16 MiB.
+const MULTIPART_THRESHOLD: u64 = 8 * 1024 * 1024;
+/// Part size for multipart uploads (8 MiB).
+const MULTIPART_PART_SIZE: usize = 8 * 1024 * 1024;
+
+/// Upload document to collection using single-bucket architecture.
 /// Uses: S3_BUCKET_NAME/collections/{collection_id}/{filename}
+///
+/// Files <= 8 MiB are uploaded with a single PutObject.
+/// Files > 8 MiB use S3 multipart upload to stay within MinIO's 16 MiB chunk limit.
 #[tracing::instrument(name = "s3.upload_document", skip(client, bucket_name, document), fields(storage.system = "s3", collection_id = %document.collection_id, key = %document.name, size = document.size))]
 pub(crate) async fn upload_document(
     client: &Client,
@@ -36,14 +50,11 @@ pub(crate) async fn upload_document(
         "Uploading document to S3"
     );
 
-    let result = client
-        .put_object()
-        .bucket(bucket_name)
-        .key(&key)
-        .body(document.content)
-        .content_type(&document.mime_type)
-        .send()
-        .await;
+    let result = if file_size <= MULTIPART_THRESHOLD {
+        upload_single_part(client, bucket_name, &key, document).await
+    } else {
+        upload_multipart(client, bucket_name, &key, document).await
+    };
 
     let duration = start.elapsed().as_secs_f64();
     let success = result.is_ok();
@@ -60,6 +71,7 @@ pub(crate) async fn upload_document(
             tracing::debug!(
                 bucket = %bucket_name,
                 key = %key,
+                size = file_size,
                 duration_ms = duration * 1000.0,
                 "Successfully uploaded document to S3"
             );
@@ -67,16 +79,189 @@ pub(crate) async fn upload_document(
         Err(e) => {
             tracing::error!(
                 bucket = %bucket_name,
-                collection_id = %document.collection_id,
-                key = %document.name,
+                key = %key,
                 error = %e,
+                size = file_size,
                 duration_ms = duration * 1000.0,
-                "Failed to upload document to S3. Check network connectivity and bucket permissions."
+                "Failed to upload document to S3"
             );
         }
     }
 
-    result?;
+    result
+}
+
+/// Single-part upload for small files (<= 8 MiB)
+async fn upload_single_part(
+    client: &Client,
+    bucket_name: &str,
+    key: &str,
+    document: DocumentUpload,
+) -> Result<()> {
+    client
+        .put_object()
+        .bucket(bucket_name)
+        .key(key)
+        .body(document.content)
+        .content_length(document.size as i64)
+        .content_type(&document.mime_type)
+        .send()
+        .await
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "S3 upload failed for '{}' ({}): {}",
+                document.name,
+                format_file_size(document.size),
+                format_s3_error(&e)
+            )
+        })?;
+    Ok(())
+}
+
+/// Multipart upload for large files (> 8 MiB)
+/// Splits the file into 8 MiB parts and uploads them individually.
+async fn upload_multipart(
+    client: &Client,
+    bucket_name: &str,
+    key: &str,
+    document: DocumentUpload,
+) -> Result<()> {
+    let file_name = document.name.clone();
+    let file_size = document.size;
+    let num_parts = (file_size as usize).div_ceil(MULTIPART_PART_SIZE);
+
+    tracing::debug!(
+        key = %key,
+        file_size = file_size,
+        num_parts = num_parts,
+        part_size = MULTIPART_PART_SIZE,
+        "Starting multipart upload"
+    );
+
+    // 1. Initiate multipart upload
+    let create_resp = client
+        .create_multipart_upload()
+        .bucket(bucket_name)
+        .key(key)
+        .content_type(&document.mime_type)
+        .send()
+        .await
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to initiate multipart upload for '{}': {}",
+                file_name,
+                format_s3_error(&e)
+            )
+        })?;
+
+    let upload_id = create_resp
+        .upload_id()
+        .context("Missing upload_id from CreateMultipartUpload response")?;
+
+    // 2. Collect the stream into bytes so we can split into parts
+    let all_bytes = document
+        .content
+        .collect()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to read file content for '{}': {}", file_name, e))?
+        .into_bytes();
+
+    // 3. Upload each part
+    let mut completed_parts: Vec<CompletedPart> = Vec::with_capacity(num_parts);
+    let mut offset = 0usize;
+    let total = all_bytes.len();
+
+    for part_number in 1..=num_parts {
+        let end = std::cmp::min(offset + MULTIPART_PART_SIZE, total);
+        let part_data = all_bytes.slice(offset..end);
+        let part_len = part_data.len() as i64;
+
+        let upload_part_result = client
+            .upload_part()
+            .bucket(bucket_name)
+            .key(key)
+            .upload_id(upload_id)
+            .part_number(part_number as i32)
+            .content_length(part_len)
+            .body(ByteStream::from(part_data))
+            .send()
+            .await;
+
+        match upload_part_result {
+            Ok(resp) => {
+                let etag = resp.e_tag().unwrap_or_default().to_string();
+                tracing::debug!(
+                    key = %key,
+                    part_number = part_number,
+                    part_size = part_len,
+                    "Uploaded part"
+                );
+                completed_parts.push(
+                    CompletedPart::builder()
+                        .e_tag(&etag)
+                        .part_number(part_number as i32)
+                        .build(),
+                );
+            }
+            Err(e) => {
+                // Abort the multipart upload on failure
+                let error_detail = format_s3_error(&e);
+                tracing::error!(
+                    key = %key,
+                    part_number = part_number,
+                    error = %error_detail,
+                    "Failed to upload part, aborting multipart upload"
+                );
+                let _ = client
+                    .abort_multipart_upload()
+                    .bucket(bucket_name)
+                    .key(key)
+                    .upload_id(upload_id)
+                    .send()
+                    .await;
+                return Err(anyhow::anyhow!(
+                    "S3 multipart upload failed for '{}' ({}) at part {}/{}: {}",
+                    file_name,
+                    format_file_size(file_size),
+                    part_number,
+                    num_parts,
+                    error_detail
+                ));
+            }
+        }
+
+        offset = end;
+    }
+
+    // 4. Complete the multipart upload
+    let completed_upload = CompletedMultipartUpload::builder()
+        .set_parts(Some(completed_parts))
+        .build();
+
+    client
+        .complete_multipart_upload()
+        .bucket(bucket_name)
+        .key(key)
+        .upload_id(upload_id)
+        .multipart_upload(completed_upload)
+        .send()
+        .await
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to complete multipart upload for '{}' ({}): {}",
+                file_name,
+                format_file_size(file_size),
+                format_s3_error(&e)
+            )
+        })?;
+
+    tracing::info!(
+        key = %key,
+        file_size = file_size,
+        num_parts = num_parts,
+        "Multipart upload completed successfully"
+    );
+
     Ok(())
 }
 
@@ -676,4 +861,39 @@ pub(crate) async fn empty_collection(
     );
 
     Ok(())
+}
+
+/// Extract detailed error information from an S3 SDK error
+fn format_s3_error<E: Debug + Error + 'static>(err: &SdkError<E>) -> String {
+    match err {
+        SdkError::ServiceError(service_err) => {
+            let raw = service_err.raw();
+            let status = raw.status().as_u16();
+            let body = raw
+                .body()
+                .bytes()
+                .map(|b| String::from_utf8_lossy(b).to_string())
+                .unwrap_or_default();
+            if body.is_empty() {
+                format!("HTTP {} - {:?}", status, service_err.err())
+            } else {
+                format!("HTTP {} - {}", status, body)
+            }
+        }
+        SdkError::TimeoutError(_) => "Request timed out".to_string(),
+        SdkError::DispatchFailure(e) => format!("Connection error: {:?}", e),
+        SdkError::ResponseError(e) => format!("Response error: {:?}", e),
+        SdkError::ConstructionFailure(e) => format!("Request construction error: {:?}", e),
+        _ => format!("{}", DisplayErrorContext(err)),
+    }
+}
+
+fn format_file_size(bytes: u64) -> String {
+    if bytes >= 1024 * 1024 {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else if bytes >= 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{} B", bytes)
+    }
 }

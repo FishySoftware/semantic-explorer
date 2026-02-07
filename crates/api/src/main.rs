@@ -290,6 +290,7 @@ async fn main() -> Result<()> {
             .service(api::collection_transforms::get_collection_transform_stats)
             .service(api::collection_transforms::get_batch_collection_transform_stats)
             .service(api::collection_transforms::get_processed_files)
+            .service(api::collection_transforms::get_failed_files_for_collection)
             .service(api::collection_transforms::get_collection_transforms_for_collection)
             .service(api::collection_transforms::get_collection_transforms_for_dataset)
             .service(api::dataset_transforms::get_dataset_transforms)

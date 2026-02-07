@@ -87,6 +87,7 @@ pub async fn initialize_jetstream(client: &Client, nats_config: &NatsConfig) -> 
             subjects: vec!["workers.collection-transform".to_string()],
             retention: RetentionPolicy::WorkQueue,
             max_age: stream_max_age,
+            max_messages: -1,                               // Unlimited
             duplicate_window: Duration::from_secs(60 * 60), // 60 minutes for deduplication
             num_replicas,
             ..Default::default()
@@ -102,6 +103,7 @@ pub async fn initialize_jetstream(client: &Client, nats_config: &NatsConfig) -> 
             subjects: vec!["workers.dataset-transform".to_string()],
             retention: RetentionPolicy::WorkQueue,
             max_age: stream_max_age,
+            max_messages: -1,                               // Unlimited
             duplicate_window: Duration::from_secs(60 * 60), // 60 minutes for deduplication
             num_replicas,
             ..Default::default()
@@ -117,6 +119,7 @@ pub async fn initialize_jetstream(client: &Client, nats_config: &NatsConfig) -> 
             subjects: vec!["workers.visualization-transform".to_string()],
             retention: RetentionPolicy::WorkQueue,
             max_age: stream_max_age,
+            max_messages: -1,                               // Unlimited
             duplicate_window: Duration::from_secs(60 * 60), // 60 minutes for deduplication
             num_replicas,
             ..Default::default()
@@ -137,6 +140,8 @@ pub async fn initialize_jetstream(client: &Client, nats_config: &NatsConfig) -> 
             ],
             retention: RetentionPolicy::Limits, // Keep for investigation
             max_age: Duration::from_secs(30 * 24 * 60 * 60), // 30 days for DLQ
+            max_messages: -1,                   // Unlimited
+            duplicate_window: Duration::from_secs(120), // 2 minutes (NATS default)
             num_replicas,
             ..Default::default()
         },
@@ -158,6 +163,7 @@ pub async fn initialize_jetstream(client: &Client, nats_config: &NatsConfig) -> 
             ],
             retention: RetentionPolicy::WorkQueue,
             max_age: Duration::from_secs(60 * 60), // 1 hour max age
+            max_messages: -1,                      // Unlimited (but limited per subject below)
             duplicate_window: Duration::from_secs(60 * 60), // 60 minutes dedup
             max_messages_per_subject: 1,           // Only one pending trigger per type
             num_replicas,
@@ -188,6 +194,7 @@ pub async fn initialize_jetstream(client: &Client, nats_config: &NatsConfig) -> 
             retention: RetentionPolicy::Limits,
             max_age: Duration::from_secs(60 * 60),
             max_messages: 100_000,
+            duplicate_window: Duration::from_secs(120), // 2 minutes (NATS default)
             num_replicas,
             ..Default::default()
         },
@@ -236,13 +243,63 @@ async fn ensure_stream(
 }
 
 fn stream_config_differs(current: &StreamConfig, desired: &StreamConfig) -> bool {
-    current.name != desired.name
-        || current.subjects != desired.subjects
-        || current.retention != desired.retention
-        || current.num_replicas != desired.num_replicas
-        || current.max_age != desired.max_age
-        || current.max_messages != desired.max_messages
-        || current.duplicate_window != desired.duplicate_window
+    if current.name != desired.name {
+        tracing::debug!(
+            "Stream config differs: name {:?} vs {:?}",
+            current.name,
+            desired.name
+        );
+        return true;
+    }
+    if current.subjects != desired.subjects {
+        tracing::debug!(
+            "Stream config differs: subjects {:?} vs {:?}",
+            current.subjects,
+            desired.subjects
+        );
+        return true;
+    }
+    if current.retention != desired.retention {
+        tracing::debug!(
+            "Stream config differs: retention {:?} vs {:?}",
+            current.retention,
+            desired.retention
+        );
+        return true;
+    }
+    if current.num_replicas != desired.num_replicas {
+        tracing::debug!(
+            "Stream config differs: num_replicas {:?} vs {:?}",
+            current.num_replicas,
+            desired.num_replicas
+        );
+        return true;
+    }
+    if current.max_age != desired.max_age {
+        tracing::debug!(
+            "Stream config differs: max_age {:?} vs {:?}",
+            current.max_age,
+            desired.max_age
+        );
+        return true;
+    }
+    if current.max_messages != desired.max_messages {
+        tracing::debug!(
+            "Stream config differs: max_messages {:?} vs {:?}",
+            current.max_messages,
+            desired.max_messages
+        );
+        return true;
+    }
+    if current.duplicate_window != desired.duplicate_window {
+        tracing::debug!(
+            "Stream config differs: duplicate_window {:?} vs {:?}",
+            current.duplicate_window,
+            desired.duplicate_window
+        );
+        return true;
+    }
+    false
 }
 
 /// Create consumer config for collection transforms with configurable parameters.
