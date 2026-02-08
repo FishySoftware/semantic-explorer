@@ -54,35 +54,11 @@ async fn main() -> Result<()> {
         "Starting embedding-inference-api server with CUDA GPU acceleration (controlled by CUDA_VISIBLE_DEVICES)"
     );
 
-    // Log allowed models configuration
-    if config.models.allowed_embedding_models.is_empty() {
-        info!(
-            "All embedding models are allowed (no INFERENCE_ALLOWED_EMBEDDING_MODELS configured)"
-        );
-    } else {
-        info!(
-            allowed_models = ?config.models.allowed_embedding_models,
-            count = config.models.allowed_embedding_models.len(),
-            "Embedding model access restricted to allowed list"
-        );
-    }
-
-    if config.models.allowed_rerank_models.is_empty() {
-        info!("All rerank models are allowed (no INFERENCE_ALLOWED_RERANK_MODELS configured)");
-    } else {
-        info!(
-            allowed_models = ?config.models.allowed_rerank_models,
-            count = config.models.allowed_rerank_models.len(),
-            "Rerank model access restricted to allowed list"
-        );
-    }
-
     tokio::join!(
         embedding::init_cache(&config.models),
         reranker::init_cache(&config.models)
     );
 
-    // Initialize backpressure semaphore for embedding requests with queue timeout
     embedding::init_semaphore(
         config.models.max_concurrent_requests,
         config.models.queue_timeout_ms,

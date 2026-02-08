@@ -31,7 +31,7 @@ POST {{baseUrl}}/api/embed
 Content-Type: application/json
 
 {
-  "model": "sentence-transformers/all-MiniLM-L6-v2",
+  "model": "onnx-community/embeddinggemma-300m-ONNX",
   "text": "The salmon is an anadromous fish that migrates upstream to spawn in freshwater rivers after spending most of its life in the ocean."
 }
 

@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { Heading } from 'flowbite-svelte';
 	import { onDestroy, onMount } from 'svelte';
-	import { formatDate } from '../utils/ui-helpers';
 	import PageHeader from '../components/PageHeader.svelte';
+	import { formatDate } from '../utils/ui-helpers';
 
 	interface Props {
 		datasetTransformId: number;
@@ -111,12 +111,20 @@
 	let batchesCurrentPage = $state(1);
 	let batchesPageSize = $state(10);
 
+	// Sort state for batches
+	let batchSortBy = $state('processed_at');
+	let batchSortDirection = $state('desc');
+
 	// SSE connection state
 	let eventSource: EventSource | null = null;
 	let reconnectAttempts = 0;
 	let maxReconnectAttempts = 10;
 	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 	let isMounted = false; // Track if component is still mounted
+
+	// Polling interval for auto-refresh
+	let pollTimer: ReturnType<typeof setInterval> | null = null;
+	const POLL_INTERVAL_MS = 5000;
 
 	async function fetchTransform() {
 		try {
@@ -194,8 +202,14 @@
 	async function fetchBatches() {
 		try {
 			const offset = (batchesCurrentPage - 1) * batchesPageSize;
+			const params = new URLSearchParams({
+				limit: batchesPageSize.toString(),
+				offset: offset.toString(),
+				sort_by: batchSortBy,
+				sort_direction: batchSortDirection,
+			});
 			const response = await fetch(
-				`/api/dataset-transforms/${datasetTransformId}/batches?limit=${batchesPageSize}&offset=${offset}`,
+				`/api/dataset-transforms/${datasetTransformId}/batches?${params}`,
 				{
 					credentials: 'include',
 				}
@@ -222,6 +236,17 @@
 	function handleBatchesPageChange(page: number) {
 		if (page < 1 || page > getBatchesTotalPages()) return;
 		batchesCurrentPage = page;
+		fetchBatches();
+	}
+
+	function handleBatchSort(field: string) {
+		if (batchSortBy === field) {
+			batchSortDirection = batchSortDirection === 'asc' ? 'desc' : 'asc';
+		} else {
+			batchSortBy = field;
+			batchSortDirection = 'desc';
+		}
+		batchesCurrentPage = 1;
 		fetchBatches();
 	}
 
@@ -302,11 +327,23 @@
 		await Promise.all([fetchTransform(), fetchDetailedStats(), fetchBatches()]);
 		loading = false;
 		connectSSE();
+
+		// Auto-refresh stats and batches every 5 seconds
+		pollTimer = setInterval(() => {
+			if (isMounted) {
+				fetchDetailedStats();
+				fetchBatches();
+			}
+		}, POLL_INTERVAL_MS);
 	});
 
 	onDestroy(() => {
 		isMounted = false;
 		disconnectSSE();
+		if (pollTimer) {
+			clearInterval(pollTimer);
+			pollTimer = null;
+		}
 	});
 </script>
 
@@ -564,11 +601,66 @@
 							class="bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700"
 						>
 							<tr>
-								<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Batch Key</th>
-								<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Status</th>
-								<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Chunks</th>
-								<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Duration</th>
-								<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Processed At</th>
+								<th class="px-4 py-3">
+									<button
+										type="button"
+										onclick={() => handleBatchSort('batch_key')}
+										class="flex items-center gap-1 font-semibold text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+									>
+										Batch Key
+										{#if batchSortBy === 'batch_key'}
+											{batchSortDirection === 'asc' ? '▲' : '▼'}
+										{/if}
+									</button>
+								</th>
+								<th class="px-4 py-3">
+									<button
+										type="button"
+										onclick={() => handleBatchSort('status')}
+										class="flex items-center gap-1 font-semibold text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+									>
+										Status
+										{#if batchSortBy === 'status'}
+											{batchSortDirection === 'asc' ? '▲' : '▼'}
+										{/if}
+									</button>
+								</th>
+								<th class="px-4 py-3">
+									<button
+										type="button"
+										onclick={() => handleBatchSort('chunk_count')}
+										class="flex items-center gap-1 font-semibold text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+									>
+										Chunks
+										{#if batchSortBy === 'chunk_count'}
+											{batchSortDirection === 'asc' ? '▲' : '▼'}
+										{/if}
+									</button>
+								</th>
+								<th class="px-4 py-3">
+									<button
+										type="button"
+										onclick={() => handleBatchSort('processing_duration_ms')}
+										class="flex items-center gap-1 font-semibold text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+									>
+										Duration
+										{#if batchSortBy === 'processing_duration_ms'}
+											{batchSortDirection === 'asc' ? '▲' : '▼'}
+										{/if}
+									</button>
+								</th>
+								<th class="px-4 py-3">
+									<button
+										type="button"
+										onclick={() => handleBatchSort('processed_at')}
+										class="flex items-center gap-1 font-semibold text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+									>
+										Processed At
+										{#if batchSortBy === 'processed_at'}
+											{batchSortDirection === 'asc' ? '▲' : '▼'}
+										{/if}
+									</button>
+								</th>
 							</tr>
 						</thead>
 						<tbody>

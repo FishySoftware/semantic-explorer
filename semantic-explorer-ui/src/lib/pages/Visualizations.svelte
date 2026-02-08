@@ -1,6 +1,7 @@
 <script lang="ts">
 	import {
 		Badge,
+		Modal,
 		Spinner,
 		Table,
 		TableBody,
@@ -8,15 +9,21 @@
 		TableHead,
 		TableHeadCell,
 	} from 'flowbite-svelte';
+	import { ChevronDownOutline, ChevronRightOutline, InfoCircleSolid } from 'flowbite-svelte-icons';
 	import { onDestroy, onMount } from 'svelte';
-	import { SvelteMap, SvelteURLSearchParams } from 'svelte/reactivity';
+	import { SvelteMap, SvelteSet, SvelteURLSearchParams } from 'svelte/reactivity';
 	import ActionMenu from '../components/ActionMenu.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import LoadingState from '../components/LoadingState.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
 	import SearchInput from '../components/SearchInput.svelte';
-	import type { Visualization, VisualizationTransform, PaginatedResponse } from '../types/models';
-	import { InfoCircleSolid } from 'flowbite-svelte-icons';
+	import type {
+		EmbeddedDataset,
+		LLM,
+		PaginatedResponse,
+		Visualization,
+		VisualizationTransform,
+	} from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { formatDate } from '../utils/ui-helpers';
 
@@ -29,11 +36,29 @@
 	let { onViewVisualization }: Props = $props();
 
 	let transforms = $state<VisualizationTransform[]>([]);
-	let completedVisualizations = $state.raw(new SvelteMap<number, Visualization>());
+	let recentVisualizations = $state.raw(new SvelteMap<number, Visualization[]>());
+	let embeddedDatasetCache = $state.raw(new SvelteMap<number, EmbeddedDataset>());
+	let llmCache = $state.raw(new SvelteMap<number, LLM>());
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let searchQuery = $state('');
 	let transformPendingDelete = $state<VisualizationTransform | null>(null);
+
+	// Selection state for bulk operations
+	let selected = new SvelteSet<number>();
+	let selectAll = $state(false);
+	let transformsPendingBulkDelete = $state<VisualizationTransform[]>([]);
+
+	// Config modal state
+	let configModalOpen = $state(false);
+	let configModalTitle = $state('');
+	let configModalJson = $state('');
+
+	// Expand/collapse state for sub-rows
+	let expandedTransforms = new SvelteSet<number>();
+
+	// Run selection state for bulk compare
+	let selectedRuns = new SvelteSet<string>(); // "transformId:vizId" keys
 
 	let pollingController: ReturnType<typeof createPollingInterval> | null = null;
 	let isLoadingTransforms = false;
@@ -102,8 +127,12 @@
 			const data = (await response.json()) as PaginatedResponse<VisualizationTransform>;
 			transforms = data.items;
 
-			// Load completed visualizations for each transform
-			await loadCompletedVisualizations();
+			// Load completed visualizations and embedded dataset details for each transform
+			await Promise.all([
+				loadCompletedVisualizations(),
+				loadEmbeddedDatasetDetails(),
+				loadLlmDetails(),
+			]);
 		} catch (err) {
 			error = formatError(err);
 			if (isInitialLoad) {
@@ -118,19 +147,17 @@
 	}
 
 	async function loadCompletedVisualizations() {
-		const newCompletedVisualizations = new SvelteMap<number, Visualization>();
+		const newRecentVisualizations = new SvelteMap<number, Visualization[]>();
 
 		for (const transform of transforms) {
 			try {
 				const response = await fetch(
-					`/api/visualization-transforms/${transform.visualization_transform_id}/visualizations?limit=50`
+					`/api/visualization-transforms/${transform.visualization_transform_id}/visualizations?limit=5`
 				);
 				if (response.ok) {
 					const visualizations: Visualization[] = await response.json();
-					// Get the most recent completed visualization
-					const completed = visualizations.find((v) => v.status === 'completed');
-					if (completed) {
-						newCompletedVisualizations.set(transform.visualization_transform_id, completed);
+					if (visualizations.length > 0) {
+						newRecentVisualizations.set(transform.visualization_transform_id, visualizations);
 					}
 				}
 			} catch (err) {
@@ -141,7 +168,77 @@
 			}
 		}
 
-		completedVisualizations = newCompletedVisualizations;
+		recentVisualizations = newRecentVisualizations;
+	}
+
+	async function loadEmbeddedDatasetDetails() {
+		const newCache = new SvelteMap<number, EmbeddedDataset>();
+		const idsToFetch = new SvelteSet<number>();
+
+		for (const transform of transforms) {
+			if (!embeddedDatasetCache.has(transform.embedded_dataset_id)) {
+				idsToFetch.add(transform.embedded_dataset_id);
+			} else {
+				newCache.set(
+					transform.embedded_dataset_id,
+					embeddedDatasetCache.get(transform.embedded_dataset_id)!
+				);
+			}
+		}
+
+		const fetchPromises = Array.from(idsToFetch).map(async (id) => {
+			try {
+				const response = await fetch(`/api/embedded-datasets/${id}`);
+				if (response.ok) {
+					const ed: EmbeddedDataset = await response.json();
+					newCache.set(id, ed);
+				}
+			} catch (err) {
+				console.error(`Failed to load embedded dataset ${id}:`, err);
+			}
+		});
+
+		await Promise.all(fetchPromises);
+		embeddedDatasetCache = newCache;
+	}
+
+	async function loadLlmDetails() {
+		const newCache = new SvelteMap<number, LLM>();
+		const idsToFetch = new SvelteSet<number>();
+
+		for (const transform of transforms) {
+			const llmId = transform.visualization_config.topic_naming_llm_id;
+			if (llmId != null) {
+				if (!llmCache.has(llmId)) {
+					idsToFetch.add(llmId);
+				} else {
+					newCache.set(llmId, llmCache.get(llmId)!);
+				}
+			}
+		}
+
+		if (idsToFetch.size === 0) {
+			llmCache = newCache;
+			return;
+		}
+
+		// Fetch all LLMs in one call and pick out the ones we need
+		try {
+			const response = await fetch('/api/llms?limit=1000');
+			if (response.ok) {
+				const data = await response.json();
+				const llms: LLM[] = data.items ?? data;
+				for (const llm of llms) {
+					if (idsToFetch.has(llm.llm_id)) {
+						newCache.set(llm.llm_id, llm);
+					}
+				}
+			}
+		} catch (err) {
+			console.error('Failed to load LLMs:', err);
+		}
+
+		llmCache = newCache;
 	}
 
 	function handleView(transformId: number) {
@@ -175,6 +272,74 @@
 		} catch (e) {
 			toastStore.error(formatError(e, 'Failed to delete visualization transform'));
 		}
+	}
+
+	function toggleSelectAll() {
+		selectAll = !selectAll;
+		if (selectAll) {
+			selected.clear();
+			for (const t of filteredTransforms) {
+				selected.add(t.visualization_transform_id);
+			}
+		} else {
+			selected.clear();
+		}
+	}
+
+	function toggleSelect(id: number) {
+		if (selected.has(id)) {
+			selected.delete(id);
+			selectAll = false;
+		} else {
+			selected.add(id);
+		}
+	}
+
+	function bulkDelete() {
+		const toDelete: VisualizationTransform[] = [];
+		for (const id of selected) {
+			const transform = transforms.find((t) => t.visualization_transform_id === id);
+			if (transform) {
+				toDelete.push(transform);
+			}
+		}
+		if (toDelete.length > 0) {
+			transformsPendingBulkDelete = toDelete;
+		}
+	}
+
+	async function confirmBulkDelete() {
+		const toDelete = transformsPendingBulkDelete;
+		transformsPendingBulkDelete = [];
+
+		for (const transform of toDelete) {
+			try {
+				const response = await fetch(
+					`/api/visualization-transforms/${transform.visualization_transform_id}`,
+					{
+						method: 'DELETE',
+					}
+				);
+
+				if (!response.ok) {
+					const errorData = await response.json();
+					throw new Error(errorData.error || `Failed to delete: ${response.statusText}`);
+				}
+
+				// Remove from local list
+				transforms = transforms.filter(
+					(t) => t.visualization_transform_id !== transform.visualization_transform_id
+				);
+			} catch (e) {
+				toastStore.error(formatError(e, `Failed to delete "${transform.title}"`));
+			}
+		}
+
+		selected.clear();
+		selectAll = false;
+		toastStore.success(
+			`Deleted ${toDelete.length} visualization${toDelete.length !== 1 ? 's' : ''}`
+		);
 	}
 
 	async function triggerRun(viz: VisualizationTransform) {
@@ -249,8 +414,9 @@
 
 	let filteredTransforms = $derived(
 		transforms.filter((v) => {
-			// Only show transforms that have a completed visualization
-			if (!completedVisualizations.has(v.visualization_transform_id)) return false;
+			// Only show transforms that have at least one completed visualization
+			const vizList = recentVisualizations.get(v.visualization_transform_id);
+			if (!vizList?.some((vis) => vis.status === 'completed')) return false;
 			return true;
 		})
 	);
@@ -258,13 +424,15 @@
 	let pendingTransforms = $derived(
 		transforms.filter((t) => {
 			const hasPending = t.last_run_status === 'pending' || t.last_run_status === 'processing';
-			return hasPending && !completedVisualizations.has(t.visualization_transform_id);
+			const vizList = recentVisualizations.get(t.visualization_transform_id);
+			return hasPending && !vizList?.some((vis) => vis.status === 'completed');
 		})
 	);
 
 	let processingTransforms = $derived(
 		transforms.filter((t) => {
-			const completedViz = completedVisualizations.get(t.visualization_transform_id);
+			const vizList = recentVisualizations.get(t.visualization_transform_id);
+			const completedViz = vizList?.find((vis) => vis.status === 'completed');
 			if (!completedViz) return false;
 
 			const isProcessing = t.last_run_status === 'pending' || t.last_run_status === 'processing';
@@ -284,6 +452,51 @@
 			return true;
 		})
 	);
+
+	function toggleExpand(transformId: number) {
+		if (expandedTransforms.has(transformId)) {
+			expandedTransforms.delete(transformId);
+		} else {
+			expandedTransforms.add(transformId);
+		}
+	}
+
+	function getLatestCompleted(transformId: number): Visualization | undefined {
+		const vizList = recentVisualizations.get(transformId);
+		return vizList?.find((v) => v.status === 'completed');
+	}
+
+	function statusColor(status: string): 'green' | 'red' | 'blue' | 'yellow' | 'gray' {
+		switch (status) {
+			case 'completed':
+				return 'green';
+			case 'failed':
+				return 'red';
+			case 'processing':
+				return 'blue';
+			case 'pending':
+				return 'yellow';
+			default:
+				return 'gray';
+		}
+	}
+
+	function toggleRunSelection(transformId: number, vizId: number) {
+		const key = `${transformId}:${vizId}`;
+		if (selectedRuns.has(key)) {
+			selectedRuns.delete(key);
+		} else {
+			selectedRuns.add(key);
+		}
+	}
+
+	function openCompareView() {
+		const ids = Array.from(selectedRuns).map((key) => {
+			const [transformId, vizId] = key.split(':');
+			return `${transformId}-${vizId}`;
+		});
+		window.location.hash = `/visualizations/compare?ids=${ids.join(',')}`;
+	}
 </script>
 
 <div class="max-w-7xl mx-auto">
@@ -378,6 +591,20 @@
 					placeholder="Search visualization transforms by title, owner, or embedded dataset..."
 				/>
 			</div>
+			{#if selectedRuns.size > 0}
+				<button
+					onclick={openCompareView}
+					class="whitespace-nowrap mt-0 px-4 py-2 text-sm font-medium rounded-lg bg-purple-600 hover:bg-purple-700 text-white transition-colors"
+				>
+					Compare {selectedRuns.size} Run{selectedRuns.size !== 1 ? 's' : ''}
+				</button>
+				<button
+					onclick={() => selectedRuns.clear()}
+					class="whitespace-nowrap mt-0 px-4 py-2 text-sm rounded-lg bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 transition-colors"
+				>
+					Clear
+				</button>
+			{/if}
 			<button
 				onclick={() => {
 					window.location.hash = '/visualization-transforms?create=true';
@@ -437,13 +664,43 @@
 			</button>
 		</div>
 	{:else}
+		{#if selected.size > 0}
+			<div
+				class="mb-4 flex items-center gap-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4"
+			>
+				<span class="text-sm text-blue-700 dark:text-blue-300 flex-1">
+					{selected.size} visualization{selected.size !== 1 ? 's' : ''} selected
+				</span>
+				<button
+					onclick={() => bulkDelete()}
+					class="text-sm px-3 py-1 rounded bg-red-600 hover:bg-red-700 text-white transition-colors"
+				>
+					Delete
+				</button>
+				<button
+					onclick={() => {
+						selected.clear();
+						selectAll = false;
+					}}
+					class="text-sm px-3 py-1 rounded bg-gray-300 hover:bg-gray-400 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-900 dark:text-white transition-colors"
+				>
+					Clear
+				</button>
+			</div>
+		{/if}
 		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
 			<Table hoverable striped>
 				<TableHead>
+					<TableHeadCell class="px-4 py-3 w-12">
+						<input
+							type="checkbox"
+							checked={selectAll}
+							onchange={() => toggleSelectAll()}
+							class="cursor-pointer"
+						/>
+					</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Title</TableHeadCell>
-					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center"
-						>Embedded Dataset</TableHeadCell
-					>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Embedded Dataset</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center"
 						>Completed</TableHeadCell
 					>
@@ -455,33 +712,103 @@
 				</TableHead>
 				<TableBody>
 					{#each filteredTransforms as viz (viz.visualization_transform_id)}
-						{@const completedViz = completedVisualizations.get(viz.visualization_transform_id)}
+						{@const completedViz = getLatestCompleted(viz.visualization_transform_id)}
+						{@const vizRuns = recentVisualizations.get(viz.visualization_transform_id) ?? []}
+						{@const isExpanded = expandedTransforms.has(viz.visualization_transform_id)}
 						{@const isProcessing =
 							viz.last_run_status === 'processing' || viz.last_run_status === 'pending'}
 						<tr class="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50">
+							<TableBodyCell class="px-4 py-2 w-12">
+								<input
+									type="checkbox"
+									checked={selected.has(viz.visualization_transform_id)}
+									onchange={() => toggleSelect(viz.visualization_transform_id)}
+									class="cursor-pointer"
+								/>
+							</TableBodyCell>
 							<TableBodyCell class="px-4 py-2">
-								<div>
+								<div class="flex items-center gap-1">
 									<button
-										onclick={() => handleView(viz.visualization_transform_id)}
-										class="font-medium text-blue-600 dark:text-blue-400 hover:underline"
+										onclick={() => toggleExpand(viz.visualization_transform_id)}
+										class="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 p-0.5 -ml-1"
+										title={isExpanded ? 'Collapse runs' : 'Expand runs'}
 									>
-										{viz.title}
-									</button>
-									<div
-										class="text-xs text-gray-600 dark:text-gray-400 mt-1 flex items-center gap-2"
-									>
-										{#if isProcessing}
-											<Badge color="blue" class="text-xs">New version processing</Badge>
+										{#if isExpanded}
+											<ChevronDownOutline class="w-3.5 h-3.5" />
+										{:else}
+											<ChevronRightOutline class="w-3.5 h-3.5" />
 										{/if}
+									</button>
+									<div>
+										<button
+											onclick={() => handleView(viz.visualization_transform_id)}
+											class="font-medium text-blue-600 dark:text-blue-400 hover:underline"
+										>
+											{viz.title}
+										</button>
+										<div
+											class="text-xs text-gray-600 dark:text-gray-400 mt-1 flex items-center gap-2"
+										>
+											{#if isProcessing}
+												<Badge color="blue" class="text-xs">New version processing</Badge>
+											{/if}
+											<span class="text-gray-500 dark:text-gray-500"
+												>{vizRuns.length} run{vizRuns.length !== 1 ? 's' : ''}</span
+											>
+										</div>
 									</div>
 								</div>
 							</TableBodyCell>
-							<TableBodyCell class="px-4 py-2 text-center">
-								<span
-									class="inline-block px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded text-sm font-medium"
-								>
-									ED #{viz.embedded_dataset_id}
-								</span>
+							<TableBodyCell class="px-4 py-2">
+								{@const ed = embeddedDatasetCache.get(viz.embedded_dataset_id)}
+								{@const llm =
+									viz.visualization_config.topic_naming_llm_id != null
+										? llmCache.get(viz.visualization_config.topic_naming_llm_id)
+										: null}
+								<div class="text-sm space-y-1">
+									<div>
+										<a
+											href="#/embedded-datasets/{viz.embedded_dataset_id}/details"
+											class="font-medium text-purple-600 dark:text-purple-400 hover:underline"
+										>
+											{ed ? ed.title : `ED #${viz.embedded_dataset_id}`}
+										</a>
+									</div>
+									{#if ed?.source_dataset_title && ed.source_dataset_id}
+										<div class="text-xs text-gray-600 dark:text-gray-400">
+											<span class="text-gray-500 dark:text-gray-500">Dataset:</span>
+											<a
+												href="#/datasets/{ed.source_dataset_id}/details"
+												class="text-blue-600 dark:text-blue-400 hover:underline"
+											>
+												{ed.source_dataset_title}
+											</a>
+										</div>
+									{/if}
+									{#if ed?.embedder_name && ed.embedder_id}
+										<div class="text-xs text-gray-600 dark:text-gray-400">
+											<span class="text-gray-500 dark:text-gray-500">Embedder:</span>
+											<a
+												href="#/embedders/{ed.embedder_id}/details"
+												class="text-blue-600 dark:text-blue-400 hover:underline"
+											>
+												{ed.embedder_name}
+											</a>
+										</div>
+									{/if}
+									{#if llm}
+										<div class="text-xs text-gray-600 dark:text-gray-400">
+											<span class="text-gray-500 dark:text-gray-500">LLM:</span>
+											<a href="#/llms" class="text-blue-600 dark:text-blue-400 hover:underline">
+												{llm.name}
+											</a>
+										</div>
+									{:else if viz.visualization_config.topic_naming_llm_id != null}
+										<div class="text-xs text-gray-500 dark:text-gray-500">
+											LLM #{viz.visualization_config.topic_naming_llm_id}
+										</div>
+									{/if}
+								</div>
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-2 text-center">
 								{#if completedViz}
@@ -525,6 +852,16 @@
 										{viz.visualization_config.metric}, min_cluster={viz.visualization_config
 											.min_cluster_size}
 									</div>
+									<button
+										onclick={() => {
+											configModalTitle = viz.title;
+											configModalJson = JSON.stringify(viz.visualization_config, null, 2);
+											configModalOpen = true;
+										}}
+										class="text-blue-600 dark:text-blue-400 hover:underline mt-0.5"
+									>
+										View all
+									</button>
 								</div>
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-2 text-center">
@@ -551,6 +888,117 @@
 								/>
 							</TableBodyCell>
 						</tr>
+						<!-- Expandable sub-rows: latest visualization runs -->
+						{#if isExpanded}
+							{#each vizRuns as run (run.visualization_id)}
+								<tr class="bg-gray-50 dark:bg-gray-900/40 border-b dark:border-gray-700">
+									<TableBodyCell class="px-4 py-1.5 w-12">
+										{#if run.status === 'completed' && run.html_s3_key}
+											<div class="flex justify-center pl-3">
+												<input
+													type="checkbox"
+													checked={selectedRuns.has(
+														`${viz.visualization_transform_id}:${run.visualization_id}`
+													)}
+													onchange={() =>
+														toggleRunSelection(
+															viz.visualization_transform_id,
+															run.visualization_id
+														)}
+													class="cursor-pointer w-3.5 h-3.5 accent-purple-600 rounded-sm"
+													title="Select for comparison"
+												/>
+											</div>
+										{/if}
+									</TableBodyCell>
+									<TableBodyCell class="px-4 py-1.5">
+										<div class="flex items-center gap-2 pl-5">
+											<a
+												href="#/visualizations/{run.visualization_id}/details"
+												class="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+											>
+												Run #{run.visualization_id}
+											</a>
+										</div>
+									</TableBodyCell>
+									<TableBodyCell class="px-4 py-1.5">
+										<span class="text-xs text-gray-500 dark:text-gray-500">
+											{formatDate(run.created_at)}
+										</span>
+									</TableBodyCell>
+									<TableBodyCell class="px-4 py-1.5 text-center">
+										<Badge color={statusColor(run.status)} class="text-xs">
+											{run.status.charAt(0).toUpperCase() + run.status.slice(1)}
+										</Badge>
+										{#if run.completed_at}
+											<div class="text-xs text-gray-500 dark:text-gray-500 mt-0.5">
+												{formatDate(run.completed_at)}
+											</div>
+										{/if}
+									</TableBodyCell>
+									<TableBodyCell class="px-4 py-1.5 text-center">
+										{#if run.point_count != null || run.cluster_count != null}
+											<div class="text-xs">
+												{#if run.point_count != null}
+													<span class="text-gray-700 dark:text-gray-300"
+														>{run.point_count.toLocaleString()} pts</span
+													>
+												{/if}
+												{#if run.cluster_count != null}
+													<span class="text-gray-500 dark:text-gray-500">
+														· {run.cluster_count} cl</span
+													>
+												{/if}
+											</div>
+										{:else}
+											<span class="text-gray-400 text-xs">—</span>
+										{/if}
+									</TableBodyCell>
+									<TableBodyCell class="px-4 py-1.5">
+										{#if run.error_message}
+											<span
+												class="text-xs text-red-600 dark:text-red-400 truncate block max-w-50"
+												title={run.error_message}
+											>
+												{run.error_message}
+											</span>
+										{:else if run.stats_json?.processing_duration_ms && typeof run.stats_json.processing_duration_ms === 'number'}
+											<span class="text-xs text-gray-500 dark:text-gray-500">
+												{(run.stats_json.processing_duration_ms / 1000).toFixed(1)}s
+											</span>
+										{/if}
+									</TableBodyCell>
+									<TableBodyCell class="px-4 py-1.5 text-center">
+										{#if run.status === 'completed' && run.html_s3_key}
+											<button
+												onclick={async () => {
+													try {
+														const resp = await fetch(
+															`/api/visualization-transforms/${viz.visualization_transform_id}/visualizations/${run.visualization_id}/download`
+														);
+														if (!resp.ok) throw new Error(resp.statusText);
+														const blob = await resp.blob();
+														const url = window.URL.createObjectURL(blob);
+														const a = document.createElement('a');
+														a.href = url;
+														a.download = `visualization-${viz.visualization_transform_id}-${run.visualization_id}.html`;
+														document.body.appendChild(a);
+														a.click();
+														window.URL.revokeObjectURL(url);
+														document.body.removeChild(a);
+													} catch (e) {
+														toastStore.error(formatError(e, 'Download failed'));
+													}
+												}}
+												class="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+											>
+												Download
+											</button>
+										{/if}
+									</TableBodyCell>
+								</tr>
+							{/each}
+						{/if}
 					{/each}
 				</TableBody>
 			</Table>
@@ -569,3 +1017,23 @@
 	onConfirm={confirmDeleteTransform}
 	onCancel={() => (transformPendingDelete = null)}
 />
+
+<ConfirmDialog
+	open={transformsPendingBulkDelete.length > 0}
+	title="Delete Visualization Transforms"
+	message={`Are you sure you want to delete ${transformsPendingBulkDelete.length} visualization transform${transformsPendingBulkDelete.length !== 1 ? 's' : ''}? This will also delete all associated visualizations. This action cannot be undone.`}
+	confirmLabel="Delete All"
+	variant="danger"
+	onConfirm={confirmBulkDelete}
+	onCancel={() => (transformsPendingBulkDelete = [])}
+/>
+
+<Modal
+	bind:open={configModalOpen}
+	size="lg"
+	title="{configModalTitle} — Config"
+	class="dark:bg-gray-800"
+>
+	<pre
+		class="bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 text-sm rounded-lg p-4 overflow-auto max-h-[70vh] whitespace-pre-wrap">{configModalJson}</pre>
+</Modal>

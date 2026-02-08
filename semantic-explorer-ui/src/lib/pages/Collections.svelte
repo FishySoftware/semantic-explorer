@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Table, TableBody, TableBodyCell, TableHead, TableHeadCell } from 'flowbite-svelte';
-	import { SvelteURLSearchParams } from 'svelte/reactivity';
+	import { SvelteSet, SvelteURLSearchParams } from 'svelte/reactivity';
 	import ActionMenu from '../components/ActionMenu.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import CreateCollectionTransformModal from '../components/CreateCollectionTransformModal.svelte';
@@ -43,6 +43,11 @@
 
 	let collectionPendingDelete = $state<Collection | null>(null);
 
+	// Selection state for bulk operations
+	let selected = new SvelteSet<number>();
+	let selectAll = $state(false);
+	let collectionsPendingBulkDelete = $state<Collection[]>([]);
+
 	let transformModalOpen = $state(false);
 	let selectedCollectionForTransform = $state<number | null>(null);
 
@@ -55,9 +60,9 @@
 		}
 	});
 
-	async function fetchCollections() {
+	async function fetchCollections(showLoading = true) {
 		try {
-			loading = true;
+			if (showLoading) loading = true;
 			error = null;
 			const params = new SvelteURLSearchParams();
 			if (searchQuery.trim()) {
@@ -177,6 +182,78 @@
 			}
 		};
 	});
+
+	// Auto-refresh every 5 seconds
+	let refreshInterval: ReturnType<typeof setInterval> | null = null;
+	$effect(() => {
+		refreshInterval = setInterval(() => {
+			fetchCollections(false);
+		}, 5000);
+		return () => {
+			if (refreshInterval) {
+				clearInterval(refreshInterval);
+			}
+		};
+	});
+
+	function toggleSelectAll() {
+		selectAll = !selectAll;
+		if (selectAll) {
+			selected.clear();
+			for (const c of filteredCollections) {
+				selected.add(c.collection_id);
+			}
+		} else {
+			selected.clear();
+		}
+	}
+
+	function toggleSelect(id: number) {
+		if (selected.has(id)) {
+			selected.delete(id);
+			selectAll = false;
+		} else {
+			selected.add(id);
+		}
+	}
+
+	function bulkDelete() {
+		const toDelete: Collection[] = [];
+		for (const id of selected) {
+			const collection = collections.find((c) => c.collection_id === id);
+			if (collection) {
+				toDelete.push(collection);
+			}
+		}
+		if (toDelete.length > 0) {
+			collectionsPendingBulkDelete = toDelete;
+		}
+	}
+
+	async function confirmBulkDelete() {
+		const toDelete = collectionsPendingBulkDelete;
+		collectionsPendingBulkDelete = [];
+
+		for (const collection of toDelete) {
+			try {
+				const response = await fetch(`/api/collections/${collection.collection_id}`, {
+					method: 'DELETE',
+				});
+
+				if (!response.ok) {
+					throw new Error(`Failed to delete: ${response.statusText}`);
+				}
+
+				collections = collections.filter((c) => c.collection_id !== collection.collection_id);
+			} catch (e) {
+				toastStore.error(formatError(e, `Failed to delete "${collection.title}"`));
+			}
+		}
+
+		selected.clear();
+		selectAll = false;
+		toastStore.success(`Deleted ${toDelete.length} collection${toDelete.length !== 1 ? 's' : ''}`);
+	}
 
 	function goToPreviousPage() {
 		currentOffset = Math.max(0, currentOffset - pageSize);
@@ -309,7 +386,7 @@
 		>
 			<p class="text-red-700 dark:text-red-400">{error}</p>
 			<button
-				onclick={fetchCollections}
+				onclick={() => fetchCollections()}
 				class="mt-2 text-sm text-red-600 dark:text-red-400 hover:underline"
 			>
 				Try again
@@ -336,18 +413,61 @@
 			</button>
 		</div>
 	{:else}
+		{#if selected.size > 0}
+			<div
+				class="mb-4 flex items-center gap-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4"
+			>
+				<span class="text-sm text-blue-700 dark:text-blue-300 flex-1">
+					{selected.size} collection{selected.size !== 1 ? 's' : ''} selected
+				</span>
+				<button
+					onclick={() => bulkDelete()}
+					class="text-sm px-3 py-1 rounded bg-red-600 hover:bg-red-700 text-white transition-colors"
+				>
+					Delete
+				</button>
+				<button
+					onclick={() => {
+						selected.clear();
+						selectAll = false;
+					}}
+					class="text-sm px-3 py-1 rounded bg-gray-300 hover:bg-gray-400 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-900 dark:text-white transition-colors"
+				>
+					Clear
+				</button>
+			</div>
+		{/if}
 		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
 			<Table hoverable striped>
 				<TableHead>
+					<TableHeadCell class="px-4 py-3 w-12">
+						<input
+							type="checkbox"
+							checked={selectAll}
+							onchange={() => toggleSelectAll()}
+							class="cursor-pointer"
+						/>
+					</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Title</TableHeadCell>
-					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Files</TableHeadCell>
-					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Owner</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Description</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Tags</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Items</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center"
+						>Transforms</TableHeadCell
+					>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Actions</TableHeadCell>
 				</TableHead>
 				<TableBody>
 					{#each filteredCollections as collection (collection.collection_id)}
 						<tr class="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50">
+							<TableBodyCell class="px-4 py-3 w-12">
+								<input
+									type="checkbox"
+									checked={selected.has(collection.collection_id)}
+									onchange={() => toggleSelect(collection.collection_id)}
+									class="cursor-pointer"
+								/>
+							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3">
 								<button
 									onclick={() => onViewCollection(collection.collection_id)}
@@ -356,6 +476,36 @@
 									{collection.title}
 								</button>
 							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3">
+								{#if collection.details}
+									<span class="text-gray-600 dark:text-gray-400 text-sm line-clamp-2"
+										>{collection.details}</span
+									>
+								{:else}
+									<span class="text-gray-400 dark:text-gray-500 text-sm italic">No description</span
+									>
+								{/if}
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3">
+								<div class="flex flex-wrap gap-1">
+									{#if collection.tags && collection.tags.length > 0}
+										{#each collection.tags.slice(0, 3) as tag (tag)}
+											<span
+												class="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs font-medium"
+											>
+												#{tag}
+											</span>
+										{/each}
+										{#if collection.tags.length > 3}
+											<span class="text-xs text-gray-500 dark:text-gray-400 px-1 py-0.5">
+												+{collection.tags.length - 3}
+											</span>
+										{/if}
+									{:else}
+										<span class="text-gray-400 dark:text-gray-500 text-xs italic">—</span>
+									{/if}
+								</div>
+							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3 text-center">
 								{#if collection.file_count !== undefined && collection.file_count !== null}
 									<span
@@ -363,30 +513,28 @@
 									>
 										{collection.file_count}
 									</span>
+									{#if collection.failed_file_count && collection.failed_file_count > 0}
+										<span
+											class="inline-block px-2 py-1 ml-1 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded text-sm font-medium"
+											title="Failed items"
+										>
+											{collection.failed_file_count} failed
+										</span>
+									{/if}
 								{:else}
 									<span class="text-gray-500 dark:text-gray-400">—</span>
 								{/if}
 							</TableBodyCell>
-							<TableBodyCell class="px-4 py-3">
-								<span class="text-gray-700 dark:text-gray-300">{collection.owner}</span>
-							</TableBodyCell>
-							<TableBodyCell class="px-4 py-3">
-								<div class="flex flex-wrap gap-1">
-									{#if collection.tags && collection.tags.length > 0}
-										{#each collection.tags.slice(0, 2) as tag (tag)}
-											<span
-												class="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs font-medium"
-											>
-												#{tag}
-											</span>
-										{/each}
-										{#if collection.tags.length > 2}
-											<span class="text-xs text-gray-500 dark:text-gray-400 px-2 py-1">
-												+{collection.tags.length - 2} more
-											</span>
-										{/if}
-									{/if}
-								</div>
+							<TableBodyCell class="px-4 py-3 text-center">
+								{#if collection.transform_count !== undefined && collection.transform_count !== null && collection.transform_count > 0}
+									<span
+										class="inline-block px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded text-sm font-medium"
+									>
+										{collection.transform_count}
+									</span>
+								{:else}
+									<span class="text-gray-400 dark:text-gray-500 text-xs">None</span>
+								{/if}
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3 text-center">
 								<ActionMenu
@@ -453,6 +601,16 @@
 	variant="danger"
 	onConfirm={confirmDeleteCollection}
 	onCancel={() => (collectionPendingDelete = null)}
+/>
+
+<ConfirmDialog
+	open={collectionsPendingBulkDelete.length > 0}
+	title="Delete Collections"
+	message={`Are you sure you want to delete ${collectionsPendingBulkDelete.length} collection${collectionsPendingBulkDelete.length !== 1 ? 's' : ''}? This action cannot be undone.`}
+	confirmLabel="Delete All"
+	variant="danger"
+	onConfirm={confirmBulkDelete}
+	onCancel={() => (collectionsPendingBulkDelete = [])}
 />
 
 <CreateCollectionTransformModal

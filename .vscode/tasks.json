@@ -49,7 +49,7 @@
         {
             "label": "Run Embedding Inference API",
             "type": "shell",
-            "command": "set -a && source crates/embedding-inference-api/.env && set +a && ${workspaceFolder}/cargo_cuda.sh run -p embedding-inference-api --release",
+            "command": "set -a && source crates/embedding-inference-api/.env && set +a && ${workspaceFolder}/cargo_cuda.sh run -p embedding-inference-api",
             "options": {
                 "cwd": "${workspaceFolder}"
             },
@@ -64,7 +64,7 @@
         {
             "label": "Run LLM Inference API",
             "type": "shell",
-            "command": "set -a && source .env && set +a && CUDA_COMPUTE_CAP=${CUDA_COMPUTE_CAP:-89} cargo run --release",
+            "command": "set -a && source .env && set +a && CUDA_COMPUTE_CAP=${CUDA_COMPUTE_CAP:-89} cargo run",
             "options": {
                 "cwd": "${workspaceFolder}/crates/llm-inference-api"
             },

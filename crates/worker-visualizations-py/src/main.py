@@ -162,6 +162,7 @@ s3_storage: Optional[S3Storage] = None
 llm_provider: Optional[LLMProvider] = None
 shutdown_event: asyncio.Event = asyncio.Event()
 active_jobs = 0
+subscription_healthy = False  # Tracks whether the NATS subscription is functional
 
 
 async def health_check_handler(_request):
@@ -170,8 +171,13 @@ async def health_check_handler(_request):
 
 
 async def readiness_check_handler(_request):
-    """Handle readiness probe request."""
+    """Handle readiness probe request.
 
+    Returns 503 when the NATS subscription is unhealthy (e.g., consumer lost),
+    causing K8s to remove the pod from endpoints until recovery.
+    """
+    if not subscription_healthy:
+        return web.Response(text="Not Ready: NATS subscription unhealthy", status=503)
     return web.Response(text="Ready", status=200)
 
 
@@ -468,8 +474,75 @@ async def message_handler(msg: Msg, nc: NATSConnection) -> None:
             logger.warning("Nacked message due to unexpected error")
 
 
+async def _create_pull_subscription(js):
+    """Create a pull subscription to the visualization transforms stream.
+
+    Uses retry logic to handle race conditions where the stream doesn't exist yet
+    (API creates streams on startup, but workers may start first).
+    Tries to bind to an existing consumer first, then falls back to creating one.
+    """
+    for attempt in range(1, NATS_STREAM_RETRY_ATTEMPTS + 1):
+        try:
+            sub_start = time.time()
+            logger.debug(
+                f"Creating pull subscriber for {NATS_SUBJECT} (attempt {attempt}/{NATS_STREAM_RETRY_ATTEMPTS})"
+            )
+
+            # First, try to bind to an existing consumer (created by API or another worker)
+            # This avoids race conditions when multiple workers start simultaneously
+            try:
+                psub = await js.pull_subscribe_bind(
+                    consumer=NATS_DURABLE_CONSUMER,
+                    stream="VISUALIZATION_TRANSFORMS",
+                )
+                sub_elapsed = time.time() - sub_start
+                logger.info(
+                    f"Bound to existing consumer {NATS_DURABLE_CONSUMER} on stream VISUALIZATION_TRANSFORMS "
+                    f"(worker_id: {WORKER_ID}) in {sub_elapsed:.3f}s"
+                )
+                return psub
+            except Exception as bind_error:
+                logger.debug(
+                    f"Could not bind to existing consumer: {bind_error}, will try to create it"
+                )
+
+                # Consumer doesn't exist yet - create it with our config
+                # Only one worker should succeed in creating; others will bind on retry
+                psub = await js.pull_subscribe(
+                    subject=NATS_SUBJECT,
+                    durable=NATS_DURABLE_CONSUMER,
+                    config=ConsumerConfig(
+                        ack_wait=1800,  # 30 minutes
+                        max_deliver=3,
+                        max_ack_pending=10,
+                    ),
+                )
+                sub_elapsed = time.time() - sub_start
+                logger.info(
+                    f"Created and subscribed to consumer {NATS_DURABLE_CONSUMER} on {NATS_SUBJECT} "
+                    f"(worker_id: {WORKER_ID}) in {sub_elapsed:.3f}s"
+                )
+            return psub
+        except Exception as e:
+            if attempt < NATS_STREAM_RETRY_ATTEMPTS:
+                logger.warning(
+                    f"Failed to subscribe to {NATS_SUBJECT} (attempt {attempt}/{NATS_STREAM_RETRY_ATTEMPTS}): {e}. "
+                    f"Retrying in {NATS_STREAM_RETRY_DELAY}s... (stream may not exist yet)"
+                )
+                await asyncio.sleep(NATS_STREAM_RETRY_DELAY)
+            else:
+                logger.error(
+                    f"Failed to subscribe to {NATS_SUBJECT} after {NATS_STREAM_RETRY_ATTEMPTS} attempts: {e}",
+                    exc_info=True,
+                )
+                raise
+
+    raise RuntimeError(f"Failed to create subscription to {NATS_SUBJECT}")
+
+
 async def main():
     """Main worker loop."""
+    global subscription_healthy
     main_start = time.time()
     logger.info(
         f"Starting visualization worker (PID: {os.getpid()}, Worker ID: {WORKER_ID})"
@@ -506,76 +579,21 @@ async def main():
             raise RuntimeError("NATS connection not established")
         js = nc.jetstream()
 
-        # Use pull-based subscription for horizontal scaling
-        # Pull subscriptions allow multiple workers to share a durable consumer
-        # Retry logic handles race conditions where the stream doesn't exist yet
-        # (API creates streams on startup, but workers may start first)
-        psub = None
-        for attempt in range(1, NATS_STREAM_RETRY_ATTEMPTS + 1):
-            try:
-                sub_start = time.time()
-                logger.debug(
-                    f"Creating pull subscriber for {NATS_SUBJECT} (attempt {attempt}/{NATS_STREAM_RETRY_ATTEMPTS})"
-                )
+        # Create pull subscription (with retry for stream availability)
+        psub = await _create_pull_subscription(js)
+        subscription_healthy = True
 
-                # First, try to bind to an existing consumer (created by API or another worker)
-                # This avoids race conditions when multiple workers start simultaneously
-                try:
-                    psub = await js.pull_subscribe_bind(
-                        consumer=NATS_DURABLE_CONSUMER,
-                        stream="VISUALIZATION_TRANSFORMS",
-                    )
-                    sub_elapsed = time.time() - sub_start
-                    logger.info(
-                        f"Bound to existing consumer {NATS_DURABLE_CONSUMER} on stream VISUALIZATION_TRANSFORMS "
-                        f"(worker_id: {WORKER_ID}) in {sub_elapsed:.3f}s"
-                    )
-                    break
-                except Exception as bind_error:
-                    logger.debug(
-                        f"Could not bind to existing consumer: {bind_error}, will try to create it"
-                    )
-
-                    # Consumer doesn't exist yet - create it with our config
-                    # Only one worker should succeed in creating; others will bind on retry
-                    psub = await js.pull_subscribe(
-                        subject=NATS_SUBJECT,
-                        durable=NATS_DURABLE_CONSUMER,
-                        config=ConsumerConfig(
-                            ack_wait=1800,  # 30 minutes
-                            max_deliver=3,
-                            max_ack_pending=10,
-                        ),
-                    )
-                    sub_elapsed = time.time() - sub_start
-                    logger.info(
-                        f"Created and subscribed to consumer {NATS_DURABLE_CONSUMER} on {NATS_SUBJECT} "
-                        f"(worker_id: {WORKER_ID}) in {sub_elapsed:.3f}s"
-                    )
-                break  # Success, exit retry loop
-            except Exception as e:
-                if attempt < NATS_STREAM_RETRY_ATTEMPTS:
-                    logger.warning(
-                        f"Failed to subscribe to {NATS_SUBJECT} (attempt {attempt}/{NATS_STREAM_RETRY_ATTEMPTS}): {e}. "
-                        f"Retrying in {NATS_STREAM_RETRY_DELAY}s... (stream may not exist yet)"
-                    )
-                    await asyncio.sleep(NATS_STREAM_RETRY_DELAY)
-                else:
-                    logger.error(
-                        f"Failed to subscribe to {NATS_SUBJECT} after {NATS_STREAM_RETRY_ATTEMPTS} attempts: {e}",
-                        exc_info=True,
-                    )
-                    raise
-
-        if psub is None:
-            raise RuntimeError(f"Failed to create subscription to {NATS_SUBJECT}")
-
-        # Message loop with pull-based fetching
+        # Message loop with pull-based fetching and subscription recovery
         logger.info("Worker started, waiting for jobs...")
         batch_size = int(os.getenv("NATS_BATCH_SIZE", "1"))
         fetch_timeout = float(os.getenv("NATS_FETCH_TIMEOUT", "5.0"))
         consecutive_errors = 0
         max_backoff = 30  # Maximum backoff in seconds
+        # After this many consecutive errors, re-create the subscription
+        # to recover from lost consumers or stale subscriptions
+        max_consecutive_errors_before_resubscribe = int(
+            os.getenv("NATS_RESUBSCRIBE_THRESHOLD", "10")
+        )
 
         while not shutdown_event.is_set():
             try:
@@ -583,6 +601,9 @@ async def main():
                 # This allows multiple workers to compete for messages
                 messages = await psub.fetch(batch=batch_size, timeout=fetch_timeout)
                 consecutive_errors = 0  # Reset on success
+                if not subscription_healthy:
+                    subscription_healthy = True
+                    logger.info("NATS subscription is healthy again")
 
                 for msg in messages:
                     if shutdown_event.is_set():
@@ -611,6 +632,28 @@ async def main():
 
                 # Handle transient NATS cluster errors with exponential backoff
                 if "serviceunavailable" in error_str or "no responders" in error_str:
+                    # After too many consecutive errors, the consumer may have been
+                    # lost (e.g., due to cluster issues). Re-create the subscription.
+                    if consecutive_errors >= max_consecutive_errors_before_resubscribe:
+                        subscription_healthy = False
+                        logger.warning(
+                            f"Consumer appears unavailable after {consecutive_errors} consecutive errors. "
+                            f"Attempting to re-create subscription..."
+                        )
+                        try:
+                            psub = await _create_pull_subscription(js)
+                            consecutive_errors = 0
+                            subscription_healthy = True
+                            logger.info("Successfully re-created subscription after consumer loss")
+                            continue
+                        except Exception as resub_err:
+                            logger.error(
+                                f"Failed to re-create subscription: {resub_err}. "
+                                f"Will retry in {max_backoff}s..."
+                            )
+                            await asyncio.sleep(max_backoff)
+                            continue
+
                     backoff = min(2**consecutive_errors, max_backoff)
                     if consecutive_errors <= 3:
                         logger.debug(

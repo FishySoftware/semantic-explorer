@@ -49,6 +49,10 @@ pub(crate) struct Collection {
     pub(crate) updated_at: Option<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>>,
     #[sqlx(default)]
     pub(crate) file_count: i64,
+    #[sqlx(default)]
+    pub(crate) failed_file_count: i64,
+    #[sqlx(default)]
+    pub(crate) transform_count: i64,
 }
 
 impl Collection {

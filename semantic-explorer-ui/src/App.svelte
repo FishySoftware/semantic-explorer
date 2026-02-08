@@ -33,6 +33,7 @@
 		import('./lib/pages/VisualizationTransformDetail.svelte');
 	const Visualizations = () => import('./lib/pages/Visualizations.svelte');
 	const VisualizationDetail = () => import('./lib/pages/VisualizationDetail.svelte');
+	const VisualizationCompare = () => import('./lib/pages/VisualizationCompare.svelte');
 
 	let activeUrl = $state('/dashboard');
 	let selectedCollectionId = $state<number | null>(null);
@@ -45,6 +46,7 @@
 	let selectedVisualizationTransformId = $state<number | null>(null);
 	let grabResourceType = $state<'collections' | 'datasets' | 'embedders' | 'llms' | null>(null);
 	let grabResourceId = $state<number | null>(null);
+	let compareIds = $state<string | null>(null);
 
 	function parseRoute(hash: string): { path: string; params: Record<string, string> } {
 		const [hashWithoutQuery, queryString] = hash.split('?');
@@ -76,6 +78,9 @@
 		}
 		if (parts.length === 3 && parts[0] === 'visualizations' && parts[2] === 'details') {
 			return { path: '/visualizations/detail', params: { ...params, id: parts[1] } };
+		}
+		if (parts.length === 2 && parts[0] === 'visualizations' && parts[1] === 'compare') {
+			return { path: '/visualizations/compare', params };
 		}
 		if (parts.length === 3 && parts[0] === 'embedders' && parts[2] === 'details') {
 			return { path: '/embedders/detail', params: { ...params, id: parts[1] } };
@@ -160,6 +165,12 @@
 			selectedVisualizationTransformId = !isNaN(id) ? id : null;
 		} else if (path !== '/visualization-transforms/detail') {
 			selectedVisualizationTransformId = null;
+		}
+
+		if (path === '/visualizations/compare' && params.ids) {
+			compareIds = params.ids;
+		} else if (path !== '/visualizations/compare') {
+			compareIds = null;
 		}
 
 		if (path.includes('/marketplace/') && path.includes('/grab')) {
@@ -443,6 +454,12 @@
 								visualizationTransformId={selectedVisualizationId}
 								onBack={backToVisualizations}
 							/>
+						{/await}
+					{/if}
+				{:else if activeUrl === '/visualizations/compare'}
+					{#if compareIds}
+						{#await VisualizationCompare() then { default: VisualizationCompareComponent }}
+							<VisualizationCompareComponent ids={compareIds} onBack={backToVisualizations} />
 						{/await}
 					{/if}
 				{:else if activeUrl === '/search'}

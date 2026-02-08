@@ -2,10 +2,11 @@ use fastembed::{RerankInitOptions, RerankerModel, TextRerank};
 use futures::stream::StreamExt;
 use once_cell::sync::OnceCell;
 use ort::ep::CUDA;
+use ort::ep::cuda::AttentionBackend;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::Mutex as TokioMutex;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 use crate::config::ModelConfig;
 use crate::errors::InferenceError;
@@ -116,7 +117,6 @@ fn get_models_to_load(config: &ModelConfig) -> Vec<String> {
 fn get_all_supported_reranker_models() -> Vec<String> {
     vec![
         "BAAI/bge-reranker-base".to_string(),
-        "rozgo/bge-reranker-v2-m3".to_string(),
         "BAAI/bge-reranker-v2-m3".to_string(),
         "jinaai/jina-reranker-v1-turbo-en".to_string(),
         "jinaai/jina-reranker-v2-base-multilingual".to_string(),
@@ -126,14 +126,10 @@ fn get_all_supported_reranker_models() -> Vec<String> {
 /// Resolve a model ID string to a fastembed RerankerModel enum
 fn resolve_reranker_model(model_id: &str) -> Result<RerankerModel, InferenceError> {
     let model = match model_id {
-        // BGE Rerankers
         "BAAI/bge-reranker-base" => RerankerModel::BGERerankerBase,
-        "rozgo/bge-reranker-v2-m3" | "BAAI/bge-reranker-v2-m3" => RerankerModel::BGERerankerV2M3,
-
-        // Jina Rerankers
+        "BAAI/bge-reranker-v2-m3" => RerankerModel::BGERerankerV2M3,
         "jinaai/jina-reranker-v1-turbo-en" => RerankerModel::JINARerankerV1TurboEn,
         "jinaai/jina-reranker-v2-base-multilingual" => RerankerModel::JINARerankerV2BaseMultiligual,
-
         _ => {
             return Err(InferenceError::UnsupportedModel(format!(
                 "Unsupported reranker model: {}",
@@ -153,66 +149,28 @@ fn create_text_rerank(
     model: RerankerModel,
     config: &ModelConfig,
 ) -> Result<TextRerank, InferenceError> {
-    let cuda_devices = std::env::var("CUDA_VISIBLE_DEVICES").ok();
-    let use_cuda = cuda_devices.is_some();
-
-    let mut options = if use_cuda {
-        let devices = cuda_devices.as_deref().unwrap_or("0");
-        info!(
-            cuda_visible_devices = %devices,
-            "Attempting to initialize CUDA execution provider for reranking"
-        );
-
-        // Configure CUDA EP with error_on_failure() to detect if CUDA fails
-        let cuda_provider = CUDA::default().build().error_on_failure();
-
-        RerankInitOptions::new(model).with_execution_providers(vec![cuda_provider])
-    } else {
-        warn!(
-            "CUDA_VISIBLE_DEVICES not set - using CPU execution provider for reranking. \
-             Set CUDA_VISIBLE_DEVICES=0 in .env to enable GPU acceleration."
-        );
-        RerankInitOptions::new(model)
-    };
+    let cuda_provider = CUDA::default()
+        .with_prefer_nhwc(true)
+        .with_attention_backend(AttentionBackend::CUDNN_FLASH_ATTENTION)
+        .build()
+        .error_on_failure();
+    let mut options = RerankInitOptions::new(model)
+        .with_execution_providers(vec![cuda_provider])
+        .with_show_download_progress(true);
 
     // Set cache directory if HF_HOME is configured
     if let Some(ref hf_home) = config.hf_home {
         options = options.with_cache_dir(hf_home.clone());
     }
 
-    let start = std::time::Instant::now();
     let text_rerank = TextRerank::try_new(options).map_err(|e| {
-        if use_cuda {
-            error!(
-                error = %e,
-                "Failed to initialize reranker model with CUDA. \
-                 This may indicate a CUDA/cuDNN version mismatch."
-            );
-        } else {
-            error!(error = %e, "Failed to initialize reranker model on CPU");
-        }
+        error!(
+            error = %e,
+            "Failed to initialize reranker model with CUDA. \
+                This may indicate a CUDA/cuDNN version mismatch."
+        );
         InferenceError::ModelLoad(e.to_string())
     })?;
-
-    let init_time = start.elapsed();
-    if use_cuda {
-        if init_time.as_secs_f64() > 3.0 {
-            warn!(
-                init_time_secs = init_time.as_secs_f64(),
-                "Reranker initialization took longer than expected - may indicate CPU fallback"
-            );
-        } else {
-            info!(
-                init_time_secs = init_time.as_secs_f64(),
-                "Reranker initialized with CUDA execution provider"
-            );
-        }
-    } else {
-        info!(
-            init_time_secs = init_time.as_secs_f64(),
-            "Reranker initialized with CPU execution provider"
-        );
-    }
 
     Ok(text_rerank)
 }

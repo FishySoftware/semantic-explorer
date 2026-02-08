@@ -178,7 +178,7 @@ impl ModelConfig {
                 .parse()
                 .context("INFERENCE_MAX_BATCH_SIZE must be a number")?,
             max_concurrent_requests: env::var("INFERENCE_MAX_CONCURRENT_REQUESTS")
-                .unwrap_or_else(|_| "4".to_string())
+                .unwrap_or_else(|_| "10".to_string())
                 .parse()
                 .context("INFERENCE_MAX_CONCURRENT_REQUESTS must be a number")?,
             queue_timeout_ms: env::var("INFERENCE_QUEUE_TIMEOUT_MS")

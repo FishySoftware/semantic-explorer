@@ -201,7 +201,13 @@ pub async fn initialize_jetstream(client: &Client, nats_config: &NatsConfig) -> 
     )
     .await?;
 
-    info!("JetStream streams and DLQ initialized successfully");
+    // Ensure durable consumers exist for all worker types.
+    // This ensures consumers survive worker restarts and cluster disruptions.
+    // Workers will bind to existing consumers rather than creating new ones.
+    let vis_consumer_config = create_visualization_consumer_config();
+    ensure_consumer(&jetstream, "VISUALIZATION_TRANSFORMS", vis_consumer_config).await?;
+
+    info!("JetStream streams, consumers, and DLQ initialized successfully");
     Ok(())
 }
 

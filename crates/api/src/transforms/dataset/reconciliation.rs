@@ -320,6 +320,8 @@ async fn recover_failed_batches(ctx: &ReconciliationContext) -> Result<usize> {
             "failed",
             50, // limit
             0,
+            "processed_at",
+            "desc",
         )
         .await?;
 

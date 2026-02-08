@@ -725,6 +725,8 @@ pub async fn get_dataset_transform_detailed_stats(
         ("limit" = Option<i64>, Query, description = "Number of batches per page", example = 20),
         ("offset" = Option<i64>, Query, description = "Batch offset for pagination", example = 0),
         ("status" = Option<String>, Query, description = "Filter by batch status"),
+        ("sort_by" = String, Query, description = "Field to sort by: batch_key, status, chunk_count, processing_duration_ms, processed_at, created_at", example = "processed_at"),
+        ("sort_direction" = String, Query, description = "Sort direction: asc or desc", example = "desc"),
     ),
     responses(
         (status = 200, description = "Paginated list of processing batches"),
@@ -756,6 +758,8 @@ pub async fn get_dataset_transform_batches(
                     status,
                     limit,
                     offset,
+                    &query.sort_by,
+                    &query.sort_direction,
                 )
                 .await
             } else {
@@ -764,6 +768,8 @@ pub async fn get_dataset_transform_batches(
                     dataset_transform_id,
                     limit,
                     offset,
+                    &query.sort_by,
+                    &query.sort_direction,
                 )
                 .await
             };
@@ -797,6 +803,18 @@ pub struct BatchQuery {
     #[serde(default)]
     pub offset: Option<i64>,
     pub status: Option<String>,
+    #[serde(default = "default_batch_sort_by")]
+    pub sort_by: String,
+    #[serde(default = "default_batch_sort_direction")]
+    pub sort_direction: String,
+}
+
+fn default_batch_sort_by() -> String {
+    "processed_at".to_string()
+}
+
+fn default_batch_sort_direction() -> String {
+    "desc".to_string()
 }
 
 #[utoipa::path(

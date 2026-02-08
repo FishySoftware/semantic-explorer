@@ -50,7 +50,7 @@ curl -X POST http://localhost:8090/api/embed \
   -H "Content-Type: application/json" \
   -d '{
     "input": ["hello world", "semantic search"],
-    "model": "sentence-transformers/all-MiniLM-L6-v2"
+    "model": "Qdrant/all-MiniLM-L6-v2-onnx"
   }'
 ```
 
@@ -112,25 +112,58 @@ curl -X POST http://localhost:8090/api/rerank \
 
 ## Supported Models
 
-Models from [FastEmbed](https://github.com/Anush008/fastembed-rs) are supported. Examples:
+Models from [FastEmbed](https://github.com/Anush008/fastembed-rs) are supported.
+
+### Model Filtering
+
+The API automatically filters out certain model variants for GPU compatibility:
+
+- **Quantized models** (models with `Q` suffix or `model_quantized.onnx` files)
+- **Optimized models** (models with `model_optimized.onnx` files)
+- **Chinese-specific models** (models containing `-zh-` in name)
+- **Embedding Gemma** (`onnx-community/embeddinggemma-300m-ONNX`)
+
+Only models with `onnx/model.onnx` file paths are included, ensuring GPU-friendly inference.
 
 ### Embedding Models
 
-| Model | Dimensions | Notes |
-|-------|------------|-------|
-| `sentence-transformers/all-MiniLM-L6-v2` | 384 | General purpose |
-| `BAAI/bge-small-en-v1.5` | 384 | Fast, lightweight |
-| `BAAI/bge-base-en-v1.5` | 768 | Balanced |
-| `BAAI/bge-large-en-v1.5` | 1024 | Higher quality |
-| `BAAI/bge-m3` | 1024 | Multilingual (100+ languages) |
+| Model | Dimensions | Context Length | Modals | Description |
+|-------|------------|---------------|-------------|-------------|
+| `Qdrant/all-MiniLM-L6-v2-onnx` | 384 | 512 | Text | Sentence Transformer model, MiniLM-L6-v2 |
+| `Xenova/all-MiniLM-L12-v2` | 384 | 512 | Text | Sentence Transformer model, MiniLM-L12-v2 |
+| `Xenova/all-mpnet-base-v2` | 768 | 512 | Text | Sentence Transformer model, mpnet-base-v2 |
+| `Xenova/bge-base-en-v1.5` | 768 | 512 | Text | v1.5 release of base English model |
+| `Xenova/bge-large-en-v1.5` | 1024 | 512 | Text | v1.5 release of large English model |
+| `Xenova/bge-small-en-v1.5` | 384 | 512 | Text | v1.5 release of fast and default English model |
+| `nomic-ai/nomic-embed-text-v1` | 768 | 8192 | Text | 8192 context length text encoder |
+| `nomic-ai/nomic-embed-text-v1.5` | 768 | 8192 | Text | v1.5 release of 8192 context length english model |
+| `Xenova/paraphrase-multilingual-MiniLM-L12-v2` | 384 | 512 | Text | Multi-lingual model |
+| `Xenova/paraphrase-multilingual-mpnet-base-v2` | 768 | 512 | Text | Sentence-transformers model for tasks like clustering or semantic search |
+| `BAAI/bge-m3` | 1024 | 8192 | Text | Multilingual M3 model with 8192 context length, supports 100+ languages |
+| `lightonai/modernbert-embed-large` | 1024 | 8192 | Text | Large model of ModernBert Text Embeddings |
+| `intfloat/multilingual-e5-small` | 384 | 512 | Text | Small model of multilingual E5 Text Embeddings (100 languages) |
+| `intfloat/multilingual-e5-base` | 768 | 512 | Text | Base model of multilingual E5 Text Embeddings (100 languages) |
+| `Qdrant/multilingual-e5-large-onnx` | 1024 | 512 | Text | Large model of multilingual E5 Text Embeddings (100 languages) |
+| `mixedbread-ai/mxbai-embed-large-v1` | 1024 | 512 | Text | Large English embedding model from MixedBreed.ai |
+| `Alibaba-NLP/gte-base-en-v1.5` | 768 | 8192 | Text | Large multilingual embedding model from Alibaba |
+| `Alibaba-NLP/gte-large-en-v1.5` | 1024 | 8192 | Text | Large multilingual embedding model from Alibaba |
+| `Qdrant/clip-ViT-B-32-text` | 512 | 77 | Text, Image | CLIP text encoder based on ViT-B/32 (pairs with clip-ViT-B-32-vision for image-to-text search) |
+| `jinaai/jina-embeddings-v2-base-code` | 768 | 8192 | Text | Jina embeddings v2 base code |
+| `jinaai/jina-embeddings-v2-base-en` | 768 | 8192 | Text | Jina embeddings v2 base English |
+| `snowflake/snowflake-arctic-embed-xs` | 384 | 2048 | Text | Snowflake Arctic embed model, xs |
+| `snowflake/snowflake-arctic-embed-s` | 384 | 2048 | Text | Snowflake Arctic embed model, small |
+| `Snowflake/snowflake-arctic-embed-m` | 768 | 2048 | Text | Snowflake Arctic embed model, medium |
+| `snowflake/snowflake-arctic-embed-m-long` | 768 | 2048 | Text | Snowflake Arctic embed model, medium with 2048 context |
+| `snowflake/snowflake-arctic-embed-l` | 1024 | 2048 | Text | Snowflake Arctic embed model, large |
 
 ### Reranking Models
 
-| Model | Notes |
-|-------|-------|
-| `jinaai/jina-reranker-v2-base-multilingual` | Multilingual |
-| `BAAI/bge-reranker-base` | English |
-| `BAAI/bge-reranker-large` | Higher quality |
+| Model | Parameters | Context Length | Languages | Description |
+|-------|------------|---------------|-----------|-------------|
+| `BAAI/bge-reranker-base` | 278M | 512 | English, Chinese | Cross-encoder model optimized for reranking tasks, built on RetroMAE architecture |
+| `rozgo/bge-reranker-v2-m3` | 568M | 8192 | Multilingual (100+) | Lightweight reranker model with strong multilingual capabilities, supports long documents |
+| `jinaai/jina-reranker-v1-turbo-en` | 37.8M | 8192 | English | Fast reranker model with 6-layer architecture, optimized for speed and accuracy |
+| `jinaai/jina-reranker-v2-base-multilingual` | 278M | 1024 | Multilingual (100+) | Listwise reranker for agentic RAG with function-calling and code search capabilities |
 
 ---
 
@@ -141,6 +174,7 @@ CUDA support via ONNX Runtime:
 - Automatic GPU detection
 - TF32 enabled for Ampere+ GPUs (faster compute)
 - Mixed precision (FP16) on compatible GPUs
+- CUDNN Flash Attention for improved performance
 
 **Supported CUDA Compute Capabilities**: 7.5, 8.0, 8.6, 8.9, 9.0
 
@@ -214,7 +248,7 @@ docker build -f crates/embedding-inference-api/Dockerfile -t embedding-inference
 ## Running
 
 ```bash
-export INFERENCE_ALLOWED_EMBEDDING_MODELS="sentence-transformers/all-MiniLM-L6-v2"
+export INFERENCE_ALLOWED_EMBEDDING_MODELS="Qdrant/all-MiniLM-L6-v2-onnx"
 cargo run -p embedding-inference-api
 ```
 

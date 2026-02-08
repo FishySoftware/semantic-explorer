@@ -9,15 +9,23 @@ use semantic_explorer_core::owner_info::OwnerInfo;
 
 // SQL queries - RLS policies handle owner filtering automatically
 const GET_COLLECTION_QUERY: &str = r#"
-    SELECT collection_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at, file_count 
-    FROM collections
-    WHERE collection_id = $1
+    SELECT c.collection_id, c.title, c.details, c.owner_id, c.owner_display_name, c.tags, c.is_public, c.created_at, c.updated_at, c.file_count,
+        COALESCE((SELECT COUNT(*) FROM transform_processed_files tpf
+            JOIN collection_transforms ct ON ct.collection_transform_id = tpf.transform_id AND tpf.transform_type = 'collection'
+            WHERE ct.collection_id = c.collection_id AND tpf.process_status = 'failed'), 0)::bigint AS failed_file_count,
+        COALESCE((SELECT COUNT(*) FROM collection_transforms ct WHERE ct.collection_id = c.collection_id), 0)::bigint AS transform_count
+    FROM collections c
+    WHERE c.collection_id = $1
 "#;
 
 const GET_COLLECTIONS_PAGINATED_QUERY: &str = r#"
-    SELECT collection_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at, file_count
-    FROM collections
-    ORDER BY created_at DESC
+    SELECT c.collection_id, c.title, c.details, c.owner_id, c.owner_display_name, c.tags, c.is_public, c.created_at, c.updated_at, c.file_count,
+        COALESCE((SELECT COUNT(*) FROM transform_processed_files tpf
+            JOIN collection_transforms ct ON ct.collection_transform_id = tpf.transform_id AND tpf.transform_type = 'collection'
+            WHERE ct.collection_id = c.collection_id AND tpf.process_status = 'failed'), 0)::bigint AS failed_file_count,
+        COALESCE((SELECT COUNT(*) FROM collection_transforms ct WHERE ct.collection_id = c.collection_id), 0)::bigint AS transform_count
+    FROM collections c
+    ORDER BY c.created_at DESC
     LIMIT $1 OFFSET $2
 "#;
 
@@ -26,10 +34,14 @@ const COUNT_COLLECTIONS_QUERY: &str = r#"
 "#;
 
 const SEARCH_COLLECTIONS_QUERY: &str = r#"
-    SELECT collection_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at, file_count
-    FROM collections
-    WHERE owner_id = $1 AND (title ILIKE $2 OR details ILIKE $2 OR $3 = ANY(tags))
-    ORDER BY created_at DESC
+    SELECT c.collection_id, c.title, c.details, c.owner_id, c.owner_display_name, c.tags, c.is_public, c.created_at, c.updated_at, c.file_count,
+        COALESCE((SELECT COUNT(*) FROM transform_processed_files tpf
+            JOIN collection_transforms ct ON ct.collection_transform_id = tpf.transform_id AND tpf.transform_type = 'collection'
+            WHERE ct.collection_id = c.collection_id AND tpf.process_status = 'failed'), 0)::bigint AS failed_file_count,
+        COALESCE((SELECT COUNT(*) FROM collection_transforms ct WHERE ct.collection_id = c.collection_id), 0)::bigint AS transform_count
+    FROM collections c
+    WHERE c.owner_id = $1 AND (c.title ILIKE $2 OR c.details ILIKE $2 OR $3 = ANY(c.tags))
+    ORDER BY c.created_at DESC
     LIMIT $4 OFFSET $5
 "#;
 
@@ -42,7 +54,7 @@ const COUNT_SEARCH_COLLECTIONS_QUERY: &str = r#"
 const CREATE_COLLECTION_QUERY: &str = r#"
     INSERT INTO collections (title, details, owner_id, owner_display_name, tags, is_public)
     VALUES ($1, $2, $3, $4, $5, $6)
-    RETURNING collection_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at, file_count
+    RETURNING collection_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at, file_count, 0::bigint AS failed_file_count, 0::bigint AS transform_count
 "#;
 
 const DELETE_COLLECTION_QUERY: &str = r#"
@@ -53,23 +65,31 @@ const UPDATE_COLLECTION_QUERY: &str = r#"
     UPDATE collections
     SET title = $1, details = $2, tags = $3, is_public = $4, updated_at = NOW()
     WHERE collection_id = $5
-    RETURNING collection_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at, file_count
+    RETURNING collection_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at, file_count, 0::bigint AS failed_file_count, 0::bigint AS transform_count
 "#;
 
 // Public collections don't require RLS context
 const GET_PUBLIC_COLLECTIONS_QUERY: &str = r#"
-    SELECT collection_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at, file_count
-    FROM collections
-    WHERE is_public = TRUE
-    ORDER BY created_at DESC
+    SELECT c.collection_id, c.title, c.details, c.owner_id, c.owner_display_name, c.tags, c.is_public, c.created_at, c.updated_at, c.file_count,
+        COALESCE((SELECT COUNT(*) FROM transform_processed_files tpf
+            JOIN collection_transforms ct ON ct.collection_transform_id = tpf.transform_id AND tpf.transform_type = 'collection'
+            WHERE ct.collection_id = c.collection_id AND tpf.process_status = 'failed'), 0)::bigint AS failed_file_count,
+        COALESCE((SELECT COUNT(*) FROM collection_transforms ct WHERE ct.collection_id = c.collection_id), 0)::bigint AS transform_count
+    FROM collections c
+    WHERE c.is_public = TRUE
+    ORDER BY c.created_at DESC
     LIMIT 1000
 "#;
 
 const GET_RECENT_PUBLIC_COLLECTIONS_QUERY: &str = r#"
-    SELECT collection_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at, file_count
-    FROM collections
-    WHERE is_public = TRUE
-    ORDER BY updated_at DESC
+    SELECT c.collection_id, c.title, c.details, c.owner_id, c.owner_display_name, c.tags, c.is_public, c.created_at, c.updated_at, c.file_count,
+        COALESCE((SELECT COUNT(*) FROM transform_processed_files tpf
+            JOIN collection_transforms ct ON ct.collection_transform_id = tpf.transform_id AND tpf.transform_type = 'collection'
+            WHERE ct.collection_id = c.collection_id AND tpf.process_status = 'failed'), 0)::bigint AS failed_file_count,
+        COALESCE((SELECT COUNT(*) FROM collection_transforms ct WHERE ct.collection_id = c.collection_id), 0)::bigint AS transform_count
+    FROM collections c
+    WHERE c.is_public = TRUE
+    ORDER BY c.updated_at DESC
     LIMIT $1
 "#;
 
@@ -78,7 +98,7 @@ const GRAB_PUBLIC_COLLECTION_QUERY: &str = r#"
     SELECT title || ' - grabbed', details, $1, $2, tags, FALSE
     FROM collections
     WHERE collection_id = $3 AND is_public = TRUE
-    RETURNING collection_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at, file_count
+    RETURNING collection_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at, file_count, 0::bigint AS failed_file_count, 0::bigint AS transform_count
 "#;
 
 const INCREMENT_COLLECTION_FILE_COUNT_QUERY: &str = r#"

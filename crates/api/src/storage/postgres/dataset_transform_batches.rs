@@ -4,6 +4,30 @@ use sqlx::{FromRow, Pool, Postgres, Row, Transaction};
 use tracing::instrument;
 use utoipa::ToSchema;
 
+/// Validate and return a safe sort field for batch queries.
+/// Falls back to "processed_at" for unrecognized inputs.
+fn validate_batch_sort_field(sort_by: &str) -> &'static str {
+    match sort_by {
+        "batch_key" => "batch_key",
+        "status" => "status",
+        "chunk_count" => "chunk_count",
+        "processing_duration_ms" => "processing_duration_ms",
+        "processed_at" => "processed_at",
+        "created_at" => "created_at",
+        _ => "processed_at",
+    }
+}
+
+/// Validate and return a safe sort direction.
+/// Falls back to "DESC" for unrecognized inputs.
+fn validate_batch_sort_direction(direction: &str) -> &'static str {
+    match direction.to_lowercase().as_str() {
+        "asc" => "ASC",
+        "desc" => "DESC",
+        _ => "DESC",
+    }
+}
+
 // SQL Query Constants
 const CREATE_BATCH_QUERY: &str = r#"
     INSERT INTO dataset_transform_batches (
@@ -28,11 +52,9 @@ const COUNT_BATCHES_BY_TRANSFORM_QUERY: &str = r#"
     SELECT COUNT(*) FROM dataset_transform_batches WHERE dataset_transform_id = $1
 "#;
 
-const LIST_BATCHES_BY_TRANSFORM_QUERY: &str = r#"
+const LIST_BATCHES_BY_TRANSFORM_BASE_QUERY: &str = r#"
     SELECT * FROM dataset_transform_batches
     WHERE dataset_transform_id = $1
-    ORDER BY processed_at DESC
-    LIMIT $2 OFFSET $3
 "#;
 
 const COUNT_BATCHES_BY_TRANSFORM_AND_STATUS_QUERY: &str = r#"
@@ -40,11 +62,9 @@ const COUNT_BATCHES_BY_TRANSFORM_AND_STATUS_QUERY: &str = r#"
     WHERE dataset_transform_id = $1 AND status = $2
 "#;
 
-const LIST_BATCHES_BY_STATUS_QUERY: &str = r#"
+const LIST_BATCHES_BY_STATUS_BASE_QUERY: &str = r#"
     SELECT * FROM dataset_transform_batches
     WHERE dataset_transform_id = $1 AND status = $2
-    ORDER BY processed_at DESC
-    LIMIT $3 OFFSET $4
 "#;
 
 /// Query for detecting stuck batches across ALL transforms (#18)
@@ -126,15 +146,24 @@ pub async fn list_batches_by_transform(
     dataset_transform_id: i32,
     limit: i64,
     offset: i64,
+    sort_by: &str,
+    sort_direction: &str,
 ) -> Result<(Vec<DatasetTransformBatch>, i64), sqlx::Error> {
+    let sort_field = validate_batch_sort_field(sort_by);
+    let sort_dir = validate_batch_sort_direction(sort_direction);
+
     // Get total count
     let count_result = sqlx::query_scalar::<_, i64>(COUNT_BATCHES_BY_TRANSFORM_QUERY)
         .bind(dataset_transform_id)
         .fetch_one(pool)
         .await?;
 
-    // Get paginated results sorted by processed_at DESC
-    let batches = sqlx::query_as::<_, DatasetTransformBatch>(LIST_BATCHES_BY_TRANSFORM_QUERY)
+    // Get paginated results with dynamic sort
+    let query = format!(
+        "{} ORDER BY {} {} LIMIT $2 OFFSET $3",
+        LIST_BATCHES_BY_TRANSFORM_BASE_QUERY, sort_field, sort_dir
+    );
+    let batches = sqlx::query_as::<_, DatasetTransformBatch>(&query)
         .bind(dataset_transform_id)
         .bind(limit)
         .bind(offset)
@@ -151,7 +180,12 @@ pub async fn list_batches_by_status(
     status: &str,
     limit: i64,
     offset: i64,
+    sort_by: &str,
+    sort_direction: &str,
 ) -> Result<(Vec<DatasetTransformBatch>, i64), sqlx::Error> {
+    let sort_field = validate_batch_sort_field(sort_by);
+    let sort_dir = validate_batch_sort_direction(sort_direction);
+
     // Get total count
     let count_result = sqlx::query_scalar::<_, i64>(COUNT_BATCHES_BY_TRANSFORM_AND_STATUS_QUERY)
         .bind(dataset_transform_id)
@@ -159,8 +193,12 @@ pub async fn list_batches_by_status(
         .fetch_one(pool)
         .await?;
 
-    // Get paginated results
-    let batches = sqlx::query_as::<_, DatasetTransformBatch>(LIST_BATCHES_BY_STATUS_QUERY)
+    // Get paginated results with dynamic sort
+    let query = format!(
+        "{} ORDER BY {} {} LIMIT $3 OFFSET $4",
+        LIST_BATCHES_BY_STATUS_BASE_QUERY, sort_field, sort_dir
+    );
+    let batches = sqlx::query_as::<_, DatasetTransformBatch>(&query)
         .bind(dataset_transform_id)
         .bind(status)
         .bind(limit)

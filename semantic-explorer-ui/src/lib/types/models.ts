@@ -200,9 +200,11 @@ export interface Collection {
 	updated_at: string;
 	// Stats
 	total_files?: number;
-	file_count?: number; // Alias or alternative name
+	file_count?: number;
 	total_size_bytes?: number;
 	processed_files?: number;
+	failed_file_count?: number;
+	transform_count?: number;
 }
 
 export interface PaginatedCollectionList {

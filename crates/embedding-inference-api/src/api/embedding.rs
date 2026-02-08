@@ -2,6 +2,7 @@
 
 use actix_web::{HttpResponse, Responder, ResponseError, get, post, web};
 use serde::{Deserialize, Serialize};
+use std::time::Instant;
 use tracing::{info, instrument};
 use utoipa::ToSchema;
 
@@ -82,7 +83,7 @@ pub async fn embed(
 
     tracing::Span::current().record("model", &model_id);
 
-    let start = std::time::Instant::now();
+    let start = Instant::now();
 
     // Generate embeddings asynchronously
     let result = embedding::generate_embeddings(&model_id, &config, vec![text]).await;
@@ -157,7 +158,7 @@ pub async fn embed_batch(
     tracing::Span::current().record("model", &model_id);
 
     let item_count = texts.len() as u64;
-    let start = std::time::Instant::now();
+    let start = Instant::now();
 
     // Generate embeddings asynchronously
     let result = embedding::generate_embeddings(&model_id, &config, texts).await;
