@@ -116,6 +116,14 @@ pub struct Metrics {
     pub scanner_triggers_processed_total: Counter<u64>,
     pub scanner_items_discovered_total: Counter<u64>,
     pub scanner_scan_duration: Histogram<f64>,
+    // Scanner resilience metrics (#10)
+    pub scanner_backpressure_skips_total: Counter<u64>,
+    pub scanner_failed_batch_recoveries_total: Counter<u64>,
+    pub scanner_orphaned_batch_cleanups_total: Counter<u64>,
+    pub scanner_pending_batch_recoveries_total: Counter<u64>,
+    pub scanner_circuit_breaker_trips_total: Counter<u64>,
+    pub scanner_batches_created_total: Counter<u64>,
+    pub scanner_stats_refresh_skips_total: Counter<u64>,
 }
 
 impl Metrics {
@@ -544,6 +552,42 @@ impl Metrics {
             .with_description("Duration of scanner scans in seconds")
             .build();
 
+        // Scanner resilience metrics (#10)
+        let scanner_backpressure_skips_total = meter
+            .u64_counter("scanner_backpressure_skips_total")
+            .with_description("Total number of scans skipped due to backpressure")
+            .build();
+
+        let scanner_failed_batch_recoveries_total = meter
+            .u64_counter("scanner_failed_batch_recoveries_total")
+            .with_description("Total number of failed batches recovered by reconciliation")
+            .build();
+
+        let scanner_orphaned_batch_cleanups_total = meter
+            .u64_counter("scanner_orphaned_batch_cleanups_total")
+            .with_description("Total number of orphaned batches cleaned up")
+            .build();
+
+        let scanner_pending_batch_recoveries_total = meter
+            .u64_counter("scanner_pending_batch_recoveries_total")
+            .with_description("Total number of pending batches recovered")
+            .build();
+
+        let scanner_circuit_breaker_trips_total = meter
+            .u64_counter("scanner_circuit_breaker_trips_total")
+            .with_description("Total number of circuit breaker trips in scanner")
+            .build();
+
+        let scanner_batches_created_total = meter
+            .u64_counter("scanner_batches_created_total")
+            .with_description("Total number of batches created by scanners")
+            .build();
+
+        let scanner_stats_refresh_skips_total = meter
+            .u64_counter("scanner_stats_refresh_skips_total")
+            .with_description("Total number of stats refreshes skipped due to unchanged dataset")
+            .build();
+
         Self {
             database_query_total,
             database_query_duration,
@@ -627,6 +671,13 @@ impl Metrics {
             scanner_triggers_processed_total,
             scanner_items_discovered_total,
             scanner_scan_duration,
+            scanner_backpressure_skips_total,
+            scanner_failed_batch_recoveries_total,
+            scanner_orphaned_batch_cleanups_total,
+            scanner_pending_batch_recoveries_total,
+            scanner_circuit_breaker_trips_total,
+            scanner_batches_created_total,
+            scanner_stats_refresh_skips_total,
         }
     }
 }
@@ -1112,6 +1163,68 @@ pub fn record_scanner_scan_duration(scanner_type: &str, duration_secs: f64) {
     let metrics = get_metrics();
     metrics.scanner_scan_duration.record(
         duration_secs,
+        &[KeyValue::new("scanner_type", scanner_type.to_string())],
+    );
+}
+
+/// Record a scan skipped due to backpressure (#10)
+pub fn record_scanner_backpressure_skip(scanner_type: &str) {
+    let metrics = get_metrics();
+    metrics.scanner_backpressure_skips_total.add(
+        1,
+        &[KeyValue::new("scanner_type", scanner_type.to_string())],
+    );
+}
+
+/// Record a failed batch recovery (#10)
+pub fn record_scanner_failed_batch_recovery(scanner_type: &str, count: u64) {
+    let metrics = get_metrics();
+    metrics.scanner_failed_batch_recoveries_total.add(
+        count,
+        &[KeyValue::new("scanner_type", scanner_type.to_string())],
+    );
+}
+
+/// Record orphaned batch cleanups (#10)
+pub fn record_scanner_orphaned_batch_cleanup(count: u64) {
+    let metrics = get_metrics();
+    metrics
+        .scanner_orphaned_batch_cleanups_total
+        .add(count, &[]);
+}
+
+/// Record pending batch recoveries (#10)
+pub fn record_scanner_pending_batch_recovery(batch_type: &str, count: u64) {
+    let metrics = get_metrics();
+    metrics.scanner_pending_batch_recoveries_total.add(
+        count,
+        &[KeyValue::new("batch_type", batch_type.to_string())],
+    );
+}
+
+/// Record a circuit breaker trip in the scanner (#10)
+pub fn record_scanner_circuit_breaker_trip(scanner_type: &str) {
+    let metrics = get_metrics();
+    metrics.scanner_circuit_breaker_trips_total.add(
+        1,
+        &[KeyValue::new("scanner_type", scanner_type.to_string())],
+    );
+}
+
+/// Record batches created by a scanner (#10)
+pub fn record_scanner_batches_created(scanner_type: &str, count: u64) {
+    let metrics = get_metrics();
+    metrics.scanner_batches_created_total.add(
+        count,
+        &[KeyValue::new("scanner_type", scanner_type.to_string())],
+    );
+}
+
+/// Record a stats refresh skip due to unchanged dataset (#10)
+pub fn record_scanner_stats_refresh_skip(scanner_type: &str) {
+    let metrics = get_metrics();
+    metrics.scanner_stats_refresh_skips_total.add(
+        1,
         &[KeyValue::new("scanner_type", scanner_type.to_string())],
     );
 }

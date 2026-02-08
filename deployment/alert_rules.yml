@@ -344,6 +344,83 @@ groups:
             Failure rate is {{ $value | humanizePercentage }}.
             Check worker logs for failure details.
       # ============================================================================
+      # SCANNER RESILIENCE ALERTS
+      # ============================================================================
+
+      - alert: ScannerBackpressureFrequent
+        expr: |
+          sum by (scanner_type) (rate(scanner_backpressure_skips_total[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: "Scanner {{ $labels.scanner_type }} frequently skipping due to backpressure"
+          description: |
+            Backpressure skip rate: {{ $value | humanize }}/sec
+            Scanner type: {{ $labels.scanner_type }}
+            The pending batch queue is frequently full. Consider increasing
+            DATASET_SCANNER_MAX_PENDING or scaling worker capacity.
+
+      - alert: ScannerCircuitBreakerTripping
+        expr: |
+          increase(scanner_circuit_breaker_trips_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: critical
+          service: api
+        annotations:
+          summary: "Scanner circuit breaker tripped for {{ $labels.scanner_type }}"
+          description: |
+            Circuit breaker has opened for scanner {{ $labels.scanner_type }}.
+            This indicates repeated NATS publish failures.
+            Check NATS connectivity and worker health.
+
+      - alert: ScannerFailedBatchesAccumulating
+        expr: |
+          sum by (scanner_type) (increase(scanner_failed_batch_recoveries_total[1h])) > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: "Many failed batches being recovered for {{ $labels.scanner_type }}"
+          description: |
+            {{ $value }} failed batches recovered in the last hour.
+            Scanner type: {{ $labels.scanner_type }}
+            This indicates persistent batch publishing failures.
+            Check NATS and worker logs for root cause.
+
+      - alert: ScannerOrphanedBatchesHigh
+        expr: |
+          increase(scanner_orphaned_batch_cleanups_total[1h]) > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: "Orphaned transform batches accumulating"
+          description: |
+            {{ $value }} orphaned batches cleaned up in the last hour.
+            Orphaned batches are those referencing deleted or non-existent transforms.
+            This may indicate transform lifecycle issues.
+
+      - alert: ScannerPendingBatchRecoveryFrequent
+        expr: |
+          sum by (batch_type) (increase(scanner_pending_batch_recoveries_total[5m])) > 3
+        for: 5m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: "Frequent pending batch recoveries for {{ $labels.batch_type }}"
+          description: |
+            {{ $value }} pending batches recovered in the last 5 minutes.
+            Batch type: {{ $labels.batch_type }}
+            This indicates NATS publish reliability issues.
+            Check NATS connectivity and message delivery.
+
+      # ============================================================================
       # COST TRACKING ALERTS
       # ============================================================================
       # NOTE: Cost tracking metrics are not currently exposed by the observability module

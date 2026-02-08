@@ -150,7 +150,11 @@ async fn main() -> Result<()> {
     let reconciliation_ctx = transforms::dataset::reconciliation::ReconciliationContext {
         pool: pool.clone(),
         nats_client: nats_client.clone(),
+        s3_client: s3_client.clone(),
+        s3_bucket_name: config.s3.bucket_name.clone(),
         config: transforms::dataset::reconciliation::ReconciliationConfig::default(),
+        encryption: encryption_service.clone(),
+        qdrant_config: qdrant_connection_config.clone(),
     };
     transforms::dataset::reconciliation::start_reconciliation_job(reconciliation_ctx);
 

@@ -3,6 +3,7 @@ use fastembed::{EmbeddingModel, TextEmbedding, TextInitOptions};
 use futures::stream::StreamExt;
 use once_cell::sync::OnceCell;
 use ort::ep::CUDA;
+use ort::ep::cuda::AttentionBackend;
 use semantic_explorer_core::observability::{
     gpu_monitor, init_embedding_session_reset_metric, record_embedding_session_metrics,
     record_embedding_session_reset,
@@ -292,11 +293,16 @@ pub async fn total_available_permits() -> usize {
         .sum()
 }
 
-/// Build the model code to enum mapping from FastEmbed's supported models
+/// Build the model code to enum mapping from FastEmbed's supported models.
+///
+/// Quantized (INT8) model variants are excluded entirely — their ops
+/// (DynamicQuantizeLinear, MatMulInteger) have no CUDA kernels, causing
+/// every MatMul to fall back to CPU with massive CPU↔GPU memory copies.
 fn build_model_code_map() -> ModelCodeToEnum {
     TextEmbedding::list_supported_models()
-        .iter()
-        .map(|m| (m.model_code.clone(), m.model.clone()))
+        .into_iter()
+        .filter(|m| !m.model_file.contains("quantized"))
+        .map(|m| (m.model_code, m.model))
         .collect()
 }
 
@@ -476,52 +482,30 @@ fn get_models_to_load(config: &ModelConfig) -> Vec<String> {
 }
 
 /// Create a TextEmbedding instance with proper configuration
-///
-/// IMPORTANT: ONNX Runtime's CUDA execution provider can silently fall back to CPU
-/// if CUDA initialization fails. This function now logs detailed information about
-/// which execution provider is actually being used.
 fn create_text_embedding(
     model: EmbeddingModel,
     config: &ModelConfig,
 ) -> Result<TextEmbedding, InferenceError> {
-    let cuda_devices = std::env::var("CUDA_VISIBLE_DEVICES").ok();
-    let use_cuda = cuda_devices.is_some();
-
-    let mut options = if use_cuda {
-        let devices = cuda_devices.as_deref().unwrap_or("0");
-        info!(
-            cuda_visible_devices = %devices,
-            "Attempting to initialize CUDA execution provider for embeddings"
-        );
-
-        // Configure CUDA EP with error_on_failure() to detect if CUDA fails
-        // Note: fastembed/ort may still fall back silently in some cases
-        let cuda_provider = CUDA::default().build().error_on_failure(); // This makes registration return an error if CUDA fails
-
-        TextInitOptions::new(model).with_execution_providers(vec![cuda_provider])
-    } else {
-        warn!(
-            "CUDA_VISIBLE_DEVICES not set - using CPU execution provider. \
-             Set CUDA_VISIBLE_DEVICES=0 in .env to enable GPU acceleration."
-        );
-        TextInitOptions::new(model)
-    };
+    let cuda_provider = CUDA::default()
+        .with_prefer_nhwc(true)
+        .with_attention_backend(AttentionBackend::CUDNN_FLASH_ATTENTION)
+        .build()
+        .error_on_failure();
+    let mut options = TextInitOptions::new(model)
+        .with_execution_providers(vec![cuda_provider])
+        .with_show_download_progress(true);
 
     if let Some(ref hf_home) = config.hf_home {
         options = options.with_cache_dir(hf_home.clone());
     }
 
     TextEmbedding::try_new(options).map_err(|e| {
-        if use_cuda {
-            error!(
-                error = %e,
-                "Failed to initialize embedding model with CUDA. \
-                 This may indicate a CUDA/cuDNN version mismatch or driver issue. \
-                 Check: nvidia-smi, nvcc --version, and cuDNN installation."
-            );
-        } else {
-            error!(error = %e, "Failed to initialize embedding model on CPU");
-        }
+        error!(
+            error = %e,
+            "Failed to initialize embedding model with CUDA. \
+            This may indicate a CUDA/cuDNN version mismatch or driver issue. \
+            Check: nvidia-smi, nvcc --version, and cuDNN installation."
+        );
         InferenceError::ModelLoad(e.to_string())
     })
 }
@@ -748,13 +732,13 @@ pub async fn generate_embeddings(
     let model_id_owned = model_id.to_string();
 
     tokio::task::spawn_blocking(move || {
-        let lock_start = std::time::Instant::now();
+        let lock_start = Instant::now();
         let mut text_embedding = slot_to_use.model.lock().map_err(|e| {
             InferenceError::Internal(format!("Failed to acquire model lock: {}", e))
         })?;
         let lock_time = lock_start.elapsed();
 
-        let embed_start = std::time::Instant::now();
+        let embed_start = Instant::now();
         let result = text_embedding.embed(texts_clone, batch_size).map_err(|e| {
             error!(error = %e, "Embedding generation failed");
             InferenceError::Embedding(e.to_string())

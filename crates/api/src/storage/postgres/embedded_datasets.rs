@@ -18,7 +18,7 @@ pub struct EmbeddedDatasetInfo {
 
 const GET_EMBEDDED_DATASET_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at
+           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
     FROM embedded_datasets
     WHERE embedded_dataset_id = $1
 "#;
@@ -36,7 +36,7 @@ const COUNT_EMBEDDED_DATASETS_SEARCH_QUERY: &str = r#"
 
 const GET_EMBEDDED_DATASETS_PAGINATED_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at
+           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
     FROM embedded_datasets
     ORDER BY created_at DESC
     LIMIT $1 OFFSET $2
@@ -44,7 +44,7 @@ const GET_EMBEDDED_DATASETS_PAGINATED_QUERY: &str = r#"
 
 const GET_EMBEDDED_DATASETS_WITH_SEARCH_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at
+           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
     FROM embedded_datasets
     WHERE title ILIKE $1
     ORDER BY created_at DESC
@@ -53,7 +53,7 @@ const GET_EMBEDDED_DATASETS_WITH_SEARCH_QUERY: &str = r#"
 
 const GET_EMBEDDED_DATASETS_FOR_DATASET_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at
+           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
     FROM embedded_datasets
     WHERE source_dataset_id = $1
     ORDER BY created_at DESC
@@ -61,7 +61,7 @@ const GET_EMBEDDED_DATASETS_FOR_DATASET_QUERY: &str = r#"
 
 const GET_EMBEDDED_DATASETS_FOR_TRANSFORM_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at
+           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
     FROM embedded_datasets
     WHERE dataset_transform_id = $1
     ORDER BY created_at DESC
@@ -93,7 +93,7 @@ const CREATE_EMBEDDED_DATASET_QUERY: &str = r#"
     INSERT INTO embedded_datasets (title, dataset_transform_id, source_dataset_id, embedder_id, owner_id, owner_display_name, collection_name, dimensions)
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
     RETURNING embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at
+              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
 "#;
 
 const UPDATE_EMBEDDED_DATASET_COLLECTION_NAME_QUERY: &str = r#"
@@ -102,7 +102,7 @@ const UPDATE_EMBEDDED_DATASET_COLLECTION_NAME_QUERY: &str = r#"
         updated_at = NOW()
     WHERE embedded_dataset_id = $1
     RETURNING embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at
+              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
 "#;
 
 const UPDATE_EMBEDDED_DATASET_TITLE_QUERY: &str = r#"
@@ -111,7 +111,7 @@ const UPDATE_EMBEDDED_DATASET_TITLE_QUERY: &str = r#"
         updated_at = NOW()
     WHERE embedded_dataset_id = $1 AND owner_id = $3
     RETURNING embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at
+              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
 "#;
 
 const DELETE_EMBEDDED_DATASET_QUERY: &str = r#"
@@ -211,6 +211,13 @@ const UPDATE_EMBEDDED_DATASET_LAST_PROCESSED_AT_QUERY: &str = r#"
     WHERE embedded_dataset_id = $1
 "#;
 
+const UPDATE_SOURCE_DATASET_VERSION_QUERY: &str = r#"
+    UPDATE embedded_datasets
+    SET source_dataset_version = $2,
+        updated_at = NOW()
+    WHERE embedded_dataset_id = $1
+"#;
+
 const GET_EMBEDDED_DATASET_WITH_DETAILS_BATCH: &str = r#"
         SELECT
             ed.embedded_dataset_id,
@@ -239,7 +246,7 @@ const CREATE_STANDALONE_EMBEDDED_DATASET_QUERY: &str = r#"
     INSERT INTO embedded_datasets (title, dataset_transform_id, source_dataset_id, embedder_id, owner_id, owner_display_name, collection_name, dimensions)
     VALUES ($1, 0, 0, 0, $2, $3, $4, $5)
     RETURNING embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at
+              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
 "#;
 
 pub async fn get_embedded_dataset(
@@ -569,6 +576,21 @@ pub async fn update_embedded_dataset_last_processed_at_to(
     sqlx::query(UPDATE_EMBEDDED_DATASET_LAST_PROCESSED_AT_QUERY)
         .bind(embedded_dataset_id)
         .bind(timestamp)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Update the source dataset version tracker (#4)
+/// Used to avoid unnecessary stats refresh when the source dataset hasn't changed
+pub async fn update_source_dataset_version(
+    pool: &Pool<Postgres>,
+    embedded_dataset_id: i32,
+    version: DateTime<Utc>,
+) -> Result<()> {
+    sqlx::query(UPDATE_SOURCE_DATASET_VERSION_QUERY)
+        .bind(embedded_dataset_id)
+        .bind(version)
         .execute(pool)
         .await?;
     Ok(())

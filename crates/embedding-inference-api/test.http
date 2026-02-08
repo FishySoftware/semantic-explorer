@@ -40,7 +40,7 @@ POST {{baseUrl}}/api/embed/batch
 Content-Type: application/json
 
 {
-  "model": "sentence-transformers/all-MiniLM-L6-v2",
+  "model": "onnx-community/embeddinggemma-300m-ONNX",
   "texts": [
     "The majestic marlin can swim up to 80 mph, making it one of the fastest fish in the ocean.",
     "Seahorses are unique fish where the male carries and gives birth to the young.",

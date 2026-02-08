@@ -559,6 +559,45 @@ pub(crate) async fn delete_file(
     Ok(())
 }
 
+/// Check if a file exists at a given key in S3 (direct key, no prefix)
+#[tracing::instrument(name = "s3.file_exists", skip(client), fields(storage.system = "s3", bucket = %bucket_name, key = %key))]
+pub(crate) async fn file_exists(client: &Client, bucket_name: &str, key: &str) -> Result<bool> {
+    match client
+        .head_object()
+        .bucket(bucket_name)
+        .key(key)
+        .send()
+        .await
+    {
+        Ok(_) => Ok(true),
+        Err(e) => {
+            // Check if it's a NotFound error
+            if e.to_string().contains("NotFound") || e.to_string().contains("404") {
+                Ok(false)
+            } else {
+                Err(anyhow::anyhow!("Failed to check file existence: {}", e))
+            }
+        }
+    }
+}
+
+/// Delete a file by its full key in S3 (no prefix manipulation)
+#[tracing::instrument(name = "s3.delete_file_by_key", skip(client), fields(storage.system = "s3", bucket = %bucket_name, key = %key))]
+pub(crate) async fn delete_file_by_key(
+    client: &Client,
+    bucket_name: &str,
+    key: &str,
+) -> Result<()> {
+    client
+        .delete_object()
+        .bucket(bucket_name)
+        .key(key)
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to delete file: {}", e))?;
+    Ok(())
+}
+
 /// Count files for a specific collection in the single-bucket architecture
 /// Uses: S3_BUCKET_NAME/collections/{collection_id}/
 #[tracing::instrument(name = "s3.count_collection_files", skip(client, bucket_name), fields(storage.system = "s3", collection_id = %collection_id))]

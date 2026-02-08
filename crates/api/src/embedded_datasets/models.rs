@@ -46,6 +46,10 @@ pub struct EmbeddedDataset {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<String>, format = DateTime)]
     pub last_processed_at: Option<DateTime<Utc>>,
+    /// Tracks source dataset version for efficient stats refresh
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub source_dataset_version: Option<DateTime<Utc>>,
 }
 
 /// Embedded Dataset with enriched information (joins)

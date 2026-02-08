@@ -138,7 +138,7 @@ Models from [FastEmbed](https://github.com/Anush008/fastembed-rs) are supported.
 
 CUDA support via ONNX Runtime:
 
-- Automatic GPU detection (falls back to CPU)
+- Automatic GPU detection
 - TF32 enabled for Ampere+ GPUs (faster compute)
 - Mixed precision (FP16) on compatible GPUs
 
@@ -191,15 +191,6 @@ Watch these log patterns:
 ## Building
 
 ### Local Development
-
-For CPU-only builds:
-```bash
-# Debug build
-cargo build -p embedding-inference-api
-
-# Release build
-cargo build -p embedding-inference-api --release
-```
 
 For CUDA-accelerated builds (requires NVIDIA GPU):
 ```bash

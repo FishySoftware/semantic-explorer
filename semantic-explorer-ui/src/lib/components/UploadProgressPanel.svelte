@@ -70,7 +70,11 @@
 			</div>
 			<div>
 				<h3 class="text-sm font-semibold text-blue-900 dark:text-blue-100">
-					{isUploading ? 'Uploading Files' : failedFiles > 0 ? 'Upload Completed with Errors' : 'Upload Complete'}
+					{isUploading
+						? 'Uploading Files'
+						: failedFiles > 0
+							? 'Upload Completed with Errors'
+							: 'Upload Complete'}
 				</h3>
 				{#if uploadProgress}
 					<p class="text-xs text-blue-700 dark:text-blue-300">
@@ -88,7 +92,12 @@
 				title="Dismiss"
 			>
 				<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width="2"
+						d="M6 18L18 6M6 6l12 12"
+					></path>
 				</svg>
 			</button>
 		{/if}

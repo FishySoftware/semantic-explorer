@@ -3,12 +3,18 @@ use async_nats::Client as NatsClient;
 use aws_sdk_s3::Client as S3Client;
 use sqlx::{Pool, Postgres};
 use std::collections::HashSet;
+use std::sync::Arc;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
+use semantic_explorer_core::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::models::{DatasetTransformJob, EmbedderConfig, QdrantConnectionConfig};
-use semantic_explorer_core::observability::record_scanner_items_discovered;
+use semantic_explorer_core::observability::{
+    record_scanner_backpressure_skip, record_scanner_batches_created,
+    record_scanner_circuit_breaker_trip, record_scanner_items_discovered,
+    record_scanner_stats_refresh_skip,
+};
 use semantic_explorer_core::storage::{DocumentUpload, upload_document};
 
 use crate::auth::AuthenticatedUser;
@@ -24,6 +30,130 @@ use crate::storage::postgres::embedded_datasets;
 use crate::storage::postgres::embedders;
 use crate::storage::s3;
 use crate::transforms::dataset::models::DatasetTransform;
+
+/// Backpressure state for scanner throttling (#3)
+enum BackpressureState {
+    /// Queue is within limits, proceed with scanning
+    Ok(u64),
+    /// Queue is overloaded, skip this scan cycle
+    Overloaded(u64),
+}
+
+/// Check NATS JetStream stream for pending message count to implement backpressure
+async fn check_backpressure(
+    nats: &NatsClient,
+    stream_name: &str,
+    max_pending: u64,
+) -> BackpressureState {
+    let jetstream = async_nats::jetstream::new(nats.clone());
+    match jetstream.get_stream(stream_name).await {
+        Ok(mut stream) => match stream.info().await {
+            Ok(info) => {
+                let pending = info.state.messages;
+                if pending >= max_pending {
+                    BackpressureState::Overloaded(pending)
+                } else {
+                    BackpressureState::Ok(pending)
+                }
+            }
+            Err(e) => {
+                // If we can't check, proceed with scan (fail-open)
+                warn!("Failed to get stream info for backpressure check: {}", e);
+                BackpressureState::Ok(0)
+            }
+        },
+        Err(e) => {
+            // Stream might not exist yet, proceed
+            warn!("Failed to get stream for backpressure check: {}", e);
+            BackpressureState::Ok(0)
+        }
+    }
+}
+
+/// Simple rate limiter for batch publishing (#8)
+/// Uses a fixed delay between operations to prevent overwhelming downstream systems.
+struct RateLimiter {
+    delay: std::time::Duration,
+}
+
+impl RateLimiter {
+    /// Create a rate limiter from environment config.
+    /// `DATASET_SCANNER_BATCH_DELAY_MS` controls the delay between batch publishes (default: 0 = no limit).
+    fn from_env() -> Self {
+        let delay_ms = std::env::var("DATASET_SCANNER_BATCH_DELAY_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0);
+        Self {
+            delay: std::time::Duration::from_millis(delay_ms),
+        }
+    }
+
+    /// Wait for the rate limit interval (no-op if delay is zero)
+    async fn acquire(&self) {
+        if !self.delay.is_zero() {
+            tokio::time::sleep(self.delay).await;
+        }
+    }
+}
+
+/// Create a circuit breaker for scanner batch publishing (#9)
+fn scanner_circuit_breaker() -> Arc<CircuitBreaker> {
+    let config = CircuitBreakerConfig::from_env_with_prefix(
+        "dataset_scanner",
+        "DATASET_SCANNER_CIRCUIT_BREAKER",
+    );
+    CircuitBreaker::new(config)
+}
+
+/// Resource limits for scanner operations
+struct ScannerLimits {
+    /// Maximum number of batches to create per transform scan
+    max_batches_per_scan: usize,
+    /// Maximum number of items to process in a single scan
+    max_items_per_scan: usize,
+}
+
+impl ScannerLimits {
+    fn from_env() -> Self {
+        let max_batches = std::env::var("DATASET_SCANNER_MAX_BATCHES_PER_SCAN")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1000);
+        let max_items = std::env::var("DATASET_SCANNER_MAX_ITEMS_PER_SCAN")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(100_000);
+        Self {
+            max_batches_per_scan: max_batches,
+            max_items_per_scan: max_items,
+        }
+    }
+}
+
+/// Validate a dataset transform configuration before scanning (#14)
+fn validate_transform_config(transform: &DatasetTransform) -> Result<()> {
+    if transform.embedder_ids.is_empty() {
+        anyhow::bail!(
+            "Dataset transform {} has no embedder IDs configured",
+            transform.dataset_transform_id
+        );
+    }
+    if transform.source_dataset_id <= 0 {
+        anyhow::bail!(
+            "Dataset transform {} has invalid source_dataset_id: {}",
+            transform.dataset_transform_id,
+            transform.source_dataset_id
+        );
+    }
+    if transform.owner_id.is_empty() {
+        anyhow::bail!(
+            "Dataset transform {} has empty owner_id",
+            transform.dataset_transform_id
+        );
+    }
+    Ok(())
+}
 
 /// Configuration for batch processing of dataset items
 #[derive(Debug, Clone)]
@@ -48,21 +178,40 @@ pub(crate) async fn scan_active_dataset_transforms(
     info!("Scanning {} active dataset transforms", transforms.len());
 
     for transform in transforms {
-        if let Err(e) = process_dataset_transform_scan(
-            pool,
-            nats,
-            s3,
-            s3_bucket_name,
-            &transform,
-            encryption,
-            qdrant_config,
+        // Timeout handling (#19): prevent individual scans from running too long
+        let scan_timeout_secs = std::env::var("DATASET_SCANNER_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(300); // 5 minutes default
+
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(scan_timeout_secs),
+            process_dataset_transform_scan(
+                pool,
+                nats,
+                s3,
+                s3_bucket_name,
+                &transform,
+                encryption,
+                qdrant_config,
+            ),
         )
         .await
         {
-            error!(
-                "Failed to process dataset transform scan for {}: {}",
-                transform.dataset_transform_id, e
-            );
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                error!(
+                    "Failed to process dataset transform scan for {}: {}",
+                    transform.dataset_transform_id, e
+                );
+            }
+            Err(_) => {
+                error!(
+                    dataset_transform_id = transform.dataset_transform_id,
+                    timeout_secs = scan_timeout_secs,
+                    "Dataset transform scan timed out"
+                );
+            }
         }
     }
     Ok(())
@@ -91,6 +240,16 @@ pub(crate) async fn scan_dataset_transform(
             dataset_transform_id
         );
         return Ok(());
+    }
+
+    // Validate transform configuration (#14)
+    if let Err(e) = validate_transform_config(&transform) {
+        error!(
+            dataset_transform_id = dataset_transform_id,
+            error = %e,
+            "Transform configuration validation failed"
+        );
+        return Err(e);
     }
 
     process_dataset_transform_scan(
@@ -125,19 +284,31 @@ async fn process_dataset_transform_scan(
         transform.embedder_ids.len()
     );
 
-    // Refresh total_chunks_to_process in case source dataset has changed
-    if let Err(e) = crate::storage::postgres::dataset_transform_stats::refresh_total_chunks(
-        pool,
-        &transform.owner_id,
-        transform.dataset_transform_id,
-    )
-    .await
-    {
-        error!(
-            "Failed to refresh total chunks for dataset transform {}: {}",
-            transform.dataset_transform_id, e
-        );
-        // Continue processing even if refresh fails - stats will be stale but transforms still work
+    // Backpressure check: Skip scan if too many pending jobs (#3)
+    let max_pending = std::env::var("DATASET_SCANNER_MAX_PENDING")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(500);
+
+    match check_backpressure(nats, "DATASET_TRANSFORMS", max_pending).await {
+        BackpressureState::Overloaded(pending) => {
+            warn!(
+                pending_messages = pending,
+                max_pending = max_pending,
+                dataset_transform_id = transform.dataset_transform_id,
+                "Workers at capacity, skipping scan (backpressure)"
+            );
+            record_scanner_backpressure_skip("dataset");
+            return Ok(());
+        }
+        BackpressureState::Ok(pending) => {
+            if pending > 0 {
+                info!(
+                    pending_messages = pending,
+                    "Backpressure check passed, proceeding with scan"
+                );
+            }
+        }
     }
 
     // Get all embedded datasets for this transform
@@ -147,6 +318,60 @@ async fn process_dataset_transform_scan(
     )
     .await?;
 
+    // Only refresh total_chunks_to_process if the source dataset has changed (#4)
+    let dataset_version = datasets::get_dataset_version(pool, transform.source_dataset_id).await?;
+
+    let needs_refresh = match (
+        dataset_version,
+        embedded_datasets_list
+            .first()
+            .and_then(|ed| ed.source_dataset_version),
+    ) {
+        (Some(current), Some(cached)) => current != cached,
+        (Some(_), None) => true, // No cached version yet, need initial refresh
+        _ => false,              // Dataset doesn't exist or no embedded datasets
+    };
+
+    if needs_refresh {
+        info!(
+            dataset_transform_id = transform.dataset_transform_id,
+            "Source dataset version changed, refreshing stats"
+        );
+        if let Err(e) = crate::storage::postgres::dataset_transform_stats::refresh_total_chunks(
+            pool,
+            &transform.owner_id,
+            transform.dataset_transform_id,
+        )
+        .await
+        {
+            error!(
+                "Failed to refresh total chunks for dataset transform {}: {}",
+                transform.dataset_transform_id, e
+            );
+            // Continue processing even if refresh fails - stats will be stale but transforms still work
+        }
+
+        // Update cached version on all embedded datasets
+        if let Some(version) = dataset_version {
+            for ed in &embedded_datasets_list {
+                if let Err(e) = embedded_datasets::update_source_dataset_version(
+                    pool,
+                    ed.embedded_dataset_id,
+                    version,
+                )
+                .await
+                {
+                    warn!(
+                        embedded_dataset_id = ed.embedded_dataset_id,
+                        "Failed to update source dataset version: {}", e
+                    );
+                }
+            }
+        }
+    } else {
+        record_scanner_stats_refresh_skip("dataset");
+    }
+
     info!(
         "Found {} embedded datasets for dataset transform {}",
         embedded_datasets_list.len(),
@@ -155,6 +380,10 @@ async fn process_dataset_transform_scan(
 
     let embedded_datasets_count = embedded_datasets_list.len();
     let mut total_jobs = 0;
+
+    // Initialize rate limiter and circuit breaker for batch publishing (#8, #9)
+    let rate_limiter = RateLimiter::from_env();
+    let circuit_breaker = scanner_circuit_breaker();
 
     let embedder_ids: Vec<i32> = embedded_datasets_list
         .iter()
@@ -330,6 +559,7 @@ async fn process_dataset_transform_scan(
                             batch_type: "dataset".to_string(),
                             dataset_transform_id: Some(transform.dataset_transform_id),
                             embedded_dataset_id: Some(embedded_dataset.embedded_dataset_id),
+                            collection_transform_id: None,
                             batch_key: batch_file_key.clone(),
                             s3_bucket: s3_bucket.clone(),
                             job_payload: serde_json::from_slice(&payload).unwrap_or_default(),
@@ -360,6 +590,8 @@ async fn process_dataset_transform_scan(
                 transform,
                 &embedded_dataset,
                 &batch_config,
+                &rate_limiter,
+                &circuit_breaker,
             )
             .await?;
             total_jobs += items_created;
@@ -379,6 +611,7 @@ async fn process_dataset_transform_scan(
 }
 
 /// Create batch files from dataset items and dispatch jobs
+#[allow(clippy::too_many_arguments)]
 async fn create_batches_from_dataset_items(
     pool: &Pool<Postgres>,
     s3: &S3Client,
@@ -386,17 +619,25 @@ async fn create_batches_from_dataset_items(
     transform: &DatasetTransform,
     embedded_dataset: &EmbeddedDataset,
     config: &DatasetBatchConfig,
+    rate_limiter: &RateLimiter,
+    circuit_breaker: &Arc<CircuitBreaker>,
 ) -> Result<usize> {
     // Use timestamp-based tracking to identify new items that need processing
     let last_processed_at = embedded_dataset.last_processed_at;
 
+    // Snapshot the current time BEFORE querying to prevent watermark race conditions.
+    // Any items added after this point will have timestamps >= query_start_time
+    // and will be picked up on the next scan. Items with timestamps between
+    // last_processed_at and query_start_time are guaranteed to be included.
+    let query_start_time = chrono::Utc::now();
+
     info!(
-        "Embedded dataset {} last processed at: {:?}",
-        embedded_dataset.embedded_dataset_id, last_processed_at
+        "Embedded dataset {} last processed at: {:?}, query snapshot at: {:?}",
+        embedded_dataset.embedded_dataset_id, last_processed_at, query_start_time
     );
 
     // Fetch only items that were modified since the last processing
-    let items = datasets::get_dataset_items_modified_since(
+    let mut items = datasets::get_dataset_items_modified_since(
         pool,
         transform.source_dataset_id,
         last_processed_at,
@@ -411,23 +652,38 @@ async fn create_batches_from_dataset_items(
         return Ok(0);
     }
 
-    // Capture the max updated_at timestamp from items we're about to process
-    // This prevents race conditions where items created between query and watermark update are missed
-    let max_item_timestamp = items.iter().filter_map(|item| item.updated_at).max();
+    // Apply resource limits
+    let limits = ScannerLimits::from_env();
+    let was_truncated = items.len() > limits.max_items_per_scan;
+    if was_truncated {
+        warn!(
+            embedded_dataset_id = embedded_dataset.embedded_dataset_id,
+            total_items = items.len(),
+            max_items = limits.max_items_per_scan,
+            "Truncating items to max_items_per_scan limit, remaining will be picked up on next scan"
+        );
+        items.truncate(limits.max_items_per_scan);
+    }
 
     info!(
-        "Embedded dataset {} found {} items with new/modified chunks, max_timestamp: {:?}",
+        "Embedded dataset {} found {} items with new/modified chunks",
         embedded_dataset.embedded_dataset_id,
         items.len(),
-        max_item_timestamp
     );
 
     // Convert dataset items to batch items (one per chunk)
     let mut all_batch_items: Vec<serde_json::Value> = Vec::new();
+    // Track cumulative chunk count per item for watermark calculation
+    // (items are ordered ASC by updated_at, so last entry = newest processed item)
+    let mut item_chunk_boundaries: Vec<(usize, chrono::DateTime<chrono::Utc>)> = Vec::new();
     // Use a namespace UUID for generating deterministic chunk IDs
     // This ensures the same item+chunk always gets the same UUID, enabling idempotent upserts
     let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap(); // URL namespace UUID
     for item in &items {
+        let item_ts = item
+            .updated_at
+            .or(item.created_at)
+            .unwrap_or(query_start_time);
         for (chunk_idx, chunk) in item.chunks.iter().enumerate() {
             // Generate a deterministic UUID based on embedded_dataset_id, item_id, and chunk_index
             // This allows re-processing to update existing vectors rather than create duplicates
@@ -449,6 +705,8 @@ async fn create_batches_from_dataset_items(
             });
             all_batch_items.push(batch_item);
         }
+        let cumulative_chunks = all_batch_items.len();
+        item_chunk_boundaries.push((cumulative_chunks, item_ts));
     }
 
     if all_batch_items.is_empty() {
@@ -468,8 +726,50 @@ async fn create_batches_from_dataset_items(
     // Split into batches and upload to S3, then dispatch jobs
     let mut jobs_created = 0;
     let chunks_per_batch = config.embedding_batch_size * 10; // Create larger batches for efficiency
+    let total_batches = all_batch_items.len().div_ceil(chunks_per_batch);
 
-    for (batch_idx, batch_chunk) in all_batch_items.chunks(chunks_per_batch).enumerate() {
+    // Apply max batch limit
+    let effective_total = total_batches.min(limits.max_batches_per_scan);
+    let was_batches_capped = total_batches > effective_total;
+    if was_batches_capped {
+        warn!(
+            total_batches = total_batches,
+            max_batches = limits.max_batches_per_scan,
+            "Capping batch creation at max_batches_per_scan limit"
+        );
+    }
+
+    for (batch_idx, batch_chunk) in all_batch_items
+        .chunks(chunks_per_batch)
+        .take(effective_total)
+        .enumerate()
+    {
+        // Circuit breaker check (#9): Stop publishing if too many failures
+        if !circuit_breaker.should_allow().await {
+            warn!(
+                embedded_dataset_id = embedded_dataset.embedded_dataset_id,
+                batch = batch_idx + 1,
+                total_batches = total_batches,
+                "Circuit breaker open, stopping batch creation"
+            );
+            record_scanner_circuit_breaker_trip("dataset");
+            break;
+        }
+
+        // Rate limiting (#8): Throttle batch publishing
+        rate_limiter.acquire().await;
+
+        // Progress tracking (#5): Log progress every 10 batches or at start/end
+        if batch_idx == 0 || (batch_idx + 1) % 10 == 0 || batch_idx + 1 == total_batches {
+            info!(
+                embedded_dataset_id = embedded_dataset.embedded_dataset_id,
+                batch = batch_idx + 1,
+                total_batches = total_batches,
+                progress_pct = ((batch_idx + 1) * 100) / total_batches,
+                "Batch creation progress"
+            );
+        }
+
         let batch_filename = format!("batch-{}-{}.json", batch_idx, Uuid::new_v4());
         let batch_key = format!(
             "{}/batches/{}",
@@ -536,6 +836,7 @@ async fn create_batches_from_dataset_items(
         {
             semantic_explorer_core::nats::PublishResult::Published => {
                 jobs_created += 1;
+                circuit_breaker.record_success().await;
                 // Track dispatched batch for accurate completion detection
                 if let Err(e) =
                     crate::storage::postgres::dataset_transform_stats::increment_dispatched_batch(
@@ -549,6 +850,7 @@ async fn create_batches_from_dataset_items(
                 }
             }
             semantic_explorer_core::nats::PublishResult::Failed(e) => {
+                circuit_breaker.record_failure().await;
                 // Store in pending_batches for recovery
                 error!(
                     batch_key = %batch_key,
@@ -562,6 +864,7 @@ async fn create_batches_from_dataset_items(
                         batch_type: "dataset".to_string(),
                         dataset_transform_id: Some(transform.dataset_transform_id),
                         embedded_dataset_id: Some(embedded_dataset.embedded_dataset_id),
+                        collection_transform_id: None,
                         batch_key: batch_key.clone(),
                         s3_bucket: config.s3_bucket.clone(),
                         job_payload: serde_json::from_slice(&payload).unwrap_or_default(),
@@ -580,15 +883,55 @@ async fn create_batches_from_dataset_items(
         jobs_created, embedded_dataset.embedded_dataset_id
     );
 
-    // Update the last_processed_at timestamp to the max item timestamp we processed
-    // This prevents race conditions where items created between query and update are missed
-    if jobs_created > 0
-        && let Some(max_ts) = max_item_timestamp
-    {
+    if jobs_created > 0 {
+        record_scanner_batches_created("dataset", jobs_created as u64);
+    }
+
+    // Advance the watermark based on what was actually processed.
+    // Items are ordered ASC by updated_at, so we advance incrementally.
+    //
+    // - No truncation, no batch cap: safe to advance to query_start_time
+    //   (all items between last_processed_at and query_start_time were batched)
+    // - Items truncated (but all batches dispatched): advance to the max updated_at
+    //   of fetched items. Truncated (newer) items will be picked up next scan.
+    // - Batches capped: advance only to the updated_at of the last item whose chunks
+    //   were fully included in dispatched batches. Remaining items will be picked up next scan.
+    // - Re-processing is always safe due to deterministic chunk UUIDs (Uuid::new_v5)
+    if jobs_created > 0 {
+        let new_watermark = if !was_truncated && !was_batches_capped {
+            // All items fetched and all batches dispatched
+            query_start_time
+        } else if was_batches_capped {
+            // Only advance to cover items fully within dispatched batches
+            let chunks_dispatched = effective_total * chunks_per_batch;
+            item_chunk_boundaries
+                .iter()
+                .rfind(|(cumul, _)| *cumul <= chunks_dispatched)
+                .map(|(_, ts)| *ts)
+                .unwrap_or(query_start_time)
+        } else {
+            // Items truncated, all batches dispatched:
+            // advance to max updated_at of processed items (last in ASC order)
+            item_chunk_boundaries
+                .iter()
+                .last()
+                .map(|(_, ts)| *ts)
+                .unwrap_or(query_start_time)
+        };
+
+        info!(
+            embedded_dataset_id = embedded_dataset.embedded_dataset_id,
+            was_truncated = was_truncated,
+            was_batches_capped = was_batches_capped,
+            ?new_watermark,
+            ?query_start_time,
+            "Advancing watermark"
+        );
+
         embedded_datasets::update_embedded_dataset_last_processed_at_to(
             pool,
             embedded_dataset.embedded_dataset_id,
-            max_ts,
+            new_watermark,
         )
         .await?;
     }

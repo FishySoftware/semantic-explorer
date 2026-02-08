@@ -100,7 +100,14 @@ const GET_DATASET_ITEMS_MODIFIED_SINCE_QUERY: &str = r#"
     SELECT item_id, dataset_id, title, chunks, metadata, created_at, COALESCE(updated_at, created_at) as updated_at
     FROM dataset_items
     WHERE dataset_id = $1 AND COALESCE(updated_at, created_at) > $2
-    ORDER BY COALESCE(updated_at, created_at) DESC
+    ORDER BY COALESCE(updated_at, created_at) ASC
+"#;
+
+/// Get the dataset's version (updated_at timestamp) for efficient stats refresh (#4)
+const GET_DATASET_VERSION_QUERY: &str = r#"
+    SELECT COALESCE(updated_at, created_at)
+    FROM datasets
+    WHERE dataset_id = $1
 "#;
 
 const UPDATE_DATASET_QUERY: &str = r#"
@@ -587,6 +594,19 @@ pub(crate) async fn get_dataset_items_modified_since(
             .await?
     };
     Ok(query)
+}
+
+/// Get the dataset's version (updated_at timestamp) for efficient stats refresh (#4)
+/// Returns None if the dataset doesn't exist
+pub(crate) async fn get_dataset_version(
+    pool: &Pool<Postgres>,
+    dataset_id: i32,
+) -> Result<Option<DateTime<Utc>>> {
+    let version = sqlx::query_scalar::<_, DateTime<Utc>>(GET_DATASET_VERSION_QUERY)
+        .bind(dataset_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(version)
 }
 
 #[tracing::instrument(name = "database.update_dataset", skip(pool), fields(database.system = "postgresql", database.operation = "UPDATE", dataset_id = %dataset_id, owner_id = %owner_id))]

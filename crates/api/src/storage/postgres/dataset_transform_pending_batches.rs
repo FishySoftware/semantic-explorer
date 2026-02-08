@@ -15,6 +15,7 @@ const INSERT_PENDING_BATCH_QUERY: &str = r#"
         batch_type,
         dataset_transform_id,
         embedded_dataset_id,
+        collection_transform_id,
         batch_key,
         s3_bucket,
         job_payload,
@@ -23,12 +24,12 @@ const INSERT_PENDING_BATCH_QUERY: &str = r#"
         created_at,
         updated_at
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', NOW(), NOW())
-    ON CONFLICT (batch_type, COALESCE(dataset_transform_id, 0), batch_key) 
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', NOW(), NOW())
+    ON CONFLICT (batch_type, COALESCE(dataset_transform_id, 0), COALESCE(collection_transform_id, 0), batch_key) 
     WHERE status = 'pending'
     DO UPDATE SET
         retry_count = pending_batches.retry_count + 1,
-        next_retry_at = $7,
+        next_retry_at = $8,
         updated_at = NOW()
     RETURNING *
 "#;
@@ -84,6 +85,7 @@ pub struct PendingBatch {
     pub batch_type: String,
     pub dataset_transform_id: Option<i32>,
     pub embedded_dataset_id: Option<i32>,
+    pub collection_transform_id: Option<i32>,
     pub batch_key: String,
     pub s3_bucket: String,
     pub job_payload: serde_json::Value,
@@ -104,6 +106,7 @@ pub struct CreatePendingBatch {
     pub batch_type: String,
     pub dataset_transform_id: Option<i32>,
     pub embedded_dataset_id: Option<i32>,
+    pub collection_transform_id: Option<i32>,
     pub batch_key: String,
     pub s3_bucket: String,
     pub job_payload: serde_json::Value,
@@ -122,6 +125,7 @@ pub async fn insert_pending_batch(
         .bind(&req.batch_type)
         .bind(req.dataset_transform_id)
         .bind(req.embedded_dataset_id)
+        .bind(req.collection_transform_id)
         .bind(&req.batch_key)
         .bind(&req.s3_bucket)
         .bind(&req.job_payload)
@@ -208,4 +212,29 @@ pub async fn cleanup_old_batches(pool: &Pool<Postgres>) -> Result<usize> {
         .context("Failed to cleanup old batches")?;
 
     Ok(deleted.len())
+}
+
+/// Get orphaned pending batches older than the specified hours (#7)
+/// These are batches that have been pending for too long and likely won't be processed
+#[instrument(skip(pool))]
+pub async fn get_orphaned_pending_batches(
+    pool: &Pool<Postgres>,
+    older_than_hours: i32,
+) -> Result<Vec<PendingBatch>> {
+    let batches = sqlx::query_as::<_, PendingBatch>(
+        r#"
+        SELECT *
+        FROM pending_batches
+        WHERE status = 'pending'
+          AND created_at < NOW() - ($1 * INTERVAL '1 hour')
+        ORDER BY created_at ASC
+        LIMIT 100
+        "#,
+    )
+    .bind(older_than_hours)
+    .fetch_all(pool)
+    .await
+    .context("Failed to get orphaned pending batches")?;
+
+    Ok(batches)
 }

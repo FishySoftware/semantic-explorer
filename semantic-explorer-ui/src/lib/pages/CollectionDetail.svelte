@@ -563,8 +563,7 @@
 							}
 							if (fileIndex >= 0) {
 								fileStatuses[fileIndex].status = 'failed';
-								fileStatuses[fileIndex].error =
-									result.failed[0]?.error || 'Upload failed';
+								fileStatuses[fileIndex].error = result.failed[0]?.error || 'Upload failed';
 							}
 						}
 					} catch (e) {
@@ -1142,14 +1141,20 @@
 							{#if uploadFailures.length > 0}
 								<div class="mb-6">
 									<div class="flex justify-between items-center mb-3">
-										<h3 class="text-lg font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-2">
-											<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-xs font-bold">
+										<h3
+											class="text-lg font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-2"
+										>
+											<span
+												class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-xs font-bold"
+											>
 												{uploadFailures.length}
 											</span>
 											Upload Failures
 										</h3>
 										<button
-											onclick={() => { uploadFailures = []; }}
+											onclick={() => {
+												uploadFailures = [];
+											}}
 											class="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300 underline"
 										>
 											Clear
@@ -1160,16 +1165,24 @@
 									</p>
 									<div class="overflow-x-auto">
 										<table class="w-full text-sm text-left text-gray-600 dark:text-gray-400">
-											<thead class="bg-red-50 dark:bg-red-900/10 border-b border-red-200 dark:border-red-800">
+											<thead
+												class="bg-red-50 dark:bg-red-900/10 border-b border-red-200 dark:border-red-800"
+											>
 												<tr>
-													<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">File</th>
-													<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Error</th>
-													<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Time</th>
+													<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">File</th
+													>
+													<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white"
+														>Error</th
+													>
+													<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Time</th
+													>
 												</tr>
 											</thead>
 											<tbody>
 												{#each uploadFailures as file, i (file.name + '-' + i)}
-													<tr class="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+													<tr
+														class="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
+													>
 														<td class="px-4 py-3 font-medium text-gray-900 dark:text-white">
 															<div class="flex items-center gap-2">
 																<span class="text-red-500">❌</span>
@@ -1177,11 +1190,15 @@
 															</div>
 														</td>
 														<td class="px-4 py-3">
-															<div class="text-red-600 dark:text-red-400 text-xs bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded max-w-md wrap-break-word whitespace-pre-wrap">
+															<div
+																class="text-red-600 dark:text-red-400 text-xs bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded max-w-md wrap-break-word whitespace-pre-wrap"
+															>
 																{file.error}
 															</div>
 														</td>
-														<td class="px-4 py-3 text-gray-500 dark:text-gray-400 whitespace-nowrap">
+														<td
+															class="px-4 py-3 text-gray-500 dark:text-gray-400 whitespace-nowrap"
+														>
 															{formatDate(file.timestamp)}
 														</td>
 													</tr>
@@ -1202,17 +1219,19 @@
 									class="text-center py-8 bg-gray-50 dark:bg-gray-900/30 rounded-lg border border-dashed border-gray-300 dark:border-gray-700"
 								>
 									<div class="text-4xl mb-3">✅</div>
-									<p class="text-gray-500 dark:text-gray-400 mb-2">
-										No failed files!
-									</p>
+									<p class="text-gray-500 dark:text-gray-400 mb-2">No failed files!</p>
 									<p class="text-sm text-gray-400 dark:text-gray-500">
 										All files have been uploaded and processed successfully.
 									</p>
 								</div>
 							{:else if failedFiles.length > 0}
 								<div class="mb-3">
-									<h3 class="text-lg font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-2">
-										<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-xs font-bold">
+									<h3
+										class="text-lg font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-2"
+									>
+										<span
+											class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-xs font-bold"
+										>
 											{failedFilesTotalCount}
 										</span>
 										Transform Processing Failures
@@ -1228,9 +1247,13 @@
 										>
 											<tr>
 												<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">File</th>
-												<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Transform</th>
+												<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white"
+													>Transform</th
+												>
 												<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Error</th>
-												<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Failed At</th>
+												<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white"
+													>Failed At</th
+												>
 											</tr>
 										</thead>
 										<tbody>
@@ -1241,7 +1264,9 @@
 													<td class="px-4 py-3 font-medium text-gray-900 dark:text-white">
 														<div class="flex items-center gap-2">
 															<span class="text-red-500">❌</span>
-															<span class="truncate max-w-xs" title={file.file_key}>{file.file_key}</span>
+															<span class="truncate max-w-xs" title={file.file_key}
+																>{file.file_key}</span
+															>
 														</div>
 													</td>
 													<td class="px-4 py-3">
@@ -1276,22 +1301,34 @@
 									<div class="px-6 py-4 border-t border-gray-200 dark:border-gray-700">
 										<div class="flex items-center justify-between">
 											<span class="text-sm text-gray-700 dark:text-gray-300">
-												Showing {failedFilesPage * failedFilesPageSize + 1}-{Math.min((failedFilesPage + 1) * failedFilesPageSize, failedFilesTotalCount)} of {failedFilesTotalCount}
+												Showing {failedFilesPage * failedFilesPageSize + 1}-{Math.min(
+													(failedFilesPage + 1) * failedFilesPageSize,
+													failedFilesTotalCount
+												)} of {failedFilesTotalCount}
 											</span>
 											<div class="flex gap-2">
 												<button
-													onclick={() => { failedFilesPage--; fetchFailedFiles(); }}
+													onclick={() => {
+														failedFilesPage--;
+														fetchFailedFiles();
+													}}
 													disabled={failedFilesPage === 0}
 													class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm text-gray-700 dark:text-gray-300"
 												>
 													Previous
 												</button>
 												<span class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">
-													Page {failedFilesPage + 1} of {Math.ceil(failedFilesTotalCount / failedFilesPageSize)}
+													Page {failedFilesPage + 1} of {Math.ceil(
+														failedFilesTotalCount / failedFilesPageSize
+													)}
 												</span>
 												<button
-													onclick={() => { failedFilesPage++; fetchFailedFiles(); }}
-													disabled={(failedFilesPage + 1) * failedFilesPageSize >= failedFilesTotalCount}
+													onclick={() => {
+														failedFilesPage++;
+														fetchFailedFiles();
+													}}
+													disabled={(failedFilesPage + 1) * failedFilesPageSize >=
+														failedFilesTotalCount}
 													class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm text-gray-700 dark:text-gray-300"
 												>
 													Next

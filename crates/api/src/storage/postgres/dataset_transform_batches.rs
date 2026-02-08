@@ -47,6 +47,15 @@ const LIST_BATCHES_BY_STATUS_QUERY: &str = r#"
     LIMIT $3 OFFSET $4
 "#;
 
+/// Query for detecting stuck batches across ALL transforms (#18)
+const LIST_STUCK_BATCHES_QUERY: &str = r#"
+    SELECT * FROM dataset_transform_batches
+    WHERE status = $1
+    AND created_at < NOW() - ($2 || ' hours')::INTERVAL
+    ORDER BY created_at ASC
+    LIMIT $3
+"#;
+
 const UPDATE_BATCH_STATUS_QUERY: &str = r#"
     UPDATE dataset_transform_batches
     SET status = $3,
@@ -238,4 +247,20 @@ pub async fn update_batch_status_tx(
         .await?;
 
     Ok(batch)
+}
+
+/// List batches that appear stuck in a given status for longer than threshold_hours (#18)
+pub async fn list_stuck_batches(
+    pool: &Pool<Postgres>,
+    status: &str,
+    threshold_hours: i64,
+    limit: i64,
+) -> Result<Vec<DatasetTransformBatch>, sqlx::Error> {
+    let batches = sqlx::query_as::<_, DatasetTransformBatch>(LIST_STUCK_BATCHES_QUERY)
+        .bind(status)
+        .bind(threshold_hours.to_string())
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+    Ok(batches)
 }

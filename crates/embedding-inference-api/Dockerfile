@@ -46,7 +46,6 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
     cargo install cargo-chef
 
 # Download ONNX Runtime GPU version manually
-# The ort crate's download strategy only supports CPU binaries
 RUN mkdir -p /opt/onnxruntime && cd /opt/onnxruntime \
     && wget -q https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-gpu-${ORT_VERSION}.tgz \
     && tar -xzf onnxruntime-linux-x64-gpu-${ORT_VERSION}.tgz \

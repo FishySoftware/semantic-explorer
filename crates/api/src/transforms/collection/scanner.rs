@@ -15,6 +15,9 @@ use crate::storage::postgres::collection_transforms::{
     get_active_collection_transforms_privileged, get_collection_transform_privileged,
     get_processed_files,
 };
+use crate::storage::postgres::dataset_transform_pending_batches::{
+    self as pending_batches, CreatePendingBatch,
+};
 use crate::storage::postgres::{collections, embedders};
 use crate::storage::s3;
 use crate::transforms::collection::models::CollectionTransform;
@@ -250,7 +253,7 @@ async fn process_collection_transform_scan(
                     nats,
                     "workers.collection-transform",
                     &msg_id,
-                    payload,
+                    payload.clone(),
                     3,
                 )
                 .await
@@ -259,11 +262,27 @@ async fn process_collection_transform_scan(
                         jobs_sent += 1;
                     }
                     semantic_explorer_core::nats::PublishResult::Failed(e) => {
-                        // TODO: Insert pending record for fallback recovery
+                        // Store in pending_batches for recovery
                         error!(
-                            "Failed to publish job for file {} after retries: {}",
+                            "Failed to publish job for file {} after retries: {}. Saving for recovery.",
                             file.key, e
                         );
+                        if let Err(pe) = pending_batches::insert_pending_batch(
+                            pool,
+                            CreatePendingBatch {
+                                batch_type: "collection".to_string(),
+                                dataset_transform_id: None,
+                                embedded_dataset_id: None,
+                                collection_transform_id: Some(transform.collection_transform_id),
+                                batch_key: file.key.clone(),
+                                s3_bucket: s3_bucket_name.to_string(),
+                                job_payload: serde_json::from_slice(&payload).unwrap_or_default(),
+                            },
+                        )
+                        .await
+                        {
+                            error!("Failed to save pending batch for recovery: {}", pe);
+                        }
                     }
                 }
             }
