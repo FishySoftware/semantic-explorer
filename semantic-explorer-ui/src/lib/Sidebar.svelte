@@ -14,6 +14,7 @@
 		MessageDotsOutline,
 		PaperClipOutline,
 		SearchOutline,
+		ServerOutline,
 	} from 'flowbite-svelte-icons';
 	import type { Props } from 'flowbite-svelte-icons/types';
 	import type { Component } from 'svelte';
@@ -74,6 +75,8 @@
 			],
 		},
 		{ name: 'divider-5', icon: GridSolid, isDivider: true },
+
+		{ name: 'NATS Status', icon: ServerOutline, url: '/status/nats' },
 	];
 	let expandedFolders = $state<string[]>(['Transforms']);
 

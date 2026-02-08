@@ -31,6 +31,7 @@
 	const VisualizationTransforms = () => import('./lib/pages/VisualizationTransforms.svelte');
 	const VisualizationTransformDetail = () =>
 		import('./lib/pages/VisualizationTransformDetail.svelte');
+	const NatsStatus = () => import('./lib/pages/NatsStatus.svelte');
 	const Visualizations = () => import('./lib/pages/Visualizations.svelte');
 	const VisualizationDetail = () => import('./lib/pages/VisualizationDetail.svelte');
 	const VisualizationCompare = () => import('./lib/pages/VisualizationCompare.svelte');
@@ -465,6 +466,10 @@
 				{:else if activeUrl === '/search'}
 					{#await Search() then { default: SearchComponent }}
 						<SearchComponent onViewDataset={viewDataset} onViewEmbedder={viewEmbedder} />
+					{/await}
+				{:else if activeUrl === '/status/nats'}
+					{#await NatsStatus() then { default: NatsStatusComponent }}
+						<NatsStatusComponent />
 					{/await}
 				{:else if activeUrl === '/marketplace'}
 					{#await Marketplace() then { default: MarketplaceComponent }}

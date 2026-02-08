@@ -11,6 +11,7 @@ pub(crate) mod llm_inference;
 pub(crate) mod llms;
 pub(crate) mod marketplace;
 pub(crate) mod search;
+pub(crate) mod status;
 pub(crate) mod visualization_transforms;
 
 use crate::auth::extract_user;
