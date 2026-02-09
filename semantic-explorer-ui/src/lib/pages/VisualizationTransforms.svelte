@@ -1,5 +1,6 @@
 <!-- eslint-disable svelte/no-at-html-tags -->
 <script lang="ts">
+	import { InfoCircleSolid } from 'flowbite-svelte-icons';
 	import { onDestroy, onMount } from 'svelte';
 	import { SvelteSet, SvelteURLSearchParams } from 'svelte/reactivity';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
@@ -13,7 +14,6 @@
 		VisualizationConfig,
 		VisualizationTransform,
 	} from '../types/models';
-	import { InfoCircleSolid } from 'flowbite-svelte-icons';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { formatDate, showTooltip } from '../utils/ui-helpers';
 
@@ -27,7 +27,7 @@
 	let transforms = $state<VisualizationTransform[]>([]);
 	let embeddedDatasets = $state<EmbeddedDataset[]>([]);
 	let llms = $state<LLM[]>([]);
-	let statsMap = $state<Map<number, Stats>>(new Map());
+	let statsMap = $state<Record<number, Stats>>({});
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
@@ -342,8 +342,7 @@
 			const response = await fetch(`/api/visualization-transforms/${transformId}/stats`);
 			if (response.ok) {
 				const stats = await response.json();
-				statsMap.set(transformId, stats);
-				statsMap = statsMap; // Trigger reactivity
+				statsMap = { ...statsMap, [transformId]: stats };
 			}
 		} catch (e) {
 			console.error(`Failed to fetch stats for transform ${transformId}:`, e);
@@ -759,7 +758,7 @@
 	}
 </script>
 
-<div class="max-w-7xl mx-auto">
+<div class="mx-auto">
 	<PageHeader
 		title="Visualization Transforms"
 		description="Create visualizations of Embedded Datasets using UMAP dimensionality reduction and HDBSCAN clustering. Visualizations help explore semantic relationships and discover topics in your data."
@@ -2524,7 +2523,7 @@
 				</thead>
 				<tbody>
 					{#each transforms as transform (transform.visualization_transform_id)}
-						{@const stats = statsMap.get(transform.visualization_transform_id)}
+						{@const stats = statsMap[transform.visualization_transform_id]}
 						<tr
 							class="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
 						>
@@ -2565,8 +2564,8 @@
 									{transform.is_enabled ? 'Enabled' : 'Disabled'}
 								</span>
 							</td>
-							<td class="px-4 py-3">{stats?.total_points ?? '-'}</td>
-							<td class="px-4 py-3">{stats?.total_clusters ?? '-'}</td>
+							<td class="px-4 py-3">{stats?.latest_visualization?.point_count ?? '-'}</td>
+							<td class="px-4 py-3">{stats?.latest_visualization?.cluster_count ?? '-'}</td>
 							<td class="px-4 py-3">{formatDate(transform.created_at, false)}</td>
 							<td class="px-4 py-3 text-center">
 								<button

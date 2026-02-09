@@ -200,7 +200,7 @@
 	}
 </script>
 
-<div class="max-w-full xl:max-w-7xl mx-auto">
+<div class="max-w-full xl: mx-auto">
 	<div class="mb-3 lg:mb-6">
 		<h1 class="text-2xl lg:text-3xl font-bold text-gray-900 dark:text-white mb-1 lg:mb-2">
 			Dashboard
@@ -486,7 +486,7 @@
 					<div class="space-y-2 lg:space-y-3">
 						{#each visualizations as visualization (visualization.visualization_id)}
 							<a
-								href={`#/visualizations/${visualization.visualization_transform_id}/details`}
+								href={`#/visualization-transforms/${visualization.visualization_transform_id}/details`}
 								class="block p-2 lg:p-3 bg-gray-50 dark:bg-gray-900 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
 							>
 								<div class="flex justify-between items-start">

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { ArrowLeftOutline } from 'flowbite-svelte-icons';
 	import { onMount } from 'svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import LoadingState from '../components/LoadingState.svelte';
@@ -81,12 +82,9 @@
 	let embedderPendingDelete = $state(false);
 
 	// Tab state
-	let activeTab = $state('overview');
+	let activeTab = $state('embeddings');
 
-	const tabs = [
-		{ id: 'overview', label: 'Overview', icon: '⚙️' },
-		{ id: 'embeddings', label: 'Embedded Datasets', icon: '🧬' },
-	];
+	const tabs = [{ id: 'embeddings', label: 'Embedded Datasets', icon: '🧬' }];
 
 	async function fetchEmbedder() {
 		try {
@@ -332,42 +330,20 @@
 	});
 </script>
 
-<div class="max-w-6xl mx-auto pb-8">
-	<!-- Header -->
-	<div class="flex items-center justify-between mb-6">
-		<div class="flex items-center gap-4">
-			<button
-				onclick={onBack}
-				class="text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
-				aria-label="Go back"
-			>
-				<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width="2"
-						d="M15 19l-7-7 7-7"
-					/>
-				</svg>
-			</button>
-			<div>
-				<h1 class="text-3xl font-bold text-gray-900 dark:text-white">
-					{loading ? 'Loading...' : embedder?.name || 'Embedder'}
-				</h1>
-				{#if embedder}
-					<p class="text-gray-600 dark:text-gray-400 mt-1">
-						{embedder.provider.charAt(0).toUpperCase() + embedder.provider.slice(1)} • {embedder.owner}
-					</p>
-				{/if}
-			</div>
-		</div>
-	</div>
+<div class=" mx-auto">
+	<!-- Back Button -->
+	<button onclick={onBack} class="mb-4 btn-secondary inline-flex items-center gap-2">
+		<ArrowLeftOutline class="w-5 h-5" />
+		Back to Embedders
+	</button>
 
 	{#if loading}
 		<LoadingState message="Loading embedder..." />
 	{:else if error}
-		<div class="bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 p-4 rounded-lg">
-			<p>{error}</p>
+		<div
+			class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4"
+		>
+			<p class="text-red-700 dark:text-red-400">{error}</p>
 			<button
 				onclick={() => {
 					loading = true;
@@ -379,266 +355,337 @@
 			</button>
 		</div>
 	{:else if embedder}
-		<!-- Tabs -->
+		<!-- Main Embedder Card -->
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-4">
+			{#if editMode}
+				<!-- Edit Mode -->
+				<div class="mb-4">
+					<div class="flex items-center justify-between mb-4">
+						<h2 class="text-xl font-semibold text-gray-900 dark:text-white">Edit Embedder</h2>
+						<span class="text-sm text-gray-500 dark:text-gray-400">
+							#{embedder.embedder_id}
+						</span>
+					</div>
 
-		<!-- Tabs -->
-		<div class="mb-6">
-			<TabPanel {tabs} activeTabId={activeTab} onChange={(id) => (activeTab = id)}>
-				{#if activeTab === 'overview'}
-					<div class="space-y-6">
-						<!-- Info Cards -->
-						<div class="grid grid-cols-2 gap-4">
-							<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
-								<div class="text-sm font-medium text-gray-600 dark:text-gray-400">Provider</div>
-								<div class="text-lg font-semibold text-gray-900 dark:text-white mt-1">
-									{embedder.provider}
-								</div>
-							</div>
-							<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
-								<div class="text-sm font-medium text-gray-600 dark:text-gray-400">Dimensions</div>
-								<div class="text-lg font-semibold text-gray-900 dark:text-white mt-1">
-									{embedder.dimensions || 'Not specified'}
-								</div>
-							</div>
-							<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
-								<div class="text-sm font-medium text-gray-600 dark:text-gray-400">Batch Size</div>
-								<div class="text-lg font-semibold text-gray-900 dark:text-white mt-1">
-									{embedder.batch_size || 'Not specified'}
-								</div>
-							</div>
+					{#if editError}
+						<div
+							class="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-red-700 dark:text-red-400"
+						>
+							{editError}
+						</div>
+					{/if}
+
+					<div class="space-y-4">
+						<div>
+							<label
+								for="edit-name"
+								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+							>
+								Name
+							</label>
+							<input
+								id="edit-name"
+								type="text"
+								bind:value={editFormName}
+								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+							/>
 						</div>
 
-						<!-- Timestamps -->
-						<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
-							<div class="grid grid-cols-2 gap-4 text-sm">
-								<div>
-									<div class="font-medium text-gray-600 dark:text-gray-400">Created</div>
-									<div class="text-gray-900 dark:text-white mt-1">
-										{formatDate(embedder.created_at)}
-									</div>
-								</div>
-								<div>
-									<div class="font-medium text-gray-600 dark:text-gray-400">Updated</div>
-									<div class="text-gray-900 dark:text-white mt-1">
-										{formatDate(embedder.updated_at)}
-									</div>
-								</div>
+						{#if embedder?.provider !== 'internal'}
+							<div>
+								<label
+									for="edit-base-url"
+									class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+								>
+									Base URL
+								</label>
+								<input
+									id="edit-base-url"
+									type="text"
+									bind:value={editFormBaseUrl}
+									class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+								/>
 							</div>
-						</div>
 
-						<!-- Configuration -->
-						<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
-							<h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-								Configuration
-							</h3>
-							<div class="space-y-4 text-sm">
-								<div>
-									<div class="font-medium text-gray-600 dark:text-gray-400 mb-1">Base URL</div>
-									<div class="font-mono text-gray-700 dark:text-gray-300 break-all">
-										{embedder.base_url}
-									</div>
-								</div>
-								<div>
-									<div class="font-medium text-gray-600 dark:text-gray-400 mb-1">Config</div>
-									<pre
-										class="bg-gray-50 dark:bg-gray-900 p-3 rounded overflow-auto text-xs text-gray-700 dark:text-gray-300">{JSON.stringify(
-											embedder.config,
-											null,
-											2
-										)}</pre>
-								</div>
-							</div>
-						</div>
-
-						<!-- Edit Section -->
-						{#if !editMode}
-							<button onclick={startEdit} class="w-full btn-primary"> Edit Embedder </button>
-						{:else}
-							<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
-								<h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-									Edit Embedder
-								</h3>
-
-								{#if editError}
-									<div
-										class="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-red-700 dark:text-red-400"
-									>
-										{editError}
-									</div>
-								{/if}
-
-								<div class="space-y-4">
-									<div>
-										<label
-											for="edit-name"
-											class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-										>
-											Name
-										</label>
-										<input
-											id="edit-name"
-											type="text"
-											bind:value={editFormName}
-											class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-										/>
-									</div>
-
-									<div>
-										<label
-											for="edit-base-url"
-											class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-										>
-											Base URL
-										</label>
-										<input
-											id="edit-base-url"
-											type="text"
-											bind:value={editFormBaseUrl}
-											class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-										/>
-									</div>
-
-									<div>
-										<label
-											for="edit-api-key"
-											class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-										>
-											API Key
-										</label>
-										<input
-											id="edit-api-key"
-											type="password"
-											autocomplete="off"
-											bind:value={editFormApiKey}
-											class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-											placeholder="Leave empty to keep current key"
-										/>
-									</div>
-
-									<div class="grid grid-cols-2 gap-4">
-										<div>
-											<label
-												for="edit-dimensions"
-												class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-											>
-												Dimensions
-											</label>
-											<input
-												id="edit-dimensions"
-												type="number"
-												bind:value={editFormDimensions}
-												class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-											/>
-										</div>
-										<div>
-											<label
-												for="edit-batch-size"
-												class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-											>
-												Batch Size
-											</label>
-											<input
-												id="edit-batch-size"
-												type="number"
-												bind:value={editFormBatchSize}
-												class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-											/>
-										</div>
-									</div>
-
-									<div>
-										<label
-											for="edit-config"
-											class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-										>
-											Config (JSON)
-										</label>
-										<textarea
-											id="edit-config"
-											bind:value={editFormConfig}
-											rows="6"
-											class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
-										></textarea>
-									</div>
-
-									<div>
-										<label class="flex items-center gap-2 cursor-pointer">
-											<input
-												type="checkbox"
-												bind:checked={editFormIsPublic}
-												class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
-											/>
-											<span class="text-sm font-medium text-gray-700 dark:text-gray-300">
-												Make this embedder public (visible in marketplace)
-											</span>
-										</label>
-									</div>
-
-									<div class="flex gap-2">
-										{#if embedder?.provider !== 'internal'}
-											<button
-												onclick={testConnection}
-												disabled={testStatus === 'testing'}
-												class="flex-1 btn-secondary disabled:opacity-50"
-											>
-												{#if testStatus === 'testing'}
-													Testing...
-												{:else}
-													Test Connection
-												{/if}
-											</button>
-										{/if}
-										<button
-											onclick={saveEdit}
-											disabled={editLoading}
-											class="flex-1 btn-primary disabled:opacity-50"
-										>
-											{editLoading ? 'Saving...' : 'Save Changes'}
-										</button>
-										<button
-											onclick={cancelEdit}
-											disabled={editLoading}
-											class="flex-1 btn-secondary disabled:opacity-50"
-										>
-											Cancel
-										</button>
-									</div>
-
-									{#if testMessage}
-										<div
-											class={`p-3 rounded-lg ${
-												testStatus === 'success'
-													? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
-													: 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300'
-											}`}
-										>
-											{testMessage}
-										</div>
-									{/if}
-								</div>
+							<div>
+								<label
+									for="edit-api-key"
+									class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+								>
+									API Key
+								</label>
+								<input
+									id="edit-api-key"
+									type="password"
+									autocomplete="off"
+									bind:value={editFormApiKey}
+									class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+									placeholder="Leave empty to keep current key"
+								/>
 							</div>
 						{/if}
 
-						<!-- Delete Button -->
-						<button onclick={() => (embedderPendingDelete = true)} class="w-full btn-danger">
-							Delete Embedder
-						</button>
-					</div>
-				{:else if activeTab === 'embeddings'}
-					<div class="space-y-4">
-						{#if embeddingsLoading}
-							<div class="flex justify-center py-8">
-								<div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+						<div class="grid grid-cols-2 gap-4">
+							<div>
+								<label
+									for="edit-dimensions"
+									class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+								>
+									Dimensions
+								</label>
+								<input
+									id="edit-dimensions"
+									type="number"
+									bind:value={editFormDimensions}
+									class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+								/>
 							</div>
-						{:else if embeddedDatasets.length === 0}
-							<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-8 text-center">
-								<p class="text-gray-500 dark:text-gray-400">
-									No embedded datasets created with this embedder yet.
+							<div>
+								<label
+									for="edit-batch-size"
+									class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+								>
+									Batch Size
+								</label>
+								<input
+									id="edit-batch-size"
+									type="number"
+									bind:value={editFormBatchSize}
+									class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+								/>
+							</div>
+						</div>
+
+						<div>
+							<label
+								for="edit-config"
+								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+							>
+								Config (JSON)
+							</label>
+							<textarea
+								id="edit-config"
+								bind:value={editFormConfig}
+								rows="6"
+								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono text-sm"
+							></textarea>
+						</div>
+
+						<div>
+							<label class="flex items-center gap-2 cursor-pointer">
+								<input
+									type="checkbox"
+									bind:checked={editFormIsPublic}
+									class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+								/>
+								<span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+									Make this embedder public (visible in marketplace)
+								</span>
+							</label>
+						</div>
+
+						<div class="flex gap-2">
+							{#if embedder?.provider !== 'internal'}
+								<button
+									onclick={testConnection}
+									disabled={testStatus === 'testing'}
+									class="flex-1 btn-secondary disabled:opacity-50"
+								>
+									{#if testStatus === 'testing'}
+										Testing...
+									{:else}
+										Test Connection
+									{/if}
+								</button>
+							{/if}
+							<button
+								onclick={saveEdit}
+								disabled={editLoading}
+								class="flex-1 btn-primary disabled:opacity-50"
+							>
+								{editLoading ? 'Saving...' : 'Save Changes'}
+							</button>
+							<button
+								onclick={cancelEdit}
+								disabled={editLoading}
+								class="flex-1 btn-secondary disabled:opacity-50"
+							>
+								Cancel
+							</button>
+						</div>
+
+						{#if testMessage}
+							<div
+								class={`p-3 rounded-lg ${
+									testStatus === 'success'
+										? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
+										: 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300'
+								}`}
+							>
+								{testMessage}
+							</div>
+						{/if}
+					</div>
+				</div>
+			{:else}
+				<!-- View Mode -->
+				<div class="flex justify-between items-start mb-4">
+					<div class="flex-1">
+						<div class="flex items-baseline gap-3 mb-2">
+							<h1 class="text-3xl font-bold text-gray-900 dark:text-white">
+								{embedder.name}
+							</h1>
+							<span class="text-sm text-gray-500 dark:text-gray-400">
+								#{embedder.embedder_id}
+							</span>
+						</div>
+						<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+							<div>
+								<p class="text-sm text-gray-600 dark:text-gray-400">Provider</p>
+								<p class="text-lg font-medium text-gray-900 dark:text-white">
+									{embedder.provider}
 								</p>
 							</div>
-						{:else}
-							<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
-								<div class="space-y-3 p-4">
+							<div>
+								<p class="text-sm text-gray-600 dark:text-gray-400">Model</p>
+								<p class="text-lg font-medium text-gray-900 dark:text-white">
+									{embedder.config?.model || 'N/A'}
+								</p>
+							</div>
+							<div>
+								<p class="text-sm text-gray-600 dark:text-gray-400">Dimensions</p>
+								<p class="text-lg font-medium text-gray-900 dark:text-white">
+									{embedder.dimensions || embedder.config?.dimensions || 'N/A'}
+								</p>
+							</div>
+							<div>
+								<p class="text-sm text-gray-600 dark:text-gray-400">Batch Size</p>
+								<p class="text-lg font-medium text-gray-900 dark:text-white">
+									{embedder.batch_size || 'N/A'}
+								</p>
+							</div>
+							<div>
+								<p class="text-sm text-gray-600 dark:text-gray-400">Public</p>
+								<p class="text-lg font-medium text-gray-900 dark:text-white">
+									{embedder.is_public ? 'Yes' : 'No'}
+								</p>
+							</div>
+						</div>
+						<div class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+							<details class="group">
+								<summary
+									class="cursor-pointer text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white flex items-center gap-2"
+								>
+									<svg
+										class="w-4 h-4 transition-transform group-open:rotate-90"
+										fill="none"
+										stroke="currentColor"
+										viewBox="0 0 24 24"
+									>
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width="2"
+											d="M9 5l7 7-7 7"
+										/>
+									</svg>
+									Configuration Details
+								</summary>
+								<div class="mt-3 space-y-3">
+									{#if embedder.provider !== 'internal'}
+										<div>
+											<p class="text-sm font-medium text-gray-600 dark:text-gray-400 mb-1">
+												Base URL
+											</p>
+											<p class="text-sm font-mono text-gray-700 dark:text-gray-300 break-all">
+												{embedder.base_url}
+											</p>
+										</div>
+									{/if}
+									<div>
+										<p class="text-sm font-medium text-gray-600 dark:text-gray-400 mb-1">
+											Configuration
+										</p>
+										<pre
+											class="bg-gray-50 dark:bg-gray-900 p-3 rounded overflow-auto text-xs text-gray-700 dark:text-gray-300">{JSON.stringify(
+												embedder.config,
+												null,
+												2
+											)}</pre>
+									</div>
+									<div class="grid grid-cols-2 gap-3 text-sm">
+										<div>
+											<p class="text-gray-600 dark:text-gray-400">Created</p>
+											<p class="text-gray-900 dark:text-white font-medium">
+												{formatDate(embedder.created_at)}
+											</p>
+										</div>
+										<div>
+											<p class="text-gray-600 dark:text-gray-400">Updated</p>
+											<p class="text-gray-900 dark:text-white font-medium">
+												{formatDate(embedder.updated_at)}
+											</p>
+										</div>
+									</div>
+								</div>
+							</details>
+						</div>
+					</div>
+					<div class="flex gap-2">
+						<button
+							type="button"
+							onclick={startEdit}
+							class="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+							title="Edit embedder"
+						>
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+								/>
+							</svg>
+							Edit
+						</button>
+						<button
+							type="button"
+							onclick={() => (embedderPendingDelete = true)}
+							class="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+						>
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+								/>
+							</svg>
+							Delete
+						</button>
+					</div>
+				</div>
+			{/if}
+		</div>
+
+		<!-- Tabs Section -->
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
+			<TabPanel {tabs} activeTabId={activeTab} onChange={(id) => (activeTab = id)}>
+				{#snippet children(tabId)}
+					{#if tabId === 'embeddings'}
+						<div class="space-y-4">
+							{#if embeddingsLoading}
+								<div class="flex justify-center py-8">
+									<div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+								</div>
+							{:else if embeddedDatasets.length === 0}
+								<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-8 text-center">
+									<p class="text-gray-500 dark:text-gray-400">
+										No embedded datasets created with this embedder yet.
+									</p>
+								</div>
+							{:else}
+								<div class="space-y-3">
 									{#each embeddedDatasets as ed (ed.embedded_dataset_id)}
 										<div
 											class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:border-blue-400 dark:hover:border-blue-600 transition-colors"
@@ -682,10 +729,10 @@
 										</div>
 									{/each}
 								</div>
-							</div>
-						{/if}
-					</div>
-				{/if}
+							{/if}
+						</div>
+					{/if}
+				{/snippet}
 			</TabPanel>
 		</div>
 	{/if}

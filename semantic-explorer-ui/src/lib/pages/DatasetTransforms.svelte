@@ -6,11 +6,11 @@
 	import CreateDatasetTransformModal from '../components/CreateDatasetTransformModal.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
 	import type {
-		DatasetTransform,
-		DatasetTransformStats as Stats,
 		Dataset,
+		DatasetTransform,
 		Embedder,
 		PaginatedResponse,
+		DatasetTransformStats as Stats,
 	} from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { formatDate } from '../utils/ui-helpers';
@@ -478,7 +478,7 @@
 	}
 </script>
 
-<div class="max-w-7xl mx-auto">
+<div class="mx-auto">
 	<PageHeader
 		title="Dataset Transforms"
 		description="Process Datasets with embedders to create Embedded Datasets. Each Dataset Transform can use multiple embedders, creating one Embedded Dataset per embedder."

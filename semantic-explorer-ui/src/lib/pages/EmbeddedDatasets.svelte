@@ -463,7 +463,7 @@
 	});
 </script>
 
-<div class="max-w-7xl mx-auto">
+<div class="mx-auto">
 	<PageHeader
 		title="Embedded Datasets"
 		description="Vector embeddings stored in Qdrant collections, used for semantic search, chat, and visualizations. Created automatically via Dataset Transforms, or manually as standalone datasets where you push vectors directly via API."

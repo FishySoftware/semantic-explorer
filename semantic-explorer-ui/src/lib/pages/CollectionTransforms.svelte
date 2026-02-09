@@ -7,12 +7,12 @@
 	import CreateCollectionTransformModal from '../components/CreateCollectionTransformModal.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
 	import type {
-		CollectionTransform,
-		CollectionTransformStats as Stats,
 		Collection,
+		CollectionTransform,
 		Dataset,
 		PaginatedResponse,
 		ProcessedFile,
+		CollectionTransformStats as Stats,
 	} from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { formatDate } from '../utils/ui-helpers';
@@ -540,7 +540,7 @@
 	}
 </script>
 
-<div class="max-w-7xl mx-auto">
+<div class="mx-auto">
 	<PageHeader
 		title="Collection Transforms"
 		description="Process files from Collections into Dataset items. Collection transforms extract text from files, chunk them into manageable pieces, and create Dataset items ready for embedding."

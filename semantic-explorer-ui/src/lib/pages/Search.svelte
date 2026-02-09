@@ -227,7 +227,7 @@
 	});
 </script>
 
-<div class="max-w-7xl mx-auto">
+<div class="mx-auto">
 	<PageHeader
 		title="Search"
 		description="Execute semantic searches against multiple embedded datasets to test and evaluate different embedding models."

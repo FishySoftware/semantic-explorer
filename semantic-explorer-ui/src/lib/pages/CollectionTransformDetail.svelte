@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { Heading } from 'flowbite-svelte';
 	import { onDestroy, onMount } from 'svelte';
+	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
+	import { formatError, toastStore } from '../utils/notifications';
 	import { formatDate } from '../utils/ui-helpers';
 
 	interface Props {
@@ -71,6 +73,16 @@
 	let totalFilesCount = $state(0);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+
+	// Edit mode state
+	let editMode = $state(false);
+	let editTitle = $state('');
+	let saving = $state(false);
+	let editError = $state<string | null>(null);
+
+	// Delete state
+	let transformPendingDelete = $state<CollectionTransform | null>(null);
+	let deleting = $state(false);
 
 	// Pagination for processed files
 	let filesCurrentPage = $state(1);
@@ -185,6 +197,100 @@
 		fetchProcessedFiles();
 	}
 
+	function startEdit() {
+		if (!transform) return;
+		editMode = true;
+		editTitle = transform.title;
+		editError = null;
+	}
+
+	function cancelEdit() {
+		editMode = false;
+		editTitle = '';
+		editError = null;
+	}
+
+	async function saveEdit() {
+		if (!transform) return;
+		if (!editTitle.trim()) {
+			editError = 'Title is required';
+			return;
+		}
+
+		try {
+			saving = true;
+			editError = null;
+			const response = await fetch(`/api/collection-transforms/${collectionTransformId}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ title: editTitle.trim() }),
+			});
+
+			if (!response.ok) {
+				throw new Error(`Failed to update transform: ${response.statusText}`);
+			}
+
+			const updated = await response.json();
+			transform = updated;
+			editMode = false;
+			toastStore.success('Collection transform updated successfully');
+		} catch (e) {
+			const message = formatError(e, 'Failed to update collection transform');
+			editError = message;
+			toastStore.error(message);
+		} finally {
+			saving = false;
+		}
+	}
+
+	async function toggleEnabled() {
+		if (!transform) return;
+
+		try {
+			const response = await fetch(`/api/collection-transforms/${collectionTransformId}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ is_enabled: !transform.is_enabled }),
+			});
+
+			if (!response.ok) {
+				throw new Error(`Failed to toggle transform: ${response.statusText}`);
+			}
+
+			const updated = await response.json();
+			transform = updated;
+			toastStore.success(
+				`Collection transform ${updated.is_enabled ? 'enabled' : 'disabled'} successfully`
+			);
+		} catch (e) {
+			toastStore.error(formatError(e, 'Failed to toggle collection transform'));
+		}
+	}
+
+	async function confirmDeleteTransform() {
+		if (!transformPendingDelete) return;
+
+		transformPendingDelete = null;
+
+		try {
+			deleting = true;
+			const response = await fetch(`/api/collection-transforms/${collectionTransformId}`, {
+				method: 'DELETE',
+			});
+
+			if (!response.ok) {
+				throw new Error(`Failed to delete transform: ${response.statusText}`);
+			}
+
+			toastStore.success('Collection transform deleted');
+			onBack();
+		} catch (e) {
+			toastStore.error(formatError(e, 'Failed to delete collection transform'));
+		} finally {
+			deleting = false;
+		}
+	}
+
 	function connectSSE() {
 		// Close existing connection first
 		disconnectSSE();
@@ -270,7 +376,7 @@
 	});
 </script>
 
-<div class="max-w-7xl mx-auto">
+<div class="mx-auto">
 	<PageHeader
 		title="Collection Transform Details"
 		description="View detailed information, processing history, and statistics for this collection transform."
@@ -299,19 +405,83 @@
 		<!-- Transform Info Card -->
 		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
 			<div class="flex justify-between items-start mb-4">
-				<div>
-					<Heading tag="h2" class="text-2xl font-bold mb-2">{transform.title}</Heading>
+				<div class="flex-1">
+					{#if editMode}
+						<form
+							onsubmit={(e) => {
+								e.preventDefault();
+								saveEdit();
+							}}
+							class="flex items-center gap-2 mb-2"
+						>
+							<input
+								type="text"
+								bind:value={editTitle}
+								placeholder="Enter transform title"
+								class="text-2xl font-bold px-3 py-1 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white flex-1"
+								required
+							/>
+							<button
+								type="submit"
+								disabled={saving}
+								class="px-3 py-1.5 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+							>
+								{saving ? 'Saving...' : 'Save'}
+							</button>
+							<button
+								type="button"
+								onclick={cancelEdit}
+								class="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+							>
+								Cancel
+							</button>
+						</form>
+						{#if editError}
+							<p class="text-sm text-red-600 dark:text-red-400 mt-1">{editError}</p>
+						{/if}
+					{:else}
+						<div class="flex items-baseline gap-3 mb-2">
+							<Heading tag="h2" class="text-2xl font-bold">{transform.title}</Heading>
+							<span class="text-sm text-gray-500 dark:text-gray-400"
+								>#{transform.collection_transform_id}</span
+							>
+						</div>
+					{/if}
 					<p class="text-sm text-gray-500 dark:text-gray-400">
 						Created {formatDate(transform.created_at)}
+						{#if transform.updated_at && transform.updated_at !== transform.created_at}
+							&middot; Updated {formatDate(transform.updated_at)}
+						{/if}
 					</p>
 				</div>
-				<span
-					class={transform.is_enabled
-						? 'px-3 py-1 rounded-full text-sm font-semibold bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400'
-						: 'px-3 py-1 rounded-full text-sm font-semibold bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-400'}
-				>
-					{transform.is_enabled ? 'Enabled' : 'Disabled'}
-				</span>
+				<div class="flex items-center gap-2 ml-4">
+					{#if !editMode}
+						<button
+							onclick={startEdit}
+							title="Edit title"
+							class="px-3 py-1 text-sm bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-lg dark:bg-gray-700 dark:text-gray-300 transition-colors"
+						>
+							Edit
+						</button>
+					{/if}
+					<button
+						onclick={toggleEnabled}
+						title={transform.is_enabled ? 'Disable transform' : 'Enable transform'}
+						class={transform.is_enabled
+							? 'px-3 py-1 text-sm rounded-lg bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-400 transition-colors'
+							: 'px-3 py-1 text-sm rounded-lg bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400 transition-colors'}
+					>
+						{transform.is_enabled ? 'Disable' : 'Enable'}
+					</button>
+					<button
+						onclick={() => (transformPendingDelete = transform)}
+						disabled={deleting}
+						title="Delete transform"
+						class="px-3 py-1 text-sm bg-red-100 text-red-700 hover:bg-red-200 rounded-lg dark:bg-red-900/20 dark:text-red-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+					>
+						{deleting ? 'Deleting...' : 'Delete'}
+					</button>
+				</div>
 			</div>
 
 			<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -350,12 +520,32 @@
 					<p class="text-sm text-gray-500 dark:text-gray-400 mb-1">Chunk Size</p>
 					<p class="text-lg font-medium text-gray-900 dark:text-white">{transform.chunk_size}</p>
 				</div>
-				<div>
-					<p class="text-sm text-gray-500 dark:text-gray-400 mb-1">Owner</p>
-					<p class="text-lg font-medium text-gray-900 dark:text-white">{transform.owner}</p>
-				</div>
 			</div>
 		</div>
+
+		<!-- Job Configuration Card -->
+		{#if transform.job_config && Object.keys(transform.job_config).length > 0}
+			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
+				<Heading tag="h3" class="text-lg font-bold mb-4">Job Configuration</Heading>
+				<div class="space-y-4">
+					{#each Object.entries(transform.job_config) as [key, value] (key)}
+						<div>
+							<h4 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">{key}</h4>
+							{#if typeof value === 'object'}
+								<pre
+									class="text-sm font-mono bg-gray-50 dark:bg-gray-900 rounded-lg p-3 overflow-x-auto text-gray-900 dark:text-gray-100">{JSON.stringify(
+										value,
+										null,
+										2
+									)}</pre>
+							{:else}
+								<p class="text-sm font-medium text-gray-900 dark:text-white">{value}</p>
+							{/if}
+						</div>
+					{/each}
+				</div>
+			</div>
+		{/if}
 
 		<!-- Stats Card -->
 		{#if stats}
@@ -509,3 +699,15 @@
 		</div>
 	{/if}
 </div>
+
+<ConfirmDialog
+	open={transformPendingDelete !== null}
+	title="Delete Collection Transform"
+	message={transformPendingDelete
+		? `Are you sure you want to delete "${transformPendingDelete.title}"? This action cannot be undone.`
+		: ''}
+	confirmLabel="Delete"
+	variant="danger"
+	onConfirm={confirmDeleteTransform}
+	onCancel={() => (transformPendingDelete = null)}
+/>

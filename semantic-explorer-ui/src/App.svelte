@@ -26,6 +26,7 @@
 	const Embedders = () => import('./lib/pages/Embedders.svelte');
 	const GrabResource = () => import('./lib/pages/GrabResource.svelte');
 	const LLMs = () => import('./lib/pages/LLMs.svelte');
+	const LLMDetail = () => import('./lib/pages/LLMDetail.svelte');
 	const Marketplace = () => import('./lib/pages/Marketplace.svelte');
 	const Search = () => import('./lib/pages/Search.svelte');
 	const VisualizationTransforms = () => import('./lib/pages/VisualizationTransforms.svelte');
@@ -41,6 +42,7 @@
 	let selectedDatasetId = $state<number | null>(null);
 	let selectedEmbeddedDatasetId = $state<number | null>(null);
 	let selectedEmbedderId = $state<number | null>(null);
+	let selectedLlmId = $state<number | null>(null);
 	let selectedVisualizationId = $state<number | null>(null);
 	let selectedCollectionTransformId = $state<number | null>(null);
 	let selectedDatasetTransformId = $state<number | null>(null);
@@ -85,6 +87,9 @@
 		}
 		if (parts.length === 3 && parts[0] === 'embedders' && parts[2] === 'details') {
 			return { path: '/embedders/detail', params: { ...params, id: parts[1] } };
+		}
+		if (parts.length === 3 && parts[0] === 'llms' && parts[2] === 'details') {
+			return { path: '/llms/detail', params: { ...params, id: parts[1] } };
 		}
 		if (parts.length === 3 && parts[0] === 'collection-transforms' && parts[2] === 'details') {
 			return { path: '/collection-transforms/detail', params: { ...params, id: parts[1] } };
@@ -145,6 +150,13 @@
 			selectedEmbedderId = !isNaN(id) ? id : null;
 		} else if (path !== '/embedders/detail') {
 			selectedEmbedderId = null;
+		}
+
+		if (path === '/llms/detail' && params.id) {
+			const id = parseInt(params.id, 10);
+			selectedLlmId = !isNaN(id) ? id : null;
+		} else if (path !== '/llms/detail') {
+			selectedLlmId = null;
 		}
 
 		if (path === '/collection-transforms/detail' && params.id) {
@@ -255,6 +267,18 @@
 		selectedEmbedderId = null;
 		activeUrl = '/embedders';
 		window.location.hash = '/embedders';
+	}
+
+	function viewLLM(llmId: number) {
+		selectedLlmId = llmId;
+		activeUrl = '/llms/detail';
+		window.location.hash = `/llms/${llmId}/details`;
+	}
+
+	function backToLLMs() {
+		selectedLlmId = null;
+		activeUrl = '/llms';
+		window.location.hash = '/llms';
 	}
 
 	function viewCollectionTransform(collectionTransformId: number) {
@@ -387,8 +411,14 @@
 					{/if}
 				{:else if activeUrl === '/llms'}
 					{#await LLMs() then { default: LLMsComponent }}
-						<LLMsComponent />
+						<LLMsComponent onViewLLM={viewLLM} />
 					{/await}
+				{:else if activeUrl === '/llms/detail'}
+					{#if selectedLlmId !== null}
+						{#await LLMDetail() then { default: LLMDetailComponent }}
+							<LLMDetailComponent llmId={selectedLlmId} onBack={backToLLMs} />
+						{/await}
+					{/if}
 				{:else if activeUrl === '/collection-transforms'}
 					{#await CollectionTransforms() then { default: CollectionTransformsComponent }}
 						<CollectionTransformsComponent onViewTransform={viewCollectionTransform} />

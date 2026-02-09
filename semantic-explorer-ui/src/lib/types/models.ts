@@ -100,6 +100,8 @@ export interface EmbeddedDataset {
 	embedder_name?: string;
 	active_point_count?: number;
 	is_standalone?: boolean; // True if dataset_transform_id, source_dataset_id, and embedder_id are 0
+	collection_id?: number; // Collection ID if this embedded dataset was created from a collection transform
+	collection_title?: string; // Collection title if this embedded dataset was created from a collection transform
 }
 
 // Request to create a standalone embedded dataset
@@ -258,9 +260,22 @@ export interface CollectionTransformStats {
 
 export interface VisualizationStats {
 	visualization_transform_id: number;
-	total_points: number;
-	total_clusters: number;
-	noise_points: number;
+	latest_visualization?: {
+		visualization_id: number;
+		visualization_transform_id: number;
+		status: string;
+		point_count: number;
+		cluster_count: number;
+		started_at?: string;
+		completed_at?: string;
+		created_at: string;
+		html_s3_key?: string;
+		error_message?: string;
+		stats_json?: Record<string, unknown>;
+	};
+	total_runs: number;
+	successful_runs: number;
+	failed_runs: number;
 }
 
 export interface VisualizationConfig {

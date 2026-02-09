@@ -95,7 +95,7 @@ graph TB
     end
 
     subgraph "Output"
-        RESULT[NATS Status<br/>transforms.visualization.status.*]
+        RESULT[Worker Status<br/>transforms.visualization.status.*]
     end
 
     NATS --> CONSUMER

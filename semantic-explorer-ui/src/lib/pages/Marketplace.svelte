@@ -219,7 +219,7 @@
 	});
 </script>
 
-<div class="space-y-6 max-w-7xl mx-auto">
+<div class="space-y-6 mx-auto">
 	<PageHeader
 		title="Marketplace"
 		description="Discover and grab public resources from the community"

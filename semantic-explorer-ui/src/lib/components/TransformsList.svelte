@@ -111,16 +111,20 @@
 		}
 
 		const status = transform.last_run_status.toLowerCase();
-		if (status.includes('success')) {
+		if (status.includes('success') || status.includes('completed')) {
 			return {
-				label: 'Success',
+				label: status.includes('completed') ? 'Completed' : 'Success',
 				color: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
 			};
-		} else if (status.includes('error')) {
+		} else if (status.includes('error') || status.includes('failed')) {
 			return { label: 'Error', color: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' };
-		} else if (status.includes('running') || status.includes('pending')) {
+		} else if (
+			status.includes('running') ||
+			status.includes('pending') ||
+			status.includes('processing')
+		) {
 			return {
-				label: 'Running',
+				label: status.includes('processing') ? 'Processing' : 'Running',
 				color: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
 			};
 		}
@@ -159,7 +163,9 @@
 		} else if (type === 'visualization') {
 			const stats = transform.last_run_stats;
 			if (!stats) return 'No data';
-			return `${stats.n_points ?? 0} points, ${stats.n_clusters ?? 0} clusters`;
+			const pointCount = stats.latest_visualization?.point_count ?? 0;
+			const clusterCount = stats.latest_visualization?.cluster_count ?? 0;
+			return `${pointCount} points, ${clusterCount} clusters`;
 		}
 		return '';
 	}
@@ -281,7 +287,9 @@
 						{getStats(transform)}
 					</TableBodyCell>
 					<TableBodyCell class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
-						{#if transform.last_run_stats?.last_run_at}
+						{#if type === 'visualization' && transform.last_run_stats?.latest_visualization?.completed_at}
+							{formatDate(transform.last_run_stats.latest_visualization.completed_at)}
+						{:else if transform.last_run_stats?.last_run_at}
 							{formatDate(transform.last_run_stats.last_run_at)}
 						{:else}
 							Never

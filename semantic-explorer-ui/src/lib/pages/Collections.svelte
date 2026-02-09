@@ -268,7 +268,7 @@
 	}
 </script>
 
-<div class="max-w-7xl mx-auto">
+<div class="mx-auto">
 	<PageHeader
 		title="Collections"
 		description="Organize collections of documents of interest. You can add as many files as you want, up to 1GB per file. Most common content types are supported including Office documents (Word, Excel, PowerPoint), HTML, XML, and raw text files."

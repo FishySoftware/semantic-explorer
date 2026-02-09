@@ -81,11 +81,15 @@ const GET_EMBEDDED_DATASET_WITH_DETAILS_QUERY: &str = r#"
         ed.collection_name,
         COALESCE(ed.dimensions, e.dimensions) as dimensions,
         (ed.dataset_transform_id = 0 AND ed.source_dataset_id = 0 AND ed.embedder_id = 0) as is_standalone,
+        ct.collection_id,
+        c.title as collection_title,
         ed.created_at,
         ed.updated_at
     FROM embedded_datasets ed
     LEFT JOIN datasets d ON d.dataset_id = ed.source_dataset_id AND ed.source_dataset_id != 0
     LEFT JOIN embedders e ON e.embedder_id = ed.embedder_id AND ed.embedder_id != 0
+    LEFT JOIN collection_transforms ct ON ct.dataset_id = d.dataset_id
+    LEFT JOIN collections c ON c.collection_id = ct.collection_id
     WHERE ed.owner_id = $1 AND ed.embedded_dataset_id = $2
 "#;
 
@@ -261,11 +265,15 @@ const GET_EMBEDDED_DATASET_WITH_DETAILS_BATCH: &str = r#"
             ed.collection_name,
             COALESCE(ed.dimensions, e.dimensions) as dimensions,
             (ed.dataset_transform_id = 0 AND ed.source_dataset_id = 0 AND ed.embedder_id = 0) as is_standalone,
+            ct.collection_id,
+            c.title as collection_title,
             ed.created_at,
             ed.updated_at
         FROM embedded_datasets ed
         LEFT JOIN datasets d ON d.dataset_id = ed.source_dataset_id AND ed.source_dataset_id != 0
         LEFT JOIN embedders e ON e.embedder_id = ed.embedder_id AND ed.embedder_id != 0
+        LEFT JOIN collection_transforms ct ON ct.dataset_id = d.dataset_id
+        LEFT JOIN collections c ON c.collection_id = ct.collection_id
         WHERE ed.owner_id = $1 AND ed.embedded_dataset_id = ANY($2)
         ORDER BY ed.embedded_dataset_id
         "#;

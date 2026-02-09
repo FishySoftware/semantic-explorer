@@ -14,7 +14,7 @@ pub enum NatsConnectionState {
     Pending,
 }
 
-/// Overall NATS status response
+/// Overall Worker status response
 #[derive(Debug, Serialize)]
 pub struct NatsStatusResponse {
     pub connection: NatsConnectionStatus,

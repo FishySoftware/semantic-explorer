@@ -71,6 +71,12 @@ pub struct EmbeddedDatasetWithDetails {
     pub dimensions: Option<i32>,
     /// Whether this is a standalone embedded dataset (true when dataset_transform_id == 0)
     pub is_standalone: bool,
+    /// Collection ID if this embedded dataset was created from a collection transform
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collection_id: Option<i32>,
+    /// Collection title if this embedded dataset was created from a collection transform
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collection_title: Option<String>,
     #[schema(value_type = String, format = DateTime)]
     pub created_at: DateTime<Utc>,
     #[schema(value_type = String, format = DateTime)]

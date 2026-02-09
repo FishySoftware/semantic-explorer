@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { ArrowLeftOutline, ExpandOutline, UploadOutline } from 'flowbite-svelte-icons';
 	import { onDestroy, onMount } from 'svelte';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import ApiIntegrationModal from '../components/ApiIntegrationModal.svelte';
@@ -8,7 +9,6 @@
 	import TabPanel from '../components/TabPanel.svelte';
 	import TransformsList from '../components/TransformsList.svelte';
 	import UploadProgressPanel from '../components/UploadProgressPanel.svelte';
-	import { ArrowLeftOutline, ExpandOutline, UploadOutline } from 'flowbite-svelte-icons';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { createSSEConnection, type SSEConnection } from '../utils/sse';
 	import { formatDate, formatFileSize } from '../utils/ui-helpers';
@@ -101,6 +101,7 @@
 	let pageSize = $state(10);
 	let deletingFile = $state<string | null>(null);
 	let filePendingDelete = $state<CollectionFile | null>(null);
+	let collectionPendingDelete = $state(false);
 
 	let collectionTransforms = $state<CollectionTransform[]>([]);
 	let transformsLoading = $state(false);
@@ -169,6 +170,14 @@
 	let fileInputRef = $state<HTMLInputElement | undefined>();
 	let updatingPublic = $state(false);
 	let allowedFileTypes = $state<string>(''); // MIME types for file input accept attribute
+
+	// Edit mode state
+	let editMode = $state(false);
+	let editTitle = $state('');
+	let editDetails = $state('');
+	let editTags = $state('');
+	let saving = $state(false);
+	let editError = $state<string | null>(null);
 
 	// SSE connection for real-time transform status updates
 	let sseConnection: SSEConnection | null = null;
@@ -407,6 +416,29 @@
 		}
 	}
 
+	async function confirmDeleteCollection() {
+		if (!collection) return;
+
+		collectionPendingDelete = false;
+
+		try {
+			const response = await fetch(`/api/collections/${collection.collection_id}`, {
+				method: 'DELETE',
+			});
+
+			if (!response.ok) {
+				const errorText = await response.text();
+				throw new Error(`Failed to delete collection: ${errorText}`);
+			}
+
+			toastStore.success('Collection deleted successfully');
+			onBack();
+		} catch (e) {
+			const message = formatError(e, 'Failed to delete collection');
+			toastStore.error(message);
+		}
+	}
+
 	function goToNextPage() {
 		if (!paginatedFiles?.has_more) return;
 
@@ -486,6 +518,67 @@
 			toastStore.error(formatError(e, 'Failed to update collection visibility'));
 		} finally {
 			updatingPublic = false;
+		}
+	}
+
+	function startEdit() {
+		if (!collection) return;
+		editMode = true;
+		editTitle = collection.title;
+		editDetails = collection.details || '';
+		editTags = collection.tags.join(', ');
+		editError = null;
+	}
+
+	function cancelEdit() {
+		editMode = false;
+		editTitle = '';
+		editDetails = '';
+		editTags = '';
+		editError = null;
+	}
+
+	async function saveEdit() {
+		if (!collection) return;
+
+		if (!editTitle.trim()) {
+			editError = 'Title is required';
+			return;
+		}
+
+		const tags = editTags
+			.split(',')
+			.map((tag) => tag.trim())
+			.filter((tag) => tag.length > 0);
+
+		try {
+			saving = true;
+			editError = null;
+			const response = await fetch(`/api/collections/${collectionId}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					title: editTitle.trim(),
+					details: editDetails.trim() || null,
+					tags,
+					is_public: collection.is_public,
+				}),
+			});
+
+			if (!response.ok) {
+				throw new Error(`Failed to update collection: ${response.statusText}`);
+			}
+
+			const updatedCollection = await response.json();
+			collection = updatedCollection;
+			editMode = false;
+			toastStore.success('Collection updated successfully');
+		} catch (e) {
+			const message = formatError(e, 'Failed to update collection');
+			editError = message;
+			toastStore.error(message);
+		} finally {
+			saving = false;
 		}
 	}
 
@@ -663,7 +756,7 @@
 	});
 </script>
 
-<div class="max-w-7xl mx-auto">
+<div class=" mx-auto">
 	<div class="mb-2">
 		<button onclick={onBack} class="mb-2 btn-secondary inline-flex items-center gap-2">
 			<ArrowLeftOutline class="w-5 h-5" />
@@ -674,23 +767,116 @@
 			<LoadingState message="Loading collection..." />
 		{:else if collection}
 			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4">
-				<div class="flex justify-between items-start mb-2">
-					<div class="flex-1">
-						<div class="flex items-baseline gap-3 mb-2">
-							<h1 class="text-3xl font-bold text-gray-900 dark:text-white">
-								{collection.title}
-							</h1>
+				{#if editMode}
+					<!-- Edit Mode -->
+					<div class="mb-4">
+						<div class="flex items-center justify-between mb-4">
+							<h2 class="text-xl font-semibold text-gray-900 dark:text-white">Edit Collection</h2>
 							<span class="text-sm text-gray-500 dark:text-gray-400">
 								#{collection.collection_id}
 							</span>
 						</div>
-						{#if collection.details}
-							<p class="text-gray-600 dark:text-gray-400 mb-3">
-								{collection.details}
-							</p>
-						{/if}
-						<div class="flex items-center gap-2 flex-wrap">
-							<!-- <span
+						<form
+							onsubmit={(e) => {
+								e.preventDefault();
+								saveEdit();
+							}}
+						>
+							<div class="space-y-4">
+								<div>
+									<label
+										for="edit-title"
+										class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+									>
+										Title
+									</label>
+									<input
+										id="edit-title"
+										type="text"
+										bind:value={editTitle}
+										placeholder="Enter collection title"
+										class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+										required
+									/>
+								</div>
+								<div>
+									<label
+										for="edit-details"
+										class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+									>
+										Details
+									</label>
+									<textarea
+										id="edit-details"
+										bind:value={editDetails}
+										placeholder="Enter collection details (optional)"
+										rows="3"
+										class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+									></textarea>
+								</div>
+								<div>
+									<label
+										for="edit-tags"
+										class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+									>
+										Tags <span class="text-xs text-gray-500 dark:text-gray-400"
+											>(comma-separated)</span
+										>
+									</label>
+									<input
+										id="edit-tags"
+										type="text"
+										bind:value={editTags}
+										placeholder="e.g., documents, images, reports"
+										class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+									/>
+								</div>
+								{#if editError}
+									<div
+										class="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-red-700 dark:text-red-400"
+									>
+										{editError}
+									</div>
+								{/if}
+								<div class="flex gap-3">
+									<button
+										type="submit"
+										disabled={saving}
+										class="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+									>
+										{saving ? 'Saving...' : 'Save'}
+									</button>
+									<button
+										type="button"
+										onclick={cancelEdit}
+										disabled={saving}
+										class="btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
+									>
+										Cancel
+									</button>
+								</div>
+							</div>
+						</form>
+					</div>
+				{:else}
+					<!-- View Mode -->
+					<div class="flex justify-between items-start mb-2">
+						<div class="flex-1">
+							<div class="flex items-baseline gap-3 mb-2">
+								<h1 class="text-3xl font-bold text-gray-900 dark:text-white">
+									{collection.title}
+								</h1>
+								<span class="text-sm text-gray-500 dark:text-gray-400">
+									#{collection.collection_id}
+								</span>
+							</div>
+							{#if collection.details}
+								<p class="text-gray-600 dark:text-gray-400 mb-3">
+									{collection.details}
+								</p>
+							{/if}
+							<div class="flex items-center gap-2 flex-wrap">
+								<!-- <span
 								class="inline-flex items-center gap-1.5 px-3 py-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full text-sm"
 							>
 								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -703,53 +889,86 @@
 								</svg>
 								{collection.owner}
 							</span> -->
-							{#if collection.tags && collection.tags.length > 0}
-								{#each collection.tags as tag (tag)}
-									<span
-										class="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs font-medium"
-									>
-										#{tag}
+								{#if collection.tags && collection.tags.length > 0}
+									{#each collection.tags as tag (tag)}
+										<span
+											class="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs font-medium"
+										>
+											#{tag}
+										</span>
+									{/each}
+								{/if}
+							</div>
+							<div class="mt-3">
+								<label class="inline-flex items-center gap-2 cursor-pointer">
+									<input
+										type="checkbox"
+										checked={collection.is_public}
+										onchange={togglePublic}
+										disabled={updatingPublic}
+										class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+									/>
+									<span class="text-sm text-gray-700 dark:text-gray-300">
+										{#if collection.is_public}
+											<span class="font-semibold text-green-600 dark:text-green-400">Public</span> - visible
+											in marketplace
+										{:else}
+											<span class="font-semibold text-gray-600 dark:text-gray-400">Private</span> - only
+											visible to you
+										{/if}
 									</span>
-								{/each}
-							{/if}
+								</label>
+							</div>
 						</div>
-						<div class="mt-3">
-							<label class="inline-flex items-center gap-2 cursor-pointer">
-								<input
-									type="checkbox"
-									checked={collection.is_public}
-									onchange={togglePublic}
-									disabled={updatingPublic}
-									class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+						<button
+							type="button"
+							onclick={() => (apiIntegrationModalOpen = true)}
+							class="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
+						>
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
 								/>
-								<span class="text-sm text-gray-700 dark:text-gray-300">
-									{#if collection.is_public}
-										<span class="font-semibold text-green-600 dark:text-green-400">Public</span> - visible
-										in marketplace
-									{:else}
-										<span class="font-semibold text-gray-600 dark:text-gray-400">Private</span> - only
-										visible to you
-									{/if}
-								</span>
-							</label>
-						</div>
+							</svg>
+							API
+						</button>
+						<button
+							type="button"
+							onclick={startEdit}
+							class="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+							title="Edit collection"
+						>
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+								/>
+							</svg>
+							Edit
+						</button>
+						<button
+							type="button"
+							onclick={() => (collectionPendingDelete = true)}
+							class="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+							title="Delete collection"
+						>
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+								/>
+							</svg>
+							Delete
+						</button>
 					</div>
-					<button
-						type="button"
-						onclick={() => (apiIntegrationModalOpen = true)}
-						class="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
-					>
-						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width="2"
-								d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
-							/>
-						</svg>
-						API
-					</button>
-				</div>
+				{/if}
 			</div>
 		{/if}
 	</div>
@@ -1345,6 +1564,17 @@
 		</TabPanel>
 	</div>
 </div>
+
+<ConfirmDialog
+	open={collectionPendingDelete}
+	title="Delete Collection?"
+	message="Are you sure you want to delete this collection? This action cannot be undone."
+	confirmLabel="Delete"
+	cancelLabel="Cancel"
+	onConfirm={confirmDeleteCollection}
+	onCancel={() => (collectionPendingDelete = false)}
+	variant="danger"
+/>
 
 <ConfirmDialog
 	open={Boolean(filePendingDelete)}

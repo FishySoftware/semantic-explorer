@@ -499,7 +499,7 @@
 	}
 </script>
 
-<div class="max-w-7xl mx-auto">
+<div class="mx-auto">
 	<PageHeader
 		title="Visualizations"
 		description="View completed interactive visualizations of your embedding spaces. Each visualization shows UMAP dimensionality reduction with HDBSCAN clustering."

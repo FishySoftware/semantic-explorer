@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { ArrowLeftOutline, ExpandOutline } from 'flowbite-svelte-icons';
 	import { onDestroy, onMount } from 'svelte';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import ApiIntegrationModal from '../components/ApiIntegrationModal.svelte';
@@ -8,11 +9,6 @@
 	import LoadingState from '../components/LoadingState.svelte';
 	import TabPanel from '../components/TabPanel.svelte';
 	import TransformsList from '../components/TransformsList.svelte';
-	import { ArrowLeftOutline, ExpandOutline } from 'flowbite-svelte-icons';
-	import { formatError, toastStore } from '../utils/notifications';
-	import { createPollingInterval } from '../utils/polling';
-	import { createSSEConnection, type SSEConnection } from '../utils/sse';
-	import { formatDate } from '../utils/ui-helpers';
 	import type {
 		CollectionTransform,
 		Dataset,
@@ -22,6 +18,10 @@
 		EmbeddedDataset,
 		PaginatedItems,
 	} from '../types/models';
+	import { formatError, toastStore } from '../utils/notifications';
+	import { createPollingInterval } from '../utils/polling';
+	import { createSSEConnection, type SSEConnection } from '../utils/sse';
+	import { formatDate } from '../utils/ui-helpers';
 
 	interface Props {
 		datasetId: number;
@@ -59,6 +59,14 @@
 	// Tab state
 	let activeTab = $state('overview');
 	let apiIntegrationModalOpen = $state(false);
+
+	// Edit mode state
+	let editMode = $state(false);
+	let editTitle = $state('');
+	let editDetails = $state('');
+	let editTags = $state('');
+	let saving = $state(false);
+	let editError = $state<string | null>(null);
 
 	const tabs = [
 		{ id: 'overview', label: 'Overview', icon: '📋' },
@@ -108,6 +116,7 @@
 	// Delete state
 	let deletingItem = $state<number | null>(null);
 	let itemPendingDelete = $state<DatasetItemSummary | null>(null);
+	let datasetPendingDelete = $state(false);
 	let updatingPublic = $state(false);
 
 	// Dataset Transform Modal state
@@ -233,6 +242,67 @@
 			}
 		} catch (e) {
 			console.error(e);
+		}
+	}
+
+	function startEdit() {
+		if (!dataset) return;
+		editMode = true;
+		editTitle = dataset.title;
+		editDetails = dataset.details || '';
+		editTags = dataset.tags.join(', ');
+		editError = null;
+	}
+
+	function cancelEdit() {
+		editMode = false;
+		editTitle = '';
+		editDetails = '';
+		editTags = '';
+		editError = null;
+	}
+
+	async function saveEdit() {
+		if (!dataset) return;
+
+		if (!editTitle.trim()) {
+			editError = 'Title is required';
+			return;
+		}
+
+		const tags = editTags
+			.split(',')
+			.map((tag) => tag.trim())
+			.filter((tag) => tag.length > 0);
+
+		try {
+			saving = true;
+			editError = null;
+			const response = await fetch(`/api/datasets/${datasetId}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					title: editTitle.trim(),
+					details: editDetails.trim() || null,
+					tags,
+					is_public: dataset.is_public,
+				}),
+			});
+
+			if (!response.ok) {
+				throw new Error(`Failed to update dataset: ${response.statusText}`);
+			}
+
+			const updatedDataset = await response.json();
+			dataset = updatedDataset;
+			editMode = false;
+			toastStore.success('Dataset updated successfully');
+		} catch (e) {
+			const message = formatError(e, 'Failed to update dataset');
+			editError = message;
+			toastStore.error(message);
+		} finally {
+			saving = false;
 		}
 	}
 
@@ -588,6 +658,29 @@
 		}
 	}
 
+	async function confirmDeleteDataset() {
+		if (!dataset) return;
+
+		datasetPendingDelete = false;
+
+		try {
+			const response = await fetch(`/api/datasets/${dataset.dataset_id}`, {
+				method: 'DELETE',
+			});
+
+			if (!response.ok) {
+				const errorText = await response.text();
+				throw new Error(`Failed to delete dataset: ${errorText}`);
+			}
+
+			toastStore.success('Dataset deleted successfully');
+			onBack();
+		} catch (e) {
+			const message = formatError(e, 'Failed to delete dataset');
+			toastStore.error(message);
+		}
+	}
+
 	function connectSSE() {
 		// Connect to dataset transforms stream (for transforms that process this dataset)
 		// Dataset transforms use source_dataset_id in their subject for filtering
@@ -643,7 +736,7 @@
 	});
 </script>
 
-<div class="max-w-7xl mx-auto">
+<div class=" mx-auto">
 	<div class="mb-4">
 		<button onclick={onBack} class="mb-4 btn-secondary inline-flex items-center gap-2">
 			<ArrowLeftOutline class="w-5 h-5" />
@@ -666,67 +759,193 @@
 			</div>
 		{:else if dataset}
 			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-4">
-				<div class="flex justify-between items-start mb-2">
-					<div class="flex-1">
-						<div class="flex items-baseline gap-3 mb-2">
-							<h1 class="text-3xl font-bold text-gray-900 dark:text-white">
-								{dataset.title}
-							</h1>
-							<span class="text-sm text-gray-500 dark:text-gray-400">
-								#{dataset.dataset_id}
-							</span>
-						</div>
-						{#if dataset.details}
-							<p class="text-gray-600 dark:text-gray-400 mb-3">
-								{dataset.details}
-							</p>
-						{/if}
-						<div class="flex items-center gap-2 flex-wrap">
-							{#each dataset.tags as tag (tag)}
-								<span
-									class="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs font-medium"
+				{#if editMode}
+					<!-- Edit Mode -->
+					<div class="mb-4">
+						<div class="flex justify-between items-center mb-4">
+							<h2 class="text-xl font-semibold text-gray-900 dark:text-white">Edit Dataset</h2>
+							<div class="flex gap-2">
+								<button
+									type="button"
+									onclick={cancelEdit}
+									disabled={saving}
+									class="px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-50"
 								>
-									#{tag}
-								</span>
-							{/each}
+									Cancel
+								</button>
+								<button
+									type="button"
+									onclick={saveEdit}
+									disabled={saving}
+									class="px-3 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors disabled:opacity-50"
+								>
+									{saving ? 'Saving...' : 'Save Changes'}
+								</button>
+							</div>
 						</div>
-						<div class="mt-3">
-							<label class="inline-flex items-center gap-2 cursor-pointer">
+
+						{#if editError}
+							<div
+								class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 mb-4"
+							>
+								<p class="text-sm text-red-700 dark:text-red-400">{editError}</p>
+							</div>
+						{/if}
+
+						<div class="space-y-4">
+							<div>
+								<label
+									for="edit-title"
+									class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+								>
+									Title <span class="text-red-500">*</span>
+								</label>
 								<input
-									type="checkbox"
-									checked={dataset.is_public}
-									onchange={togglePublic}
-									disabled={updatingPublic}
-									class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+									id="edit-title"
+									type="text"
+									bind:value={editTitle}
+									disabled={saving}
+									class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white disabled:opacity-50"
+									placeholder="Enter dataset title"
 								/>
-								<span class="text-sm text-gray-700 dark:text-gray-300">
-									{#if dataset.is_public}
-										<span class="font-semibold text-green-600 dark:text-green-400">Public</span> - visible
-										in marketplace
-									{:else}
-										<span class="font-semibold text-gray-600 dark:text-gray-400">Private</span> - only
-										visible to you
-									{/if}
-								</span>
-							</label>
+							</div>
+
+							<div>
+								<label
+									for="edit-details"
+									class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+								>
+									Details
+								</label>
+								<textarea
+									id="edit-details"
+									bind:value={editDetails}
+									disabled={saving}
+									rows="3"
+									class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white disabled:opacity-50"
+									placeholder="Enter dataset details (optional)"
+								></textarea>
+							</div>
+
+							<div>
+								<label
+									for="edit-tags"
+									class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+								>
+									Tags
+								</label>
+								<input
+									id="edit-tags"
+									type="text"
+									bind:value={editTags}
+									disabled={saving}
+									class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white disabled:opacity-50"
+									placeholder="Enter tags separated by commas"
+								/>
+								<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+									Separate multiple tags with commas
+								</p>
+							</div>
 						</div>
 					</div>
-					<button
-						type="button"
-						onclick={() => (apiIntegrationModalOpen = true)}
-						class="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
-					>
-						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width="2"
-								d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
-							/>
-						</svg>
-						API
-					</button>
-				</div>
+				{:else}
+					<!-- View Mode -->
+					<div class="flex justify-between items-start mb-2">
+						<div class="flex-1">
+							<div class="flex items-baseline gap-3 mb-2">
+								<h1 class="text-3xl font-bold text-gray-900 dark:text-white">
+									{dataset.title}
+								</h1>
+								<span class="text-sm text-gray-500 dark:text-gray-400">
+									#{dataset.dataset_id}
+								</span>
+							</div>
+							{#if dataset.details}
+								<p class="text-gray-600 dark:text-gray-400 mb-3">
+									{dataset.details}
+								</p>
+							{/if}
+							<div class="flex items-center gap-2 flex-wrap">
+								{#each dataset.tags as tag (tag)}
+									<span
+										class="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs font-medium"
+									>
+										#{tag}
+									</span>
+								{/each}
+							</div>
+							<div class="mt-3">
+								<label class="inline-flex items-center gap-2 cursor-pointer">
+									<input
+										type="checkbox"
+										checked={dataset.is_public}
+										onchange={togglePublic}
+										disabled={updatingPublic}
+										class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+									/>
+									<span class="text-sm text-gray-700 dark:text-gray-300">
+										{#if dataset.is_public}
+											<span class="font-semibold text-green-600 dark:text-green-400">Public</span> - visible
+											in marketplace
+										{:else}
+											<span class="font-semibold text-gray-600 dark:text-gray-400">Private</span> - only
+											visible to you
+										{/if}
+									</span>
+								</label>
+							</div>
+						</div>
+						<div class="flex gap-2">
+							<button
+								type="button"
+								onclick={() => (apiIntegrationModalOpen = true)}
+								class="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
+							>
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
+									/>
+								</svg>
+								API
+							</button>
+							<button
+								type="button"
+								onclick={startEdit}
+								class="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+								title="Edit dataset"
+							>
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+									/>
+								</svg>
+								Edit
+							</button>
+							<button
+								type="button"
+								onclick={() => (datasetPendingDelete = true)}
+								class="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+								title="Delete dataset"
+							>
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+									/>
+								</svg>
+								Delete
+							</button>
+						</div>
+					</div>
+				{/if}
 			</div>
 
 			{#if activeTransformProgress}
@@ -1252,6 +1471,17 @@
 		{/if}
 	</div>
 </div>
+
+<ConfirmDialog
+	open={datasetPendingDelete}
+	title="Delete Dataset?"
+	message="Are you sure you want to delete this dataset? This action cannot be undone."
+	confirmLabel="Delete"
+	cancelLabel="Cancel"
+	onConfirm={confirmDeleteDataset}
+	onCancel={() => (datasetPendingDelete = false)}
+	variant="danger"
+/>
 
 <ConfirmDialog
 	title="Delete dataset item"

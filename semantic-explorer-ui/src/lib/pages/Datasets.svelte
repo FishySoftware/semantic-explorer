@@ -296,7 +296,7 @@
 	}
 </script>
 
-<div class="max-w-7xl mx-auto">
+<div class="mx-auto">
 	<PageHeader
 		title="Datasets"
 		description="Contains processed texts as JSON with name and chunks, to be used for embedding transforms. Datasets can be generated from collections using transforms, or exported to the dataset endpoints directly via API."

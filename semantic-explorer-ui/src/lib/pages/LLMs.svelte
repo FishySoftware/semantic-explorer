@@ -3,6 +3,7 @@
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import LoadingState from '$lib/components/LoadingState.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
+	import SearchInput from '$lib/components/SearchInput.svelte';
 	import type {
 		LLM,
 		ModelInfo,
@@ -10,9 +11,18 @@
 		PaginatedLLMList,
 		ProviderDefaultConfig,
 	} from '$lib/types/models';
+	import { formatError, toastStore } from '$lib/utils/notifications';
 	import { Table, TableBody, TableBodyCell, TableHead, TableHeadCell } from 'flowbite-svelte';
 	import { onMount } from 'svelte';
-	import { SvelteURLSearchParams } from 'svelte/reactivity';
+	import { SvelteSet, SvelteURLSearchParams } from 'svelte/reactivity';
+
+	let { onViewLLM: handleViewLLM } = $props<{
+		onViewLLM?: (_: number) => void;
+	}>();
+
+	const onViewLLM = (id: number) => {
+		handleViewLLM?.(id);
+	};
 
 	let llms = $state<LLM[]>([]);
 	let loading = $state(true);
@@ -40,6 +50,11 @@
 	let customModel = $state('');
 
 	let llmPendingDelete = $state<LLM | null>(null);
+
+	// Selection state for bulk operations
+	let selected = new SvelteSet<number>();
+	let selectAll = $state(false);
+	let llmsPendingBulkDelete = $state<LLM[]>([]);
 
 	let inferenceModels = $state<ModelInfo[]>([]);
 	let localModelsForDisplay = $derived(
@@ -234,7 +249,7 @@
 			const model = localModel === '__custom__' ? customModel : localModel;
 			if (model && typeof model === 'string') {
 				const cleanModel = model.split('/').pop()?.toLowerCase() || model.toLowerCase();
-				formName = `llm-${formProvider}-${cleanModel}`;
+				formName = cleanModel;
 			}
 		}
 	});
@@ -354,11 +369,73 @@
 				console.error('Failed to delete LLM:', errorText);
 				throw new Error(`Failed to delete LLM: ${response.status}`);
 			}
+			toastStore.success('LLM deleted');
 			await fetchLLMs();
 		} catch (e: any) {
 			console.error('Error deleting LLM:', e);
-			error = e.message || 'Failed to delete LLM';
+			const message = formatError(e, 'Failed to delete LLM');
+			error = message;
+			toastStore.error(message);
 		}
+	}
+
+	function toggleSelectAll() {
+		selectAll = !selectAll;
+		if (selectAll) {
+			selected.clear();
+			for (const llm of llms) {
+				selected.add(llm.llm_id);
+			}
+		} else {
+			selected.clear();
+		}
+	}
+
+	function toggleSelect(id: number) {
+		if (selected.has(id)) {
+			selected.delete(id);
+			selectAll = false;
+		} else {
+			selected.add(id);
+		}
+	}
+
+	function bulkDelete() {
+		const toDelete: LLM[] = [];
+		for (const id of selected) {
+			const llm = llms.find((l) => l.llm_id === id);
+			if (llm) {
+				toDelete.push(llm);
+			}
+		}
+		if (toDelete.length > 0) {
+			llmsPendingBulkDelete = toDelete;
+		}
+	}
+
+	async function confirmBulkDelete() {
+		const toDelete = llmsPendingBulkDelete;
+		llmsPendingBulkDelete = [];
+
+		for (const llm of toDelete) {
+			try {
+				const response = await fetch(`/api/llms/${llm.llm_id}`, {
+					method: 'DELETE',
+				});
+
+				if (!response.ok) {
+					throw new Error(`Failed to delete: ${response.statusText}`);
+				}
+
+				llms = llms.filter((l) => l.llm_id !== llm.llm_id);
+			} catch (e) {
+				toastStore.error(formatError(e, `Failed to delete "${llm.name}"`));
+			}
+		}
+
+		selected.clear();
+		selectAll = false;
+		toastStore.success(`Deleted ${toDelete.length} LLM${toDelete.length !== 1 ? 's' : ''}`);
 	}
 
 	// Refetch when search query changes
@@ -394,7 +471,7 @@
 	}
 </script>
 
-<div class="max-w-7xl mx-auto">
+<div class="mx-auto">
 	<PageHeader
 		title="LLMs"
 		description="Manage Large Language Model configurations. Define OpenAI, Cohere, or custom LLM providers that can be used for chat, completions, and AI-powered features."
@@ -660,29 +737,10 @@
 	{/if}
 
 	{#if !showCreateForm}
-		<div class="mb-4">
-			<div class="relative">
-				<input
-					type="text"
-					bind:value={searchQuery}
-					placeholder="Search LLMs by name, provider, owner, or URL..."
-					class="w-full px-4 py-2 pl-10 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
-				/>
-				<svg
-					class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400"
-					fill="none"
-					stroke="currentColor"
-					viewBox="0 0 24 24"
-				>
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width="2"
-						d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-					/>
-				</svg>
-			</div>
-		</div>
+		<SearchInput
+			bind:value={searchQuery}
+			placeholder="Search LLMs by name, provider, owner, or URL..."
+		/>
 	{/if}
 
 	{#if loading}
@@ -710,9 +768,41 @@
 			</button>
 		</div>
 	{:else}
+		{#if selected.size > 0}
+			<div
+				class="mb-4 flex items-center gap-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4"
+			>
+				<span class="text-sm text-blue-700 dark:text-blue-300 flex-1">
+					{selected.size} LLM{selected.size !== 1 ? 's' : ''} selected
+				</span>
+				<button
+					onclick={() => bulkDelete()}
+					class="text-sm px-3 py-1 rounded bg-red-600 hover:bg-red-700 text-white transition-colors"
+				>
+					Delete
+				</button>
+				<button
+					onclick={() => {
+						selected.clear();
+						selectAll = false;
+					}}
+					class="text-sm px-3 py-1 rounded bg-gray-300 hover:bg-gray-400 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-900 dark:text-white transition-colors"
+				>
+					Clear
+				</button>
+			</div>
+		{/if}
 		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
 			<Table hoverable striped class="table-fixed">
 				<TableHead>
+					<TableHeadCell class="px-4 py-3 w-12">
+						<input
+							type="checkbox"
+							checked={selectAll}
+							onchange={() => toggleSelectAll()}
+							class="cursor-pointer"
+						/>
+					</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold w-[20%]">Name</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold w-[15%]">Provider</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold w-[30%]">Model</TableHeadCell>
@@ -725,9 +815,17 @@
 				<TableBody>
 					{#each llms as llm (llm.llm_id)}
 						<tr class="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50">
+							<TableBodyCell class="px-4 py-3 w-12">
+								<input
+									type="checkbox"
+									checked={selected.has(llm.llm_id)}
+									onchange={() => toggleSelect(llm.llm_id)}
+									class="cursor-pointer"
+								/>
+							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3">
 								<button
-									onclick={() => openEditForm(llm)}
+									onclick={() => onViewLLM(llm.llm_id)}
 									class="font-semibold text-blue-600 dark:text-blue-400 hover:underline"
 								>
 									{llm.name}
@@ -816,4 +914,14 @@
 	variant="danger"
 	onConfirm={confirmDeleteLLM}
 	onCancel={() => (llmPendingDelete = null)}
+/>
+
+<ConfirmDialog
+	open={llmsPendingBulkDelete.length > 0}
+	title="Delete LLMs"
+	message={`Are you sure you want to delete ${llmsPendingBulkDelete.length} LLM${llmsPendingBulkDelete.length !== 1 ? 's' : ''}? This action cannot be undone.`}
+	confirmLabel="Delete All"
+	variant="danger"
+	onConfirm={confirmBulkDelete}
+	onCancel={() => (llmsPendingBulkDelete = [])}
 />

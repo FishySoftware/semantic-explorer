@@ -62,7 +62,7 @@
 		} catch (e) {
 			const err = e instanceof Error ? e : new Error(String(e));
 			error = err.message;
-			toastStore.error(formatError(err, 'Failed to fetch NATS status'));
+			toastStore.error(formatError(err, 'Failed to fetch Worker status'));
 		} finally {
 			loading = false;
 		}
@@ -73,7 +73,7 @@
 		polling = createPollingInterval(fetchStatus, {
 			interval: 5000,
 			maxErrors: 10,
-			onError: (err) => console.warn('NATS status poll error:', err.message),
+			onError: (err) => console.warn('Worker status poll error:', err.message),
 		});
 	});
 
@@ -155,11 +155,11 @@
 	}
 </script>
 
-<div class="max-w-full xl:max-w-7xl mx-auto">
+<div class="max-w-full xl: mx-auto">
 	<!-- Header -->
 	<div class="mb-3 lg:mb-6">
 		<h1 class="text-2xl lg:text-3xl font-bold text-gray-900 dark:text-white mb-1 lg:mb-2">
-			NATS Status
+			Worker Status
 		</h1>
 		<p class="text-sm lg:text-base text-gray-600 dark:text-gray-400">
 			Message queue monitoring and worker health
@@ -172,7 +172,7 @@
 	</div>
 
 	{#if loading && !status}
-		<LoadingState message="Loading NATS status..." />
+		<LoadingState message="Loading Worker status..." />
 	{:else if error && !status}
 		<div
 			class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 lg:p-6"

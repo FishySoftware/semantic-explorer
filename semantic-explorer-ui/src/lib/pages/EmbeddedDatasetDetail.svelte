@@ -3,6 +3,7 @@
 	import { PlusOutline } from 'flowbite-svelte-icons';
 	import { onDestroy, onMount } from 'svelte';
 	import ApiExamples from '../ApiExamples.svelte';
+	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import TabPanel from '../components/TabPanel.svelte';
 	import TransformsList from '../components/TransformsList.svelte';
 	import type {
@@ -73,6 +74,15 @@
 
 	let activeTab = $state('overview');
 
+	// Edit mode state
+	let editMode = $state(false);
+	let editTitle = $state('');
+	let saving = $state(false);
+	let editError = $state<string | null>(null);
+
+	// Delete state
+	let embeddedDatasetPendingDelete = $state(false);
+
 	const tabs = [
 		{ id: 'overview', label: 'Overview', icon: '📊' },
 		{ id: 'points', label: 'Points', icon: '📍' },
@@ -110,6 +120,81 @@
 			toastStore.error(formatError(e, 'Failed to fetch embedded dataset'));
 		} finally {
 			loading = false;
+		}
+	}
+
+	function startEdit() {
+		if (!embeddedDataset) return;
+		editMode = true;
+		editTitle = embeddedDataset.title;
+		editError = null;
+	}
+
+	function cancelEdit() {
+		editMode = false;
+		editTitle = '';
+		editError = null;
+	}
+
+	async function saveEdit() {
+		if (!embeddedDataset) return;
+
+		if (!editTitle.trim()) {
+			editError = 'Title is required';
+			return;
+		}
+
+		try {
+			saving = true;
+			editError = null;
+			const response = await fetch(`/api/embedded-datasets/${embeddedDatasetId}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					title: editTitle.trim(),
+				}),
+			});
+
+			if (!response.ok) {
+				throw new Error(`Failed to update embedded dataset: ${response.statusText}`);
+			}
+
+			const updatedEmbeddedDataset = await response.json();
+			embeddedDataset = updatedEmbeddedDataset;
+			editMode = false;
+			toastStore.success('Embedded dataset updated successfully');
+		} catch (e) {
+			const message = formatError(e, 'Failed to update embedded dataset');
+			editError = message;
+			toastStore.error(message);
+		} finally {
+			saving = false;
+		}
+	}
+
+	async function confirmDeleteEmbeddedDataset() {
+		if (!embeddedDataset) return;
+
+		embeddedDatasetPendingDelete = false;
+
+		try {
+			const response = await fetch(
+				`/api/embedded-datasets/${embeddedDataset.embedded_dataset_id}`,
+				{
+					method: 'DELETE',
+				}
+			);
+
+			if (!response.ok) {
+				const errorText = await response.text();
+				throw new Error(`Failed to delete embedded dataset: ${errorText}`);
+			}
+
+			toastStore.success('Embedded dataset deleted successfully');
+			onBack();
+		} catch (e) {
+			const message = formatError(e, 'Failed to delete embedded dataset');
+			toastStore.error(message);
 		}
 	}
 
@@ -348,7 +433,7 @@
 	});
 </script>
 
-<div class="max-w-7xl mx-auto">
+<div class=" mx-auto">
 	{#if loading}
 		<div class="flex items-center justify-center py-12">
 			<Spinner size="12" />
@@ -367,41 +452,129 @@
 			>
 				← Back to Embedded Datasets
 			</button>
-			<div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-				<div class="flex-1">
-					<div class="flex items-center gap-2 mb-2">
-						<h1 class="text-3xl font-bold text-gray-900 dark:text-white">
-							{embeddedDataset.title}
-						</h1>
-						{#if isStandalone()}
-							<span
-								class="px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded text-xs font-medium"
+
+			{#if editMode}
+				<!-- Edit Mode -->
+				<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+					<div class="flex justify-between items-center mb-4">
+						<h2 class="text-xl font-semibold text-gray-900 dark:text-white">
+							Edit Embedded Dataset
+						</h2>
+						<div class="flex gap-2">
+							<button
+								type="button"
+								onclick={cancelEdit}
+								disabled={saving}
+								class="px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-50"
 							>
-								Standalone
-							</span>
+								Cancel
+							</button>
+							<button
+								type="button"
+								onclick={saveEdit}
+								disabled={saving}
+								class="px-3 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors disabled:opacity-50"
+							>
+								{saving ? 'Saving...' : 'Save Changes'}
+							</button>
+						</div>
+					</div>
+
+					{#if editError}
+						<div
+							class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 mb-4"
+						>
+							<p class="text-sm text-red-700 dark:text-red-400">{editError}</p>
+						</div>
+					{/if}
+
+					<div>
+						<label
+							for="edit-title"
+							class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+						>
+							Title <span class="text-red-500">*</span>
+						</label>
+						<input
+							id="edit-title"
+							type="text"
+							bind:value={editTitle}
+							disabled={saving}
+							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white disabled:opacity-50"
+							placeholder="Enter embedded dataset title"
+						/>
+					</div>
+				</div>
+			{:else}
+				<!-- View Mode -->
+				<div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+					<div class="flex-1">
+						<div class="flex items-center gap-2 mb-2">
+							<h1 class="text-3xl font-bold text-gray-900 dark:text-white">
+								{embeddedDataset.title}
+							</h1>
+							{#if isStandalone()}
+								<span
+									class="px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded text-xs font-medium"
+								>
+									Standalone
+								</span>
+							{/if}
+						</div>
+						<p class="text-gray-600 dark:text-gray-400">
+							Embedded Dataset #{embeddedDataset.embedded_dataset_id}
+							{#if isStandalone()}
+								<span class="text-sm"> · Push vectors directly via API</span>
+							{/if}
+						</p>
+					</div>
+					<div class="flex gap-2">
+						<button
+							type="button"
+							onclick={startEdit}
+							class="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+							title="Edit embedded dataset"
+						>
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+								/>
+							</svg>
+							Edit
+						</button>
+						<button
+							type="button"
+							onclick={() => (embeddedDatasetPendingDelete = true)}
+							class="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+							title="Delete embedded dataset"
+						>
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+								/>
+							</svg>
+							Delete
+						</button>
+						{#if isStandalone()}
+							<Button color="light" disabled title="Standalone datasets cannot be used for chat"
+								>💬 Chat</Button
+							>
+							<Button color="light" disabled title="Standalone datasets cannot be used for search"
+								>🔍 Search</Button
+							>
+						{:else}
+							<Button color="blue" onclick={navigateToChat}>💬 Chat</Button>
+							<Button color="purple" onclick={navigateToSearch}>🔍 Search</Button>
 						{/if}
 					</div>
-					<p class="text-gray-600 dark:text-gray-400">
-						Embedded Dataset #{embeddedDataset.embedded_dataset_id}
-						{#if isStandalone()}
-							<span class="text-sm"> · Push vectors directly via API</span>
-						{/if}
-					</p>
 				</div>
-				<div class="flex gap-2">
-					{#if isStandalone()}
-						<Button color="light" disabled title="Standalone datasets cannot be used for chat"
-							>💬 Chat</Button
-						>
-						<Button color="light" disabled title="Standalone datasets cannot be used for search"
-							>🔍 Search</Button
-						>
-					{:else}
-						<Button color="blue" onclick={navigateToChat}>💬 Chat</Button>
-						<Button color="purple" onclick={navigateToSearch}>🔍 Search</Button>
-					{/if}
-				</div>
-			</div>
+			{/if}
 		</div>
 
 		<!-- Metadata Card -->
@@ -427,7 +600,7 @@
 						<button
 							onclick={() =>
 								embeddedDataset &&
-								(window.location.hash = `#/datasets/${embeddedDataset.source_dataset_id}`)}
+								(window.location.hash = `#/datasets/${embeddedDataset.source_dataset_id}/details`)}
 							class="text-lg font-medium text-blue-600 dark:text-blue-400 hover:underline text-left"
 						>
 							{embeddedDataset.source_dataset_title ||
@@ -450,28 +623,22 @@
 							<p class="text-sm text-gray-600 dark:text-gray-400">Dimension</p>
 							<p class="text-lg font-medium text-gray-900 dark:text-white">{embedder.dimensions}</p>
 						</div>
-						<div>
-							<p class="text-sm text-gray-600 dark:text-gray-400">Embedding Model</p>
-							<p class="text-lg font-medium text-gray-900 dark:text-white">
-								{embedder.config?.model || embedder.name}
-							</p>
-						</div>
 					{/if}
 				{/if}
 				<div>
-					<p class="text-sm text-gray-600 dark:text-gray-400">Collection Name</p>
-					<button
-						onclick={() =>
-							embeddedDataset &&
-							(window.location.hash = `#/collections?search=${encodeURIComponent(embeddedDataset.collection_name)}`)}
-						class="font-mono text-blue-600 dark:text-blue-400 hover:underline text-sm break-all text-left"
-					>
-						{embeddedDataset.collection_name}
-					</button>
-				</div>
-				<div>
-					<p class="text-sm text-gray-600 dark:text-gray-400">Owner</p>
-					<p class="text-lg font-medium text-gray-900 dark:text-white">{embeddedDataset.owner}</p>
+					<p class="text-sm text-gray-600 dark:text-gray-400">Collection</p>
+					{#if embeddedDataset.collection_id}
+						<button
+							onclick={() =>
+								embeddedDataset &&
+								(window.location.hash = `#/collections/${embeddedDataset.collection_id}/details`)}
+							class="text-lg font-medium text-blue-600 dark:text-blue-400 hover:underline text-left"
+						>
+							{embeddedDataset.collection_title || `Collection #${embeddedDataset.collection_id}`}
+						</button>
+					{:else}
+						<p class="text-lg font-medium text-gray-500 dark:text-gray-400">None</p>
+					{/if}
 				</div>
 			</div>
 
@@ -826,3 +993,14 @@
 		</TabPanel>
 	{/if}
 </div>
+
+<ConfirmDialog
+	open={embeddedDatasetPendingDelete}
+	title="Delete Embedded Dataset?"
+	message="Are you sure you want to delete this embedded dataset? This action cannot be undone."
+	confirmLabel="Delete"
+	cancelLabel="Cancel"
+	onConfirm={confirmDeleteEmbeddedDataset}
+	onCancel={() => (embeddedDatasetPendingDelete = false)}
+	variant="danger"
+/>

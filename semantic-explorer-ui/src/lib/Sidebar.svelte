@@ -76,7 +76,7 @@
 		},
 		{ name: 'divider-5', icon: GridSolid, isDivider: true },
 
-		{ name: 'NATS Status', icon: ServerOutline, url: '/status/nats' },
+		{ name: 'Worker Status', icon: ServerOutline, url: '/status/nats' },
 	];
 	let expandedFolders = $state<string[]>(['Transforms']);
 
