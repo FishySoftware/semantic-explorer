@@ -1857,6 +1857,26 @@ pub mod gpu_monitor {
         false
     }
 
+    /// Check if GPU compute utilization exceeds threshold
+    /// Returns true if any device's GPU utilization exceeds the threshold percentage
+    pub fn is_compute_pressure_high(threshold_percent: f64) -> bool {
+        let count = device_count();
+        for i in 0..count {
+            if let Some((gpu_util, _mem_util)) = get_utilization(i)
+                && gpu_util as f64 > threshold_percent
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check if GPU is under pressure (VRAM OR compute exceeds threshold).
+    /// This is the recommended single check for load-shedding decisions.
+    pub fn is_gpu_under_pressure(threshold_percent: f64) -> bool {
+        is_memory_pressure_high(threshold_percent) || is_compute_pressure_high(threshold_percent)
+    }
+
     /// Get memory utilization percentage for a device
     pub fn get_memory_utilization_percent(device_index: u32) -> Option<f64> {
         let (used, total) = get_memory_info(device_index)?;

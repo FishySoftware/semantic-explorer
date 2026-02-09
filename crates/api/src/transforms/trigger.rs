@@ -33,6 +33,7 @@ use semantic_explorer_core::observability::{
 
 use super::collection::scanner as collection_scanner;
 use super::dataset::scanner as dataset_scanner;
+use super::dataset::scanner::ScannerConfig;
 
 /// Context required for processing scan triggers
 #[derive(Clone)]
@@ -43,6 +44,7 @@ pub struct ScannerContext {
     pub s3_bucket_name: String,
     pub encryption: EncryptionService,
     pub qdrant_config: QdrantConnectionConfig,
+    pub scanner_config: ScannerConfig,
 }
 
 /// Start the trigger publisher - a lightweight timer that publishes scan triggers.
@@ -265,6 +267,7 @@ async fn process_trigger(ctx: &ScannerContext, msg: &Message) -> Result<()> {
                 transform_id,
                 &ctx.encryption,
                 &ctx.qdrant_config,
+                &ctx.scanner_config,
             )
             .await
         }
@@ -281,6 +284,7 @@ async fn process_trigger(ctx: &ScannerContext, msg: &Message) -> Result<()> {
                 &ctx.s3_bucket_name,
                 &ctx.encryption,
                 &ctx.qdrant_config,
+                &ctx.scanner_config,
             )
             .await
         }

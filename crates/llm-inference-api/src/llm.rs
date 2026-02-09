@@ -46,8 +46,8 @@ static SEMAPHORE_QUEUE_TIMEOUT: OnceLock<Duration> = OnceLock::new();
 /// Cached GPU memory pressure state (updated by background monitor)
 static GPU_MEMORY_PRESSURE_HIGH: AtomicBool = AtomicBool::new(false);
 
-/// GPU memory pressure threshold percentage (trigger load shedding above this)
-const GPU_MEMORY_PRESSURE_THRESHOLD: f64 = 85.0;
+/// GPU pressure threshold percentage — configured via GPU_PRESSURE_THRESHOLD env var (default 95.0)
+static GPU_PRESSURE_THRESHOLD: OnceLock<f64> = OnceLock::new();
 
 /// Initialize the LLM semaphore for backpressure control
 pub fn init_semaphore(max_concurrent: usize, queue_timeout_ms: u64) {
@@ -107,7 +107,8 @@ pub fn available_permits() -> usize {
 }
 
 /// Spawn background task that monitors GPU pressure and updates cached state
-fn spawn_gpu_pressure_monitor() {
+fn spawn_gpu_pressure_monitor(threshold: f64) {
+    GPU_PRESSURE_THRESHOLD.get_or_init(|| threshold);
     tokio::spawn(async move {
         if !gpu_monitor::init() {
             warn!("GPU monitoring disabled - NVML not available");
@@ -116,7 +117,7 @@ fn spawn_gpu_pressure_monitor() {
 
         info!(
             device_count = gpu_monitor::device_count(),
-            threshold = GPU_MEMORY_PRESSURE_THRESHOLD,
+            threshold = threshold,
             "Starting LLM GPU pressure monitor"
         );
 
@@ -127,14 +128,14 @@ fn spawn_gpu_pressure_monitor() {
             // Collect metrics (updates Prometheus gauges)
             gpu_monitor::collect_metrics();
 
-            // Update cached pressure state
-            let is_high = gpu_monitor::is_memory_pressure_high(GPU_MEMORY_PRESSURE_THRESHOLD);
+            // Update cached pressure state (VRAM OR compute)
+            let is_high = gpu_monitor::is_gpu_under_pressure(threshold);
             GPU_MEMORY_PRESSURE_HIGH.store(is_high, Ordering::Relaxed);
 
             if is_high {
                 warn!(
-                    "LLM: GPU memory pressure is HIGH (>{}%)",
-                    GPU_MEMORY_PRESSURE_THRESHOLD
+                    "LLM: GPU pressure is HIGH (>{}% VRAM or compute)",
+                    threshold
                 );
             }
         }
@@ -160,7 +161,7 @@ pub async fn init_cache(config: &ModelConfig) {
     let cache = LLM_MODELS.get_or_init(|| Arc::new(Mutex::new(HashMap::new())));
 
     // Start GPU monitoring
-    spawn_gpu_pressure_monitor();
+    spawn_gpu_pressure_monitor(config.gpu_pressure_threshold);
 
     // Get list of models to load
     let models_to_load = get_models_to_load(config);
@@ -608,14 +609,14 @@ pub async fn generate_text(
         )));
     }
 
-    // Check GPU memory pressure before starting
+    // Check GPU pressure before starting (VRAM + compute utilization)
     if is_gpu_memory_pressure_high() {
         warn!(
             model_id = %model_id,
-            "GPU memory pressure high, rejecting request"
+            "GPU pressure high, rejecting request"
         );
         return Err(InferenceError::ServiceUnavailable(
-            "GPU memory pressure high, try again later".to_string(),
+            "GPU pressure high, try again later".to_string(),
         ));
     }
 
@@ -787,14 +788,14 @@ pub async fn chat_completion(
         )));
     }
 
-    // Check GPU memory pressure before starting
+    // Check GPU pressure before starting (VRAM + compute utilization)
     if is_gpu_memory_pressure_high() {
         warn!(
             model_id = %model_id,
-            "GPU memory pressure high, rejecting chat request"
+            "GPU pressure high, rejecting chat request"
         );
         return Err(InferenceError::ServiceUnavailable(
-            "GPU memory pressure high, try again later".to_string(),
+            "GPU pressure high, try again later".to_string(),
         ));
     }
 
@@ -1073,14 +1074,14 @@ pub async fn text_completion(
         )));
     }
 
-    // Check GPU memory pressure before starting
+    // Check GPU pressure before starting (VRAM + compute utilization)
     if is_gpu_memory_pressure_high() {
         warn!(
             model_id = %model_id,
-            "GPU memory pressure high, rejecting request"
+            "GPU pressure high, rejecting request"
         );
         return Err(InferenceError::ServiceUnavailable(
-            "GPU memory pressure high, try again later".to_string(),
+            "GPU pressure high, try again later".to_string(),
         ));
     }
 

@@ -100,39 +100,21 @@ semantic-explorer/
 
 ## Performance & Scalability Configuration
 
-The chart includes configuration for high-availability deployments (100K+ users):
+The chart includes configuration for high-availability deployments (100K+ users).
 
-### Circuit Breakers
+### Adaptive Concurrency
 
-```yaml
-api:
-  env:
-    QDRANT_CIRCUIT_BREAKER_FAILURE_THRESHOLD: "5"
-    QDRANT_CIRCUIT_BREAKER_TIMEOUT_SECS: "30"
-    S3_CIRCUIT_BREAKER_FAILURE_THRESHOLD: "5"
-    INFERENCE_CIRCUIT_BREAKER_FAILURE_THRESHOLD: "5"
-```
+Workers automatically adjust their concurrency based on downstream service health.
+Circuit breakers, retry policies, and NATS consumer tuning use hardcoded production-tested
+defaults and no longer require Helm value overrides.
 
-### NATS Consumer Tuning
+The following variables have been **removed** from required configuration:
+- All `*_CIRCUIT_BREAKER_*` variables
+- All `*_RETRY_*` variables  
+- All `NATS_*_ACK_WAIT_SECS` and `NATS_MAX_ACK_PENDING` variables
 
-```yaml
-api:
-  env:
-    NATS_MAX_ACK_PENDING: "100"
-    NATS_COLLECTION_ACK_WAIT_SECS: "600"
-    NATS_DATASET_ACK_WAIT_SECS: "600"
-    NATS_VISUALIZATION_ACK_WAIT_SECS: "1800"
-```
-
-### Retry Policies
-
-```yaml
-workerDatasets:
-  env:
-    RETRY_MAX_ATTEMPTS: "3"
-    RETRY_INITIAL_DELAY_MS: "100"
-    QDRANT_RETRY_MAX_ATTEMPTS: "3"
-```
+Workers expose health endpoints (`/healthz`, `/readyz`, `/status`) on the configured
+`HEALTH_CHECK_PORT` (default: `8080`) for Kubernetes probes.
 
 ## Dependencies
 

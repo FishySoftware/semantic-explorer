@@ -58,6 +58,8 @@ pub struct ModelConfig {
     /// Enable prefix caching for multi-turn conversations and RAG workloads
     /// Significantly accelerates repeated prompts by reusing KV cache for shared prefixes
     pub enable_prefix_caching: bool,
+    /// GPU pressure threshold percentage — reject requests above this % VRAM or compute utilization
+    pub gpu_pressure_threshold: f64,
 }
 
 /// Text generation configuration
@@ -218,6 +220,10 @@ impl ModelConfig {
                 .unwrap_or_else(|_| "false".to_string())
                 .parse()
                 .context("LLM_ENABLE_PREFIX_CACHING must be true or false")?,
+            gpu_pressure_threshold: env::var("GPU_PRESSURE_THRESHOLD")
+                .unwrap_or_else(|_| "95.0".to_string())
+                .parse()
+                .context("GPU_PRESSURE_THRESHOLD must be a number")?,
         })
     }
 }
@@ -311,6 +317,7 @@ mod tests {
             queue_timeout_ms: 30000,
             paged_cache_type: PagedCacheType::Auto,
             enable_prefix_caching: false,
+            gpu_pressure_threshold: 95.0,
         };
 
         assert_eq!(model.allowed_models.len(), 2);
@@ -333,6 +340,7 @@ mod tests {
             queue_timeout_ms: 30000,
             paged_cache_type: PagedCacheType::F8E4M3,
             enable_prefix_caching: true,
+            gpu_pressure_threshold: 95.0,
         };
         assert_eq!(config_restricted.allowed_models.len(), 1);
         assert!(

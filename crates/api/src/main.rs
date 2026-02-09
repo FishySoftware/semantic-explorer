@@ -82,7 +82,7 @@ async fn main() -> Result<()> {
     let qdrant_client = storage::qdrant::initialize_client(&config.qdrant).await?;
     let pool = storage::postgres::initialize_pool(&config.database).await?;
     let openid_client =
-        auth::oidc::initialize_client(format!("{public_url}/auth_callback")).await?;
+        auth::oidc::initialize_client(format!("{public_url}/auth_callback"), &config.oidc).await?;
     let nats_client = async_nats::connect(&config.nats.url).await?;
 
     // Keep references for graceful shutdown
@@ -127,6 +127,9 @@ async fn main() -> Result<()> {
         api_key: config.qdrant.api_key.clone(),
     };
 
+    // Load scanner configuration from env at startup
+    let scanner_config = transforms::dataset::scanner::ScannerConfig::from_env();
+
     let scanner_ctx = transforms::trigger::ScannerContext {
         pool: pool.clone(),
         nats: nats_client.clone(),
@@ -134,6 +137,7 @@ async fn main() -> Result<()> {
         s3_bucket_name: config.s3.bucket_name.clone(),
         encryption: encryption_service.clone(),
         qdrant_config: qdrant_connection_config.clone(),
+        scanner_config,
     };
 
     // Start trigger listener (all instances listen, NATS coordinates)
@@ -152,7 +156,7 @@ async fn main() -> Result<()> {
         nats_client: nats_client.clone(),
         s3_client: s3_client.clone(),
         s3_bucket_name: config.s3.bucket_name.clone(),
-        config: transforms::dataset::reconciliation::ReconciliationConfig::default(),
+        config: transforms::dataset::reconciliation::ReconciliationConfig::from_env(),
         encryption: encryption_service.clone(),
         qdrant_config: qdrant_connection_config.clone(),
     };

@@ -72,12 +72,8 @@ pub async fn initialize_jetstream(client: &Client, nats_config: &NatsConfig) -> 
     let jetstream = jetstream::new(client.clone());
     let num_replicas = nats_config.replicas as usize;
 
-    // Stream max age in days, configurable via environment variable
-    let stream_max_age_days: u64 = std::env::var("NATS_STREAM_MAX_AGE_DAYS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(7);
-    let stream_max_age = Duration::from_secs(stream_max_age_days * 24 * 60 * 60);
+    // 7-day max age for transform streams
+    let stream_max_age = Duration::from_secs(7 * 24 * 60 * 60);
 
     ensure_stream(
         &jetstream,
@@ -308,25 +304,16 @@ fn stream_config_differs(current: &StreamConfig, desired: &StreamConfig) -> bool
     false
 }
 
-/// Create consumer config for collection transforms with configurable parameters.
-/// Falls back to environment variables or defaults if not provided.
+/// Create consumer config for collection transforms.
+/// Values are hardcoded — max_ack_pending is clamped to MAX_CONCURRENT_JOBS by the worker.
 pub fn create_transform_file_consumer_config() -> ConsumerConfig {
-    let max_ack_pending = std::env::var("NATS_MAX_ACK_PENDING")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(100);
-    let ack_wait_secs = std::env::var("NATS_COLLECTION_ACK_WAIT_SECS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(600); // 10 minutes default
-
     ConsumerConfig {
         durable_name: Some("collection-transform-workers".to_string()),
         description: Some("Consumer for file transformation jobs".to_string()),
         ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
-        ack_wait: Duration::from_secs(ack_wait_secs),
-        max_deliver: 5, // Retry up to 5 times
-        max_ack_pending,
+        ack_wait: Duration::from_secs(600), // 10 minutes
+        max_deliver: 5,
+        max_ack_pending: 100, // Clamped to max_concurrent_jobs by worker.rs
         backoff: vec![
             Duration::from_secs(30),
             Duration::from_secs(60),
@@ -337,25 +324,16 @@ pub fn create_transform_file_consumer_config() -> ConsumerConfig {
     }
 }
 
-/// Create consumer config for dataset transforms with configurable parameters.
-/// Falls back to environment variables or defaults if not provided.
+/// Create consumer config for dataset transforms.
+/// Values are hardcoded — max_ack_pending is clamped to MAX_CONCURRENT_JOBS by the worker.
 pub fn create_dataset_transform_consumer_config() -> ConsumerConfig {
-    let max_ack_pending = std::env::var("NATS_MAX_ACK_PENDING")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(100);
-    let ack_wait_secs = std::env::var("NATS_DATASET_ACK_WAIT_SECS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(600); // 10 minutes default
-
     ConsumerConfig {
         durable_name: Some("dataset-transform-workers".to_string()),
         description: Some("Consumer for dataset transform embedding jobs".to_string()),
         ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
-        ack_wait: Duration::from_secs(ack_wait_secs),
-        max_deliver: 5, // Retry up to 5 times
-        max_ack_pending,
+        ack_wait: Duration::from_secs(600), // 10 minutes
+        max_deliver: 5,
+        max_ack_pending: 100, // Clamped to max_concurrent_jobs by worker.rs
         backoff: vec![
             Duration::from_secs(30),
             Duration::from_secs(60),
@@ -366,26 +344,16 @@ pub fn create_dataset_transform_consumer_config() -> ConsumerConfig {
     }
 }
 
-/// Create consumer config for visualization transforms with configurable parameters.
-/// Falls back to environment variables or defaults if not provided.
+/// Create consumer config for visualization transforms.
+/// Lower max_ack_pending (resource-intensive jobs).
 pub fn create_visualization_consumer_config() -> ConsumerConfig {
-    // Visualization has lower max_ack_pending by default (resource-intensive)
-    let max_ack_pending = std::env::var("NATS_VISUALIZATION_MAX_ACK_PENDING")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(10);
-    let ack_wait_secs = std::env::var("NATS_VISUALIZATION_ACK_WAIT_SECS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(1800); // 30 minutes default
-
     ConsumerConfig {
         durable_name: Some("visualization-transform-workers".to_string()),
         description: Some("Consumer for visualization transform jobs (UMAP/HDBSCAN)".to_string()),
         ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
-        ack_wait: Duration::from_secs(ack_wait_secs),
-        max_deliver: 3, // Retry up to 3 times
-        max_ack_pending,
+        ack_wait: Duration::from_secs(3600), // 60 minutes
+        max_deliver: 3,
+        max_ack_pending: 10, // Low — viz jobs are very resource-intensive
         ..Default::default()
     }
 }
@@ -421,30 +389,22 @@ pub async fn ensure_consumer(
         .clone()
         .ok_or_else(|| anyhow::anyhow!("Consumer config must have a durable_name"))?;
 
-    match stream.get_consumer(&consumer_name).await {
-        Ok(consumer) => {
-            info!(
-                "Consumer '{}' already exists on stream '{}'",
-                consumer_name, stream_name
-            );
-            Ok(consumer)
-        }
-        Err(_) => {
-            info!(
-                "Creating consumer '{}' on stream '{}'",
-                consumer_name, stream_name
-            );
-            let consumer = stream
-                .create_consumer(consumer_config)
-                .await
-                .context(format!(
-                    "Failed to create consumer '{}' on stream '{}'",
-                    consumer_name, stream_name
-                ))?;
-            info!("Consumer '{}' created successfully", consumer_name);
-            Ok(consumer)
-        }
-    }
+    // Always use create_consumer which acts as an upsert for durable consumers.
+    // This ensures config changes (e.g., max_ack_pending adjustments) are applied
+    // to existing consumers, not silently ignored.
+    info!(
+        "Creating/updating consumer '{}' on stream '{}' (max_ack_pending: {})",
+        consumer_name, stream_name, consumer_config.max_ack_pending
+    );
+    let consumer = stream
+        .create_consumer(consumer_config)
+        .await
+        .context(format!(
+            "Failed to create/update consumer '{}' on stream '{}'",
+            consumer_name, stream_name
+        ))?;
+    info!("Consumer '{}' ready", consumer_name);
+    Ok(consumer)
 }
 
 /// Result of a publish attempt with retry

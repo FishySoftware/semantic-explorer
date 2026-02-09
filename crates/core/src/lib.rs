@@ -1,3 +1,4 @@
+pub mod adaptive_concurrency;
 pub mod circuit_breaker;
 pub mod config;
 pub mod embedder;
@@ -14,6 +15,7 @@ pub mod tls;
 pub mod validation;
 pub mod worker;
 
+pub use adaptive_concurrency::AdaptiveConcurrency;
 pub use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, with_circuit_breaker};
 pub use retry::{RetryPolicy, RetryableError, retry_with_policy};
 pub use subjects::{consumers, dlq, jobs, status};

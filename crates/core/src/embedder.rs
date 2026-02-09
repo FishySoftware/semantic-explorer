@@ -1,8 +1,9 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use once_cell::sync::Lazy;
+use std::sync::OnceLock;
 use tokio::sync::Semaphore;
 use tokio::time::sleep;
 
@@ -14,22 +15,42 @@ const DEFAULT_COHERE_BATCH_SIZE: usize = 96;
 const DEFAULT_LOCAL_BATCH_SIZE: usize = 256;
 
 // Global semaphore to limit concurrent embedding API requests
-static EMBEDDING_SEMAPHORE: Lazy<Arc<Semaphore>> = Lazy::new(|| {
-    let max_concurrent = std::env::var("EMBEDDING_MAX_CONCURRENT_REQUESTS")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(3); // Default to 3 concurrent requests for local inference
+static EMBEDDING_SEMAPHORE: OnceLock<Arc<Semaphore>> = OnceLock::new();
 
-    tracing::info!(
-        max_concurrent,
-        "Initialized embedding request semaphore for rate limiting"
-    );
-    Arc::new(Semaphore::new(max_concurrent))
-});
+/// Cached embedding inference API URL (set once at startup)
+static EMBEDDING_INFERENCE_API_URL: OnceLock<String> = OnceLock::new();
 
-fn get_embedding_inference_api_url() -> String {
-    std::env::var("EMBEDDING_INFERENCE_API_URL")
-        .unwrap_or_else(|_| "http://localhost:8090".to_string())
+/// Initialize the embedding client configuration.
+///
+/// Must be called from main before any embedding requests.
+/// - `api_url`: URL of the local embedding inference API
+/// - `max_concurrent_requests`: maximum concurrent embedding API requests
+pub fn init_embedder(api_url: &str, max_concurrent_requests: usize) {
+    EMBEDDING_INFERENCE_API_URL.get_or_init(|| api_url.to_string());
+    EMBEDDING_SEMAPHORE.get_or_init(|| {
+        tracing::info!(
+            max_concurrent = max_concurrent_requests,
+            "Initialized embedding request semaphore for rate limiting"
+        );
+        Arc::new(Semaphore::new(max_concurrent_requests))
+    });
+}
+
+/// Global flag indicating the embedding/inference downstream is under pressure.
+/// Set to `true` on 503 responses, cleared on successful requests.
+/// Workers can poll this to throttle NATS consumption.
+static DOWNSTREAM_PRESSURE: AtomicBool = AtomicBool::new(false);
+
+/// Check if the downstream embedding service is signalling overload.
+pub fn is_downstream_under_pressure() -> bool {
+    DOWNSTREAM_PRESSURE.load(Ordering::Relaxed)
+}
+
+fn get_embedding_inference_api_url() -> &'static str {
+    EMBEDDING_INFERENCE_API_URL
+        .get()
+        .map(|s| s.as_str())
+        .unwrap_or("http://localhost:8090")
 }
 
 pub async fn generate_batch_embeddings(
@@ -56,24 +77,8 @@ pub async fn generate_batch_embeddings(
         return process_single_batch(config, texts).await;
     }
 
-    // Get delay between batches to avoid overwhelming the API (especially for local inference)
-    let batch_delay_ms = std::env::var("EMBEDDING_BATCH_DELAY_MS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(0);
-
     let mut all_embeddings = Vec::new();
-    for (idx, chunk) in texts.chunks(effective_batch_size).enumerate() {
-        // Add delay between batches (except for the first batch)
-        if idx > 0 && batch_delay_ms > 0 {
-            tracing::debug!(
-                batch = idx + 1,
-                delay_ms = batch_delay_ms,
-                "Waiting between embedding batches to avoid overwhelming API"
-            );
-            sleep(Duration::from_millis(batch_delay_ms)).await;
-        }
-
+    for chunk in texts.chunks(effective_batch_size) {
         let embeddings = process_single_batch(config, chunk.to_vec()).await?;
         all_embeddings.extend(embeddings);
     }
@@ -171,11 +176,8 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
         }
     }
 
-    // Max retries for embedding operations, configurable via environment variable
-    let max_retries: u32 = std::env::var("WORKER_EMBEDDING_MAX_RETRIES")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(5);
+    // Max retries for embedding operations (hardcoded — no env var needed)
+    let max_retries: u32 = 5;
     let mut last_error = None;
     let mut used_server_retry_delay = false; // Track if we already waited per server's Retry-After
 
@@ -194,6 +196,8 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
 
         // Acquire permit from global semaphore to limit concurrent embedding requests
         let _permit = EMBEDDING_SEMAPHORE
+            .get()
+            .expect("Embedding semaphore not initialized — call init_embedder() from main")
             .acquire()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to acquire embedding semaphore permit: {}", e))?;
@@ -209,6 +213,9 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
                 if resp.status().is_success() {
                     let response_body: serde_json::Value = resp.json().await?;
                     let result = parse_embeddings_response(config, response_body);
+
+                    // Clear downstream pressure on success
+                    DOWNSTREAM_PRESSURE.store(false, Ordering::Relaxed);
 
                     // Aggregate metrics: record once per batch with total duration
                     let batch_duration = batch_start.elapsed().as_secs_f64();
@@ -237,6 +244,9 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
 
                 // Handle 503 Service Unavailable with Retry-After header
                 if status == reqwest::StatusCode::SERVICE_UNAVAILABLE {
+                    // Signal downstream pressure to upstream workers
+                    DOWNSTREAM_PRESSURE.store(true, Ordering::Relaxed);
+
                     let retry_after = resp
                         .headers()
                         .get("Retry-After")

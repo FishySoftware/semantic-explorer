@@ -144,21 +144,17 @@ impl CircuitBreaker {
 
     /// Create circuit breaker for Qdrant operations
     pub fn for_qdrant() -> Arc<Self> {
-        let config = CircuitBreakerConfig::from_env_with_prefix("qdrant", "QDRANT_CIRCUIT_BREAKER");
-        Self::new(config)
+        Self::new(CircuitBreakerConfig::new("qdrant"))
     }
 
     /// Create circuit breaker for S3 operations
     pub fn for_s3() -> Arc<Self> {
-        let config = CircuitBreakerConfig::from_env_with_prefix("s3", "S3_CIRCUIT_BREAKER");
-        Self::new(config)
+        Self::new(CircuitBreakerConfig::new("s3"))
     }
 
     /// Create circuit breaker for inference API operations
     pub fn for_inference() -> Arc<Self> {
-        let config =
-            CircuitBreakerConfig::from_env_with_prefix("inference", "INFERENCE_CIRCUIT_BREAKER");
-        Self::new(config)
+        Self::new(CircuitBreakerConfig::new("inference"))
     }
 
     /// Get the current circuit state

@@ -77,45 +77,18 @@ services:
       - ENCRYPTION_MASTER_KEY=${ENCRYPTION_MASTER_KEY:-e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4}
       # Reconciliation job for transform reliability
       - RECONCILIATION_INTERVAL_SECS=300
-      # Worker batch sizes and NATS timeouts
+      # Worker batch sizes
       - WORKER_SEARCH_BATCH_SIZE=200
       - WORKER_CHAT_BATCH_SIZE=500
       - WORKER_DATASET_BATCH_SIZE=1000
       - WORKER_S3_DELETE_BATCH_SIZE=1000
       - WORKER_QDRANT_UPLOAD_CHUNK_SIZE=200
-      - WORKER_EMBEDDING_MAX_RETRIES=5
-      - NATS_CONNECTION_TIMEOUT_SECS=10
-      - NATS_PING_INTERVAL_SECS=15
-      - NATS_STREAM_MAX_AGE_DAYS=7
-      - NATS_ACK_WAIT_SECS=600
-      - NATS_VISUALIZATION_ACK_WAIT_SECS=1800
-      - NATS_DATASET_TRANSFORM_ACK_WAIT_SECS=600
-      # NATS consumer tuning
-      - NATS_MAX_ACK_PENDING=100
-      - NATS_COLLECTION_ACK_WAIT_SECS=600
-      - NATS_DATASET_ACK_WAIT_SECS=600
-      - NATS_VISUALIZATION_MAX_ACK_PENDING=10
-      # Circuit breakers
-      - QDRANT_CIRCUIT_BREAKER_FAILURE_THRESHOLD=5
-      - QDRANT_CIRCUIT_BREAKER_SUCCESS_THRESHOLD=3
-      - QDRANT_CIRCUIT_BREAKER_TIMEOUT_SECS=30
-      - S3_CIRCUIT_BREAKER_FAILURE_THRESHOLD=5
-      - INFERENCE_CIRCUIT_BREAKER_FAILURE_THRESHOLD=5
-      # Retry policies
-      - RETRY_MAX_ATTEMPTS=3
-      - RETRY_INITIAL_DELAY_MS=100
-      - RETRY_MAX_DELAY_MS=10000
-      - RETRY_BACKOFF_MULTIPLIER=2.0
-      # Scanner resilience tuning
+      # Scanner configuration
       - DATASET_SCANNER_MAX_PENDING=500
       - DATASET_SCANNER_BATCH_DELAY_MS=0
       - DATASET_SCANNER_TIMEOUT_SECS=300
       - DATASET_SCANNER_MAX_BATCHES_PER_SCAN=1000
       - DATASET_SCANNER_MAX_ITEMS_PER_SCAN=100000
-      - DATASET_SCANNER_CIRCUIT_BREAKER_FAILURE_THRESHOLD=5
-      - DATASET_SCANNER_CIRCUIT_BREAKER_SUCCESS_THRESHOLD=3
-      - DATASET_SCANNER_CIRCUIT_BREAKER_TIMEOUT_SECS=30
-      - DATASET_SCANNER_CIRCUIT_BREAKER_FAILURE_WINDOW_SECS=60
       - STUCK_BATCH_THRESHOLD_HOURS=2
     ports:
       - "8080:8080"
@@ -156,23 +129,11 @@ services:
       - SERVICE_NAME=worker-collections
       - ENCRYPTION_MASTER_KEY=${ENCRYPTION_MASTER_KEY:-e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4}
       # Worker configuration
+      - MAX_CONCURRENT_JOBS=5
+      - HEALTH_CHECK_PORT=8080
       - WORKER_QDRANT_UPLOAD_CHUNK_SIZE=200
-      - WORKER_EMBEDDING_MAX_RETRIES=5
-      - NATS_CONNECTION_TIMEOUT_SECS=10
-      - NATS_PING_INTERVAL_SECS=15
-      - NATS_STREAM_MAX_AGE_DAYS=7
-      - NATS_ACK_WAIT_SECS=600
-      # NATS consumer tuning
-      - NATS_MAX_ACK_PENDING=100
-      - NATS_COLLECTION_ACK_WAIT_SECS=600
-      # Circuit breakers
-      - S3_CIRCUIT_BREAKER_FAILURE_THRESHOLD=5
-      - S3_CIRCUIT_BREAKER_SUCCESS_THRESHOLD=3
-      - S3_CIRCUIT_BREAKER_TIMEOUT_SECS=30
-      # Retry policies
-      - RETRY_MAX_ATTEMPTS=3
-      - RETRY_INITIAL_DELAY_MS=100
-      - S3_RETRY_MAX_ATTEMPTS=3
+      - EMBEDDING_INFERENCE_API_URL=http://embedding-inference-api:8090
+      - EMBEDDING_MAX_CONCURRENT_REQUESTS=5
     networks:
       - semantic-explorer-net
 
@@ -218,25 +179,9 @@ services:
       # Worker configuration
       - WORKER_DATASET_BATCH_SIZE=1000
       - WORKER_QDRANT_UPLOAD_CHUNK_SIZE=200
-      - NATS_CONNECTION_TIMEOUT_SECS=10
-      - NATS_PING_INTERVAL_SECS=15
-      - NATS_STREAM_MAX_AGE_DAYS=7
-      - NATS_DATASET_TRANSFORM_ACK_WAIT_SECS=600
-      # NATS consumer tuning
-      - NATS_MAX_ACK_PENDING=100
-      - NATS_DATASET_ACK_WAIT_SECS=600
-      # Circuit breakers
-      - QDRANT_CIRCUIT_BREAKER_FAILURE_THRESHOLD=5
-      - QDRANT_CIRCUIT_BREAKER_SUCCESS_THRESHOLD=3
-      - QDRANT_CIRCUIT_BREAKER_TIMEOUT_SECS=30
-      - S3_CIRCUIT_BREAKER_FAILURE_THRESHOLD=5
-      - INFERENCE_CIRCUIT_BREAKER_FAILURE_THRESHOLD=5
-      # Retry policies
-      - RETRY_MAX_ATTEMPTS=3
-      - RETRY_INITIAL_DELAY_MS=100
-      - QDRANT_RETRY_MAX_ATTEMPTS=3
-      - S3_RETRY_MAX_ATTEMPTS=3
-      - INFERENCE_RETRY_MAX_ATTEMPTS=3
+      - HEALTH_CHECK_PORT=8080
+      - EMBEDDING_MAX_CONCURRENT_REQUESTS=5
+      - QDRANT_PARALLEL_UPLOADS=4
     networks:
       - semantic-explorer-net
 
@@ -312,6 +257,8 @@ services:
       # Maximum concurrent embedding requests (for backpressure control)
       # When at capacity, the API returns 503 with Retry-After header
       - INFERENCE_MAX_CONCURRENT_REQUESTS=5
+      # GPU pressure threshold (0-100) - requests rejected above this
+      - GPU_PRESSURE_THRESHOLD=95.0
       # HuggingFace cache for models (mount a volume for persistence)
       - HF_HOME=/models
       # For airgapped deployments: pre-download models and mount at HF_HOME
@@ -372,6 +319,8 @@ services:
       # Runtime ISQ is SLOW (5-10 min) and NOT cached between restarts
       - LLM_ENABLE_ISQ=false
       # - LLM_ISQ_TYPE=Q4_K
+      # GPU pressure threshold (0-100) - requests rejected above this
+      - GPU_PRESSURE_THRESHOLD=95.0
       # HuggingFace cache for models (mount a volume for persistence)
       - HF_HOME=/models
       # For airgapped deployments: pre-download models and mount at HF_HOME

@@ -11,10 +11,19 @@ use semantic_explorer_core::storage::get_file;
 use semantic_explorer_core::validation::{validate_bucket_name, validate_s3_key};
 use semantic_explorer_core::worker::WorkerContext;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::Instant;
 use tracing::{error, info, instrument, warn};
 
 const QDRANT_CHUNK_SIZE: usize = 1000;
+
+/// Cached parallel upload count (set once from main via init_job_config)
+static QDRANT_PARALLEL_UPLOADS: OnceLock<usize> = OnceLock::new();
+
+/// Initialize job-level configuration. Call once from main.
+pub fn init_job_config(qdrant_parallel_uploads: usize) {
+    QDRANT_PARALLEL_UPLOADS.get_or_init(|| qdrant_parallel_uploads);
+}
 
 #[derive(serde::Deserialize)]
 pub(crate) struct BatchItem {
@@ -227,11 +236,8 @@ pub(crate) async fn process_dataset_transform_job(
         .map(|c| c.to_vec())
         .collect();
 
-    // Get parallel upload count from env (default 4)
-    let parallel_uploads: usize = std::env::var("QDRANT_PARALLEL_UPLOADS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(4);
+    // Get parallel upload count from config (default 4)
+    let parallel_uploads: usize = QDRANT_PARALLEL_UPLOADS.get().copied().unwrap_or(4);
 
     info!(
         point_count = points.len(),

@@ -130,6 +130,7 @@ NATS_STREAM_RETRY_ATTEMPTS = int(os.getenv("NATS_STREAM_RETRY_ATTEMPTS", "30"))
 NATS_STREAM_RETRY_DELAY = float(os.getenv("NATS_STREAM_RETRY_DELAY", "2.0"))
 PROCESSING_TIMEOUT_SECS = int(os.getenv("PROCESSING_TIMEOUT_SECS", "3600"))
 HEALTH_CHECK_PORT = int(os.getenv("HEALTH_CHECK_PORT", "8081"))
+MAX_CONCURRENT_JOBS = int(os.getenv("MAX_CONCURRENT_JOBS", "3"))
 
 
 def build_status_subject(
@@ -595,6 +596,17 @@ async def main():
             os.getenv("NATS_RESUBSCRIBE_THRESHOLD", "10")
         )
 
+        # Semaphore to bound concurrent job processing.
+        # Without this, asyncio.create_task() would spawn unbounded tasks,
+        # potentially exhausting memory on CPU-heavy visualization jobs.
+        job_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
+        logger.info(f"Concurrency limited to {MAX_CONCURRENT_JOBS} concurrent jobs")
+
+        async def bounded_message_handler(msg: Msg, nc: NATSConnection):
+            """Wrap message_handler with semaphore for bounded concurrency."""
+            async with job_semaphore:
+                await message_handler(msg, nc)
+
         while not shutdown_event.is_set():
             try:
                 # Fetch messages from the pull subscription
@@ -614,8 +626,8 @@ async def main():
 
                     message_count += 1
                     logger.debug(f"Received message #{message_count} from queue")
-                    # Create a task for message handling to allow concurrent processing
-                    asyncio.create_task(message_handler(msg, nc))
+                    # Create a bounded task for message handling
+                    asyncio.create_task(bounded_message_handler(msg, nc))
 
             except asyncio.TimeoutError:
                 # No messages available, continue polling

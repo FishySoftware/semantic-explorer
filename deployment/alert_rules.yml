@@ -362,20 +362,6 @@ groups:
             The pending batch queue is frequently full. Consider increasing
             DATASET_SCANNER_MAX_PENDING or scaling worker capacity.
 
-      - alert: ScannerCircuitBreakerTripping
-        expr: |
-          increase(scanner_circuit_breaker_trips_total[5m]) > 0
-        for: 2m
-        labels:
-          severity: critical
-          service: api
-        annotations:
-          summary: "Scanner circuit breaker tripped for {{ $labels.scanner_type }}"
-          description: |
-            Circuit breaker has opened for scanner {{ $labels.scanner_type }}.
-            This indicates repeated NATS publish failures.
-            Check NATS connectivity and worker health.
-
       - alert: ScannerFailedBatchesAccumulating
         expr: |
           sum by (scanner_type) (increase(scanner_failed_batch_recoveries_total[1h])) > 10

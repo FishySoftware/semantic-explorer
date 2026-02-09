@@ -146,45 +146,18 @@ api:
     NATS_REPLICAS: "3"
     # Reconciliation job for transform reliability (retries failed batch publishes)
     RECONCILIATION_INTERVAL_SECS: "300"
-    # Worker batch sizes and NATS timeouts
+    # Worker batch sizes
     WORKER_SEARCH_BATCH_SIZE: "200"
     WORKER_CHAT_BATCH_SIZE: "500"
     WORKER_DATASET_BATCH_SIZE: "1000"
     WORKER_S3_DELETE_BATCH_SIZE: "1000"
     WORKER_QDRANT_UPLOAD_CHUNK_SIZE: "200"
-    WORKER_EMBEDDING_MAX_RETRIES: "5"
-    NATS_CONNECTION_TIMEOUT_SECS: "10"
-    NATS_PING_INTERVAL_SECS: "15"
-    NATS_STREAM_MAX_AGE_DAYS: "7"
-    NATS_ACK_WAIT_SECS: "600"
-    NATS_VISUALIZATION_ACK_WAIT_SECS: "1800"
-    NATS_DATASET_TRANSFORM_ACK_WAIT_SECS: "600"
-    # NATS consumer tuning
-    NATS_MAX_ACK_PENDING: "100"
-    NATS_COLLECTION_ACK_WAIT_SECS: "600"
-    NATS_DATASET_ACK_WAIT_SECS: "600"
-    NATS_VISUALIZATION_MAX_ACK_PENDING: "10"
-    # Circuit breakers
-    QDRANT_CIRCUIT_BREAKER_FAILURE_THRESHOLD: "5"
-    QDRANT_CIRCUIT_BREAKER_SUCCESS_THRESHOLD: "3"
-    QDRANT_CIRCUIT_BREAKER_TIMEOUT_SECS: "30"
-    S3_CIRCUIT_BREAKER_FAILURE_THRESHOLD: "5"
-    INFERENCE_CIRCUIT_BREAKER_FAILURE_THRESHOLD: "5"
-    # Retry policies
-    RETRY_MAX_ATTEMPTS: "3"
-    RETRY_INITIAL_DELAY_MS: "100"
-    RETRY_MAX_DELAY_MS: "10000"
-    RETRY_BACKOFF_MULTIPLIER: "2.0"
-    # Scanner resilience tuning
+    # Scanner configuration
     DATASET_SCANNER_MAX_PENDING: "500"
     DATASET_SCANNER_BATCH_DELAY_MS: "0"
     DATASET_SCANNER_TIMEOUT_SECS: "300"
     DATASET_SCANNER_MAX_BATCHES_PER_SCAN: "1000"
     DATASET_SCANNER_MAX_ITEMS_PER_SCAN: "100000"
-    DATASET_SCANNER_CIRCUIT_BREAKER_FAILURE_THRESHOLD: "5"
-    DATASET_SCANNER_CIRCUIT_BREAKER_SUCCESS_THRESHOLD: "3"
-    DATASET_SCANNER_CIRCUIT_BREAKER_TIMEOUT_SECS: "30"
-    DATASET_SCANNER_CIRCUIT_BREAKER_FAILURE_WINDOW_SECS: "60"
     STUCK_BATCH_THRESHOLD_HOURS: "2"
   envFrom: []
   nodeSelector: {}
@@ -252,24 +225,10 @@ workerCollections:
     LOG_FORMAT: "json"
     NATS_REPLICAS: "3"
     MAX_CONCURRENT_JOBS: "10"
-    # Worker batch sizes and NATS timeouts
+    # Worker configuration
     WORKER_QDRANT_UPLOAD_CHUNK_SIZE: "200"
-    WORKER_EMBEDDING_MAX_RETRIES: "5"
-    NATS_CONNECTION_TIMEOUT_SECS: "10"
-    NATS_PING_INTERVAL_SECS: "15"
-    NATS_STREAM_MAX_AGE_DAYS: "7"
-    NATS_ACK_WAIT_SECS: "600"
-    # NATS consumer tuning
-    NATS_MAX_ACK_PENDING: "100"
-    NATS_COLLECTION_ACK_WAIT_SECS: "600"
-    # Circuit breakers
-    S3_CIRCUIT_BREAKER_FAILURE_THRESHOLD: "5"
-    S3_CIRCUIT_BREAKER_SUCCESS_THRESHOLD: "3"
-    S3_CIRCUIT_BREAKER_TIMEOUT_SECS: "30"
-    # Retry policies
-    RETRY_MAX_ATTEMPTS: "3"
-    RETRY_INITIAL_DELAY_MS: "100"
-    S3_RETRY_MAX_ATTEMPTS: "3"
+    HEALTH_CHECK_PORT: "8080"
+    EMBEDDING_MAX_CONCURRENT_REQUESTS: "5"
   envFrom: []
   nodeSelector: {}
   tolerations: []
@@ -336,28 +295,12 @@ workerDatasets:
     LOG_FORMAT: "json"
     NATS_REPLICAS: "3"
     MAX_CONCURRENT_JOBS: "10"
-    # Worker batch sizes and NATS timeouts
+    # Worker configuration
     WORKER_DATASET_BATCH_SIZE: "1000"
     WORKER_QDRANT_UPLOAD_CHUNK_SIZE: "200"
-    NATS_CONNECTION_TIMEOUT_SECS: "10"
-    NATS_PING_INTERVAL_SECS: "15"
-    NATS_STREAM_MAX_AGE_DAYS: "7"
-    NATS_DATASET_TRANSFORM_ACK_WAIT_SECS: "600"
-    # NATS consumer tuning
-    NATS_MAX_ACK_PENDING: "100"
-    NATS_DATASET_ACK_WAIT_SECS: "600"
-    # Circuit breakers
-    QDRANT_CIRCUIT_BREAKER_FAILURE_THRESHOLD: "5"
-    QDRANT_CIRCUIT_BREAKER_SUCCESS_THRESHOLD: "3"
-    QDRANT_CIRCUIT_BREAKER_TIMEOUT_SECS: "30"
-    S3_CIRCUIT_BREAKER_FAILURE_THRESHOLD: "5"
-    INFERENCE_CIRCUIT_BREAKER_FAILURE_THRESHOLD: "5"
-    # Retry policies
-    RETRY_MAX_ATTEMPTS: "3"
-    RETRY_INITIAL_DELAY_MS: "100"
-    QDRANT_RETRY_MAX_ATTEMPTS: "3"
-    S3_RETRY_MAX_ATTEMPTS: "3"
-    INFERENCE_RETRY_MAX_ATTEMPTS: "3"
+    HEALTH_CHECK_PORT: "8080"
+    EMBEDDING_MAX_CONCURRENT_REQUESTS: "5"
+    QDRANT_PARALLEL_UPLOADS: "4"
   envFrom: []
   nodeSelector: {}
   tolerations: []
@@ -565,6 +508,8 @@ embeddingInferenceApi:
     INFERENCE_MAX_BATCH_SIZE: "256"
     # Concurrency and model restrictions (security)
     INFERENCE_MAX_CONCURRENT_REQUESTS: "100"
+    # GPU pressure threshold (0-100) - requests rejected above this
+    GPU_PRESSURE_THRESHOLD: "95.0"
     # Comma-separated list of allowed embedding models (empty = allow all)
     # INFERENCE_ALLOWED_EMBEDDING_MODELS: "BAAI/bge-small-en-v1.5,BAAI/bge-base-en-v1.5"
     # Comma-separated list of allowed reranker models (empty = allow all)
@@ -700,6 +645,8 @@ llmInferenceApi:
     # Model configuration
     LLM_ALLOWED_MODELS: "microsoft/Phi-3-mini-4k-instruct-gguf:Phi-3-mini-4k-instruct-q4.gguf@microsoft/Phi-3-mini-4k-instruct"
     LLM_MAX_CONCURRENT_REQUESTS: "10"
+    # GPU pressure threshold (0-100) - requests rejected above this
+    GPU_PRESSURE_THRESHOLD: "95.0"
     LLM_DEFAULT_TEMPERATURE: "0.5"
     LLM_DEFAULT_TOP_P: "0.9"
     LLM_DEFAULT_MAX_TOKENS: "512"

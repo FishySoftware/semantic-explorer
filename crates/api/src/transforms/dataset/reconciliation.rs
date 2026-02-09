@@ -39,10 +39,14 @@ pub struct ReconciliationConfig {
     pub interval: Duration,
     /// Maximum pending batches to retry per run
     pub max_pending_retries: i64,
+    /// Hours after which a "processing" batch is considered stuck (default: 2)
+    pub stuck_batch_threshold_hours: i64,
 }
 
-impl Default for ReconciliationConfig {
-    fn default() -> Self {
+impl ReconciliationConfig {
+    /// Load reconciliation configuration from environment variables.
+    /// Call once at startup.
+    pub fn from_env() -> Self {
         Self {
             interval: Duration::from_secs(
                 std::env::var("RECONCILIATION_INTERVAL_SECS")
@@ -51,6 +55,10 @@ impl Default for ReconciliationConfig {
                     .unwrap_or(300),
             ),
             max_pending_retries: 100,
+            stuck_batch_threshold_hours: std::env::var("STUCK_BATCH_THRESHOLD_HOURS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(2),
         }
     }
 }
@@ -505,10 +513,7 @@ async fn cleanup_orphaned_batches(ctx: &ReconciliationContext) -> Result<usize> 
 /// This helps identify potential deadlocks where a worker picked up a batch
 /// but never completed it (e.g., worker crash, OOM, network partition).
 async fn detect_stuck_batches(ctx: &ReconciliationContext) {
-    let stuck_threshold_hours: i64 = std::env::var("STUCK_BATCH_THRESHOLD_HOURS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(2);
+    let stuck_threshold_hours = ctx.config.stuck_batch_threshold_hours;
 
     match dataset_transform_batches::list_stuck_batches(
         &ctx.pool,

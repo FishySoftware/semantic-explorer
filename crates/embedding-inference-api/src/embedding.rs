@@ -4,14 +4,19 @@ use once_cell::sync::OnceCell;
 use ort::ep::CUDA;
 use ort::ep::cuda::AttentionBackend;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::available_parallelism;
 use std::time::{Duration, Instant};
 use tokio::sync::{RwLock, Semaphore};
 use tracing::{debug, error, info, warn};
 
+use std::sync::OnceLock;
+
 use crate::config::ModelConfig;
 use crate::errors::InferenceError;
+
+use semantic_explorer_core::observability::gpu_monitor;
 
 struct CachedModel {
     model: Mutex<TextEmbedding>,
@@ -27,6 +32,12 @@ static EMBEDDING_SEMAPHORE: OnceCell<Arc<Semaphore>> = OnceCell::new();
 
 /// Queue timeout for acquiring semaphore permits
 static SEMAPHORE_QUEUE_TIMEOUT: OnceCell<Duration> = OnceCell::new();
+
+/// Cached GPU pressure state (updated by background monitor)
+static GPU_PRESSURE_HIGH: AtomicBool = AtomicBool::new(false);
+
+/// GPU pressure threshold — configured via GPU_PRESSURE_THRESHOLD env var (default 95.0)
+static GPU_PRESSURE_THRESHOLD: OnceLock<f64> = OnceLock::new();
 
 /// Initialize the global concurrency semaphore for embedding requests
 pub fn init_semaphore(max_concurrent: usize, queue_timeout_ms: u64) {
@@ -47,6 +58,48 @@ pub fn available_permits() -> usize {
         .get()
         .map(|s| s.available_permits())
         .unwrap_or(0)
+}
+
+/// Spawn background task that monitors GPU pressure and updates cached state
+pub fn spawn_gpu_pressure_monitor(threshold: f64) {
+    GPU_PRESSURE_THRESHOLD.get_or_init(|| threshold);
+    tokio::spawn(async move {
+        if !gpu_monitor::init() {
+            warn!("GPU monitoring disabled - NVML not available");
+            return;
+        }
+
+        info!(
+            device_count = gpu_monitor::device_count(),
+            threshold = threshold,
+            "Starting embedding GPU pressure monitor"
+        );
+
+        let mut ticker = tokio::time::interval(Duration::from_secs(5));
+        loop {
+            ticker.tick().await;
+
+            // Collect metrics (updates Prometheus gauges)
+            gpu_monitor::collect_metrics();
+
+            // Update cached pressure state (VRAM OR compute)
+            let is_high = gpu_monitor::is_gpu_under_pressure(threshold);
+            GPU_PRESSURE_HIGH.store(is_high, Ordering::Relaxed);
+
+            if is_high {
+                warn!(
+                    "Embedding: GPU pressure is HIGH (>{}% VRAM or compute)",
+                    threshold
+                );
+            }
+        }
+    });
+}
+
+/// Check cached GPU pressure (fast, no NVML call)
+#[inline]
+pub fn is_gpu_pressure_high() -> bool {
+    GPU_PRESSURE_HIGH.load(Ordering::Relaxed)
 }
 
 pub(crate) fn get_all_available_embedding_models(
@@ -229,6 +282,19 @@ pub async fn generate_embeddings(
             ))
         })?
     };
+
+    // Check GPU pressure before accepting work
+    let threshold = GPU_PRESSURE_THRESHOLD.get().copied().unwrap_or(95.0);
+    if is_gpu_pressure_high() {
+        warn!(
+            model_id = %model_id,
+            "GPU pressure high (>{}% VRAM or compute), rejecting request",
+            threshold
+        );
+        return Err(InferenceError::ServiceUnavailable(
+            "GPU pressure high, try again later".to_string(),
+        ));
+    }
 
     // Acquire global semaphore permit with timeout for backpressure
     let _permit = if let Some(semaphore) = EMBEDDING_SEMAPHORE.get() {

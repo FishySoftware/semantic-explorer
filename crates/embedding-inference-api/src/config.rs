@@ -53,6 +53,8 @@ pub struct ModelConfig {
     /// Queue timeout in milliseconds - how long to wait for a permit before 503
     /// Setting this higher allows requests to queue briefly instead of immediate rejection
     pub queue_timeout_ms: u64,
+    /// GPU pressure threshold percentage — reject requests above this % VRAM or compute utilization
+    pub gpu_pressure_threshold: f64,
 }
 
 /// Observability configuration
@@ -185,6 +187,10 @@ impl ModelConfig {
                 .unwrap_or_else(|_| "5000".to_string())
                 .parse()
                 .context("INFERENCE_QUEUE_TIMEOUT_MS must be a number")?,
+            gpu_pressure_threshold: env::var("GPU_PRESSURE_THRESHOLD")
+                .unwrap_or_else(|_| "95.0".to_string())
+                .parse()
+                .context("GPU_PRESSURE_THRESHOLD must be a number")?,
         })
     }
 
@@ -243,6 +249,7 @@ mod tests {
             max_batch_size: 256,
             max_concurrent_requests: 2,
             queue_timeout_ms: 5000,
+            gpu_pressure_threshold: 95.0,
         };
 
         assert_eq!(model.allowed_embedding_models.len(), 2);
@@ -268,6 +275,7 @@ mod tests {
             max_batch_size: 256,
             max_concurrent_requests: 2,
             queue_timeout_ms: 5000,
+            gpu_pressure_threshold: 95.0,
         };
         assert!(config_all_allowed.is_embedding_model_allowed("any-model"));
         assert!(config_all_allowed.is_rerank_model_allowed("any-model"));
@@ -287,6 +295,7 @@ mod tests {
             max_batch_size: 256,
             max_concurrent_requests: 2,
             queue_timeout_ms: 5000,
+            gpu_pressure_threshold: 95.0,
         };
         // Embedding checks
         assert!(config_restricted.is_embedding_model_allowed("BAAI/bge-small-en-v1.5"));
@@ -311,6 +320,7 @@ mod tests {
             max_batch_size: 256,
             max_concurrent_requests: 2,
             queue_timeout_ms: 5000,
+            gpu_pressure_threshold: 95.0,
         };
         assert!(!config_no_rerankers.is_rerank_model_allowed("any-model"));
     }

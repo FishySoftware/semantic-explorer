@@ -64,10 +64,13 @@ async fn main() -> Result<()> {
         config.models.queue_timeout_ms,
     );
 
+    // Start GPU pressure monitoring (NVML-based, configurable threshold)
+    embedding::spawn_gpu_pressure_monitor(config.models.gpu_pressure_threshold);
+
     info!(
         max_concurrent_requests = config.models.max_concurrent_requests,
         queue_timeout_ms = config.models.queue_timeout_ms,
-        "Model caches and backpressure semaphore initialized."
+        "Model caches, backpressure semaphore, and GPU monitor initialized."
     );
 
     let model_config = web::Data::new(config.models.clone());

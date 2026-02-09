@@ -599,43 +599,18 @@ See [`deployment/DEPLOYMENT_GUIDE.md`](deployment/DEPLOYMENT_GUIDE.md) for detai
 
 The platform includes several features for high-availability deployments (100K+ users).
 
+#### Adaptive Concurrency & Self-Pacing
 
-#### NATS Consumer Tuning
+Workers automatically adjust their concurrency based on downstream service health:
+- **503 backpressure**: When downstream services return 503, workers halve their effective concurrency
+- **Automatic recovery**: Concurrency gradually scales back up after pressure subsides
+- **Health endpoints**: `/healthz`, `/readyz`, `/status` on each worker for Kubernetes probes
 
-| Variable | Default | Required | Description |
-|-----------|----------|----------|-------------|
-| `NATS_MAX_ACK_PENDING` | `100` | No | Max unacknowledged messages per consumer |
-| `NATS_COLLECTION_ACK_WAIT_SECS` | `600` | No | Ack wait for collection transforms |
-| `NATS_DATASET_ACK_WAIT_SECS` | `600` | No | Ack wait for dataset transforms |
-| `NATS_VISUALIZATION_ACK_WAIT_SECS` | `1800` | No | Ack wait for visualization jobs |
-| `NATS_VISUALIZATION_MAX_ACK_PENDING` | `10` | No | Max pending for visualization (lower due to long jobs) |
+#### Hardcoded Defaults
 
-#### Circuit Breakers
-
-Protect external services from cascading failures:
-
-| Variable | Default | Required | Description |
-|-----------|----------|----------|-------------|
-| `QDRANT_CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `5` | No | Failures before circuit opens |
-| `QDRANT_CIRCUIT_BREAKER_SUCCESS_THRESHOLD` | `3` | No | Successes to close from half-open |
-| `QDRANT_CIRCUIT_BREAKER_TIMEOUT_SECS` | `30` | No | How long circuit stays open |
-| `S3_CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `5` | No | S3 failure threshold |
-| `INFERENCE_CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `5` | No | Inference API failure threshold |
-
-#### Retry Policies
-
-Exponential backoff with jitter for transient failures:
-
-| Variable | Default | Required | Description |
-|-----------|----------|----------|-------------|
-| `RETRY_MAX_ATTEMPTS` | `3` | No | Maximum retry attempts |
-| `RETRY_INITIAL_DELAY_MS` | `100` | No | Initial delay between retries (ms) |
-| `RETRY_MAX_DELAY_MS` | `10000` | No | Maximum delay between retries (ms) |
-| `RETRY_BACKOFF_MULTIPLIER` | `2.0` | No | Exponential backoff multiplier |
-| `RETRY_JITTER_FACTOR` | `0.1` | No | Jitter factor (0.0 to 1.0) |
-| `QDRANT_RETRY_MAX_ATTEMPTS` | `3` | No | Qdrant-specific retry attempts |
-| `S3_RETRY_MAX_ATTEMPTS` | `3` | No | S3-specific retry attempts |
-| `INFERENCE_RETRY_MAX_ATTEMPTS` | `3` | No | Inference API retry attempts |
+NATS consumer tuning, circuit breaker, and retry policy parameters use production-tested
+defaults and no longer require environment variables. This eliminates ~40 configuration
+variables while maintaining the same resilience behavior.
 
 ### Inference APIs
 

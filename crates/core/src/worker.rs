@@ -15,13 +15,13 @@ use serde::de::DeserializeOwned;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
-use tokio::sync::Semaphore;
 use tracing::{Instrument, error, info, info_span, warn};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_subscriber::{
     EnvFilter, Layer, Registry as TracingRegistry, layer::SubscriberExt, util::SubscriberInitExt,
 };
 
+use crate::adaptive_concurrency::AdaptiveConcurrency;
 use crate::config::NatsConfig;
 use crate::observability;
 
@@ -33,6 +33,10 @@ pub struct WorkerConfig {
     pub max_concurrent_jobs: usize,
     /// Maximum number of delivery attempts before sending to DLQ
     pub max_deliver: u64,
+    /// Port for the health check HTTP server (default: 8082)
+    pub health_check_port: u16,
+    /// NATS configuration (extracted from env in main)
+    pub nats_config: NatsConfig,
 }
 
 /// DLQ subject mapping for each stream type
@@ -62,18 +66,19 @@ pub struct WorkerContext {
 }
 
 /// Initialize OpenTelemetry for the worker
-pub fn initialize_opentelemetry(service_name: &str) -> Result<()> {
+pub fn initialize_opentelemetry(
+    service_name: &str,
+    otlp_endpoint: &str,
+    log_format: &str,
+) -> Result<()> {
     let resource = Resource::builder()
         .with_service_name(service_name.to_string())
         .build();
 
-    let otlp_endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
-        .unwrap_or_else(|_| "http://localhost:4317".to_string());
-
     // Initialize trace exporter
     let trace_exporter = SpanExporter::builder()
         .with_tonic()
-        .with_endpoint(&otlp_endpoint)
+        .with_endpoint(otlp_endpoint)
         .with_timeout(Duration::from_secs(10))
         .build();
 
@@ -90,7 +95,7 @@ pub fn initialize_opentelemetry(service_name: &str) -> Result<()> {
     // Initialize log exporter
     let log_exporter = LogExporter::builder()
         .with_tonic()
-        .with_endpoint(&otlp_endpoint)
+        .with_endpoint(otlp_endpoint)
         .with_timeout(Duration::from_secs(10))
         .build();
 
@@ -108,7 +113,7 @@ pub fn initialize_opentelemetry(service_name: &str) -> Result<()> {
     // Initialize metric exporter
     let metric_exporter = MetricExporter::builder()
         .with_tonic()
-        .with_endpoint(&otlp_endpoint)
+        .with_endpoint(otlp_endpoint)
         .with_timeout(Duration::from_secs(10))
         .build();
 
@@ -133,10 +138,7 @@ pub fn initialize_opentelemetry(service_name: &str) -> Result<()> {
         .expect("failed to initialize tracing filter layer");
 
     // Use JSON format for structured logging in production, human-readable for development
-    let use_json = std::env::var("LOG_FORMAT")
-        .unwrap_or_else(|_| "json".to_string())
-        .to_lowercase()
-        == "json";
+    let use_json = log_format.to_lowercase() == "json";
 
     let format_layer = if use_json {
         tracing_subscriber::fmt::layer()
@@ -192,23 +194,54 @@ where
     // Use provided NATS client or create a new connection
     let nats_client = context.nats_client.clone();
 
-    let semaphore = Arc::new(Semaphore::new(config.max_concurrent_jobs));
+    let concurrency = AdaptiveConcurrency::new(config.max_concurrent_jobs);
     let shutdown = Arc::new(AtomicBool::new(false));
     let in_flight = Arc::new(AtomicUsize::new(0));
 
     info!("Using JetStream mode for reliable message delivery");
 
-    // Initialize NATS configuration
-    let nats_config = NatsConfig::from_env()?;
-    crate::nats::initialize_jetstream(&nats_client, &nats_config).await?;
+    // Initialize NATS JetStream with provided configuration
+    crate::nats::initialize_jetstream(&nats_client, &config.nats_config).await?;
 
     // Start NATS metrics collector
     crate::nats::start_metrics_collector(nats_client.clone()).await?;
 
+    // Start health check HTTP endpoint for K8s liveness/readiness probes
+    let health_concurrency = Arc::clone(&concurrency);
+    let health_in_flight = Arc::clone(&in_flight);
+    let health_shutdown = Arc::clone(&shutdown);
+    let health_service_name = config.service_name.clone();
+    let health_port = config.health_check_port;
+    tokio::spawn(async move {
+        if let Err(e) = run_health_server(
+            health_service_name,
+            health_concurrency,
+            health_in_flight,
+            health_shutdown,
+            health_port,
+        )
+        .await
+        {
+            warn!("Health check server failed: {}", e);
+        }
+    });
+
+    // Clamp max_ack_pending to max_concurrent_jobs to prevent NAK/redelivery churn.
+    // When max_ack_pending >> max_concurrent_jobs, NATS delivers far more messages
+    // than the worker can process concurrently, causing the excess to be NAK'd and
+    // redelivered repeatedly — wasting resources and inflating redelivery counts.
+    let mut consumer_config = config.consumer_config;
+    if consumer_config.max_ack_pending > config.max_concurrent_jobs as i64 {
+        info!(
+            "Clamping max_ack_pending from {} to {} to match max_concurrent_jobs",
+            consumer_config.max_ack_pending, config.max_concurrent_jobs
+        );
+        consumer_config.max_ack_pending = config.max_concurrent_jobs as i64;
+    }
+
     let jetstream = async_nats::jetstream::new(nats_client.clone());
     let consumer =
-        crate::nats::ensure_consumer(&jetstream, &config.stream_name, config.consumer_config)
-            .await?;
+        crate::nats::ensure_consumer(&jetstream, &config.stream_name, consumer_config).await?;
 
     info!(
         "Worker started with JetStream, listening on {} stream",
@@ -234,7 +267,7 @@ where
         result = process_messages(
             consumer,
             context,
-            semaphore,
+            concurrency,
             process_job,
             proc_ctx,
         ) => {
@@ -312,7 +345,7 @@ struct ProcessingContext {
 async fn process_messages<J, F, Fut>(
     consumer: Consumer<Config>,
     context: WorkerContext,
-    semaphore: Arc<Semaphore>,
+    concurrency: Arc<AdaptiveConcurrency>,
     process_job: F,
     proc_ctx: ProcessingContext,
 ) -> Result<()>
@@ -358,28 +391,45 @@ where
             }
         };
 
-        // Acquire semaphore permit for backpressure
-        let permit = match semaphore.clone().try_acquire_owned() {
-            Ok(p) => p,
-            Err(_) => {
-                // Get configurable NAK delay (default 30s to match consumer backoff schedule)
-                let nak_delay_secs: u64 = std::env::var("WORKER_BACKPRESSURE_NAK_DELAY_SECS")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(30);
+        // If downstream is under pressure, pause briefly before acquiring
+        // to avoid spinning on jobs that will likely fail anyway.
+        if concurrency.is_downstream_pressured() {
+            info!("Downstream pressure active, pausing 2s before accepting next job");
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
 
+        // Acquire semaphore permit for backpressure.
+        // We use a blocking acquire here instead of try_acquire. Combined with
+        // max_ack_pending being clamped to max_concurrent_jobs, NATS won't deliver
+        // more messages than we can handle, so this should rarely block. If it does
+        // block briefly (e.g., between a task acking and releasing its permit), it
+        // naturally throttles consumption without causing NAK/redelivery churn.
+        let permit = match tokio::time::timeout(
+            Duration::from_secs(300), // Safety timeout (5 min) — should never be reached
+            concurrency.acquire(),
+        )
+        .await
+        {
+            Ok(Ok(p)) => p,
+            Ok(Err(_)) => {
+                // Semaphore closed — shouldn't happen in normal operation
+                error!("Semaphore closed unexpectedly");
+                break;
+            }
+            Err(_) => {
+                // Timeout waiting for permit — indicates max_ack_pending is too high
+                // relative to max_concurrent_jobs, or jobs are taking too long
                 warn!(
-                    nak_delay_secs = nak_delay_secs,
-                    "Semaphore limit reached, workers are at capacity. Message will be redelivered."
+                    "Timed out waiting for semaphore permit (300s). \
+                     Consider lowering NATS_MAX_ACK_PENDING to match MAX_CONCURRENT_JOBS."
                 );
-                // Negative acknowledgment with longer delay to reduce churn
                 if let Err(e) = msg
                     .ack_with(async_nats::jetstream::AckKind::Nak(Some(
-                        Duration::from_secs(nak_delay_secs),
+                        Duration::from_secs(30),
                     )))
                     .await
                 {
-                    error!("Failed to Nak message during backpressure: {}", e);
+                    error!("Failed to Nak message during backpressure timeout: {}", e);
                 }
                 continue;
             }
@@ -395,6 +445,7 @@ where
         let in_flight_clone = proc_ctx.in_flight.clone();
         let jetstream_clone = jetstream.clone();
         let payload = msg.payload.clone();
+        let concurrency_clone = Arc::clone(&concurrency);
 
         // Create a span with the parent context for distributed tracing
         let job_span = info_span!(
@@ -411,12 +462,20 @@ where
                 match process_job(job, ctx).await {
                     Ok(_) => {
                         info!("Job processed successfully.");
+                        // Signal that downstream is healthy
+                        concurrency_clone.record_downstream_success();
                         // Acknowledge success
                         if let Err(e) = msg.ack().await {
                             error!("Failed to acknowledge successful job: {}", e);
                         }
                     }
                     Err(e) => {
+                        // Check if downstream embedding service is under pressure
+                        // and propagate to adaptive concurrency controller
+                        if crate::embedder::is_downstream_under_pressure() {
+                            concurrency_clone.record_downstream_pressure();
+                        }
+
                         let error_type = format!("{:?}", e)
                             .split(':')
                             .next()
@@ -487,4 +546,93 @@ where
     }
 
     Ok(())
+}
+
+/// Tiny HTTP health check server for K8s liveness/readiness probes.
+///
+/// Listens on `HEALTH_CHECK_PORT` (default 8082) and serves:
+/// - `GET /healthz` — liveness probe (always 200 unless shutting down)
+/// - `GET /readyz` — readiness probe (200 when not shutting down)
+/// - `GET /status` — JSON status with concurrency info
+async fn run_health_server(
+    service_name: String,
+    concurrency: Arc<AdaptiveConcurrency>,
+    in_flight: Arc<AtomicUsize>,
+    shutdown: Arc<AtomicBool>,
+    port: u16,
+) -> Result<()> {
+    use std::io::Write;
+
+    let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
+        Ok(l) => {
+            info!(port = port, "Health check server listening");
+            l
+        }
+        Err(e) => {
+            warn!(port = port, error = %e, "Failed to bind health check port, skipping");
+            return Ok(());
+        }
+    };
+
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let is_shutdown = shutdown.load(Ordering::SeqCst);
+        let current_in_flight = in_flight.load(Ordering::SeqCst);
+        let effective = concurrency.effective_limit();
+        let max = concurrency.max_limit();
+        let available = concurrency.available_permits();
+        let pressured = concurrency.is_downstream_pressured();
+        let svc = service_name.clone();
+
+        tokio::spawn(async move {
+            let mut buf = [0u8; 1024];
+            let stream = stream.into_std().ok();
+            if let Some(mut stream) = stream {
+                use std::io::Read;
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..n]);
+
+                let (status, body) = if request.contains("GET /healthz") {
+                    if is_shutdown {
+                        ("503 Service Unavailable", "{\"status\":\"shutting_down\"}")
+                    } else {
+                        ("200 OK", "{\"status\":\"ok\"}")
+                    }
+                } else if request.contains("GET /readyz") {
+                    if is_shutdown {
+                        ("503 Service Unavailable", "{\"status\":\"shutting_down\"}")
+                    } else {
+                        ("200 OK", "{\"status\":\"ready\"}")
+                    }
+                } else if request.contains("GET /status") {
+                    // Return detailed JSON status (we'll format inline)
+                    let json = format!(
+                        "{{\"service\":\"{}\",\"in_flight\":{},\"effective_limit\":{},\
+                         \"max_limit\":{},\"available_permits\":{},\
+                         \"downstream_pressure\":{}}}",
+                        svc, current_in_flight, effective, max, available, pressured
+                    );
+                    // Can't use the json variable with a static lifetime; write directly
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                        json.len(),
+                        json
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    return;
+                } else {
+                    ("404 Not Found", "{\"error\":\"not_found\"}")
+                };
+
+                let response = format!(
+                    "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                    status,
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+    }
 }

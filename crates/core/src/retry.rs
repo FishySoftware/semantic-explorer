@@ -229,17 +229,17 @@ where
 
 /// Retry policy specifically configured for Qdrant operations
 pub fn qdrant_retry_policy() -> RetryPolicy {
-    RetryPolicy::from_env_with_prefix("QDRANT_RETRY")
+    RetryPolicy::default()
 }
 
 /// Retry policy specifically configured for S3 operations
 pub fn s3_retry_policy() -> RetryPolicy {
-    RetryPolicy::from_env_with_prefix("S3_RETRY")
+    RetryPolicy::default()
 }
 
 /// Retry policy specifically configured for inference API operations
 pub fn inference_retry_policy() -> RetryPolicy {
-    RetryPolicy::from_env_with_prefix("INFERENCE_RETRY")
+    RetryPolicy::default()
 }
 
 #[cfg(test)]

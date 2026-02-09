@@ -65,7 +65,17 @@ impl ResponseError for InferenceError {
             InferenceError::ServiceUnavailable(_) => "SERVICE_UNAVAILABLE",
         };
 
-        HttpResponse::build(self.status_code()).json(ErrorResponse {
+        let mut response = HttpResponse::build(self.status_code());
+
+        // Add Retry-After header for 503 responses so clients can back off appropriately
+        if matches!(
+            self,
+            InferenceError::ServiceUnavailable(_) | InferenceError::ModelLoad(_)
+        ) {
+            response.insert_header(("Retry-After", "5"));
+        }
+
+        response.json(ErrorResponse {
             error: self.to_string(),
             code: code.to_string(),
         })

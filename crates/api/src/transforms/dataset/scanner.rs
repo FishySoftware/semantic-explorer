@@ -4,6 +4,7 @@ use aws_sdk_s3::Client as S3Client;
 use sqlx::{Pool, Postgres};
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
@@ -37,6 +38,50 @@ enum BackpressureState {
     Ok(u64),
     /// Queue is overloaded, skip this scan cycle
     Overloaded(u64),
+}
+
+/// Configuration for the dataset scanner, loaded from env at startup.
+#[derive(Debug, Clone)]
+pub struct ScannerConfig {
+    /// Delay in ms between batch publishes (default: 0 = no limit)
+    pub batch_delay_ms: u64,
+    /// Maximum batches per scan (default: 1000)
+    pub max_batches_per_scan: usize,
+    /// Maximum items per scan (default: 100_000)
+    pub max_items_per_scan: usize,
+    /// Timeout for individual scans in seconds (default: 300)
+    pub scan_timeout_secs: u64,
+    /// Maximum pending messages before backpressure kicks in (default: 500)
+    pub max_pending: u64,
+}
+
+impl ScannerConfig {
+    /// Load scanner configuration from environment variables.
+    /// Call once at startup.
+    pub fn from_env() -> Self {
+        Self {
+            batch_delay_ms: std::env::var("DATASET_SCANNER_BATCH_DELAY_MS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
+            max_batches_per_scan: std::env::var("DATASET_SCANNER_MAX_BATCHES_PER_SCAN")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1000),
+            max_items_per_scan: std::env::var("DATASET_SCANNER_MAX_ITEMS_PER_SCAN")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(100_000),
+            scan_timeout_secs: std::env::var("DATASET_SCANNER_TIMEOUT_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(300),
+            max_pending: std::env::var("DATASET_SCANNER_MAX_PENDING")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(500),
+        }
+    }
 }
 
 /// Check NATS JetStream stream for pending message count to implement backpressure
@@ -73,19 +118,14 @@ async fn check_backpressure(
 /// Simple rate limiter for batch publishing (#8)
 /// Uses a fixed delay between operations to prevent overwhelming downstream systems.
 struct RateLimiter {
-    delay: std::time::Duration,
+    delay: Duration,
 }
 
 impl RateLimiter {
-    /// Create a rate limiter from environment config.
-    /// `DATASET_SCANNER_BATCH_DELAY_MS` controls the delay between batch publishes (default: 0 = no limit).
-    fn from_env() -> Self {
-        let delay_ms = std::env::var("DATASET_SCANNER_BATCH_DELAY_MS")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(0);
+    /// Create a rate limiter from scanner config.
+    fn new(batch_delay_ms: u64) -> Self {
         Self {
-            delay: std::time::Duration::from_millis(delay_ms),
+            delay: Duration::from_millis(batch_delay_ms),
         }
     }
 
@@ -99,11 +139,7 @@ impl RateLimiter {
 
 /// Create a circuit breaker for scanner batch publishing (#9)
 fn scanner_circuit_breaker() -> Arc<CircuitBreaker> {
-    let config = CircuitBreakerConfig::from_env_with_prefix(
-        "dataset_scanner",
-        "DATASET_SCANNER_CIRCUIT_BREAKER",
-    );
-    CircuitBreaker::new(config)
+    CircuitBreaker::new(CircuitBreakerConfig::new("dataset_scanner"))
 }
 
 /// Resource limits for scanner operations
@@ -115,18 +151,10 @@ struct ScannerLimits {
 }
 
 impl ScannerLimits {
-    fn from_env() -> Self {
-        let max_batches = std::env::var("DATASET_SCANNER_MAX_BATCHES_PER_SCAN")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(1000);
-        let max_items = std::env::var("DATASET_SCANNER_MAX_ITEMS_PER_SCAN")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(100_000);
+    fn new(config: &ScannerConfig) -> Self {
         Self {
-            max_batches_per_scan: max_batches,
-            max_items_per_scan: max_items,
+            max_batches_per_scan: config.max_batches_per_scan,
+            max_items_per_scan: config.max_items_per_scan,
         }
     }
 }
@@ -173,19 +201,14 @@ pub(crate) async fn scan_active_dataset_transforms(
     s3_bucket_name: &str,
     encryption: &EncryptionService,
     qdrant_config: &QdrantConnectionConfig,
+    scanner_config: &ScannerConfig,
 ) -> Result<()> {
     let transforms = get_active_dataset_transforms_privileged(pool).await?;
     info!("Scanning {} active dataset transforms", transforms.len());
 
     for transform in transforms {
-        // Timeout handling (#19): prevent individual scans from running too long
-        let scan_timeout_secs = std::env::var("DATASET_SCANNER_TIMEOUT_SECS")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(300); // 5 minutes default
-
         match tokio::time::timeout(
-            std::time::Duration::from_secs(scan_timeout_secs),
+            Duration::from_secs(scanner_config.scan_timeout_secs),
             process_dataset_transform_scan(
                 pool,
                 nats,
@@ -194,6 +217,7 @@ pub(crate) async fn scan_active_dataset_transforms(
                 &transform,
                 encryption,
                 qdrant_config,
+                scanner_config,
             ),
         )
         .await
@@ -208,7 +232,7 @@ pub(crate) async fn scan_active_dataset_transforms(
             Err(_) => {
                 error!(
                     dataset_transform_id = transform.dataset_transform_id,
-                    timeout_secs = scan_timeout_secs,
+                    timeout_secs = scanner_config.scan_timeout_secs,
                     "Dataset transform scan timed out"
                 );
             }
@@ -220,9 +244,10 @@ pub(crate) async fn scan_active_dataset_transforms(
 /// Scan a specific dataset transform by ID (privileged, for NATS triggers)
 #[tracing::instrument(
     name = "scan_dataset_transform",
-    skip(pool, nats, s3, encryption, qdrant_config),
+    skip(pool, nats, s3, encryption, qdrant_config, scanner_config),
     fields(dataset_transform_id = %dataset_transform_id)
 )]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn scan_dataset_transform(
     pool: &Pool<Postgres>,
     nats: &NatsClient,
@@ -231,6 +256,7 @@ pub(crate) async fn scan_dataset_transform(
     dataset_transform_id: i32,
     encryption: &EncryptionService,
     qdrant_config: &QdrantConnectionConfig,
+    scanner_config: &ScannerConfig,
 ) -> Result<()> {
     let transform = get_dataset_transform_privileged(pool, dataset_transform_id).await?;
 
@@ -260,15 +286,17 @@ pub(crate) async fn scan_dataset_transform(
         &transform,
         encryption,
         qdrant_config,
+        scanner_config,
     )
     .await
 }
 
 #[tracing::instrument(
     name = "process_dataset_transform_scan",
-    skip(pool, nats, s3, transform, encryption, qdrant_config),
+    skip(pool, nats, s3, transform, encryption, qdrant_config, scanner_config),
     fields(dataset_transform_id = %transform.dataset_transform_id, embedder_count = %transform.embedder_ids.len())
 )]
+#[allow(clippy::too_many_arguments)]
 async fn process_dataset_transform_scan(
     pool: &Pool<Postgres>,
     nats: &NatsClient,
@@ -277,6 +305,7 @@ async fn process_dataset_transform_scan(
     transform: &DatasetTransform,
     encryption: &EncryptionService,
     qdrant_config: &QdrantConnectionConfig,
+    scanner_config: &ScannerConfig,
 ) -> Result<()> {
     info!(
         "Starting dataset transform scan for {} with {} embedders",
@@ -285,16 +314,11 @@ async fn process_dataset_transform_scan(
     );
 
     // Backpressure check: Skip scan if too many pending jobs (#3)
-    let max_pending = std::env::var("DATASET_SCANNER_MAX_PENDING")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(500);
-
-    match check_backpressure(nats, "DATASET_TRANSFORMS", max_pending).await {
+    match check_backpressure(nats, "DATASET_TRANSFORMS", scanner_config.max_pending).await {
         BackpressureState::Overloaded(pending) => {
             warn!(
                 pending_messages = pending,
-                max_pending = max_pending,
+                max_pending = scanner_config.max_pending,
                 dataset_transform_id = transform.dataset_transform_id,
                 "Workers at capacity, skipping scan (backpressure)"
             );
@@ -382,7 +406,7 @@ async fn process_dataset_transform_scan(
     let mut total_jobs = 0;
 
     // Initialize rate limiter and circuit breaker for batch publishing (#8, #9)
-    let rate_limiter = RateLimiter::from_env();
+    let rate_limiter = RateLimiter::new(scanner_config.batch_delay_ms);
     let circuit_breaker = scanner_circuit_breaker();
 
     let embedder_ids: Vec<i32> = embedded_datasets_list
@@ -592,6 +616,7 @@ async fn process_dataset_transform_scan(
                 &batch_config,
                 &rate_limiter,
                 &circuit_breaker,
+                scanner_config,
             )
             .await?;
             total_jobs += items_created;
@@ -621,6 +646,7 @@ async fn create_batches_from_dataset_items(
     config: &DatasetBatchConfig,
     rate_limiter: &RateLimiter,
     circuit_breaker: &Arc<CircuitBreaker>,
+    scanner_config: &ScannerConfig,
 ) -> Result<usize> {
     // Use timestamp-based tracking to identify new items that need processing
     let last_processed_at = embedded_dataset.last_processed_at;
@@ -653,7 +679,7 @@ async fn create_batches_from_dataset_items(
     }
 
     // Apply resource limits
-    let limits = ScannerLimits::from_env();
+    let limits = ScannerLimits::new(scanner_config);
     let was_truncated = items.len() > limits.max_items_per_scan;
     if was_truncated {
         warn!(
