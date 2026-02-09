@@ -9,7 +9,7 @@
 		TableHead,
 		TableHeadCell,
 	} from 'flowbite-svelte';
-	import { DownloadOutline, EyeOutline, ArrowLeftOutline } from 'flowbite-svelte-icons';
+	import { ArrowLeftOutline, DownloadOutline, EyeOutline } from 'flowbite-svelte-icons';
 	import { onDestroy, onMount } from 'svelte';
 	import LoadingState from '../components/LoadingState.svelte';
 	import type { Visualization, VisualizationTransform } from '../types/models';
@@ -134,8 +134,7 @@
 				throw new Error(`Failed to download HTML: ${response.statusText}`);
 			}
 
-			const blob = await response.blob();
-			htmlContent = await blob.text();
+			htmlContent = await response.text();
 		} catch (err) {
 			toastStore.error(formatError(err, 'Failed to load visualization HTML'));
 		}
@@ -149,7 +148,7 @@
 
 		try {
 			const response = await fetch(
-				`/api/visualization-transforms/${visualizationTransformId}/visualizations/${visualization.visualization_id}/download`
+				`/api/visualization-transforms/${visualizationTransformId}/visualizations/${visualization.visualization_id}/download?download=true`
 			);
 
 			if (!response.ok) {

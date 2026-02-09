@@ -1,6 +1,7 @@
 use fastembed::{RerankInitOptions, RerankerModel, TextRerank};
 use futures::stream::StreamExt;
 use once_cell::sync::OnceCell;
+use ort::ep::ArenaExtendStrategy;
 use ort::ep::CUDA;
 use ort::ep::cuda::AttentionBackend;
 use std::collections::HashMap;
@@ -149,11 +150,32 @@ fn create_text_rerank(
     model: RerankerModel,
     config: &ModelConfig,
 ) -> Result<TextRerank, InferenceError> {
-    let cuda_provider = CUDA::default()
+    let mut cuda = CUDA::default()
         .with_prefer_nhwc(true)
-        .with_attention_backend(AttentionBackend::CUDNN_FLASH_ATTENTION)
-        .build()
-        .error_on_failure();
+        .with_attention_backend(AttentionBackend::CUDNN_FLASH_ATTENTION);
+
+    // Apply CUDA arena size limit if configured, otherwise uses all available GPU memory
+    if let Some(arena_size) = config.cuda_arena_size {
+        info!(
+            cuda_arena_size_bytes = arena_size,
+            cuda_arena_size_mb = arena_size / (1024 * 1024),
+            "Setting CUDA memory arena limit for reranker"
+        );
+        cuda = cuda.with_memory_limit(arena_size);
+    }
+
+    // Apply arena extend strategy
+    let strategy = match config.cuda_arena_extend_strategy {
+        crate::config::CudaArenaExtendStrategy::SameAsRequested => {
+            ArenaExtendStrategy::SameAsRequested
+        }
+        crate::config::CudaArenaExtendStrategy::NextPowerOfTwo => {
+            ArenaExtendStrategy::NextPowerOfTwo
+        }
+    };
+    cuda = cuda.with_arena_extend_strategy(strategy);
+
+    let cuda_provider = cuda.build().error_on_failure();
     let mut options = RerankInitOptions::new(model)
         .with_execution_providers(vec![cuda_provider])
         .with_show_download_progress(true);

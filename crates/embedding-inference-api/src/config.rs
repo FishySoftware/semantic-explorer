@@ -9,6 +9,39 @@ use semantic_explorer_core::config::TlsConfig;
 use std::env;
 use std::path::PathBuf;
 
+/// Parse a human-readable byte size string (e.g. "4G", "512M", "1024K", "8589934592")
+/// into a byte count. Supports suffixes: K/KB, M/MB, G/GB, T/TB (case-insensitive).
+fn parse_byte_size(s: &str) -> Result<usize> {
+    let s = s.trim();
+    if s.is_empty() {
+        anyhow::bail!("empty byte size string");
+    }
+
+    // Find where the numeric part ends and the suffix begins
+    let (num_part, suffix) = match s.find(|c: char| c.is_alphabetic()) {
+        Some(idx) => (s[..idx].trim(), s[idx..].trim().to_uppercase()),
+        None => {
+            return s
+                .parse::<usize>()
+                .context("invalid byte size: not a number");
+        }
+    };
+
+    let base: f64 = num_part
+        .parse()
+        .with_context(|| format!("invalid numeric part in byte size: {num_part}"))?;
+
+    let multiplier: u64 = match suffix.as_str() {
+        "K" | "KB" => 1024,
+        "M" | "MB" => 1024 * 1024,
+        "G" | "GB" => 1024 * 1024 * 1024,
+        "T" | "TB" => 1024 * 1024 * 1024 * 1024,
+        other => anyhow::bail!("unknown byte size suffix: {other}"),
+    };
+
+    Ok((base * multiplier as f64) as usize)
+}
+
 /// Inference API configuration
 #[derive(Debug, Clone)]
 pub struct InferenceConfig {
@@ -55,6 +88,25 @@ pub struct ModelConfig {
     pub queue_timeout_ms: u64,
     /// GPU pressure threshold percentage — reject requests above this % VRAM or compute utilization
     pub gpu_pressure_threshold: f64,
+    /// CUDA memory arena size limit in bytes.
+    /// When set, limits how much GPU VRAM the ONNX Runtime arena can allocate.
+    /// When None (default), uses all available GPU memory (usize::MAX).
+    pub cuda_arena_size: Option<usize>,
+    /// Strategy for extending the CUDA memory arena when more memory is needed.
+    /// NextPowerOfTwo (default): each extension doubles — fewer but larger allocations.
+    /// SameAsRequested: each extension is exactly the requested size — more granular.
+    pub cuda_arena_extend_strategy: CudaArenaExtendStrategy,
+}
+
+/// Strategy for extending the CUDA memory arena.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CudaArenaExtendStrategy {
+    /// Each subsequent extension doubles in size (default).
+    /// Reaches target size faster = fewer reallocations during model loading.
+    NextPowerOfTwo,
+    /// Each extension is exactly the size requested.
+    /// More predictable memory usage but more frequent allocations.
+    SameAsRequested,
 }
 
 /// Observability configuration
@@ -109,6 +161,21 @@ impl InferenceConfig {
             } else {
                 tracing::warn!(model_path = %model_path.display(), "Custom model path configured but does not exist");
             }
+        }
+
+        // Log CUDA arena config
+        match self.models.cuda_arena_size {
+            Some(size) => tracing::info!(
+                cuda_arena_size_bytes = size,
+                cuda_arena_size_human = %format!("{}MB", size / (1024 * 1024)),
+                cuda_arena_extend_strategy = ?self.models.cuda_arena_extend_strategy,
+                source = if env::var("CUDA_ARENA_SIZE").is_ok() { "explicit" } else { "auto-sized" },
+                "CUDA memory arena configured"
+            ),
+            None => tracing::info!(
+                cuda_arena_extend_strategy = ?self.models.cuda_arena_extend_strategy,
+                "CUDA memory arena using all available GPU memory (no GPU detected for auto-sizing)"
+            ),
         }
     }
 }
@@ -191,6 +258,28 @@ impl ModelConfig {
                 .unwrap_or_else(|_| "95.0".to_string())
                 .parse()
                 .context("GPU_PRESSURE_THRESHOLD must be a number")?,
+            cuda_arena_size: match env::var("CUDA_ARENA_SIZE") {
+                Ok(val) if !val.trim().is_empty() && val.trim() != "0" => {
+                    Some(parse_byte_size(&val).context(
+                        "CUDA_ARENA_SIZE must be a byte size (e.g. '4G', '512M', '8589934592')",
+                    )?)
+                }
+                _ => None, // Default: use all available GPU memory
+            },
+            cuda_arena_extend_strategy: match env::var("CUDA_ARENA_EXTEND_STRATEGY") {
+                Ok(val) => match val.trim().to_lowercase().as_str() {
+                    "same" | "same_as_requested" | "sameasrequested" => {
+                        CudaArenaExtendStrategy::SameAsRequested
+                    }
+                    "power_of_two" | "nextpoweroftwo" | "next_power_of_two" | "default" | "" => {
+                        CudaArenaExtendStrategy::NextPowerOfTwo
+                    }
+                    other => anyhow::bail!(
+                        "CUDA_ARENA_EXTEND_STRATEGY must be 'next_power_of_two' (default) or 'same_as_requested', got: {other}"
+                    ),
+                },
+                _ => CudaArenaExtendStrategy::NextPowerOfTwo,
+            },
         })
     }
 
@@ -205,6 +294,53 @@ impl ModelConfig {
     /// Check if a rerank model is allowed based on configuration
     pub fn is_rerank_model_allowed(&self, model_id: &str) -> bool {
         self.all_rerank_models || self.allowed_rerank_models.contains(&model_id.to_string())
+    }
+
+    /// Resolve the effective CUDA arena size.
+    ///
+    /// If `CUDA_ARENA_SIZE` was explicitly set, use that value.
+    /// Otherwise, auto-compute from GPU total VRAM x (gpu_pressure_threshold / 100)
+    /// so the arena never grows past the pressure rejection threshold.
+    ///
+    /// This must be called after NVML is initialized (before model loading).
+    pub fn resolve_effective_arena_size(&mut self) {
+        use semantic_explorer_core::observability::gpu_monitor;
+
+        if self.cuda_arena_size.is_some() {
+            // Explicit size set — respect it
+            return;
+        }
+
+        // Auto-compute from GPU VRAM and pressure threshold.
+        // Use the minimum VRAM across all visible devices (incl. MIG slices)
+        // so the arena cap is safe regardless of which device ORT targets.
+        if let Some(min_vram) = gpu_monitor::get_min_device_vram() {
+            let fraction = self.gpu_pressure_threshold / 100.0;
+            // Leave a 5% additional margin below the threshold for CUDA runtime overhead
+            // (cuDNN workspaces, kernel launches, etc. that live outside the ORT arena)
+            let effective_fraction = (fraction - 0.05).max(0.5);
+            let arena_limit = (min_vram as f64 * effective_fraction) as usize;
+
+            // Log per-device VRAM for visibility in multi-GPU / MIG setups
+            let per_device = gpu_monitor::get_vram_per_device();
+            tracing::info!(
+                devices = per_device.len(),
+                per_device_vram_mb = ?per_device.iter().map(|(idx, v)| (*idx, v / (1024 * 1024))).collect::<Vec<_>>(),
+                min_vram_mb = min_vram / (1024 * 1024),
+                gpu_pressure_threshold = self.gpu_pressure_threshold,
+                effective_fraction_pct = effective_fraction * 100.0,
+                arena_limit_mb = arena_limit / (1024 * 1024),
+                "Auto-sizing CUDA arena from minimum device VRAM to stay below GPU pressure threshold"
+            );
+
+            self.cuda_arena_size = Some(arena_limit);
+        } else {
+            tracing::warn!(
+                "No GPU detected via NVML — cannot auto-size CUDA arena. \
+                 Arena will use all available GPU memory (ONNX Runtime default). \
+                 Set CUDA_ARENA_SIZE explicitly if needed."
+            );
+        }
     }
 }
 
@@ -250,6 +386,8 @@ mod tests {
             max_concurrent_requests: 2,
             queue_timeout_ms: 5000,
             gpu_pressure_threshold: 95.0,
+            cuda_arena_size: None,
+            cuda_arena_extend_strategy: CudaArenaExtendStrategy::NextPowerOfTwo,
         };
 
         assert_eq!(model.allowed_embedding_models.len(), 2);
@@ -276,6 +414,8 @@ mod tests {
             max_concurrent_requests: 2,
             queue_timeout_ms: 5000,
             gpu_pressure_threshold: 95.0,
+            cuda_arena_size: None,
+            cuda_arena_extend_strategy: CudaArenaExtendStrategy::NextPowerOfTwo,
         };
         assert!(config_all_allowed.is_embedding_model_allowed("any-model"));
         assert!(config_all_allowed.is_rerank_model_allowed("any-model"));
@@ -296,6 +436,8 @@ mod tests {
             max_concurrent_requests: 2,
             queue_timeout_ms: 5000,
             gpu_pressure_threshold: 95.0,
+            cuda_arena_size: None,
+            cuda_arena_extend_strategy: CudaArenaExtendStrategy::NextPowerOfTwo,
         };
         // Embedding checks
         assert!(config_restricted.is_embedding_model_allowed("BAAI/bge-small-en-v1.5"));
@@ -321,6 +463,8 @@ mod tests {
             max_concurrent_requests: 2,
             queue_timeout_ms: 5000,
             gpu_pressure_threshold: 95.0,
+            cuda_arena_size: None,
+            cuda_arena_extend_strategy: CudaArenaExtendStrategy::NextPowerOfTwo,
         };
         assert!(!config_no_rerankers.is_rerank_model_allowed("any-model"));
     }
@@ -343,5 +487,45 @@ mod tests {
         assert_eq!(server.hostname, "127.0.0.1");
         assert_eq!(server.port, 8080);
         assert_eq!(server.cors_allowed_origins.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_byte_size() {
+        // Raw bytes
+        assert_eq!(parse_byte_size("1024").unwrap(), 1024);
+        assert_eq!(parse_byte_size("8589934592").unwrap(), 8589934592);
+
+        // Kilobytes
+        assert_eq!(parse_byte_size("1K").unwrap(), 1024);
+        assert_eq!(parse_byte_size("1KB").unwrap(), 1024);
+
+        // Megabytes
+        assert_eq!(parse_byte_size("512M").unwrap(), 512 * 1024 * 1024);
+        assert_eq!(parse_byte_size("512MB").unwrap(), 512 * 1024 * 1024);
+
+        // Gigabytes
+        assert_eq!(parse_byte_size("4G").unwrap(), 4 * 1024 * 1024 * 1024);
+        assert_eq!(parse_byte_size("4GB").unwrap(), 4 * 1024 * 1024 * 1024);
+
+        // Terabytes
+        assert_eq!(parse_byte_size("1T").unwrap(), 1024 * 1024 * 1024 * 1024);
+
+        // Case insensitive
+        assert_eq!(parse_byte_size("4g").unwrap(), 4 * 1024 * 1024 * 1024);
+        assert_eq!(parse_byte_size("512m").unwrap(), 512 * 1024 * 1024);
+
+        // With whitespace
+        assert_eq!(parse_byte_size("  4G  ").unwrap(), 4 * 1024 * 1024 * 1024);
+
+        // Fractional
+        assert_eq!(
+            parse_byte_size("1.5G").unwrap(),
+            (1.5 * 1024.0 * 1024.0 * 1024.0) as usize
+        );
+
+        // Errors
+        assert!(parse_byte_size("").is_err());
+        assert!(parse_byte_size("abc").is_err());
+        assert!(parse_byte_size("4X").is_err());
     }
 }

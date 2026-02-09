@@ -30,6 +30,7 @@ export interface Dataset {
 	is_public: boolean;
 	item_count?: number;
 	total_chunks?: number;
+	transform_count?: number;
 	created_at?: string;
 	updated_at?: string;
 }

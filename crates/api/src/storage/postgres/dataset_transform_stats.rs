@@ -249,6 +249,34 @@ pub async fn refresh_total_chunks(
     Ok(result)
 }
 
+const RECONCILE_FROM_BATCHES_QUERY: &str = r#"
+    UPDATE dataset_transform_stats dts
+    SET
+        successful_batches = COALESCE(batch_stats.success_count, 0),
+        failed_batches = COALESCE(batch_stats.failed_count, 0),
+        processing_batches = COALESCE(batch_stats.processing_count, 0),
+        total_chunks_embedded = COALESCE(batch_stats.success_chunks, 0),
+        total_chunks_failed = COALESCE(batch_stats.failed_chunks, 0),
+        total_chunks_processing = COALESCE(batch_stats.processing_chunks, 0),
+        last_processed_at = batch_stats.last_processed,
+        updated_at = NOW()
+    FROM (
+        SELECT
+            dataset_transform_id,
+            SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS success_count,
+            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_count,
+            SUM(CASE WHEN status IN ('pending', 'processing') THEN 1 ELSE 0 END) AS processing_count,
+            SUM(CASE WHEN status = 'success' THEN chunk_count ELSE 0 END) AS success_chunks,
+            SUM(CASE WHEN status = 'failed' THEN chunk_count ELSE 0 END) AS failed_chunks,
+            SUM(CASE WHEN status IN ('pending', 'processing') THEN chunk_count ELSE 0 END) AS processing_chunks,
+            MAX(processed_at) AS last_processed
+        FROM dataset_transform_batches
+        WHERE dataset_transform_id = $1
+        GROUP BY dataset_transform_id
+    ) batch_stats
+    WHERE dts.dataset_transform_id = $1
+"#;
+
 const INCREMENT_DISPATCHED_QUERY: &str = r#"
     INSERT INTO dataset_transform_stats (
         dataset_transform_id,
@@ -264,6 +292,20 @@ const INCREMENT_DISPATCHED_QUERY: &str = r#"
         total_chunks_dispatched = dataset_transform_stats.total_chunks_dispatched + $2,
         updated_at = NOW()
 "#;
+
+/// Reconcile stats counters from actual batch data.
+/// Fixes any drift between the counters and real batch statuses.
+pub async fn reconcile_from_batches(
+    pool: &Pool<Postgres>,
+    dataset_transform_id: i32,
+) -> Result<()> {
+    sqlx::query(RECONCILE_FROM_BATCHES_QUERY)
+        .bind(dataset_transform_id)
+        .execute(pool)
+        .await
+        .context("Failed to reconcile stats from batches")?;
+    Ok(())
+}
 
 /// Increment the dispatched batch and chunk counters.
 /// Call this when a batch job is successfully published to NATS.

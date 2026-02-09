@@ -1,6 +1,7 @@
 use crate::audit::{ResourceType, events};
 use crate::auth::AuthenticatedUser;
 use crate::errors::{bad_request, not_found};
+use crate::storage::postgres::dataset_transform_stats::reconcile_from_batches;
 use crate::storage::postgres::{dataset_transform_batches, dataset_transforms, embedded_datasets};
 use crate::transforms::dataset::models::{
     CreateDatasetTransform, DatasetTransform, DatasetTransformStats, UpdateDatasetTransform,
@@ -403,6 +404,132 @@ pub async fn trigger_dataset_transform(
         "message": "Dataset transform triggered for all embedders",
         "dataset_transform_id": dataset_transform_id,
         "embedder_count": transform.embedder_ids.len()
+    }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/dataset-transforms/{id}/retry-failed",
+    tag = "Dataset Transforms",
+    params(
+        ("id" = i32, Path, description = "Dataset Transform ID")
+    ),
+    responses(
+        (status = 200, description = "Failed batches retried successfully"),
+        (status = 404, description = "Dataset transform not found"),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[post("/api/dataset-transforms/{id}/retry-failed")]
+#[tracing::instrument(name = "retry_failed_batches", skip(user, pool, nats_client), fields(dataset_transform_id = %path.as_ref()))]
+pub async fn retry_failed_batches(
+    user: AuthenticatedUser,
+    pool: Data<Pool<Postgres>>,
+    nats_client: Data<NatsClient>,
+    path: Path<i32>,
+) -> impl Responder {
+    let dataset_transform_id = path.into_inner();
+
+    // Verify the transform exists and user has access
+    let _transform = match dataset_transforms::get_dataset_transform(
+        &pool,
+        &user.as_owner(),
+        dataset_transform_id,
+    )
+    .await
+    {
+        Ok(t) => t,
+        Err(e) => {
+            error!("Dataset transform not found: {}", e);
+            return not_found(format!("Dataset transform not found: {}", e));
+        }
+    };
+
+    // Get failed batches and reset them to pending
+    let failed_batches =
+        match dataset_transform_batches::reset_failed_batches(&pool, dataset_transform_id).await {
+            Ok(b) => b,
+            Err(e) => {
+                error!("Failed to reset failed batches: {}", e);
+                return HttpResponse::InternalServerError().json(serde_json::json!({
+                    "error": format!("Failed to reset failed batches: {}", e)
+                }));
+            }
+        };
+
+    if failed_batches.is_empty() {
+        // Reconcile stats from the real batch data to fix stale counters.
+        info!(
+            dataset_transform_id,
+            "No failed batches found in table, reconciling stale stats"
+        );
+        if let Err(e) = reconcile_from_batches(&pool, dataset_transform_id).await {
+            error!("Failed to reconcile stats: {}", e);
+        }
+        return HttpResponse::Ok().json(serde_json::json!({
+            "message": "No failed batches to retry. Stats have been reconciled.",
+            "dataset_transform_id": dataset_transform_id,
+            "retried_count": 0,
+            "stats_reconciled": true
+        }));
+    }
+
+    let batch_count = failed_batches.len();
+    let batch_keys: Vec<String> = failed_batches.iter().map(|b| b.batch_key.clone()).collect();
+
+    // Delete the corresponding transform_processed_files records so the scanner
+    // treats these batch files as unprocessed and re-dispatches jobs for them.
+    match embedded_datasets::delete_processed_batches_for_retry(
+        &pool,
+        dataset_transform_id,
+        &batch_keys,
+    )
+    .await
+    {
+        Ok(deleted) => {
+            info!(
+                dataset_transform_id,
+                deleted, batch_count, "Deleted processed-file records for retry"
+            );
+        }
+        Err(e) => {
+            error!("Failed to delete processed batch records: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to clean up processed records: {}", e)
+            }));
+        }
+    }
+
+    // Reconcile stats from actual batch data (the failed batches are now 'pending')
+    if let Err(e) = reconcile_from_batches(&pool, dataset_transform_id).await {
+        error!("Failed to reconcile stats after retry reset: {}", e);
+        // Non-fatal — the scanner will still pick up the batches
+    }
+
+    // Trigger the scanner so it rediscovers the now-unprocessed batch files
+    // and publishes DatasetTransformJob messages for the worker to pick up.
+    if let Err(e) = crate::transforms::dataset::scanner::trigger_dataset_transform_scan(
+        &nats_client,
+        dataset_transform_id,
+        &user.as_owner(),
+    )
+    .await
+    {
+        error!("Failed to trigger scan after retry: {}", e);
+        return HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": format!("Batches reset but failed to trigger scan: {}", e)
+        }));
+    }
+
+    info!(
+        dataset_transform_id,
+        batch_count, "Retry: reset batches and triggered scanner"
+    );
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "message": "Failed batches reset and scan triggered",
+        "dataset_transform_id": dataset_transform_id,
+        "retried_count": batch_count,
     }))
 }
 

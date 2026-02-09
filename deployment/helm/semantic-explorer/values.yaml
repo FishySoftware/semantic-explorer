@@ -510,6 +510,12 @@ embeddingInferenceApi:
     INFERENCE_MAX_CONCURRENT_REQUESTS: "100"
     # GPU pressure threshold (0-100) - requests rejected above this
     GPU_PRESSURE_THRESHOLD: "95.0"
+    # CUDA memory arena size limit (e.g. '4G', '512M', '8589934592')
+    # Unset or "0" = use all available GPU memory (default)
+    # CUDA_ARENA_SIZE: "4G"
+    # Arena extend strategy: 'next_power_of_two' (default, fewer larger allocs)
+    # or 'same_as_requested' (exact-sized allocs, more predictable)
+    # CUDA_ARENA_EXTEND_STRATEGY: "next_power_of_two"
     # Comma-separated list of allowed embedding models (empty = allow all)
     # INFERENCE_ALLOWED_EMBEDDING_MODELS: "BAAI/bge-small-en-v1.5,BAAI/bge-base-en-v1.5"
     # Comma-separated list of allowed reranker models (empty = allow all)

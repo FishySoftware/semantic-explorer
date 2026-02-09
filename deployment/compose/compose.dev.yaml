@@ -280,6 +280,11 @@ services:
   #     - INFERENCE_MAX_BATCH_SIZE=256
   #     - INFERENCE_MAX_CONCURRENT_REQUESTS=5
   #     - GPU_PRESSURE_THRESHOLD=95.0
+  #     # CUDA memory arena size limit (e.g. '4G', '512M', '8589934592')
+  #     # Unset or 0 = use all available GPU memory (default)
+  #     # - CUDA_ARENA_SIZE=4G
+  #     # Arena extend strategy: 'next_power_of_two' (default) or 'same_as_requested'
+  #     # - CUDA_ARENA_EXTEND_STRATEGY=next_power_of_two
   #     - HF_HOME=/models
   #     - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
   #     - SERVICE_NAME=embedding-inference-api

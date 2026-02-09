@@ -32,6 +32,8 @@
 
 	let searchQuery = $state('');
 
+	let filteredDatasets = $derived(datasets);
+
 	let showCreateForm = $state(false);
 	let editingDataset = $state<Dataset | null>(null);
 	let newTitle = $state('');
@@ -59,9 +61,9 @@
 		}
 	});
 
-	async function fetchDatasets() {
+	async function fetchDatasets(showLoading = true) {
 		try {
-			loading = true;
+			if (showLoading) loading = true;
 			error = null;
 			const params = new SvelteURLSearchParams();
 			if (searchQuery.trim()) {
@@ -193,7 +195,7 @@
 		selectAll = !selectAll;
 		if (selectAll) {
 			selected.clear();
-			for (const d of datasets) {
+			for (const d of filteredDatasets) {
 				selected.add(d.dataset_id);
 			}
 		} else {
@@ -249,10 +251,36 @@
 	}
 
 	// Refetch when search query changes
+	// Debounce search to avoid spamming API on every keystroke
+	let searchDebounceTimeout: ReturnType<typeof setTimeout> | null = null;
 	$effect(() => {
-		searchQuery;
-		currentOffset = 0; // Reset to first page when searching
-		fetchDatasets();
+		if (searchQuery !== undefined) {
+			currentOffset = 0; // Reset to first page when searching
+			if (searchDebounceTimeout) {
+				clearTimeout(searchDebounceTimeout);
+			}
+			searchDebounceTimeout = setTimeout(() => {
+				fetchDatasets();
+			}, 300); // 300ms debounce
+		}
+		return () => {
+			if (searchDebounceTimeout) {
+				clearTimeout(searchDebounceTimeout);
+			}
+		};
+	});
+
+	// Auto-refresh every 5 seconds
+	let refreshInterval: ReturnType<typeof setInterval> | null = null;
+	$effect(() => {
+		refreshInterval = setInterval(() => {
+			fetchDatasets(false);
+		}, 5000);
+		return () => {
+			if (refreshInterval) {
+				clearInterval(refreshInterval);
+			}
+		};
 	});
 
 	function goToPreviousPage() {
@@ -393,7 +421,7 @@
 		>
 			<p class="text-red-700 dark:text-red-400">{error}</p>
 			<button
-				onclick={fetchDatasets}
+				onclick={() => fetchDatasets()}
 				class="mt-2 text-sm text-red-600 dark:text-red-400 hover:underline"
 			>
 				Try again
@@ -446,16 +474,19 @@
 						/>
 					</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Title</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Description</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Tags</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Items</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Chunks</TableHeadCell>
-					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Owner</TableHeadCell>
-					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Tags</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center"
+						>Transforms</TableHeadCell
+					>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Actions</TableHeadCell>
 				</TableHead>
 				<TableBody>
-					{#each datasets as dataset (dataset.dataset_id)}
+					{#each filteredDatasets as dataset (dataset.dataset_id)}
 						<tr class="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50">
-							<TableBodyCell class="px-4 py-2 w-12">
+							<TableBodyCell class="px-4 py-3 w-12">
 								<input
 									type="checkbox"
 									checked={selected.has(dataset.dataset_id)}
@@ -463,22 +494,45 @@
 									class="cursor-pointer"
 								/>
 							</TableBodyCell>
-							<TableBodyCell class="px-4 py-2">
-								<div>
-									<button
-										onclick={() => onViewDataset(dataset.dataset_id)}
-										class="font-medium text-blue-600 dark:text-blue-400 hover:underline"
+							<TableBodyCell class="px-4 py-3">
+								<button
+									onclick={() => onViewDataset(dataset.dataset_id)}
+									class="font-semibold text-blue-600 dark:text-blue-400 hover:underline"
+								>
+									{dataset.title}
+								</button>
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3">
+								{#if dataset.details}
+									<span class="text-gray-600 dark:text-gray-400 text-sm line-clamp-2"
+										>{dataset.details}</span
 									>
-										{dataset.title}
-									</button>
-									{#if dataset.details}
-										<div class="text-xs text-gray-600 dark:text-gray-400 mt-1 line-clamp-1">
-											{dataset.details}
-										</div>
+								{:else}
+									<span class="text-gray-400 dark:text-gray-500 text-sm italic">No description</span
+									>
+								{/if}
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3">
+								<div class="flex flex-wrap gap-1">
+									{#if dataset.tags && dataset.tags.length > 0}
+										{#each dataset.tags.slice(0, 3) as tag (tag)}
+											<span
+												class="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs font-medium"
+											>
+												#{tag}
+											</span>
+										{/each}
+										{#if dataset.tags.length > 3}
+											<span class="text-xs text-gray-500 dark:text-gray-400 px-1 py-0.5">
+												+{dataset.tags.length - 3}
+											</span>
+										{/if}
+									{:else}
+										<span class="text-gray-400 dark:text-gray-500 text-xs italic">—</span>
 									{/if}
 								</div>
 							</TableBodyCell>
-							<TableBodyCell class="px-4 py-2 text-center">
+							<TableBodyCell class="px-4 py-3 text-center">
 								{#if dataset.item_count !== undefined && dataset.item_count !== null}
 									<span
 										class="inline-block px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded text-sm font-medium"
@@ -489,7 +543,7 @@
 									<span class="text-gray-500 dark:text-gray-400">—</span>
 								{/if}
 							</TableBodyCell>
-							<TableBodyCell class="px-4 py-2 text-center">
+							<TableBodyCell class="px-4 py-3 text-center">
 								{#if dataset.total_chunks !== undefined && dataset.total_chunks !== null}
 									<span
 										class="inline-block px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded text-sm font-medium"
@@ -500,24 +554,16 @@
 									<span class="text-gray-500 dark:text-gray-400">—</span>
 								{/if}
 							</TableBodyCell>
-							<TableBodyCell class="px-4 py-2 text-sm">
-								<span class="text-gray-700 dark:text-gray-300">{dataset.owner}</span>
-							</TableBodyCell>
-							<TableBodyCell class="px-4 py-2">
-								<div class="flex gap-1 flex-wrap">
-									{#each dataset.tags.slice(0, 2) as tag (tag)}
-										<span
-											class="text-xs px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded"
-										>
-											#{tag}
-										</span>
-									{/each}
-									{#if dataset.tags.length > 2}
-										<span class="text-xs px-2 py-0.5 text-gray-600 dark:text-gray-400">
-											+{dataset.tags.length - 2}
-										</span>
-									{/if}
-								</div>
+							<TableBodyCell class="px-4 py-3 text-center">
+								{#if dataset.transform_count !== undefined && dataset.transform_count !== null && dataset.transform_count > 0}
+									<span
+										class="inline-block px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded text-sm font-medium"
+									>
+										{dataset.transform_count}
+									</span>
+								{:else}
+									<span class="text-gray-400 dark:text-gray-500 text-xs">None</span>
+								{/if}
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-2 text-center">
 								<ActionMenu

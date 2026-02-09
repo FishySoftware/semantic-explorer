@@ -41,13 +41,17 @@
 	});
 
 	async function loadItem(item: CompareItem) {
+		const downloadUrl = `/api/visualization-transforms/${item.transformId}/visualizations/${item.vizId}/download`;
+		console.log('[VizCompare] loadItem: fetching', {
+			transformId: item.transformId,
+			vizId: item.vizId,
+			downloadUrl,
+		});
 		try {
 			// Fetch transform details and visualization HTML in parallel
 			const [transformRes, downloadRes] = await Promise.all([
 				fetch(`/api/visualization-transforms/${item.transformId}`),
-				fetch(
-					`/api/visualization-transforms/${item.transformId}/visualizations/${item.vizId}/download`
-				),
+				fetch(downloadUrl),
 			]);
 
 			if (transformRes.ok) {
@@ -67,8 +71,7 @@
 				throw new Error(`Failed to load HTML: ${downloadRes.statusText}`);
 			}
 
-			const blob = await downloadRes.blob();
-			item.htmlContent = await blob.text();
+			item.htmlContent = await downloadRes.text();
 		} catch (err) {
 			item.error = formatError(err, 'Failed to load visualization');
 			toastStore.error(item.error);

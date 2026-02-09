@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
     dotenv().ok();
 
     // Load configuration
-    let config = InferenceConfig::from_env()?;
+    let mut config = InferenceConfig::from_env()?;
 
     // Initialize observability
     let prometheus = observability::init_observability(&config.observability)?;
@@ -53,6 +53,15 @@ async fn main() -> Result<()> {
         port = config.server.port,
         "Starting embedding-inference-api server with CUDA GPU acceleration (controlled by CUDA_VISIBLE_DEVICES)"
     );
+
+    // Initialize NVML and resolve arena size before loading models.
+    // If no explicit CUDA_ARENA_SIZE is set, auto-compute from GPU VRAM x pressure threshold
+    // so the arena never grows past the rejection threshold.
+    {
+        use semantic_explorer_core::observability::gpu_monitor;
+        gpu_monitor::init();
+        config.models.resolve_effective_arena_size();
+    }
 
     tokio::join!(
         embedding::init_cache(&config.models),
@@ -70,6 +79,8 @@ async fn main() -> Result<()> {
     info!(
         max_concurrent_requests = config.models.max_concurrent_requests,
         queue_timeout_ms = config.models.queue_timeout_ms,
+        cuda_arena_size = ?config.models.cuda_arena_size.map(|s| format!("{}MB", s / (1024 * 1024))).unwrap_or_else(|| "unlimited".to_string()),
+        cuda_arena_extend_strategy = ?config.models.cuda_arena_extend_strategy,
         "Model caches, backpressure semaphore, and GPU monitor initialized."
     );
 

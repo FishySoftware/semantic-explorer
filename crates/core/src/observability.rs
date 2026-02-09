@@ -1877,6 +1877,43 @@ pub mod gpu_monitor {
         is_memory_pressure_high(threshold_percent) || is_compute_pressure_high(threshold_percent)
     }
 
+    /// Get total VRAM for each visible GPU device in bytes.
+    /// Returns a Vec of (device_index, total_vram_bytes) for all devices.
+    /// Useful for logging and diagnostics in multi-GPU / MIG environments.
+    pub fn get_vram_per_device() -> Vec<(u32, u64)> {
+        let count = device_count();
+        (0..count)
+            .filter_map(|i| get_memory_info(i).map(|(_used, total)| (i, total)))
+            .collect()
+    }
+
+    /// Get the minimum VRAM across all visible GPU devices in bytes.
+    /// Returns None if NVML is not available or no devices are found.
+    ///
+    /// Uses the **minimum** rather than device 0 because:
+    /// - MIG slices may have different partition sizes
+    /// - Multi-GPU setups may mix GPU models
+    /// - CUDA_VISIBLE_DEVICES remaps indices, so NVML device 0 may not
+    ///   correspond to the device the ONNX Runtime session actually uses
+    ///
+    /// The minimum is the safest default for auto-sizing the CUDA arena,
+    /// ensuring the cap is valid for whichever device the model lands on.
+    pub fn get_min_device_vram() -> Option<u64> {
+        let devices = get_vram_per_device();
+        if devices.is_empty() {
+            return None;
+        }
+        let min = devices.iter().min_by_key(|(_idx, vram)| *vram).unwrap();
+        info!(
+            device_count = devices.len(),
+            min_vram_device = min.0,
+            min_vram_mb = min.1 / (1024 * 1024),
+            devices = ?devices.iter().map(|(i, v)| format!("GPU{}={}MB", i, v / (1024 * 1024))).collect::<Vec<_>>(),
+            "Detected GPU VRAM across all visible devices"
+        );
+        Some(min.1)
+    }
+
     /// Get memory utilization percentage for a device
     pub fn get_memory_utilization_percent(device_index: u32) -> Option<f64> {
         let (used, total) = get_memory_info(device_index)?;

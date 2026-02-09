@@ -106,6 +106,7 @@ pub(crate) async fn get_datasets(
             updated_at: d.updated_at,
             item_count: d.item_count as i64,
             total_chunks: d.total_chunks,
+            transform_count: d.transform_count,
         })
         .collect();
 

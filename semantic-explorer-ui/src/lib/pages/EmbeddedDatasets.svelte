@@ -3,7 +3,9 @@
 	import { SvelteSet, SvelteURLSearchParams } from 'svelte/reactivity';
 	import ActionMenu from '../components/ActionMenu.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
+	import LoadingState from '../components/LoadingState.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
+	import SearchInput from '../components/SearchInput.svelte';
 	import type {
 		Dataset,
 		EmbeddedDataset,
@@ -47,13 +49,18 @@
 	// Create standalone modal state
 	let showCreateStandaloneModal = $state(false);
 	let standaloneTitle = $state('');
-	let standaloneDimensions = $state(1536); // Default to common embedding size
+	let standaloneDimensions = $state(1536);
 	let creatingStandalone = $state(false);
+
+	// Delete confirmation state
+	let datasetPendingDelete = $state<EmbeddedDataset | null>(null);
 
 	// Selection state for bulk operations
 	let selected = new SvelteSet<number>();
 	let selectAll = $state(false);
 	let datasetsPendingBulkDelete = $state<EmbeddedDataset[]>([]);
+
+	let filteredDatasets = $derived(embeddedDatasets);
 
 	async function fetchDataset(datasetId: number): Promise<Dataset | 'not_found' | null> {
 		if (datasetsCache.has(datasetId)) {
@@ -64,7 +71,7 @@
 			if (response.ok) {
 				const dataset = await response.json();
 				datasetsCache.set(datasetId, dataset);
-				datasetsCache = datasetsCache; // Trigger reactivity
+				datasetsCache = datasetsCache;
 				return dataset;
 			}
 			if (response.status === 404) {
@@ -85,7 +92,7 @@
 			if (response.ok) {
 				const embedder = await response.json();
 				embeddersCache.set(embedderId, embedder);
-				embeddersCache = embeddersCache; // Trigger reactivity
+				embeddersCache = embeddersCache;
 				return embedder;
 			}
 		} catch (e) {
@@ -94,9 +101,9 @@
 		return null;
 	}
 
-	async function fetchEmbeddedDatasets() {
+	async function fetchEmbeddedDatasets(showLoading = true) {
 		try {
-			loading = true;
+			if (showLoading) loading = true;
 			error = null;
 			const params = new SvelteURLSearchParams();
 			if (searchQuery.trim()) {
@@ -104,9 +111,7 @@
 			}
 			params.append('limit', pageSize.toString());
 			params.append('offset', currentOffset.toString());
-			const url = params.toString()
-				? `/api/embedded-datasets?${params.toString()}`
-				: '/api/embedded-datasets';
+			const url = `/api/embedded-datasets?${params.toString()}`;
 			const response = await fetch(url);
 			if (!response.ok) {
 				throw new Error(`Failed to fetch embedded datasets: ${response.statusText}`);
@@ -115,7 +120,6 @@
 			embeddedDatasets = data.embedded_datasets;
 			totalCount = data.total_count;
 
-			// Fetch related datasets and embedders
 			// Fetch all stats in one batch request
 			const embeddedDatasetIds = embeddedDatasets.map((d) => d.embedded_dataset_id);
 			if (embeddedDatasetIds.length > 0) {
@@ -124,7 +128,6 @@
 
 			// Fetch related datasets and embedders
 			for (const dataset of embeddedDatasets) {
-				// Skip fetching for standalone embedded datasets
 				const standalone =
 					dataset.is_standalone === true ||
 					(dataset.dataset_transform_id === 0 &&
@@ -136,7 +139,6 @@
 					if (sourceDataset && sourceDataset !== 'not_found') {
 						dataset.source_dataset_title = sourceDataset.title;
 					} else {
-						// Dataset was deleted or doesn't exist
 						dataset.source_dataset_title = 'N/A (deleted)';
 					}
 
@@ -144,13 +146,11 @@
 					if (embedder) {
 						dataset.embedder_name = embedder.name;
 					} else {
-						// Embedder was deleted or doesn't exist
 						dataset.embedder_name = 'N/A (deleted)';
 					}
 				}
 			}
 
-			// Trigger reactivity
 			embeddedDatasets = embeddedDatasets;
 		} catch (e) {
 			const message = formatError(e, 'Failed to fetch embedded datasets');
@@ -174,7 +174,7 @@
 					const id = parseInt(idStr, 10);
 					statsMap.set(id, stats);
 				}
-				statsMap = statsMap; // Trigger reactivity
+				statsMap = statsMap;
 			}
 		} catch (e) {
 			console.error('Failed to fetch batch stats:', e);
@@ -193,7 +193,6 @@
 			);
 			if (response.ok) {
 				const allBatches: ProcessedBatch[] = await response.json();
-				// Filter to only failed batches
 				failedBatches = allBatches.filter((b) => b.process_status === 'failed');
 			}
 		} catch (e) {
@@ -213,17 +212,18 @@
 		failedBatches = [];
 	}
 
-	async function deleteEmbeddedDataset(dataset: EmbeddedDataset) {
-		if (
-			!confirm(
-				`Are you sure you want to delete "${dataset.title}"?\n\nThis will permanently delete:\n- The database record\n- The Qdrant collection: ${dataset.collection_name}\n\nThis action cannot be undone.`
-			)
-		) {
-			return;
-		}
+	function requestDeleteEmbeddedDataset(dataset: EmbeddedDataset) {
+		datasetPendingDelete = dataset;
+	}
+
+	async function confirmDeleteEmbeddedDataset() {
+		if (!datasetPendingDelete) return;
+
+		const target = datasetPendingDelete;
+		datasetPendingDelete = null;
 
 		try {
-			const response = await fetch(`/api/embedded-datasets/${dataset.embedded_dataset_id}`, {
+			const response = await fetch(`/api/embedded-datasets/${target.embedded_dataset_id}`, {
 				method: 'DELETE',
 			});
 
@@ -232,13 +232,12 @@
 				throw new Error(errorData.error || `Failed to delete: ${response.statusText}`);
 			}
 
-			toastStore.success(`Successfully deleted embedded dataset "${dataset.title}"`);
-			// Remove from local list
+			toastStore.success(`Successfully deleted embedded dataset "${target.title}"`);
 			embeddedDatasets = embeddedDatasets.filter(
-				(d) => d.embedded_dataset_id !== dataset.embedded_dataset_id
+				(d) => d.embedded_dataset_id !== target.embedded_dataset_id
 			);
-			statsMap.delete(dataset.embedded_dataset_id);
-			statsMap = statsMap; // Trigger reactivity
+			statsMap.delete(target.embedded_dataset_id);
+			statsMap = statsMap;
 		} catch (e) {
 			const message = formatError(e, 'Failed to delete embedded dataset');
 			toastStore.error(message);
@@ -253,16 +252,11 @@
 			return;
 		}
 
-		const dataset = embeddedDatasets.find((d) => d.embedded_dataset_id === renamingDatasetId);
-		if (!dataset) return;
-
 		try {
 			renaming = true;
 			const response = await fetch(`/api/embedded-datasets/${renamingDatasetId}`, {
 				method: 'PATCH',
-				headers: {
-					'Content-Type': 'application/json',
-				},
+				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ title: newTitle.trim() }),
 			});
 
@@ -272,7 +266,6 @@
 			}
 
 			const updatedDataset = await response.json();
-			// Update in local list
 			const index = embeddedDatasets.findIndex((d) => d.embedded_dataset_id === renamingDatasetId);
 			if (index !== -1) {
 				embeddedDatasets[index].title = updatedDataset.title;
@@ -324,9 +317,7 @@
 			creatingStandalone = true;
 			const response = await fetch('/api/embedded-datasets/standalone', {
 				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-				},
+				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					title: standaloneTitle.trim(),
 					dimensions: standaloneDimensions,
@@ -342,10 +333,7 @@
 			toastStore.success(`Successfully created standalone embedded dataset "${standaloneTitle}"`);
 			closeCreateStandaloneModal();
 
-			// Refresh the list
 			await fetchEmbeddedDatasets();
-
-			// Navigate to the new dataset
 			onNavigate(`/embedded-datasets/${newDataset.embedded_dataset_id}/details`);
 		} catch (e) {
 			const message = formatError(e, 'Failed to create standalone embedded dataset');
@@ -354,40 +342,6 @@
 			creatingStandalone = false;
 		}
 	}
-
-	function goToPreviousPage() {
-		if (currentOffset > 0) {
-			currentOffset = Math.max(0, currentOffset - pageSize);
-			fetchEmbeddedDatasets();
-		}
-	}
-
-	function goToNextPage() {
-		if (currentOffset + pageSize < totalCount) {
-			currentOffset += pageSize;
-			fetchEmbeddedDatasets();
-		}
-	}
-
-	$effect(() => {
-		// Reset to first page when search changes and fetch data
-		currentOffset = 0;
-		fetchEmbeddedDatasets();
-	});
-
-	let filteredDatasets = $derived(
-		embeddedDatasets.filter((d) => {
-			if (!searchQuery.trim()) return true;
-			const query = searchQuery.toLowerCase();
-			return (
-				d.title.toLowerCase().includes(query) ||
-				(d.source_dataset_title?.toLowerCase().includes(query) ?? false) ||
-				(d.embedder_name?.toLowerCase().includes(query) ?? false) ||
-				d.owner.toLowerCase().includes(query) ||
-				d.collection_name.toLowerCase().includes(query)
-			);
-		})
-	);
 
 	function isStandalone(dataset: EmbeddedDataset): boolean {
 		return (
@@ -447,7 +401,6 @@
 					throw new Error(errorData.error || `Failed to delete: ${response.statusText}`);
 				}
 
-				// Remove from local list
 				embeddedDatasets = embeddedDatasets.filter(
 					(d) => d.embedded_dataset_id !== dataset.embedded_dataset_id
 				);
@@ -457,52 +410,115 @@
 			}
 		}
 
-		statsMap = statsMap; // Trigger reactivity
+		statsMap = statsMap;
 		selected.clear();
 		selectAll = false;
 		toastStore.success(
 			`Deleted ${toDelete.length} embedded dataset${toDelete.length !== 1 ? 's' : ''}`
 		);
 	}
+
+	function goToPreviousPage() {
+		currentOffset = Math.max(0, currentOffset - pageSize);
+		fetchEmbeddedDatasets();
+	}
+
+	function goToNextPage() {
+		if (currentOffset + pageSize < totalCount) {
+			currentOffset += pageSize;
+			fetchEmbeddedDatasets();
+		}
+	}
+
+	// Debounce search to avoid spamming API on every keystroke
+	let searchDebounceTimeout: ReturnType<typeof setTimeout> | null = null;
+	$effect(() => {
+		if (searchQuery !== undefined) {
+			currentOffset = 0;
+			if (searchDebounceTimeout) {
+				clearTimeout(searchDebounceTimeout);
+			}
+			searchDebounceTimeout = setTimeout(() => {
+				fetchEmbeddedDatasets();
+			}, 300);
+		}
+		return () => {
+			if (searchDebounceTimeout) {
+				clearTimeout(searchDebounceTimeout);
+			}
+		};
+	});
+
+	// Auto-refresh every 5 seconds
+	let refreshInterval: ReturnType<typeof setInterval> | null = null;
+	$effect(() => {
+		refreshInterval = setInterval(() => {
+			fetchEmbeddedDatasets(false);
+		}, 5000);
+		return () => {
+			if (refreshInterval) {
+				clearInterval(refreshInterval);
+			}
+		};
+	});
 </script>
 
 <div class="max-w-7xl mx-auto">
 	<PageHeader
 		title="Embedded Datasets"
-		description="Embedded Datasets contain vector embeddings stored in Qdrant collections. They can be created automatically via Dataset Transforms, or manually as standalone datasets where you push vectors directly."
+		description="Vector embeddings stored in Qdrant collections, used for semantic search, chat, and visualizations. Created automatically via Dataset Transforms, or manually as standalone datasets where you push vectors directly via API."
 	/>
 
 	<div class="flex justify-between items-center mb-4">
 		<h1 class="text-3xl font-bold text-gray-900 dark:text-white">Embedded Datasets</h1>
-		<button onclick={openCreateStandaloneModal} class="btn-primary">+ Create Standalone</button>
+		<button onclick={openCreateStandaloneModal} class="btn-primary"> Create Standalone </button>
 	</div>
 
-	<div class="mb-4">
-		<input
-			type="text"
+	{#if !showCreateStandaloneModal}
+		<SearchInput
 			bind:value={searchQuery}
-			placeholder="Search embedded datasets..."
-			class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+			placeholder="Search embedded datasets by title, source, embedder, or owner..."
 		/>
-	</div>
+	{/if}
 
 	{#if loading}
-		<div class="text-center py-8">
-			<p class="text-gray-600 dark:text-gray-400">Loading embedded datasets...</p>
-		</div>
+		<LoadingState message="Loading embedded datasets..." />
 	{:else if error}
 		<div
 			class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4"
 		>
-			<p class="text-red-600 dark:text-red-400">{error}</p>
+			<p class="text-red-700 dark:text-red-400">{error}</p>
+			<button
+				onclick={() => fetchEmbeddedDatasets()}
+				class="mt-2 text-sm text-red-600 dark:text-red-400 hover:underline"
+			>
+				Try again
+			</button>
 		</div>
-	{:else if filteredDatasets.length === 0}
-		<div class="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 text-center">
-			<p class="text-gray-600 dark:text-gray-400">
-				{searchQuery
-					? 'No embedded datasets found matching your search.'
-					: 'No embedded datasets yet. Create a Dataset Transform to generate Embedded Datasets.'}
+	{:else if embeddedDatasets.length === 0}
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-8 text-center">
+			<p class="text-gray-500 dark:text-gray-400 mb-4">
+				{searchQuery ? 'No embedded datasets match your search' : 'No embedded datasets yet'}
 			</p>
+			{#if searchQuery}
+				<button
+					onclick={() => (searchQuery = '')}
+					class="text-blue-600 dark:text-blue-400 hover:underline"
+				>
+					Clear search
+				</button>
+			{:else}
+				<p class="text-gray-400 dark:text-gray-500 text-sm mb-4">
+					Create a Dataset Transform to generate embedded datasets, or create a standalone dataset
+					to push vectors via API.
+				</p>
+				<button
+					onclick={openCreateStandaloneModal}
+					class="text-blue-600 dark:text-blue-400 hover:underline"
+				>
+					Create your first standalone embedded dataset
+				</button>
+			{/if}
 		</div>
 	{:else}
 		{#if selected.size > 0}
@@ -541,12 +557,13 @@
 						/>
 					</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Title</TableHeadCell>
-					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Source Dataset</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Source</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Embedder</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center"
-						>Dimension</TableHeadCell
+						>Dimensions</TableHeadCell
 					>
-					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Stats</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Vectors</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Status</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Actions</TableHeadCell>
 				</TableHead>
 				<TableBody>
@@ -562,7 +579,7 @@
 									class="cursor-pointer"
 								/>
 							</TableBodyCell>
-							<TableBodyCell class="px-4 py-3 wrap-break-word whitespace-normal">
+							<TableBodyCell class="px-4 py-3">
 								<div class="flex items-center gap-2">
 									<button
 										onclick={() =>
@@ -580,31 +597,31 @@
 									{/if}
 								</div>
 							</TableBodyCell>
-							<TableBodyCell class="px-4 py-3 wrap-break-word whitespace-normal">
+							<TableBodyCell class="px-4 py-3">
 								{#if standalone}
-									<span class="text-gray-500 dark:text-gray-400 text-sm italic">N/A</span>
+									<span class="text-gray-400 dark:text-gray-500 text-sm italic">—</span>
 								{:else if dataset.source_dataset_title === 'N/A (deleted)'}
-									<span class="text-gray-500 dark:text-gray-400 text-sm italic">N/A (deleted)</span>
+									<span class="text-gray-400 dark:text-gray-500 text-sm italic">Deleted</span>
 								{:else if dataset.source_dataset_title}
 									<button
 										onclick={() => onViewDataset(dataset.source_dataset_id)}
-										class="text-blue-600 dark:text-blue-400 hover:underline font-semibold"
+										class="text-blue-600 dark:text-blue-400 hover:underline text-sm font-medium"
 									>
 										{dataset.source_dataset_title}
 									</button>
 								{:else}
-									<span class="text-gray-500 dark:text-gray-400">Loading...</span>
+									<span class="text-gray-500 dark:text-gray-400 text-sm">Loading...</span>
 								{/if}
 							</TableBodyCell>
-							<TableBodyCell class="px-4 py-3 wrap-break-word whitespace-normal">
+							<TableBodyCell class="px-4 py-3">
 								{#if standalone}
-									<span class="text-gray-500 dark:text-gray-400 text-sm italic">N/A</span>
+									<span class="text-gray-400 dark:text-gray-500 text-sm italic">—</span>
 								{:else if dataset.embedder_name === 'N/A (deleted)'}
-									<span class="text-gray-500 dark:text-gray-400 text-sm italic">N/A (deleted)</span>
+									<span class="text-gray-400 dark:text-gray-500 text-sm italic">Deleted</span>
 								{:else if dataset.embedder_name}
 									<button
 										onclick={() => onNavigate(`/embedders/${dataset.embedder_id}/details`)}
-										class="text-blue-600 dark:text-blue-400 hover:underline font-semibold text-sm"
+										class="text-blue-600 dark:text-blue-400 hover:underline text-sm font-medium"
 									>
 										{dataset.embedder_name}
 									</button>
@@ -615,7 +632,7 @@
 							<TableBodyCell class="px-4 py-3 text-center">
 								{#if standalone && dataset.dimensions}
 									<span
-										class="inline-block px-2 py-1 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded text-xs font-medium"
+										class="inline-block px-2 py-1 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded text-sm font-medium"
 									>
 										{dataset.dimensions}
 									</span>
@@ -623,42 +640,84 @@
 									{@const embedder = embeddersCache.get(dataset.embedder_id)}
 									{#if embedder?.dimensions}
 										<span
-											class="inline-block px-2 py-1 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded text-xs font-medium"
+											class="inline-block px-2 py-1 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded text-sm font-medium"
 										>
 											{embedder.dimensions}
 										</span>
 									{:else}
-										<span class="text-gray-500 dark:text-gray-400 text-xs">—</span>
+										<span class="text-gray-500 dark:text-gray-400">—</span>
 									{/if}
 								{/if}
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3 text-center">
 								{#if standalone}
-									<span class="text-gray-500 dark:text-gray-400 text-xs italic">Push via API</span>
+									{#if dataset.active_point_count !== undefined && dataset.active_point_count !== null}
+										<span
+											class="inline-block px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded text-sm font-medium"
+										>
+											{formatNumber(dataset.active_point_count)}
+										</span>
+									{:else}
+										<span class="text-gray-400 dark:text-gray-500 text-xs italic">Push via API</span
+										>
+									{/if}
 								{:else if stats}
+									<span
+										class="inline-block px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded text-sm font-medium"
+										title="Total chunks embedded"
+									>
+										{formatNumber(stats.total_chunks_embedded)}
+									</span>
+								{:else}
+									<span class="text-gray-500 dark:text-gray-400">—</span>
+								{/if}
+							</TableBodyCell>
+							<TableBodyCell class="px-4 py-3 text-center">
+								{#if standalone}
+									<span
+										class="inline-block px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded text-xs font-medium"
+									>
+										Ready
+									</span>
+								{:else if stats}
+									{@const successRate =
+										stats.total_batches_processed > 0
+											? Math.round((stats.successful_batches / stats.total_batches_processed) * 100)
+											: 0}
 									<div class="flex gap-1 justify-center flex-wrap">
-										<span
-											class="inline-block px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded text-xs font-medium"
-											title="Success Rate"
-										>
-											{stats.total_batches_processed > 0
-												? Math.round(
-														(stats.successful_batches / stats.total_batches_processed) * 100
-													)
-												: 0}%
-										</span>
-										<span
-											class="inline-block px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs font-medium"
-											title="Total Chunks Embedded"
-										>
-											{formatNumber(stats.total_chunks_embedded)}
-										</span>
-										{#if stats.failed_batches > 0}
+										{#if stats.processing_batches > 0}
+											<span
+												class="inline-block px-2 py-1 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 rounded text-xs font-medium"
+												title="Processing batches"
+											>
+												Processing
+											</span>
+										{:else if stats.failed_batches > 0 && stats.successful_batches === 0}
 											<span
 												class="inline-block px-2 py-1 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded text-xs font-medium"
-												title="Failed Batches"
+												title="All batches failed"
 											>
-												❌ {stats.failed_batches}
+												Failed
+											</span>
+										{:else if stats.failed_batches > 0}
+											<span
+												class="inline-block px-2 py-1 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 rounded text-xs font-medium"
+												title="{successRate}% success rate, {stats.failed_batches} failed"
+											>
+												Partial ({successRate}%)
+											</span>
+										{:else if stats.total_batches_processed > 0}
+											<span
+												class="inline-block px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded text-xs font-medium"
+												title="All batches successful"
+											>
+												Complete
+											</span>
+										{:else}
+											<span
+												class="inline-block px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 rounded text-xs font-medium"
+											>
+												Pending
 											</span>
 										{/if}
 									</div>
@@ -666,7 +725,7 @@
 									<span class="text-gray-500 dark:text-gray-400 text-xs">—</span>
 								{/if}
 							</TableBodyCell>
-							<TableBodyCell class="px-4 py-3 text-center">
+							<TableBodyCell class="px-4 py-2 text-center">
 								<ActionMenu
 									actions={[
 										{
@@ -677,7 +736,7 @@
 										...(stats && stats.failed_batches > 0
 											? [
 													{
-														label: 'View Failed',
+														label: 'View Failed Batches',
 														handler: () => openFailedBatchesModal(dataset),
 													},
 												]
@@ -688,7 +747,7 @@
 										},
 										{
 											label: 'Delete',
-											handler: () => deleteEmbeddedDataset(dataset),
+											handler: () => requestDeleteEmbeddedDataset(dataset),
 											isDangerous: true,
 										},
 									]}
@@ -919,6 +978,18 @@
 		</div>
 	</div>
 {/if}
+
+<ConfirmDialog
+	open={datasetPendingDelete !== null}
+	title="Delete embedded dataset"
+	message={datasetPendingDelete
+		? `Are you sure you want to delete "${datasetPendingDelete.title}"?\n\nThis will permanently delete the database record and the Qdrant collection: ${datasetPendingDelete.collection_name}\n\nThis action cannot be undone.`
+		: ''}
+	confirmLabel="Delete"
+	variant="danger"
+	onConfirm={confirmDeleteEmbeddedDataset}
+	onCancel={() => (datasetPendingDelete = null)}
+/>
 
 <ConfirmDialog
 	open={datasetsPendingBulkDelete.length > 0}

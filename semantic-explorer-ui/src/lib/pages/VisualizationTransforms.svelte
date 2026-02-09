@@ -44,7 +44,7 @@
 	let showCreateForm = $state(false);
 	let editingTransform = $state<VisualizationTransform | null>(null);
 	let newTitle = $state('');
-	let newEmbeddedDatasetId = $state<number | null>(null);
+	let selectedEmbeddedDatasetIds = new SvelteSet<number>();
 
 	// Default configuration values - must match backend defaults in crates/core/src/models.rs
 	const DEFAULT_CONFIG: VisualizationConfig = {
@@ -352,16 +352,12 @@
 
 	async function fetchEmbeddedDatasets() {
 		try {
-			const response = await fetch('/api/embedded-datasets?limit=10&offset=0');
+			const response = await fetch('/api/embedded-datasets?limit=100&offset=0');
 			if (!response.ok) {
 				throw new Error(`Failed to fetch embedded datasets: ${response.statusText}`);
 			}
 			const data: PaginatedEmbeddedDatasetList = await response.json();
 			embeddedDatasets = data.embedded_datasets;
-			// Auto-select first option if available and nothing selected
-			if (embeddedDatasets.length > 0 && newEmbeddedDatasetId === null) {
-				newEmbeddedDatasetId = embeddedDatasets[0].embedded_dataset_id;
-			}
 		} catch (e) {
 			console.error('Failed to fetch embedded datasets:', e);
 		}
@@ -390,62 +386,29 @@
 			return;
 		}
 
-		if (!newEmbeddedDatasetId) {
-			createError = 'Embedded Dataset is required';
-			return;
-		}
+		if (editingTransform) {
+			// Update existing transform
+			try {
+				creating = true;
+				createError = null;
 
-		try {
-			creating = true;
-			createError = null;
-
-			const url = editingTransform
-				? `/api/visualization-transforms/${editingTransform.visualization_transform_id}`
-				: '/api/visualization-transforms';
-			const method = editingTransform ? 'PATCH' : 'POST';
-
-			const body = editingTransform
-				? {
-						title: newTitle,
-						visualization_config: config,
+				const response = await fetch(
+					`/api/visualization-transforms/${editingTransform.visualization_transform_id}`,
+					{
+						method: 'PATCH',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({
+							title: newTitle,
+							visualization_config: config,
+						}),
 					}
-				: {
-						title: newTitle,
-						embedded_dataset_id: newEmbeddedDatasetId,
-						llm_id: config.topic_naming_llm_id,
-						n_neighbors: config.n_neighbors,
-						min_dist: config.min_dist,
-						metric: config.metric,
-						min_cluster_size: config.min_cluster_size,
-						min_samples: config.min_samples,
-						min_fontsize: config.min_fontsize,
-						max_fontsize: config.max_fontsize,
-						font_family: config.font_family,
-						darkmode: config.darkmode,
-						noise_color: config.noise_color,
-						label_wrap_width: config.label_wrap_width,
-						use_medoids: config.use_medoids,
-						cluster_boundary_polygons: config.cluster_boundary_polygons,
-						polygon_alpha: config.polygon_alpha,
-					};
-
-			const response = await fetch(url, {
-				method,
-				headers: {
-					'Content-Type': 'application/json',
-				},
-				body: JSON.stringify(body),
-			});
-
-			if (!response.ok) {
-				throw new Error(
-					`Failed to ${editingTransform ? 'update' : 'create'} visualization transform: ${response.statusText}`
 				);
-			}
 
-			const savedTransform = await response.json();
+				if (!response.ok) {
+					throw new Error(`Failed to update visualization transform: ${response.statusText}`);
+				}
 
-			if (editingTransform) {
+				const savedTransform = await response.json();
 				transforms = transforms.map((t) =>
 					t.visualization_transform_id === savedTransform.visualization_transform_id
 						? savedTransform
@@ -453,18 +416,86 @@
 				);
 				toastStore.success('Visualization transform updated successfully');
 				resetForm();
-			} else {
-				transforms = [...transforms, savedTransform];
-				toastStore.success('Visualization transform created successfully');
+			} catch (e) {
+				const message = formatError(e, 'Failed to update visualization transform');
+				createError = message;
+				toastStore.error(message);
+			} finally {
+				creating = false;
+			}
+			return;
+		}
+
+		// Create new transforms - one per selected embedded dataset
+		if (selectedEmbeddedDatasetIds.size === 0) {
+			createError = 'At least one Embedded Dataset must be selected';
+			return;
+		}
+
+		try {
+			creating = true;
+			createError = null;
+
+			const datasetIds = Array.from(selectedEmbeddedDatasetIds);
+			const useSuffix = datasetIds.length > 1;
+			let createdCount = 0;
+			let lastError: string | null = null;
+
+			for (const embeddedDatasetId of datasetIds) {
+				const dataset = embeddedDatasets.find((d) => d.embedded_dataset_id === embeddedDatasetId);
+				const suffix = useSuffix && dataset ? ` (${dataset.title})` : '';
+
+				const body = {
+					title: `${newTitle}${suffix}`,
+					embedded_dataset_id: embeddedDatasetId,
+					llm_id: config.topic_naming_llm_id,
+					n_neighbors: config.n_neighbors,
+					min_dist: config.min_dist,
+					metric: config.metric,
+					min_cluster_size: config.min_cluster_size,
+					min_samples: config.min_samples,
+					min_fontsize: config.min_fontsize,
+					max_fontsize: config.max_fontsize,
+					font_family: config.font_family,
+					darkmode: config.darkmode,
+					noise_color: config.noise_color,
+					label_wrap_width: config.label_wrap_width,
+					use_medoids: config.use_medoids,
+					cluster_boundary_polygons: config.cluster_boundary_polygons,
+					polygon_alpha: config.polygon_alpha,
+				};
+
+				try {
+					const response = await fetch('/api/visualization-transforms', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify(body),
+					});
+
+					if (!response.ok) {
+						throw new Error(`Failed to create visualization transform: ${response.statusText}`);
+					}
+
+					const savedTransform = await response.json();
+					transforms = [...transforms, savedTransform];
+					createdCount++;
+				} catch (e) {
+					lastError = formatError(e, `Failed to create transform for dataset ${embeddedDatasetId}`);
+					toastStore.error(lastError);
+				}
+			}
+
+			if (createdCount > 0) {
+				toastStore.success(
+					`Created ${createdCount} visualization transform${createdCount !== 1 ? 's' : ''} successfully`
+				);
 				resetForm();
-				// Redirect to the Visualizations page to monitor progress
 				window.location.hash = '#/visualizations';
+			} else if (lastError) {
+				createError = lastError;
 			}
 		} catch (e) {
-			const message = formatError(
-				e,
-				`Failed to ${editingTransform ? 'update' : 'create'} visualization transform`
-			);
+			const message = formatError(e, 'Failed to create visualization transforms');
 			createError = message;
 			toastStore.error(message);
 		} finally {
@@ -534,7 +565,8 @@
 	function openEditForm(transform: VisualizationTransform) {
 		editingTransform = transform;
 		newTitle = transform.title;
-		newEmbeddedDatasetId = transform.embedded_dataset_id;
+		selectedEmbeddedDatasetIds.clear();
+		selectedEmbeddedDatasetIds.add(transform.embedded_dataset_id);
 		// Apply defaults to handle missing fields from older database records
 		config = applyDefaults(transform.visualization_config);
 		showCreateForm = true;
@@ -542,7 +574,7 @@
 
 	function resetForm() {
 		newTitle = '';
-		newEmbeddedDatasetId = null;
+		selectedEmbeddedDatasetIds.clear();
 		config = { ...DEFAULT_CONFIG };
 		showCreateForm = false;
 		editingTransform = null;
@@ -683,7 +715,7 @@
 		}
 
 		if (embeddedDatasetId) {
-			newEmbeddedDatasetId = parseInt(embeddedDatasetId, 10);
+			selectedEmbeddedDatasetIds.add(parseInt(embeddedDatasetId, 10));
 		}
 
 		// Handle edit parameter - open edit form for specified transform
@@ -777,26 +809,72 @@
 				</div>
 
 				{#if !editingTransform}
-					<div class="mb-4">
-						<label
-							for="embedded-dataset-select"
-							class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+					<fieldset class="mb-4">
+						<legend class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+							Embedded Datasets
+							{#if selectedEmbeddedDatasetIds.size > 0}
+								<span class="ml-2 text-xs font-normal text-blue-600 dark:text-blue-400">
+									{selectedEmbeddedDatasetIds.size} selected — will create {selectedEmbeddedDatasetIds.size}
+									visualization{selectedEmbeddedDatasetIds.size !== 1 ? 's' : ''}
+								</span>
+							{/if}
+						</legend>
+						<div
+							class="max-h-48 overflow-y-auto border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 p-2 space-y-1"
 						>
-							Embedded Dataset
-						</label>
-						<select
-							id="embedded-dataset-select"
-							bind:value={newEmbeddedDatasetId}
-							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-						>
-							<option value={null}>Select an embedded dataset...</option>
-							{#each embeddedDatasets as dataset (dataset.embedded_dataset_id)}
-								<option value={dataset.embedded_dataset_id}>
-									{dataset.title}
-								</option>
-							{/each}
-						</select>
-					</div>
+							{#if embeddedDatasets.length === 0}
+								<p class="text-sm text-gray-500 dark:text-gray-400 px-2 py-1">
+									No embedded datasets available
+								</p>
+							{:else}
+								<div
+									class="flex items-center gap-2 px-2 py-1 border-b border-gray-200 dark:border-gray-600 mb-1"
+								>
+									<button
+										type="button"
+										class="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+										onclick={() => {
+											if (selectedEmbeddedDatasetIds.size === embeddedDatasets.length) {
+												selectedEmbeddedDatasetIds.clear();
+											} else {
+												for (const d of embeddedDatasets) {
+													selectedEmbeddedDatasetIds.add(d.embedded_dataset_id);
+												}
+											}
+										}}
+									>
+										{selectedEmbeddedDatasetIds.size === embeddedDatasets.length
+											? 'Deselect All'
+											: 'Select All'}
+									</button>
+								</div>
+								{#each embeddedDatasets as dataset (dataset.embedded_dataset_id)}
+									<label
+										class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer"
+									>
+										<input
+											type="checkbox"
+											checked={selectedEmbeddedDatasetIds.has(dataset.embedded_dataset_id)}
+											onchange={() => {
+												if (selectedEmbeddedDatasetIds.has(dataset.embedded_dataset_id)) {
+													selectedEmbeddedDatasetIds.delete(dataset.embedded_dataset_id);
+												} else {
+													selectedEmbeddedDatasetIds.add(dataset.embedded_dataset_id);
+												}
+											}}
+											class="rounded border-gray-300 dark:border-gray-500 text-blue-600 focus:ring-blue-500"
+										/>
+										<span class="text-sm text-gray-900 dark:text-white">{dataset.title}</span>
+										{#if dataset.source_dataset_title}
+											<span class="text-xs text-gray-500 dark:text-gray-400"
+												>({dataset.source_dataset_title})</span
+											>
+										{/if}
+									</label>
+								{/each}
+							{/if}
+						</div>
+					</fieldset>
 				{/if}
 
 				<div
@@ -2296,10 +2374,12 @@
 						{creating
 							? editingTransform
 								? 'Updating...'
-								: 'Creating...'
+								: `Creating ${selectedEmbeddedDatasetIds.size > 1 ? `${selectedEmbeddedDatasetIds.size} Transforms` : ''}...`
 							: editingTransform
 								? 'Update Transform'
-								: 'Create Transform'}
+								: selectedEmbeddedDatasetIds.size > 1
+									? `Create ${selectedEmbeddedDatasetIds.size} Transforms`
+									: 'Create Transform'}
 					</button>
 					<button
 						type="button"

@@ -201,6 +201,18 @@ const GET_BATCH_PREVIOUS_STATUS_QUERY: &str = r#"
       AND file_key = $2
 "#;
 
+/// Delete processed-file records for specific batch keys across all embedded datasets
+/// of a given dataset transform. This allows the scanner to rediscover them for retry.
+const DELETE_PROCESSED_BATCHES_FOR_RETRY_QUERY: &str = r#"
+    DELETE FROM transform_processed_files
+    WHERE transform_type = 'dataset'
+      AND transform_id = ANY(
+          SELECT embedded_dataset_id FROM embedded_datasets
+          WHERE dataset_transform_id = $1
+      )
+      AND file_key = ANY($2)
+"#;
+
 const GET_EMBEDDED_DATASET_INFO_QUERY: &str = r#"
     SELECT collection_name, embedder_id FROM embedded_datasets WHERE embedded_dataset_id = $1
 "#;
@@ -208,6 +220,23 @@ const GET_EMBEDDED_DATASET_INFO_QUERY: &str = r#"
 const UPDATE_EMBEDDED_DATASET_LAST_PROCESSED_AT_QUERY: &str = r#"
     UPDATE embedded_datasets
     SET last_processed_at = $2
+    WHERE embedded_dataset_id = $1
+"#;
+
+/// Atomically acquire a scan lock on an embedded dataset.
+/// Returns true (1 row updated) if the lock was acquired, false if another scanner holds it.
+/// The lock expires after the specified timeout so stale locks don't block forever.
+const ACQUIRE_SCAN_LOCK_QUERY: &str = r#"
+    UPDATE embedded_datasets
+    SET scan_locked_at = NOW()
+    WHERE embedded_dataset_id = $1
+      AND (scan_locked_at IS NULL OR scan_locked_at < NOW() - $2::interval)
+"#;
+
+/// Release the scan lock after processing is complete.
+const RELEASE_SCAN_LOCK_QUERY: &str = r#"
+    UPDATE embedded_datasets
+    SET scan_locked_at = NULL
     WHERE embedded_dataset_id = $1
 "#;
 
@@ -566,6 +595,22 @@ pub async fn record_processed_batch_tx(
     Ok(())
 }
 
+/// Delete processed-file records for the given batch keys so the scanner
+/// can rediscover them during a retry. Deletes across all embedded datasets
+/// that belong to the specified dataset transform.
+pub async fn delete_processed_batches_for_retry(
+    pool: &Pool<Postgres>,
+    dataset_transform_id: i32,
+    batch_keys: &[String],
+) -> Result<u64> {
+    let result = sqlx::query(DELETE_PROCESSED_BATCHES_FOR_RETRY_QUERY)
+        .bind(dataset_transform_id)
+        .bind(batch_keys)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
+}
+
 /// Update the last_processed_at timestamp to a specific value
 /// This prevents race conditions where items created between query and update are missed
 pub async fn update_embedded_dataset_last_processed_at_to(
@@ -576,6 +621,32 @@ pub async fn update_embedded_dataset_last_processed_at_to(
     sqlx::query(UPDATE_EMBEDDED_DATASET_LAST_PROCESSED_AT_QUERY)
         .bind(embedded_dataset_id)
         .bind(timestamp)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Attempt to acquire a scan lock on an embedded dataset.
+/// Returns true if the lock was acquired, false if another scanner holds it.
+/// The lock auto-expires after `lock_timeout_secs` to prevent stale locks.
+pub async fn try_acquire_scan_lock(
+    pool: &Pool<Postgres>,
+    embedded_dataset_id: i32,
+    lock_timeout_secs: u64,
+) -> Result<bool> {
+    let interval = format!("{} seconds", lock_timeout_secs);
+    let result = sqlx::query(ACQUIRE_SCAN_LOCK_QUERY)
+        .bind(embedded_dataset_id)
+        .bind(&interval)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// Release the scan lock on an embedded dataset after processing.
+pub async fn release_scan_lock(pool: &Pool<Postgres>, embedded_dataset_id: i32) -> Result<()> {
+    sqlx::query(RELEASE_SCAN_LOCK_QUERY)
+        .bind(embedded_dataset_id)
         .execute(pool)
         .await?;
     Ok(())

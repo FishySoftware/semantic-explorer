@@ -85,6 +85,7 @@ pub(crate) struct DatasetWithStats {
     pub(crate) updated_at: Option<DateTime<Utc>>,
     pub(crate) item_count: i64,
     pub(crate) total_chunks: i64,
+    pub(crate) transform_count: i64,
 }
 
 #[derive(Serialize, ToSchema)]

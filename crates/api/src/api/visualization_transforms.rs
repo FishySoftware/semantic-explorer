@@ -729,6 +729,13 @@ pub async fn get_visualizations_by_dataset(
     }
 }
 
+#[derive(Deserialize, Debug)]
+pub struct DownloadParams {
+    /// When true, sets Content-Disposition to attachment for browser download
+    #[serde(default)]
+    pub download: Option<bool>,
+}
+
 #[utoipa::path(
     get,
     path = "/api/visualization-transforms/{id}/visualizations/{visualization_id}/download",
@@ -736,6 +743,7 @@ pub async fn get_visualizations_by_dataset(
     params(
         ("id" = i32, Path, description = "Visualization Transform ID"),
         ("visualization_id" = i32, Path, description = "Visualization ID"),
+        ("download" = Option<bool>, Query, description = "Set to true to download as attachment"),
     ),
     responses(
         (status = 200, description = "HTML file download", content_type = "text/html"),
@@ -751,6 +759,7 @@ pub async fn download_visualization_html(
     s3_client: Data<Client>,
     s3_config: Data<S3Config>,
     path: Path<(i32, i32)>,
+    query: Query<DownloadParams>,
 ) -> impl Responder {
     let (transform_id, visualization_id) = path.into_inner();
 
@@ -822,12 +831,17 @@ pub async fn download_visualization_html(
     {
         Ok(file_data) => {
             let filename = format!("visualization-{}-{}.html", transform_id, visualization_id);
+            let disposition = if query.download.unwrap_or(false) {
+                format!("attachment; filename=\"{}\"", filename)
+            } else {
+                // Use inline so fetch() in the browser can read the response body.
+                // Content-Disposition: attachment causes Chrome to intercept the response,
+                // resulting in "no resource with given identifier" errors.
+                format!("inline; filename=\"{}\"", filename)
+            };
             HttpResponse::Ok()
                 .content_type("text/html")
-                .insert_header((
-                    "Content-Disposition",
-                    format!("attachment; filename=\"{}\"", filename),
-                ))
+                .insert_header(("Content-Disposition", disposition))
                 .body(file_data)
         }
         Err(e) => {

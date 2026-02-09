@@ -14,17 +14,19 @@ const GET_DATASET_QUERY: &str = r#"
 "#;
 
 const GET_DATASETS_PAGINATED_QUERY: &str = r#"
-    SELECT dataset_id, title, details, owner_id, owner_display_name, tags, is_public, item_count, total_chunks, created_at, updated_at
-    FROM datasets
-    ORDER BY created_at DESC
+    SELECT d.dataset_id, d.title, d.details, d.owner_id, d.owner_display_name, d.tags, d.is_public, d.item_count, d.total_chunks, d.created_at, d.updated_at,
+        COALESCE((SELECT COUNT(*) FROM dataset_transforms dt WHERE dt.source_dataset_id = d.dataset_id), 0)::bigint AS transform_count
+    FROM datasets d
+    ORDER BY d.created_at DESC
     LIMIT $1 OFFSET $2
 "#;
 
 const GET_DATASETS_PAGINATED_SEARCH_QUERY: &str = r#"
-    SELECT dataset_id, title, details, owner_id, owner_display_name, tags, is_public, item_count, total_chunks, created_at, updated_at
-    FROM datasets
-    WHERE owner_id = $3 AND (title ILIKE $4 OR details ILIKE $4 OR $5 = ANY(tags))
-    ORDER BY created_at DESC
+    SELECT d.dataset_id, d.title, d.details, d.owner_id, d.owner_display_name, d.tags, d.is_public, d.item_count, d.total_chunks, d.created_at, d.updated_at,
+        COALESCE((SELECT COUNT(*) FROM dataset_transforms dt WHERE dt.source_dataset_id = d.dataset_id), 0)::bigint AS transform_count
+    FROM datasets d
+    WHERE d.owner_id = $3 AND (d.title ILIKE $4 OR d.details ILIKE $4 OR $5 = ANY(d.tags))
+    ORDER BY d.created_at DESC
     LIMIT $1 OFFSET $2
 "#;
 
@@ -99,8 +101,8 @@ const COUNT_DATASET_ITEMS_WITH_SEARCH_QUERY: &str = r#"
 const GET_DATASET_ITEMS_MODIFIED_SINCE_QUERY: &str = r#"
     SELECT item_id, dataset_id, title, chunks, metadata, created_at, COALESCE(updated_at, created_at) as updated_at
     FROM dataset_items
-    WHERE dataset_id = $1 AND COALESCE(updated_at, created_at) > $2
-    ORDER BY COALESCE(updated_at, created_at) ASC
+    WHERE dataset_id = $1 AND COALESCE(updated_at, created_at) >= $2
+    ORDER BY COALESCE(updated_at, created_at) ASC, item_id ASC
 "#;
 
 /// Get the dataset's version (updated_at timestamp) for efficient stats refresh (#4)
@@ -197,6 +199,7 @@ pub(crate) struct DatasetWithStatsRow {
     pub(crate) total_chunks: i64,
     pub(crate) created_at: Option<DateTime<Utc>>,
     pub(crate) updated_at: Option<DateTime<Utc>>,
+    pub(crate) transform_count: i64,
 }
 
 #[derive(Debug)]

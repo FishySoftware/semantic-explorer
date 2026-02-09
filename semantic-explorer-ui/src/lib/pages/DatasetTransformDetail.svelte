@@ -3,6 +3,7 @@
 	import { onDestroy, onMount } from 'svelte';
 	import PageHeader from '../components/PageHeader.svelte';
 	import { formatDate } from '../utils/ui-helpers';
+	import { toastStore } from '../utils/notifications';
 
 	interface Props {
 		datasetTransformId: number;
@@ -106,6 +107,8 @@
 	let totalBatchesCount = $state(0);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+	let retrying = $state(false);
+	let showRetryConfirm = $state(false);
 
 	// Pagination for batches
 	let batchesCurrentPage = $state(1);
@@ -178,6 +181,40 @@
 			}
 		} catch (e) {
 			console.error('Error fetching embedders:', e);
+		}
+	}
+
+	async function retryFailedBatches() {
+		retrying = true;
+		showRetryConfirm = false;
+		try {
+			const response = await fetch(`/api/dataset-transforms/${datasetTransformId}/retry-failed`, {
+				method: 'POST',
+				credentials: 'include',
+			});
+			if (!response.ok) {
+				const errorText = await response.text();
+				throw new Error(`Failed to retry: ${errorText}`);
+			}
+			const result = await response.json();
+			if (result.retried_count > 0) {
+				toastStore.success(
+					`${result.retried_count} batch job(s) re-submitted for processing.`,
+					'Retry Started'
+				);
+			} else if (result.stats_reconciled) {
+				toastStore.info('No failed batches found. Stats have been reconciled.', 'Stats Corrected');
+			} else {
+				toastStore.info('No failed batches to retry.', 'Nothing to Retry');
+			}
+			// Refresh stats and batches immediately
+			await Promise.all([fetchDetailedStats(), fetchBatches()]);
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : 'Unknown error';
+			toastStore.error(msg, 'Retry Failed');
+			console.error('Error retrying failed batches:', e);
+		} finally {
+			retrying = false;
 		}
 	}
 
@@ -443,19 +480,63 @@
 			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
 				<div class="flex items-center justify-between mb-4">
 					<Heading tag="h3" class="text-xl font-bold">Aggregate Embedding Statistics</Heading>
-					<span
-						class={`px-3 py-1 rounded-full text-sm font-semibold ${
-							stats.is_processing
-								? 'bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400'
-								: stats.status === 'completed'
-									? 'bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400'
-									: stats.status === 'failed'
-										? 'bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400'
-										: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-400'
-						}`}
-					>
-						{stats.is_processing ? 'Processing' : stats.status}
-					</span>
+					<div class="flex items-center gap-2">
+						{#if stats.failed_batches > 0 && !stats.is_processing}
+							<button
+								onclick={() => (showRetryConfirm = true)}
+								disabled={retrying}
+								class="inline-flex items-center gap-1.5 px-3 py-1 text-sm font-medium rounded-full bg-orange-100 text-orange-700 hover:bg-orange-200 dark:bg-orange-900/20 dark:text-orange-400 dark:hover:bg-orange-900/40 disabled:opacity-50 transition-colors"
+							>
+								{#if retrying}
+									<svg class="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+										<circle
+											class="opacity-25"
+											cx="12"
+											cy="12"
+											r="10"
+											stroke="currentColor"
+											stroke-width="4"
+										></circle>
+										<path
+											class="opacity-75"
+											fill="currentColor"
+											d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+										></path>
+									</svg>
+									Retrying…
+								{:else}
+									<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width="2"
+											d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+										/>
+									</svg>
+									Retry Failed ({stats.failed_batches})
+								{/if}
+							</button>
+						{/if}
+						<span
+							class={`px-3 py-1 rounded-full text-sm font-semibold ${
+								stats.is_processing
+									? 'bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400'
+									: stats.status === 'completed'
+										? 'bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400'
+										: stats.status === 'completed_with_errors'
+											? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400'
+											: stats.status === 'failed'
+												? 'bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400'
+												: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-400'
+							}`}
+						>
+							{stats.is_processing
+								? 'Processing'
+								: stats.status === 'completed_with_errors'
+									? 'Completed with Errors'
+									: stats.status.charAt(0).toUpperCase() + stats.status.slice(1)}
+						</span>
+					</div>
 				</div>
 				<div class="grid grid-cols-2 md:grid-cols-5 gap-4">
 					<div>
@@ -755,3 +836,31 @@
 		</div>
 	{/if}
 </div>
+
+<!-- Retry Confirmation Dialog -->
+{#if showRetryConfirm}
+	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 max-w-md mx-4">
+			<h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">Retry Failed Batches</h3>
+			<p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+				This will retry {stats?.failed_batches} failed
+				{stats?.failed_batches === 1 ? 'batch' : 'batches'}. Failed batch files still in storage
+				will be re-submitted for embedding.
+			</p>
+			<div class="flex justify-end gap-3">
+				<button
+					onclick={() => (showRetryConfirm = false)}
+					class="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+				>
+					Cancel
+				</button>
+				<button
+					onclick={retryFailedBatches}
+					class="px-4 py-2 text-sm font-medium rounded-lg bg-orange-600 text-white hover:bg-orange-700"
+				>
+					Retry Failed Batches
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}

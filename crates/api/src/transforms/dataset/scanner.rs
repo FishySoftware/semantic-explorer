@@ -599,6 +599,24 @@ async fn process_dataset_transform_scan(
 
         // If all existing batches are processed (or none exist), check if we need to create new batches
         if unprocessed_existing.is_empty() {
+            // Acquire scan lock to prevent concurrent scanners from racing on the same watermark.
+            // The lock auto-expires after scan_timeout_secs to prevent stale locks.
+            let lock_acquired = embedded_datasets::try_acquire_scan_lock(
+                pool,
+                embedded_dataset.embedded_dataset_id,
+                scanner_config.scan_timeout_secs,
+            )
+            .await
+            .unwrap_or(false);
+
+            if !lock_acquired {
+                info!(
+                    embedded_dataset_id = embedded_dataset.embedded_dataset_id,
+                    "Skipping embedded dataset: another scanner holds the scan lock"
+                );
+                continue;
+            }
+
             // Get dataset items that haven't been batched yet
             let batch_config = DatasetBatchConfig {
                 embedder_config: embedder_config.clone(),
@@ -618,8 +636,20 @@ async fn process_dataset_transform_scan(
                 &circuit_breaker,
                 scanner_config,
             )
-            .await?;
-            total_jobs += items_created;
+            .await;
+
+            // Always release the scan lock, even on error
+            if let Err(e) =
+                embedded_datasets::release_scan_lock(pool, embedded_dataset.embedded_dataset_id)
+                    .await
+            {
+                warn!(
+                    embedded_dataset_id = embedded_dataset.embedded_dataset_id,
+                    "Failed to release scan lock: {}", e
+                );
+            }
+
+            total_jobs += items_created?;
         }
     }
 
@@ -751,6 +781,7 @@ async fn create_batches_from_dataset_items(
 
     // Split into batches and upload to S3, then dispatch jobs
     let mut jobs_created = 0;
+    let mut actual_chunks_dispatched: usize = 0;
     let chunks_per_batch = config.embedding_batch_size * 10; // Create larger batches for efficiency
     let total_batches = all_batch_items.len().div_ceil(chunks_per_batch);
 
@@ -862,6 +893,7 @@ async fn create_batches_from_dataset_items(
         {
             semantic_explorer_core::nats::PublishResult::Published => {
                 jobs_created += 1;
+                actual_chunks_dispatched += batch_chunk.len();
                 circuit_breaker.record_success().await;
                 // Track dispatched batch for accurate completion detection
                 if let Err(e) =
@@ -928,11 +960,13 @@ async fn create_batches_from_dataset_items(
             // All items fetched and all batches dispatched
             query_start_time
         } else if was_batches_capped {
-            // Only advance to cover items fully within dispatched batches
-            let chunks_dispatched = effective_total * chunks_per_batch;
+            // Only advance to cover items fully within dispatched batches.
+            // Use actual_chunks_dispatched (tracked during the loop) instead of
+            // effective_total * chunks_per_batch — this is resilient to partial
+            // batches, circuit breaker breaks, and future refactors.
             item_chunk_boundaries
                 .iter()
-                .rfind(|(cumul, _)| *cumul <= chunks_dispatched)
+                .rfind(|(cumul, _)| *cumul <= actual_chunks_dispatched)
                 .map(|(_, ts)| *ts)
                 .unwrap_or(query_start_time)
         } else {

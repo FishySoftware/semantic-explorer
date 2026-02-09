@@ -57,7 +57,7 @@ async fn main() -> Result<()> {
     let health_check_port: u16 = std::env::var("HEALTH_CHECK_PORT")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(8082);
+        .unwrap_or(8083);
 
     let config = worker::WorkerConfig {
         service_name,

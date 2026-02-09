@@ -382,7 +382,7 @@
 
 			// Download the HTML file
 			const downloadResponse = await fetch(
-				`/api/visualization-transforms/${viz.visualization_transform_id}/visualizations/${completed.visualization_id}/download`
+				`/api/visualization-transforms/${viz.visualization_transform_id}/visualizations/${completed.visualization_id}/download?download=true`
 			);
 
 			if (!downloadResponse.ok) {

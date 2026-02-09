@@ -41,6 +41,13 @@ const CREATE_BATCH_QUERY: &str = r#"
         updated_at
     )
     VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT (dataset_transform_id, batch_key)
+    DO UPDATE SET
+        status = EXCLUDED.status,
+        chunk_count = EXCLUDED.chunk_count,
+        error_message = EXCLUDED.error_message,
+        processing_duration_ms = EXCLUDED.processing_duration_ms,
+        updated_at = CURRENT_TIMESTAMP
     RETURNING *
 "#;
 
@@ -84,6 +91,16 @@ const UPDATE_BATCH_STATUS_QUERY: &str = r#"
         chunk_count = $6,
         updated_at = CURRENT_TIMESTAMP
     WHERE dataset_transform_id = $1 AND batch_key = $2
+    RETURNING *
+"#;
+
+const RESET_FAILED_BATCHES_QUERY: &str = r#"
+    UPDATE dataset_transform_batches
+    SET status = 'pending',
+        error_message = NULL,
+        processing_duration_ms = NULL,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE dataset_transform_id = $1 AND status = 'failed'
     RETURNING *
 "#;
 
@@ -285,6 +302,19 @@ pub async fn update_batch_status_tx(
         .await?;
 
     Ok(batch)
+}
+
+/// Reset all failed batches to "pending" for retry.
+/// Returns the reset batches so they can be re-published.
+pub async fn reset_failed_batches(
+    pool: &Pool<Postgres>,
+    dataset_transform_id: i32,
+) -> Result<Vec<DatasetTransformBatch>, sqlx::Error> {
+    let batches = sqlx::query_as::<_, DatasetTransformBatch>(RESET_FAILED_BATCHES_QUERY)
+        .bind(dataset_transform_id)
+        .fetch_all(pool)
+        .await?;
+    Ok(batches)
 }
 
 /// List batches that appear stuck in a given status for longer than threshold_hours (#18)
