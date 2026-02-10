@@ -10,10 +10,6 @@ use sqlx::{Pool, Postgres};
 use std::time::SystemTime;
 use tracing::{info, warn};
 
-// ================================
-// NATS CONFIGURATION
-// ================================
-
 /// NATS subject for audit events
 pub const AUDIT_EVENTS_SUBJECT: &str = "audit.events";
 

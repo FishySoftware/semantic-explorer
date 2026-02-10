@@ -30,15 +30,12 @@ pub fn get_embedding_models(config: &ModelConfig) -> Vec<ModelInfo> {
 
     let mut models: Vec<ModelInfo> = supported_models
         .iter()
-        .map(|m| {
-            let model_id = m.model_code.clone();
-            ModelInfo {
-                id: model_id.clone(),
-                name: model_id.clone(),
-                description: m.description.clone(),
-                model_type: "embedding".to_string(),
-                dimensions: Some(m.dim),
-            }
+        .map(|m| ModelInfo {
+            id: m.model_code.clone(),
+            name: m.model_code.clone(),
+            description: m.description.clone(),
+            model_type: "embedding".to_string(),
+            dimensions: Some(m.dim),
         })
         .collect();
 

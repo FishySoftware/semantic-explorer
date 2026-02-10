@@ -2297,6 +2297,7 @@ dependencies = [
  "actix-web",
  "actix-web-prom",
  "anyhow",
+ "candle-core",
  "dotenvy",
  "fastembed",
  "futures",

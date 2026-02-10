@@ -6,7 +6,7 @@
 ![CUDA](https://img.shields.io/badge/CUDA-12.x_(optional)-76B900.svg)
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
 
-**Local embedding and reranking server using FastEmbed with ONNX Runtime**
+**Local embedding and reranking server using FastEmbed with ONNX Runtime and Candle**
 
 </div>
 
@@ -112,11 +112,14 @@ curl -X POST http://localhost:8090/api/rerank \
 
 ## Supported Models
 
-Models from [FastEmbed](https://github.com/Anush008/fastembed-rs) are supported.
+Models from [FastEmbed](https://github.com/Anush008/fastembed-rs) are supported across two backends:
 
-### Model Filtering
+- **ONNX Runtime** — Traditional ONNX models with CUDA execution providers
+- **Candle** — Native Rust transformer inference for Qwen3 models (SafeTensors weights, no ONNX)
 
-The API automatically filters out certain model variants for GPU compatibility:
+### Model Filtering (ONNX)
+
+The API automatically filters out certain ONNX model variants for GPU compatibility:
 
 - **Quantized models** (models with `Q` suffix or `model_quantized.onnx` files)
 - **Optimized models** (models with `model_optimized.onnx` files)
@@ -125,7 +128,17 @@ The API automatically filters out certain model variants for GPU compatibility:
 
 Only models with `onnx/model.onnx` file paths are included, ensuring GPU-friendly inference.
 
-### Embedding Models
+### Qwen3 Embedding Models (Candle Backend)
+
+These models use the **Candle** transformer backend with SafeTensors weights. They support CUDA via Candle's native GPU kernels (not ONNX Runtime). Precision and context length are hardcoded per model.
+
+| Model | Parameters | Dimensions | Context Length | Description |
+|-------|------------|------------|---------------|-------------|
+| `Qwen/Qwen3-Embedding-0.6B` | 0.6B | 1024 | 32768 | Lightweight Qwen3 embedding model, good balance of speed and quality |
+| `Qwen/Qwen3-Embedding-4B` | 4B | 3584 | 32768 | Mid-size Qwen3 embedding model with strong multilingual performance |
+| `Qwen/Qwen3-Embedding-8B` | 8B | 4096 | 32768 | Largest Qwen3 embedding model, highest quality embeddings |
+
+### ONNX Embedding Models
 
 | Model | Dimensions | Context Length | Modals | Description |
 |-------|------------|---------------|-------------|-------------|
@@ -169,12 +182,20 @@ Only models with `onnx/model.onnx` file paths are included, ensuring GPU-friendl
 
 ## GPU Acceleration
 
-CUDA support via ONNX Runtime:
+### ONNX Runtime (ONNX Models)
 
 - Automatic GPU detection
 - TF32 enabled for Ampere+ GPUs (faster compute)
 - Mixed precision (FP16) on compatible GPUs
 - CUDNN Flash Attention for improved performance
+- Configurable CUDA memory arena (`CUDA_ARENA_SIZE`)
+
+### Candle (Qwen3 Models)
+
+- Native CUDA kernels via Candle with cuDNN support
+- Configurable weight precision: `bf16` (default), `f16`, or `f32`
+- SafeTensors weight loading (no ONNX conversion needed)
+- Automatic CPU fallback when CUDA is unavailable
 
 **Supported CUDA Compute Capabilities**: 7.5, 8.0, 8.6, 8.9, 9.0
 
@@ -206,7 +227,13 @@ docker build -f crates/embedding-inference-api/Dockerfile -t embedding-inference
 ## Running
 
 ```bash
+# ONNX model only
 export INFERENCE_ALLOWED_EMBEDDING_MODELS="Qdrant/all-MiniLM-L6-v2-onnx"
+cargo run -p embedding-inference-api
+
+# Mix of ONNX and Qwen3 models
+export INFERENCE_ALLOWED_EMBEDDING_MODELS="Qdrant/all-MiniLM-L6-v2-onnx,Qwen/Qwen3-Embedding-0.6B"
+export QWEN3_DTYPE=bf16
 cargo run -p embedding-inference-api
 ```
 

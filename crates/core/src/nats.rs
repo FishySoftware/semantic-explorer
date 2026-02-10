@@ -559,10 +559,6 @@ async fn collect_nats_metrics(client: &Client) -> Result<()> {
     Ok(())
 }
 
-// =============================================================================
-// Trace Context Propagation (W3C Trace Context)
-// =============================================================================
-
 /// A simple injector wrapper for HashMap that implements OpenTelemetry's Injector trait
 struct HashMapInjector<'a>(&'a mut HashMap<String, String>);
 

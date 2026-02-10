@@ -47,10 +47,6 @@ pub struct DatasetTransformJob {
     pub batch_size: Option<usize>,
 }
 
-// =============================================================================
-// Scanner Trigger Messages
-// =============================================================================
-
 /// Trigger message for collection transform scanning.
 /// Sent periodically to initiate scanning of active collection transforms.
 #[derive(Debug, Clone, Serialize, Deserialize)]

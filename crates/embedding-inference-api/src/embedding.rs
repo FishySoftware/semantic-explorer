@@ -1,4 +1,5 @@
-use fastembed::{EmbeddingModel, ModelInfo, TextEmbedding, TextInitOptions};
+use candle_core::{DType, Device};
+use fastembed::{EmbeddingModel, Qwen3TextEmbedding, TextEmbedding, TextInitOptions};
 use futures::stream::StreamExt;
 use once_cell::sync::OnceCell;
 use ort::ep::ArenaExtendStrategy;
@@ -19,8 +20,73 @@ use crate::errors::InferenceError;
 
 use semantic_explorer_core::observability::gpu_monitor;
 
+/// Known Qwen3 embedding model definitions.
+/// These use the candle backend (not ONNX) and are loaded via `Qwen3TextEmbedding`.
+struct Qwen3ModelDef {
+    model_code: &'static str,
+    description: &'static str,
+    dim: usize,
+    /// Weight loading precision — F32 is required because the embed() attention
+    /// mask is built as F32 and candle does not auto-broadcast dtypes in matmul.
+    dtype: DType,
+    /// Maximum token length supported by the model.
+    max_length: usize,
+}
+
+const QWEN3_MODELS: &[Qwen3ModelDef] = &[
+    Qwen3ModelDef {
+        model_code: "Qwen/Qwen3-Embedding-0.6B",
+        description: "Qwen3 0.6B parameter embedding model (candle backend)",
+        dim: 1024,
+        dtype: DType::F32,
+        max_length: 32768,
+    },
+    Qwen3ModelDef {
+        model_code: "Qwen/Qwen3-Embedding-4B",
+        description: "Qwen3 4B parameter embedding model (candle backend)",
+        dim: 3584,
+        dtype: DType::F32,
+        max_length: 32768,
+    },
+    Qwen3ModelDef {
+        model_code: "Qwen/Qwen3-Embedding-8B",
+        description: "Qwen3 8B parameter embedding model (candle backend)",
+        dim: 4096,
+        dtype: DType::F32,
+        max_length: 32768,
+    },
+];
+
+/// Check whether a model code refers to a Qwen3 embedding model.
+pub(crate) fn is_qwen3_model(model_code: &str) -> bool {
+    QWEN3_MODELS.iter().any(|d| d.model_code == model_code)
+}
+
+// ---------------------------------------------------------------------------
+// Unified model info type
+// ---------------------------------------------------------------------------
+
+/// Backend-agnostic model information exposed to callers.
+#[derive(Debug, Clone)]
+pub(crate) struct AvailableModel {
+    pub model_code: String,
+    pub description: String,
+    pub dim: usize,
+}
+
+// ---------------------------------------------------------------------------
+// Cached embedder enum — dispatches to ONNX or Qwen3 at inference time
+// ---------------------------------------------------------------------------
+
+enum CachedEmbedder {
+    /// ONNX-based model via fastembed's `TextEmbedding`
+    Onnx(Box<Mutex<TextEmbedding>>),
+    /// Candle-based Qwen3 model via fastembed's `Qwen3TextEmbedding`
+    Qwen3(Box<Mutex<Qwen3TextEmbedding>>),
+}
+
 struct CachedModel {
-    model: Mutex<TextEmbedding>,
+    embedder: CachedEmbedder,
 }
 
 type EmbeddingCache = Arc<RwLock<HashMap<String, Arc<CachedModel>>>>;
@@ -103,10 +169,9 @@ pub fn is_gpu_pressure_high() -> bool {
     GPU_PRESSURE_HIGH.load(Ordering::Relaxed)
 }
 
-pub(crate) fn get_all_available_embedding_models(
-    config: &ModelConfig,
-) -> Vec<ModelInfo<EmbeddingModel>> {
-    TextEmbedding::list_supported_models()
+pub(crate) fn get_all_available_embedding_models(config: &ModelConfig) -> Vec<AvailableModel> {
+    // ONNX-based models from fastembed
+    let onnx_models = TextEmbedding::list_supported_models()
         .into_iter()
         .filter(|m| {
             m.model_file.eq("onnx/model.onnx") && // Remove optimized and quantized variants (not GPU friendly)
@@ -114,7 +179,23 @@ pub(crate) fn get_all_available_embedding_models(
             !m.model_code.eq("onnx-community/embeddinggemma-300m-ONNX") // Remove Gemma (not GPU friendly)
         })
         .filter(|m| config.is_embedding_model_allowed(&m.model_code))
-        .collect()
+        .map(|m| AvailableModel {
+            model_code: m.model_code,
+            description: m.description,
+            dim: m.dim,
+        });
+
+    // Qwen3 candle-based models
+    let qwen3_models = QWEN3_MODELS
+        .iter()
+        .filter(|d| config.is_embedding_model_allowed(d.model_code))
+        .map(|d| AvailableModel {
+            model_code: d.model_code.to_string(),
+            description: d.description.to_string(),
+            dim: d.dim,
+        });
+
+    onnx_models.chain(qwen3_models).collect()
 }
 
 /// Get the list of embedding models to load based on configuration
@@ -129,16 +210,15 @@ fn get_models_to_load(config: &ModelConfig) -> Vec<String> {
     }
 }
 
-/// Resolve a model code string to a fastembed EmbeddingModel enum
-fn resolve_embedding_model(
-    config: &ModelConfig,
-    model_code: &str,
-) -> Result<EmbeddingModel, InferenceError> {
-    get_all_available_embedding_models(config)
+/// Resolve a model code string to a fastembed EmbeddingModel enum (ONNX models only)
+fn resolve_onnx_embedding_model(model_code: &str) -> Result<EmbeddingModel, InferenceError> {
+    TextEmbedding::list_supported_models()
         .into_iter()
         .find(|m| m.model_code == model_code)
         .map(|m| m.model)
-        .ok_or_else(|| InferenceError::UnsupportedModel(format!("Unknown model: {}", model_code)))
+        .ok_or_else(|| {
+            InferenceError::UnsupportedModel(format!("Unknown ONNX model: {}", model_code))
+        })
 }
 
 /// Initialize the embedding model cache and pre-load allowed models
@@ -162,21 +242,34 @@ pub async fn init_cache(config: &ModelConfig) {
 
     info!("Using concurrency limit: {}", concurrency_limit);
 
-    // Parallel loading
+    // Parallel loading — dispatch to ONNX or Qwen3 based on model_code
     let results = futures::stream::iter(models_to_load)
         .map(|model_id| {
             let config = config.clone();
             async move {
                 let model_id_clone = model_id.clone();
                 let res = tokio::task::spawn_blocking(move || {
-                    match resolve_embedding_model(&config, &model_id_clone) {
-                        Ok(embedding_model) => {
-                            match create_text_embedding(embedding_model, &config) {
-                                Ok(text_embedding) => Ok((model_id_clone, text_embedding)),
-                                Err(e) => Err((model_id_clone, e)),
-                            }
-                        }
-                        Err(e) => Err((model_id_clone, e)),
+                    if is_qwen3_model(&model_id_clone) {
+                        let id_for_err = model_id_clone.clone();
+                        create_qwen3_embedding(&model_id_clone, &config)
+                            .map(|qwen| {
+                                (
+                                    model_id_clone,
+                                    CachedEmbedder::Qwen3(Box::new(Mutex::new(qwen))),
+                                )
+                            })
+                            .map_err(|e| (id_for_err, e))
+                    } else {
+                        let id_for_err = model_id_clone.clone();
+                        resolve_onnx_embedding_model(&model_id_clone)
+                            .and_then(|emb| create_text_embedding(emb, &config))
+                            .map(|te| {
+                                (
+                                    model_id_clone,
+                                    CachedEmbedder::Onnx(Box::new(Mutex::new(te))),
+                                )
+                            })
+                            .map_err(|e| (id_for_err, e))
                     }
                 })
                 .await;
@@ -197,13 +290,15 @@ pub async fn init_cache(config: &ModelConfig) {
 
     for result in results {
         match result {
-            Ok((model_id, text_embedding)) => {
-                let entry = Arc::new(CachedModel {
-                    model: Mutex::new(text_embedding),
-                });
+            Ok((model_id, embedder)) => {
+                let backend = match &embedder {
+                    CachedEmbedder::Onnx(_) => "onnx",
+                    CachedEmbedder::Qwen3(_) => "qwen3/candle",
+                };
+                let entry = Arc::new(CachedModel { embedder });
                 cache_guard.insert(model_id.clone(), entry);
 
-                info!(model_id = %model_id, "Pre-loaded embedding model");
+                info!(model_id = %model_id, backend = backend, "Pre-loaded embedding model");
             }
             Err((model_id, e)) => {
                 error!(
@@ -271,9 +366,40 @@ fn create_text_embedding(
     })
 }
 
-// ============================================================================
-// Embedding Generation
-// ============================================================================
+/// Create a Qwen3TextEmbedding instance using the candle backend
+fn create_qwen3_embedding(
+    model_code: &str,
+    _config: &ModelConfig,
+) -> Result<Qwen3TextEmbedding, InferenceError> {
+    let def = QWEN3_MODELS
+        .iter()
+        .find(|d| d.model_code == model_code)
+        .ok_or_else(|| {
+            InferenceError::UnsupportedModel(format!("Unknown Qwen3 model: {}", model_code))
+        })?;
+
+    let device = Device::new_cuda(0).unwrap_or_else(|e| {
+        warn!(error = %e, "CUDA device unavailable for Qwen3, falling back to CPU");
+        Device::Cpu
+    });
+
+    info!(
+        model_code = %model_code,
+        dtype = ?def.dtype,
+        max_length = def.max_length,
+        device = ?device,
+        "Loading Qwen3 embedding model via candle backend"
+    );
+
+    Qwen3TextEmbedding::from_hf(model_code, &device, def.dtype, def.max_length).map_err(|e| {
+        error!(
+            model_code = %model_code,
+            error = %e,
+            "Failed to load Qwen3 embedding model"
+        );
+        InferenceError::ModelLoad(e.to_string())
+    })
+}
 
 /// Generate embeddings using the model cache
 pub async fn generate_embeddings(
@@ -360,31 +486,60 @@ pub async fn generate_embeddings(
 
     tokio::task::spawn_blocking(move || {
         let lock_start = Instant::now();
-        let mut text_embedding = entry.model.lock().map_err(|e| {
-            InferenceError::Internal(format!("Failed to acquire model lock: {}", e))
-        })?;
-        let lock_time = lock_start.elapsed();
 
-        let embed_start = Instant::now();
-        let result = text_embedding.embed(texts, batch_size).map_err(|e| {
-            error!(error = %e, "Embedding generation failed");
-            InferenceError::Embedding(e.to_string())
-        });
-        let embed_time = embed_start.elapsed();
-
-        debug!(
-            model_id = %model_id_owned,
-            texts_count = texts_count,
-            total_chars = total_chars,
-            avg_chars_per_text = avg_chars,
-            lock_time_ms = lock_time.as_millis(),
-            embed_time_ms = embed_time.as_millis(),
-            per_text_ms = embed_time.as_millis() as f64 / texts_count as f64,
-            chars_per_sec = total_chars as f64 / embed_time.as_secs_f64(),
-            "Embedding timing"
-        );
-
-        result
+        match &entry.embedder {
+            CachedEmbedder::Onnx(model_mutex) => {
+                let mut text_embedding = model_mutex.lock().map_err(|e| {
+                    InferenceError::Internal(format!("Failed to acquire ONNX model lock: {}", e))
+                })?;
+                let lock_time = lock_start.elapsed();
+                let embed_start = Instant::now();
+                let res = text_embedding.embed(texts, batch_size).map_err(|e| {
+                    error!(error = %e, "ONNX embedding generation failed");
+                    InferenceError::Embedding(e.to_string())
+                });
+                let embed_time = embed_start.elapsed();
+                debug!(
+                    model_id = %model_id_owned,
+                    backend = "onnx",
+                    texts_count = texts_count,
+                    total_chars = total_chars,
+                    avg_chars_per_text = avg_chars,
+                    lock_time_ms = lock_time.as_millis(),
+                    embed_time_ms = embed_time.as_millis(),
+                    per_text_ms = embed_time.as_millis() as f64 / texts_count as f64,
+                    chars_per_sec = total_chars as f64 / embed_time.as_secs_f64(),
+                    "Embedding timing"
+                );
+                res
+            }
+            CachedEmbedder::Qwen3(model_mutex) => {
+                let model = model_mutex.lock().map_err(|e| {
+                    InferenceError::Internal(format!("Failed to acquire Qwen3 model lock: {}", e))
+                })?;
+                let lock_time = lock_start.elapsed();
+                let embed_start = Instant::now();
+                let text_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
+                let res = model.embed(&text_refs).map_err(|e| {
+                    error!(error = %e, "Qwen3 embedding generation failed");
+                    InferenceError::Embedding(e.to_string())
+                });
+                let embed_time = embed_start.elapsed();
+                debug!(
+                    model_id = %model_id_owned,
+                    backend = "qwen3/candle",
+                    texts_count = texts_count,
+                    total_chars = total_chars,
+                    avg_chars_per_text = avg_chars,
+                    lock_time_ms = lock_time.as_millis(),
+                    embed_time_ms = embed_time.as_millis(),
+                    per_text_ms = embed_time.as_millis() as f64 / texts_count as f64,
+                    chars_per_sec = total_chars as f64 / embed_time.as_secs_f64(),
+                    "Embedding timing"
+                );
+                res
+            }
+        }
     })
     .await
     .map_err(|e| InferenceError::Internal(format!("Blocking task join error: {}", e)))?

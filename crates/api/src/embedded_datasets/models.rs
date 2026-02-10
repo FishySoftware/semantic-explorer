@@ -128,10 +128,6 @@ impl EmbeddedDataset {
     }
 }
 
-// =============================================================================
-// Standalone Embedded Dataset Request/Response Models
-// =============================================================================
-
 /// Request to create a standalone embedded dataset
 /// Standalone datasets can receive vectors directly via push, without needing a transform/embedder
 #[derive(Debug, Deserialize, ToSchema)]

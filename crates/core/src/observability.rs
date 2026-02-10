@@ -1709,10 +1709,6 @@ pub fn record_embedding_batch(model: &str, duration_secs: f64, chunk_count: usiz
     );
 }
 
-// ============================================================================
-// GPU Metrics Recording Functions
-// ============================================================================
-
 /// Record GPU memory and utilization metrics
 pub fn record_gpu_metrics(
     device_index: u32,
