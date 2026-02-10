@@ -3,9 +3,11 @@ use sqlx::{
     Pool, Postgres,
     types::chrono::{DateTime, Utc},
 };
+use std::time::Instant;
 
 use crate::transforms::visualization::models::{Visualization, VisualizationTransform};
 use semantic_explorer_core::models::PaginatedResponse;
+use semantic_explorer_core::observability::record_database_query;
 
 /// Builder for updating visualization fields.
 ///
@@ -72,18 +74,21 @@ impl VisualizationUpdate {
     }
 }
 
-fn validate_sort_field(sort_by: &str) -> Result<String> {
+fn validate_sort_field(sort_by: &str) -> Result<&'static str> {
     match sort_by {
-        "title" | "is_enabled" | "last_run_status" | "created_at" | "updated_at" => {
-            Ok(sort_by.to_string())
-        }
+        "title" => Ok("title"),
+        "is_enabled" => Ok("is_enabled"),
+        "last_run_status" => Ok("last_run_status"),
+        "created_at" => Ok("created_at"),
+        "updated_at" => Ok("updated_at"),
         _ => anyhow::bail!("Invalid sort field: {}", sort_by),
     }
 }
 
-fn validate_sort_direction(direction: &str) -> Result<String> {
+fn validate_sort_direction(direction: &str) -> Result<&'static str> {
     match direction.to_lowercase().as_str() {
-        "asc" | "desc" => Ok(direction.to_uppercase()),
+        "asc" => Ok("ASC"),
+        "desc" => Ok("DESC"),
         _ => anyhow::bail!("Invalid sort direction: {}", direction),
     }
 }
@@ -341,6 +346,7 @@ const GET_VISUALIZATION_TRANSFORMS_BY_EMBEDDED_DATASET_QUERY: &str = r#"
     FROM visualization_transforms
     WHERE embedded_dataset_id = $1 AND owner_id = $2
     ORDER BY created_at DESC
+    LIMIT $3 OFFSET $4
 "#;
 
 const COUNT_VISUALIZATION_TRANSFORMS_QUERY: &str =
@@ -348,24 +354,198 @@ const COUNT_VISUALIZATION_TRANSFORMS_QUERY: &str =
 const COUNT_VISUALIZATION_TRANSFORMS_WITH_SEARCH_QUERY: &str =
     "SELECT COUNT(*) as count FROM visualization_transforms WHERE title ILIKE $1 AND owner_id = $2";
 
-// Note: ORDER BY clause is built dynamically with validated identifiers
-// Column names cannot be parameterized in PostgreSQL, so we validate and use format!
-const GET_VISUALIZATION_TRANSFORMS_PAGINATED_BASE: &str = r#"
+// Static sort query variants for plan caching
+const VT_PAGINATED_TITLE_ASC: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,
            last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
     FROM visualization_transforms
     WHERE owner_id = $1
+    ORDER BY title ASC LIMIT $2 OFFSET $3
 "#;
-
-const GET_VISUALIZATION_TRANSFORMS_PAGINATED_WITH_SEARCH_BASE: &str = r#"
+const VT_PAGINATED_TITLE_DESC: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,
            last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
     FROM visualization_transforms
-    WHERE title ILIKE $1
-    AND owner_id = $2
+    WHERE owner_id = $1
+    ORDER BY title DESC LIMIT $2 OFFSET $3
 "#;
+const VT_PAGINATED_IS_ENABLED_ASC: &str = r#"
+    SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
+           reduced_collection_name, topics_collection_name, visualization_config,
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+    FROM visualization_transforms
+    WHERE owner_id = $1
+    ORDER BY is_enabled ASC LIMIT $2 OFFSET $3
+"#;
+const VT_PAGINATED_IS_ENABLED_DESC: &str = r#"
+    SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
+           reduced_collection_name, topics_collection_name, visualization_config,
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+    FROM visualization_transforms
+    WHERE owner_id = $1
+    ORDER BY is_enabled DESC LIMIT $2 OFFSET $3
+"#;
+const VT_PAGINATED_LAST_RUN_STATUS_ASC: &str = r#"
+    SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
+           reduced_collection_name, topics_collection_name, visualization_config,
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+    FROM visualization_transforms
+    WHERE owner_id = $1
+    ORDER BY last_run_status ASC LIMIT $2 OFFSET $3
+"#;
+const VT_PAGINATED_LAST_RUN_STATUS_DESC: &str = r#"
+    SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
+           reduced_collection_name, topics_collection_name, visualization_config,
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+    FROM visualization_transforms
+    WHERE owner_id = $1
+    ORDER BY last_run_status DESC LIMIT $2 OFFSET $3
+"#;
+const VT_PAGINATED_CREATED_AT_ASC: &str = r#"
+    SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
+           reduced_collection_name, topics_collection_name, visualization_config,
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+    FROM visualization_transforms
+    WHERE owner_id = $1
+    ORDER BY created_at ASC LIMIT $2 OFFSET $3
+"#;
+const VT_PAGINATED_CREATED_AT_DESC: &str = r#"
+    SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
+           reduced_collection_name, topics_collection_name, visualization_config,
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+    FROM visualization_transforms
+    WHERE owner_id = $1
+    ORDER BY created_at DESC LIMIT $2 OFFSET $3
+"#;
+const VT_PAGINATED_UPDATED_AT_ASC: &str = r#"
+    SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
+           reduced_collection_name, topics_collection_name, visualization_config,
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+    FROM visualization_transforms
+    WHERE owner_id = $1
+    ORDER BY updated_at ASC LIMIT $2 OFFSET $3
+"#;
+const VT_PAGINATED_UPDATED_AT_DESC: &str = r#"
+    SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
+           reduced_collection_name, topics_collection_name, visualization_config,
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+    FROM visualization_transforms
+    WHERE owner_id = $1
+    ORDER BY updated_at DESC LIMIT $2 OFFSET $3
+"#;
+
+const VT_SEARCH_TITLE_ASC: &str = r#"
+    SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
+           reduced_collection_name, topics_collection_name, visualization_config,
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+    FROM visualization_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY title ASC LIMIT $3 OFFSET $4
+"#;
+const VT_SEARCH_TITLE_DESC: &str = r#"
+    SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
+           reduced_collection_name, topics_collection_name, visualization_config,
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+    FROM visualization_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY title DESC LIMIT $3 OFFSET $4
+"#;
+const VT_SEARCH_IS_ENABLED_ASC: &str = r#"
+    SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
+           reduced_collection_name, topics_collection_name, visualization_config,
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+    FROM visualization_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY is_enabled ASC LIMIT $3 OFFSET $4
+"#;
+const VT_SEARCH_IS_ENABLED_DESC: &str = r#"
+    SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
+           reduced_collection_name, topics_collection_name, visualization_config,
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+    FROM visualization_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY is_enabled DESC LIMIT $3 OFFSET $4
+"#;
+const VT_SEARCH_LAST_RUN_STATUS_ASC: &str = r#"
+    SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
+           reduced_collection_name, topics_collection_name, visualization_config,
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+    FROM visualization_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY last_run_status ASC LIMIT $3 OFFSET $4
+"#;
+const VT_SEARCH_LAST_RUN_STATUS_DESC: &str = r#"
+    SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
+           reduced_collection_name, topics_collection_name, visualization_config,
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+    FROM visualization_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY last_run_status DESC LIMIT $3 OFFSET $4
+"#;
+const VT_SEARCH_CREATED_AT_ASC: &str = r#"
+    SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
+           reduced_collection_name, topics_collection_name, visualization_config,
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+    FROM visualization_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY created_at ASC LIMIT $3 OFFSET $4
+"#;
+const VT_SEARCH_CREATED_AT_DESC: &str = r#"
+    SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
+           reduced_collection_name, topics_collection_name, visualization_config,
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+    FROM visualization_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY created_at DESC LIMIT $3 OFFSET $4
+"#;
+const VT_SEARCH_UPDATED_AT_ASC: &str = r#"
+    SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
+           reduced_collection_name, topics_collection_name, visualization_config,
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+    FROM visualization_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY updated_at ASC LIMIT $3 OFFSET $4
+"#;
+const VT_SEARCH_UPDATED_AT_DESC: &str = r#"
+    SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
+           reduced_collection_name, topics_collection_name, visualization_config,
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+    FROM visualization_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY updated_at DESC LIMIT $3 OFFSET $4
+"#;
+
+fn get_vt_paginated_query(sort_field: &str, sort_dir: &str) -> &'static str {
+    match (sort_field, sort_dir) {
+        ("title", "ASC") => VT_PAGINATED_TITLE_ASC,
+        ("title", "DESC") => VT_PAGINATED_TITLE_DESC,
+        ("is_enabled", "ASC") => VT_PAGINATED_IS_ENABLED_ASC,
+        ("is_enabled", "DESC") => VT_PAGINATED_IS_ENABLED_DESC,
+        ("last_run_status", "ASC") => VT_PAGINATED_LAST_RUN_STATUS_ASC,
+        ("last_run_status", "DESC") => VT_PAGINATED_LAST_RUN_STATUS_DESC,
+        ("created_at", "ASC") => VT_PAGINATED_CREATED_AT_ASC,
+        ("updated_at", "ASC") => VT_PAGINATED_UPDATED_AT_ASC,
+        ("updated_at", "DESC") => VT_PAGINATED_UPDATED_AT_DESC,
+        _ => VT_PAGINATED_CREATED_AT_DESC, // default
+    }
+}
+
+fn get_vt_search_query(sort_field: &str, sort_dir: &str) -> &'static str {
+    match (sort_field, sort_dir) {
+        ("title", "ASC") => VT_SEARCH_TITLE_ASC,
+        ("title", "DESC") => VT_SEARCH_TITLE_DESC,
+        ("is_enabled", "ASC") => VT_SEARCH_IS_ENABLED_ASC,
+        ("is_enabled", "DESC") => VT_SEARCH_IS_ENABLED_DESC,
+        ("last_run_status", "ASC") => VT_SEARCH_LAST_RUN_STATUS_ASC,
+        ("last_run_status", "DESC") => VT_SEARCH_LAST_RUN_STATUS_DESC,
+        ("created_at", "ASC") => VT_SEARCH_CREATED_AT_ASC,
+        ("updated_at", "ASC") => VT_SEARCH_UPDATED_AT_ASC,
+        ("updated_at", "DESC") => VT_SEARCH_UPDATED_AT_DESC,
+        _ => VT_SEARCH_CREATED_AT_DESC, // default
+    }
+}
 
 pub async fn get_visualization_transforms_paginated(
     pool: &Pool<Postgres>,
@@ -380,6 +560,7 @@ pub async fn get_visualization_transforms_paginated(
     let sort_field = validate_sort_field(sort_by)?;
     let sort_dir = validate_sort_direction(sort_direction)?;
 
+    let start = Instant::now();
     let mut tx = pool.begin().await?;
     super::rls::set_rls_user_tx(&mut tx, owner).await?;
 
@@ -393,13 +574,10 @@ pub async fn get_visualization_transforms_paginated(
             .await?;
         let total = count_result.0;
 
-        // Build query with validated identifiers (column names cannot be parameterized)
-        let query_str = format!(
-            "{} ORDER BY {} {} LIMIT $3 OFFSET $4",
-            GET_VISUALIZATION_TRANSFORMS_PAGINATED_WITH_SEARCH_BASE, sort_field, sort_dir
-        );
+        // Use static query variant for plan caching
+        let query_str = get_vt_search_query(sort_field, sort_dir);
 
-        let items = sqlx::query_as::<_, VisualizationTransform>(&query_str)
+        let items = sqlx::query_as::<_, VisualizationTransform>(query_str)
             .bind(&search_pattern)
             .bind(owner)
             .bind(limit)
@@ -415,13 +593,10 @@ pub async fn get_visualization_transforms_paginated(
             .await?;
         let total = count_result.0;
 
-        // Build query with validated identifiers (column names cannot be parameterized)
-        let query_str = format!(
-            "{} ORDER BY {} {} LIMIT $2 OFFSET $3",
-            GET_VISUALIZATION_TRANSFORMS_PAGINATED_BASE, sort_field, sort_dir
-        );
+        // Use static query variant for plan caching
+        let query_str = get_vt_paginated_query(sort_field, sort_dir);
 
-        let items = sqlx::query_as::<_, VisualizationTransform>(&query_str)
+        let items = sqlx::query_as::<_, VisualizationTransform>(query_str)
             .bind(owner)
             .bind(limit)
             .bind(offset)
@@ -430,6 +605,9 @@ pub async fn get_visualization_transforms_paginated(
 
         (total, items)
     };
+
+    let duration = start.elapsed().as_secs_f64();
+    record_database_query("SELECT", "visualization_transforms", duration, true);
 
     tx.commit().await?;
 
@@ -524,6 +702,8 @@ pub async fn get_visualization_transforms_by_embedded_dataset(
     pool: &Pool<Postgres>,
     embedded_dataset_id: i32,
     owner: &str,
+    limit: i64,
+    offset: i64,
 ) -> Result<Vec<VisualizationTransform>> {
     let mut tx = pool.begin().await?;
     super::rls::set_rls_user_tx(&mut tx, owner).await?;
@@ -533,6 +713,8 @@ pub async fn get_visualization_transforms_by_embedded_dataset(
     )
     .bind(embedded_dataset_id)
     .bind(owner)
+    .bind(limit)
+    .bind(offset)
     .fetch_all(&mut *tx)
     .await?;
 

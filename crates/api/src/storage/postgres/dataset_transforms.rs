@@ -1,20 +1,30 @@
 use crate::embedded_datasets::EmbeddedDataset;
+use crate::storage::postgres::INTERNAL_BATCH_SIZE;
+use crate::storage::postgres::embedded_datasets::{
+    delete_embedded_dataset_in_transaction, get_embedded_datasets_for_transform_in_transaction,
+};
 use crate::transforms::dataset::models::{DatasetTransform, DatasetTransformStats};
 use anyhow::{Context, Result};
 use semantic_explorer_core::models::PaginatedResponse;
+use semantic_explorer_core::observability::record_database_query;
 use semantic_explorer_core::owner_info::OwnerInfo;
 use sqlx::{Pool, Postgres, Transaction};
+use std::time::Instant;
 
-fn validate_sort_field(sort_by: &str) -> Result<String> {
+fn validate_sort_field(sort_by: &str) -> Result<&'static str> {
     match sort_by {
-        "title" | "is_enabled" | "created_at" | "updated_at" => Ok(sort_by.to_string()),
+        "title" => Ok("title"),
+        "is_enabled" => Ok("is_enabled"),
+        "created_at" => Ok("created_at"),
+        "updated_at" => Ok("updated_at"),
         _ => anyhow::bail!("Invalid sort field: {}", sort_by),
     }
 }
 
-fn validate_sort_direction(direction: &str) -> Result<String> {
+fn validate_sort_direction(direction: &str) -> Result<&'static str> {
     match direction.to_lowercase().as_str() {
-        "asc" | "desc" => Ok(direction.to_uppercase()),
+        "asc" => Ok("ASC"),
+        "desc" => Ok("DESC"),
         _ => anyhow::bail!("Invalid sort direction: {}", direction),
     }
 }
@@ -75,22 +85,147 @@ const COUNT_DATASET_TRANSFORMS_QUERY: &str =
 const COUNT_DATASET_TRANSFORMS_WITH_SEARCH_QUERY: &str =
     "SELECT COUNT(*) as count FROM dataset_transforms WHERE title ILIKE $1 AND owner_id = $2";
 
-// Note: ORDER BY clause is built dynamically with validated identifiers
-// Column names cannot be parameterized in PostgreSQL, so we validate and use format!
-const GET_DATASET_TRANSFORMS_PAGINATED_BASE: &str = r#"
+// Static sort query variants for plan caching
+// Each sort field/direction combination is a separate const
+const DT_PAGINATED_TITLE_ASC: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
            job_config, created_at, updated_at
     FROM dataset_transforms
     WHERE owner_id = $1
+    ORDER BY title ASC LIMIT $2 OFFSET $3
 "#;
-
-const GET_DATASET_TRANSFORMS_PAGINATED_WITH_SEARCH_BASE: &str = r#"
+const DT_PAGINATED_TITLE_DESC: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
            job_config, created_at, updated_at
     FROM dataset_transforms
-    WHERE title ILIKE $1
-    AND owner_id = $2
+    WHERE owner_id = $1
+    ORDER BY title DESC LIMIT $2 OFFSET $3
 "#;
+const DT_PAGINATED_IS_ENABLED_ASC: &str = r#"
+    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
+           job_config, created_at, updated_at
+    FROM dataset_transforms
+    WHERE owner_id = $1
+    ORDER BY is_enabled ASC LIMIT $2 OFFSET $3
+"#;
+const DT_PAGINATED_IS_ENABLED_DESC: &str = r#"
+    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
+           job_config, created_at, updated_at
+    FROM dataset_transforms
+    WHERE owner_id = $1
+    ORDER BY is_enabled DESC LIMIT $2 OFFSET $3
+"#;
+const DT_PAGINATED_CREATED_AT_ASC: &str = r#"
+    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
+           job_config, created_at, updated_at
+    FROM dataset_transforms
+    WHERE owner_id = $1
+    ORDER BY created_at ASC LIMIT $2 OFFSET $3
+"#;
+const DT_PAGINATED_CREATED_AT_DESC: &str = r#"
+    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
+           job_config, created_at, updated_at
+    FROM dataset_transforms
+    WHERE owner_id = $1
+    ORDER BY created_at DESC LIMIT $2 OFFSET $3
+"#;
+const DT_PAGINATED_UPDATED_AT_ASC: &str = r#"
+    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
+           job_config, created_at, updated_at
+    FROM dataset_transforms
+    WHERE owner_id = $1
+    ORDER BY updated_at ASC LIMIT $2 OFFSET $3
+"#;
+const DT_PAGINATED_UPDATED_AT_DESC: &str = r#"
+    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
+           job_config, created_at, updated_at
+    FROM dataset_transforms
+    WHERE owner_id = $1
+    ORDER BY updated_at DESC LIMIT $2 OFFSET $3
+"#;
+
+const DT_SEARCH_TITLE_ASC: &str = r#"
+    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
+           job_config, created_at, updated_at
+    FROM dataset_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY title ASC LIMIT $3 OFFSET $4
+"#;
+const DT_SEARCH_TITLE_DESC: &str = r#"
+    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
+           job_config, created_at, updated_at
+    FROM dataset_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY title DESC LIMIT $3 OFFSET $4
+"#;
+const DT_SEARCH_IS_ENABLED_ASC: &str = r#"
+    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
+           job_config, created_at, updated_at
+    FROM dataset_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY is_enabled ASC LIMIT $3 OFFSET $4
+"#;
+const DT_SEARCH_IS_ENABLED_DESC: &str = r#"
+    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
+           job_config, created_at, updated_at
+    FROM dataset_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY is_enabled DESC LIMIT $3 OFFSET $4
+"#;
+const DT_SEARCH_CREATED_AT_ASC: &str = r#"
+    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
+           job_config, created_at, updated_at
+    FROM dataset_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY created_at ASC LIMIT $3 OFFSET $4
+"#;
+const DT_SEARCH_CREATED_AT_DESC: &str = r#"
+    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
+           job_config, created_at, updated_at
+    FROM dataset_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY created_at DESC LIMIT $3 OFFSET $4
+"#;
+const DT_SEARCH_UPDATED_AT_ASC: &str = r#"
+    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
+           job_config, created_at, updated_at
+    FROM dataset_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY updated_at ASC LIMIT $3 OFFSET $4
+"#;
+const DT_SEARCH_UPDATED_AT_DESC: &str = r#"
+    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
+           job_config, created_at, updated_at
+    FROM dataset_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY updated_at DESC LIMIT $3 OFFSET $4
+"#;
+
+fn get_dt_paginated_query(sort_field: &str, sort_dir: &str) -> &'static str {
+    match (sort_field, sort_dir) {
+        ("title", "ASC") => DT_PAGINATED_TITLE_ASC,
+        ("title", "DESC") => DT_PAGINATED_TITLE_DESC,
+        ("is_enabled", "ASC") => DT_PAGINATED_IS_ENABLED_ASC,
+        ("is_enabled", "DESC") => DT_PAGINATED_IS_ENABLED_DESC,
+        ("created_at", "ASC") => DT_PAGINATED_CREATED_AT_ASC,
+        ("updated_at", "ASC") => DT_PAGINATED_UPDATED_AT_ASC,
+        ("updated_at", "DESC") => DT_PAGINATED_UPDATED_AT_DESC,
+        _ => DT_PAGINATED_CREATED_AT_DESC, // default
+    }
+}
+
+fn get_dt_search_query(sort_field: &str, sort_dir: &str) -> &'static str {
+    match (sort_field, sort_dir) {
+        ("title", "ASC") => DT_SEARCH_TITLE_ASC,
+        ("title", "DESC") => DT_SEARCH_TITLE_DESC,
+        ("is_enabled", "ASC") => DT_SEARCH_IS_ENABLED_ASC,
+        ("is_enabled", "DESC") => DT_SEARCH_IS_ENABLED_DESC,
+        ("created_at", "ASC") => DT_SEARCH_CREATED_AT_ASC,
+        ("updated_at", "ASC") => DT_SEARCH_UPDATED_AT_ASC,
+        ("updated_at", "DESC") => DT_SEARCH_UPDATED_AT_DESC,
+        _ => DT_SEARCH_CREATED_AT_DESC, // default
+    }
+}
 
 const VERIFY_DATASET_TRANSFORM_OWNERSHIP_QUERY: &str =
     "SELECT dataset_transform_id FROM dataset_transforms WHERE dataset_transform_id = ANY($1)";
@@ -103,14 +238,19 @@ pub async fn get_dataset_transform(
     owner: &str,
     dataset_transform_id: i32,
 ) -> Result<DatasetTransform> {
+    let start = Instant::now();
     let mut tx = pool.begin().await?;
     super::rls::set_rls_user_tx(&mut tx, owner).await?;
 
-    let transform = sqlx::query_as::<_, DatasetTransform>(GET_DATASET_TRANSFORM_QUERY)
+    let result = sqlx::query_as::<_, DatasetTransform>(GET_DATASET_TRANSFORM_QUERY)
         .bind(dataset_transform_id)
         .fetch_one(&mut *tx)
-        .await?;
+        .await;
 
+    let duration = start.elapsed().as_secs_f64();
+    record_database_query("SELECT", "dataset_transforms", duration, result.is_ok());
+
+    let transform = result?;
     tx.commit().await?;
     Ok(transform)
 }
@@ -141,6 +281,7 @@ pub async fn get_dataset_transforms_paginated(
     let sort_field = validate_sort_field(sort_by)?;
     let sort_dir = validate_sort_direction(sort_direction)?;
 
+    let start = Instant::now();
     let mut tx = pool.begin().await?;
     super::rls::set_rls_user_tx(&mut tx, owner).await?;
 
@@ -154,13 +295,10 @@ pub async fn get_dataset_transforms_paginated(
             .await?;
         let total = count_result.0;
 
-        // Build query with validated identifiers (column names cannot be parameterized)
-        let query_str = format!(
-            "{} ORDER BY {} {} LIMIT $3 OFFSET $4",
-            GET_DATASET_TRANSFORMS_PAGINATED_WITH_SEARCH_BASE, sort_field, sort_dir
-        );
+        // Use static query variant for plan caching
+        let query_str = get_dt_search_query(sort_field, sort_dir);
 
-        let items = sqlx::query_as::<_, DatasetTransform>(&query_str)
+        let items = sqlx::query_as::<_, DatasetTransform>(query_str)
             .bind(&search_pattern)
             .bind(owner)
             .bind(limit)
@@ -176,13 +314,10 @@ pub async fn get_dataset_transforms_paginated(
             .await?;
         let total = count_result.0;
 
-        // Build query with validated identifiers (column names cannot be parameterized)
-        let query_str = format!(
-            "{} ORDER BY {} {} LIMIT $2 OFFSET $3",
-            GET_DATASET_TRANSFORMS_PAGINATED_BASE, sort_field, sort_dir
-        );
+        // Use static query variant for plan caching
+        let query_str = get_dt_paginated_query(sort_field, sort_dir);
 
-        let items = sqlx::query_as::<_, DatasetTransform>(&query_str)
+        let items = sqlx::query_as::<_, DatasetTransform>(query_str)
             .bind(owner)
             .bind(limit)
             .bind(offset)
@@ -191,6 +326,9 @@ pub async fn get_dataset_transforms_paginated(
 
         (total, items)
     };
+
+    let duration = start.elapsed().as_secs_f64();
+    record_database_query("SELECT", "dataset_transforms", duration, true);
 
     tx.commit().await?;
 
@@ -520,14 +658,19 @@ async fn get_embedded_datasets_for_transform_internal(
     executor: &mut sqlx::PgConnection,
     dataset_transform_id: i32,
 ) -> Result<Vec<EmbeddedDataset>> {
-    use crate::storage::postgres::embedded_datasets::get_embedded_datasets_for_transform_in_transaction;
-    get_embedded_datasets_for_transform_in_transaction(executor, dataset_transform_id).await
+    // Embedded datasets per transform is a small set; a single batch suffices.
+    get_embedded_datasets_for_transform_in_transaction(
+        executor,
+        dataset_transform_id,
+        INTERNAL_BATCH_SIZE,
+        0,
+    )
+    .await
 }
 
 async fn delete_embedded_dataset_internal(
     tx: &mut Transaction<'_, Postgres>,
     embedded_dataset_id: i32,
 ) -> Result<()> {
-    use crate::storage::postgres::embedded_datasets::delete_embedded_dataset_in_transaction;
     delete_embedded_dataset_in_transaction(tx, embedded_dataset_id).await
 }

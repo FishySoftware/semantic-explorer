@@ -7,8 +7,11 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Pool, Postgres};
+use std::time::Instant;
 use tracing::instrument;
 use utoipa::ToSchema;
+
+use semantic_explorer_core::observability::record_database_query;
 
 const INSERT_PENDING_BATCH_QUERY: &str = r#"
     INSERT INTO pending_batches (
@@ -118,10 +121,11 @@ pub async fn insert_pending_batch(
     pool: &Pool<Postgres>,
     req: CreatePendingBatch,
 ) -> Result<PendingBatch> {
+    let start = Instant::now();
     // Calculate next retry time with exponential backoff (starts at 30s)
     let next_retry_at = Utc::now() + chrono::Duration::seconds(30);
 
-    let batch = sqlx::query_as::<_, PendingBatch>(INSERT_PENDING_BATCH_QUERY)
+    let result = sqlx::query_as::<_, PendingBatch>(INSERT_PENDING_BATCH_QUERY)
         .bind(&req.batch_type)
         .bind(req.dataset_transform_id)
         .bind(req.embedded_dataset_id)
@@ -131,9 +135,12 @@ pub async fn insert_pending_batch(
         .bind(&req.job_payload)
         .bind(next_retry_at)
         .fetch_one(pool)
-        .await
-        .context("Failed to insert pending batch")?;
+        .await;
 
+    let duration = start.elapsed().as_secs_f64();
+    record_database_query("INSERT", "pending_batches", duration, result.is_ok());
+
+    let batch = result.context("Failed to insert pending batch")?;
     Ok(batch)
 }
 
@@ -220,6 +227,8 @@ pub async fn cleanup_old_batches(pool: &Pool<Postgres>) -> Result<usize> {
 pub async fn get_orphaned_pending_batches(
     pool: &Pool<Postgres>,
     older_than_hours: i32,
+    limit: i64,
+    offset: i64,
 ) -> Result<Vec<PendingBatch>> {
     let batches = sqlx::query_as::<_, PendingBatch>(
         r#"
@@ -228,10 +237,12 @@ pub async fn get_orphaned_pending_batches(
         WHERE status = 'pending'
           AND created_at < NOW() - ($1 * INTERVAL '1 hour')
         ORDER BY created_at ASC
-        LIMIT 100
+        LIMIT $2 OFFSET $3
         "#,
     )
     .bind(older_than_hours)
+    .bind(limit)
+    .bind(offset)
     .fetch_all(pool)
     .await
     .context("Failed to get orphaned pending batches")?;

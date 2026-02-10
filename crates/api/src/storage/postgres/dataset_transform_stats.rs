@@ -1,7 +1,9 @@
 use crate::transforms::dataset::models::DatasetTransformStats;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
+use semantic_explorer_core::observability::record_database_query;
 use sqlx::{Pool, Postgres, Transaction};
+use std::time::Instant;
 
 const INIT_STATS_QUERY: &str = r#"
     INSERT INTO dataset_transform_stats (
@@ -195,19 +197,29 @@ pub async fn get_stats(
     owner_id: &str,
     dataset_transform_id: i32,
 ) -> Result<Option<DatasetTransformStats>> {
+    let start = Instant::now();
     let mut tx = pool.begin().await?;
     super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
-    let stats = sqlx::query_as::<_, DatasetTransformStats>(GET_STATS_QUERY)
+    let result = sqlx::query_as::<_, DatasetTransformStats>(GET_STATS_QUERY)
         .bind(dataset_transform_id)
         .fetch_optional(&mut *tx)
-        .await
-        .with_context(|| {
-            format!(
-                "Failed to get dataset transform stats for transform {} with owner {}",
-                dataset_transform_id, owner_id
-            )
-        })?;
+        .await;
+
+    let duration = start.elapsed().as_secs_f64();
+    record_database_query(
+        "SELECT",
+        "dataset_transform_stats",
+        duration,
+        result.is_ok(),
+    );
+
+    let stats = result.with_context(|| {
+        format!(
+            "Failed to get dataset transform stats for transform {} with owner {}",
+            dataset_transform_id, owner_id
+        )
+    })?;
 
     tx.commit().await?;
     Ok(stats)

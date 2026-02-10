@@ -1,6 +1,8 @@
 use std::collections::HashMap;
+use std::time::Instant;
 
 use anyhow::Result;
+use semantic_explorer_core::observability::record_database_query;
 use semantic_explorer_core::owner_info::OwnerInfo;
 use sqlx::types::chrono::{DateTime, Utc};
 use sqlx::{FromRow, Pool, Postgres, Transaction};
@@ -57,6 +59,7 @@ const GET_EMBEDDED_DATASETS_FOR_DATASET_QUERY: &str = r#"
     FROM embedded_datasets
     WHERE source_dataset_id = $1
     ORDER BY created_at DESC
+    LIMIT $2 OFFSET $3
 "#;
 
 const GET_EMBEDDED_DATASETS_FOR_TRANSFORM_QUERY: &str = r#"
@@ -65,6 +68,7 @@ const GET_EMBEDDED_DATASETS_FOR_TRANSFORM_QUERY: &str = r#"
     FROM embedded_datasets
     WHERE dataset_transform_id = $1
     ORDER BY created_at DESC
+    LIMIT $2 OFFSET $3
 "#;
 
 const GET_EMBEDDED_DATASET_WITH_DETAILS_QUERY: &str = r#"
@@ -182,6 +186,7 @@ const GET_PROCESSED_BATCHES_QUERY: &str = r#"
     FROM transform_processed_files
     WHERE transform_type = 'dataset' AND transform_id = $1
     ORDER BY processed_at DESC
+    LIMIT $2 OFFSET $3
 "#;
 
 const RECORD_PROCESSED_BATCH_QUERY: &str = r#"
@@ -291,13 +296,19 @@ pub async fn get_embedded_dataset(
     owner: &str,
     embedded_dataset_id: i32,
 ) -> Result<EmbeddedDataset> {
+    let start = Instant::now();
     let mut tx = pool.begin().await?;
     super::rls::set_rls_user_tx(&mut tx, owner).await?;
 
-    let embedded_dataset = sqlx::query_as::<_, EmbeddedDataset>(GET_EMBEDDED_DATASET_QUERY)
+    let result = sqlx::query_as::<_, EmbeddedDataset>(GET_EMBEDDED_DATASET_QUERY)
         .bind(embedded_dataset_id)
         .fetch_one(&mut *tx)
-        .await?;
+        .await;
+
+    let duration = start.elapsed().as_secs_f64();
+    record_database_query("SELECT", "embedded_datasets", duration, result.is_ok());
+
+    let embedded_dataset = result?;
 
     tx.commit().await?;
     Ok(embedded_dataset)
@@ -380,6 +391,8 @@ pub async fn get_embedded_datasets_for_dataset(
     pool: &Pool<Postgres>,
     owner: &str,
     dataset_id: i32,
+    limit: i64,
+    offset: i64,
 ) -> Result<Vec<EmbeddedDataset>> {
     let mut tx = pool.begin().await?;
     super::rls::set_rls_user_tx(&mut tx, owner).await?;
@@ -387,6 +400,8 @@ pub async fn get_embedded_datasets_for_dataset(
     let embedded_datasets =
         sqlx::query_as::<_, EmbeddedDataset>(GET_EMBEDDED_DATASETS_FOR_DATASET_QUERY)
             .bind(dataset_id)
+            .bind(limit)
+            .bind(offset)
             .fetch_all(&mut *tx)
             .await?;
 
@@ -397,10 +412,14 @@ pub async fn get_embedded_datasets_for_dataset(
 pub async fn get_embedded_datasets_for_transform(
     pool: &Pool<Postgres>,
     dataset_transform_id: i32,
+    limit: i64,
+    offset: i64,
 ) -> Result<Vec<EmbeddedDataset>> {
     let embedded_datasets =
         sqlx::query_as::<_, EmbeddedDataset>(GET_EMBEDDED_DATASETS_FOR_TRANSFORM_QUERY)
             .bind(dataset_transform_id)
+            .bind(limit)
+            .bind(offset)
             .fetch_all(pool)
             .await?;
     Ok(embedded_datasets)
@@ -504,10 +523,19 @@ pub async fn get_embedded_dataset_stats(
     pool: &Pool<Postgres>,
     embedded_dataset_id: i32,
 ) -> Result<EmbeddedDatasetStats> {
-    let stats = sqlx::query_as::<_, EmbeddedDatasetStats>(GET_EMBEDDED_DATASET_STATS_QUERY)
+    let start = Instant::now();
+    let result = sqlx::query_as::<_, EmbeddedDatasetStats>(GET_EMBEDDED_DATASET_STATS_QUERY)
         .bind(embedded_dataset_id)
         .fetch_one(pool)
-        .await?;
+        .await;
+    let duration = start.elapsed().as_secs_f64();
+    record_database_query(
+        "SELECT",
+        "embedded_datasets_stats",
+        duration,
+        result.is_ok(),
+    );
+    let stats = result?;
     Ok(stats)
 }
 
@@ -557,9 +585,13 @@ pub async fn verify_embedded_datasets_ownership_batch(
 pub async fn get_processed_batches(
     pool: &Pool<Postgres>,
     embedded_dataset_id: i32,
+    limit: i64,
+    offset: i64,
 ) -> Result<Vec<EmbeddedDatasetProcessedBatch>> {
     let batches = sqlx::query_as::<_, EmbeddedDatasetProcessedBatch>(GET_PROCESSED_BATCHES_QUERY)
         .bind(embedded_dataset_id)
+        .bind(limit)
+        .bind(offset)
         .fetch_all(pool)
         .await?;
     Ok(batches)
@@ -715,10 +747,14 @@ pub async fn create_embedded_dataset_in_transaction(
 pub async fn get_embedded_datasets_for_transform_in_transaction(
     executor: &mut sqlx::PgConnection,
     dataset_transform_id: i32,
+    limit: i64,
+    offset: i64,
 ) -> Result<Vec<EmbeddedDataset>> {
     let embedded_datasets =
         sqlx::query_as::<_, EmbeddedDataset>(GET_EMBEDDED_DATASETS_FOR_TRANSFORM_QUERY)
             .bind(dataset_transform_id)
+            .bind(limit)
+            .bind(offset)
             .fetch_all(executor)
             .await?;
     Ok(embedded_datasets)

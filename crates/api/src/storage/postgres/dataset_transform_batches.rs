@@ -1,8 +1,11 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Pool, Postgres, Row, Transaction};
+use std::time::Instant;
 use tracing::instrument;
 use utoipa::ToSchema;
+
+use semantic_explorer_core::observability::record_database_query;
 
 /// Validate and return a safe sort field for batch queries.
 /// Falls back to "processed_at" for unrecognized inputs.
@@ -59,20 +62,72 @@ const COUNT_BATCHES_BY_TRANSFORM_QUERY: &str = r#"
     SELECT COUNT(*) FROM dataset_transform_batches WHERE dataset_transform_id = $1
 "#;
 
-const LIST_BATCHES_BY_TRANSFORM_BASE_QUERY: &str = r#"
-    SELECT * FROM dataset_transform_batches
-    WHERE dataset_transform_id = $1
-"#;
-
 const COUNT_BATCHES_BY_TRANSFORM_AND_STATUS_QUERY: &str = r#"
     SELECT COUNT(*) FROM dataset_transform_batches
     WHERE dataset_transform_id = $1 AND status = $2
 "#;
 
-const LIST_BATCHES_BY_STATUS_BASE_QUERY: &str = r#"
-    SELECT * FROM dataset_transform_batches
-    WHERE dataset_transform_id = $1 AND status = $2
-"#;
+// Static sort query variants for list_batches_by_transform (plan caching)
+const BTF_BATCH_KEY_ASC: &str = "SELECT * FROM dataset_transform_batches WHERE dataset_transform_id = $1 ORDER BY batch_key ASC LIMIT $2 OFFSET $3";
+const BTF_BATCH_KEY_DESC: &str = "SELECT * FROM dataset_transform_batches WHERE dataset_transform_id = $1 ORDER BY batch_key DESC LIMIT $2 OFFSET $3";
+const BTF_STATUS_ASC: &str = "SELECT * FROM dataset_transform_batches WHERE dataset_transform_id = $1 ORDER BY status ASC LIMIT $2 OFFSET $3";
+const BTF_STATUS_DESC: &str = "SELECT * FROM dataset_transform_batches WHERE dataset_transform_id = $1 ORDER BY status DESC LIMIT $2 OFFSET $3";
+const BTF_CHUNK_COUNT_ASC: &str = "SELECT * FROM dataset_transform_batches WHERE dataset_transform_id = $1 ORDER BY chunk_count ASC LIMIT $2 OFFSET $3";
+const BTF_CHUNK_COUNT_DESC: &str = "SELECT * FROM dataset_transform_batches WHERE dataset_transform_id = $1 ORDER BY chunk_count DESC LIMIT $2 OFFSET $3";
+const BTF_DURATION_ASC: &str = "SELECT * FROM dataset_transform_batches WHERE dataset_transform_id = $1 ORDER BY processing_duration_ms ASC LIMIT $2 OFFSET $3";
+const BTF_DURATION_DESC: &str = "SELECT * FROM dataset_transform_batches WHERE dataset_transform_id = $1 ORDER BY processing_duration_ms DESC LIMIT $2 OFFSET $3";
+const BTF_PROCESSED_AT_ASC: &str = "SELECT * FROM dataset_transform_batches WHERE dataset_transform_id = $1 ORDER BY processed_at ASC LIMIT $2 OFFSET $3";
+const BTF_PROCESSED_AT_DESC: &str = "SELECT * FROM dataset_transform_batches WHERE dataset_transform_id = $1 ORDER BY processed_at DESC LIMIT $2 OFFSET $3";
+const BTF_CREATED_AT_ASC: &str = "SELECT * FROM dataset_transform_batches WHERE dataset_transform_id = $1 ORDER BY created_at ASC LIMIT $2 OFFSET $3";
+const BTF_CREATED_AT_DESC: &str = "SELECT * FROM dataset_transform_batches WHERE dataset_transform_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3";
+
+fn get_btf_query(sort_field: &str, sort_dir: &str) -> &'static str {
+    match (sort_field, sort_dir) {
+        ("batch_key", "ASC") => BTF_BATCH_KEY_ASC,
+        ("batch_key", "DESC") => BTF_BATCH_KEY_DESC,
+        ("status", "ASC") => BTF_STATUS_ASC,
+        ("status", "DESC") => BTF_STATUS_DESC,
+        ("chunk_count", "ASC") => BTF_CHUNK_COUNT_ASC,
+        ("chunk_count", "DESC") => BTF_CHUNK_COUNT_DESC,
+        ("processing_duration_ms", "ASC") => BTF_DURATION_ASC,
+        ("processing_duration_ms", "DESC") => BTF_DURATION_DESC,
+        ("processed_at", "ASC") => BTF_PROCESSED_AT_ASC,
+        ("created_at", "ASC") => BTF_CREATED_AT_ASC,
+        ("created_at", "DESC") => BTF_CREATED_AT_DESC,
+        _ => BTF_PROCESSED_AT_DESC, // default
+    }
+}
+
+// Static sort query variants for list_batches_by_status (plan caching)
+const BTS_BATCH_KEY_ASC: &str = "SELECT * FROM dataset_transform_batches WHERE dataset_transform_id = $1 AND status = $2 ORDER BY batch_key ASC LIMIT $3 OFFSET $4";
+const BTS_BATCH_KEY_DESC: &str = "SELECT * FROM dataset_transform_batches WHERE dataset_transform_id = $1 AND status = $2 ORDER BY batch_key DESC LIMIT $3 OFFSET $4";
+const BTS_STATUS_ASC: &str = "SELECT * FROM dataset_transform_batches WHERE dataset_transform_id = $1 AND status = $2 ORDER BY status ASC LIMIT $3 OFFSET $4";
+const BTS_STATUS_DESC: &str = "SELECT * FROM dataset_transform_batches WHERE dataset_transform_id = $1 AND status = $2 ORDER BY status DESC LIMIT $3 OFFSET $4";
+const BTS_CHUNK_COUNT_ASC: &str = "SELECT * FROM dataset_transform_batches WHERE dataset_transform_id = $1 AND status = $2 ORDER BY chunk_count ASC LIMIT $3 OFFSET $4";
+const BTS_CHUNK_COUNT_DESC: &str = "SELECT * FROM dataset_transform_batches WHERE dataset_transform_id = $1 AND status = $2 ORDER BY chunk_count DESC LIMIT $3 OFFSET $4";
+const BTS_DURATION_ASC: &str = "SELECT * FROM dataset_transform_batches WHERE dataset_transform_id = $1 AND status = $2 ORDER BY processing_duration_ms ASC LIMIT $3 OFFSET $4";
+const BTS_DURATION_DESC: &str = "SELECT * FROM dataset_transform_batches WHERE dataset_transform_id = $1 AND status = $2 ORDER BY processing_duration_ms DESC LIMIT $3 OFFSET $4";
+const BTS_PROCESSED_AT_ASC: &str = "SELECT * FROM dataset_transform_batches WHERE dataset_transform_id = $1 AND status = $2 ORDER BY processed_at ASC LIMIT $3 OFFSET $4";
+const BTS_PROCESSED_AT_DESC: &str = "SELECT * FROM dataset_transform_batches WHERE dataset_transform_id = $1 AND status = $2 ORDER BY processed_at DESC LIMIT $3 OFFSET $4";
+const BTS_CREATED_AT_ASC: &str = "SELECT * FROM dataset_transform_batches WHERE dataset_transform_id = $1 AND status = $2 ORDER BY created_at ASC LIMIT $3 OFFSET $4";
+const BTS_CREATED_AT_DESC: &str = "SELECT * FROM dataset_transform_batches WHERE dataset_transform_id = $1 AND status = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4";
+
+fn get_bts_query(sort_field: &str, sort_dir: &str) -> &'static str {
+    match (sort_field, sort_dir) {
+        ("batch_key", "ASC") => BTS_BATCH_KEY_ASC,
+        ("batch_key", "DESC") => BTS_BATCH_KEY_DESC,
+        ("status", "ASC") => BTS_STATUS_ASC,
+        ("status", "DESC") => BTS_STATUS_DESC,
+        ("chunk_count", "ASC") => BTS_CHUNK_COUNT_ASC,
+        ("chunk_count", "DESC") => BTS_CHUNK_COUNT_DESC,
+        ("processing_duration_ms", "ASC") => BTS_DURATION_ASC,
+        ("processing_duration_ms", "DESC") => BTS_DURATION_DESC,
+        ("processed_at", "ASC") => BTS_PROCESSED_AT_ASC,
+        ("created_at", "ASC") => BTS_CREATED_AT_ASC,
+        ("created_at", "DESC") => BTS_CREATED_AT_DESC,
+        _ => BTS_PROCESSED_AT_DESC, // default
+    }
+}
 
 /// Query for detecting stuck batches across ALL transforms (#18)
 const LIST_STUCK_BATCHES_QUERY: &str = r#"
@@ -169,23 +224,25 @@ pub async fn list_batches_by_transform(
     let sort_field = validate_batch_sort_field(sort_by);
     let sort_dir = validate_batch_sort_direction(sort_direction);
 
+    let start = Instant::now();
+
     // Get total count
     let count_result = sqlx::query_scalar::<_, i64>(COUNT_BATCHES_BY_TRANSFORM_QUERY)
         .bind(dataset_transform_id)
         .fetch_one(pool)
         .await?;
 
-    // Get paginated results with dynamic sort
-    let query = format!(
-        "{} ORDER BY {} {} LIMIT $2 OFFSET $3",
-        LIST_BATCHES_BY_TRANSFORM_BASE_QUERY, sort_field, sort_dir
-    );
-    let batches = sqlx::query_as::<_, DatasetTransformBatch>(&query)
+    // Get paginated results with static sort query
+    let query = get_btf_query(sort_field, sort_dir);
+    let batches = sqlx::query_as::<_, DatasetTransformBatch>(query)
         .bind(dataset_transform_id)
         .bind(limit)
         .bind(offset)
         .fetch_all(pool)
         .await?;
+
+    let duration = start.elapsed().as_secs_f64();
+    record_database_query("SELECT", "dataset_transform_batches", duration, true);
 
     Ok((batches, count_result))
 }
@@ -210,12 +267,9 @@ pub async fn list_batches_by_status(
         .fetch_one(pool)
         .await?;
 
-    // Get paginated results with dynamic sort
-    let query = format!(
-        "{} ORDER BY {} {} LIMIT $3 OFFSET $4",
-        LIST_BATCHES_BY_STATUS_BASE_QUERY, sort_field, sort_dir
-    );
-    let batches = sqlx::query_as::<_, DatasetTransformBatch>(&query)
+    // Get paginated results with static sort query
+    let query = get_bts_query(sort_field, sort_dir);
+    let batches = sqlx::query_as::<_, DatasetTransformBatch>(query)
         .bind(dataset_transform_id)
         .bind(status)
         .bind(limit)

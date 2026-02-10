@@ -20,7 +20,9 @@ use crate::auth::AuthenticatedUser;
 use crate::storage::postgres::dataset_transform_pending_batches::{
     self as pending_batches, PendingBatch,
 };
-use crate::storage::postgres::{dataset_transform_batches, dataset_transform_stats};
+use crate::storage::postgres::{
+    INTERNAL_BATCH_SIZE, dataset_transform_batches, dataset_transform_stats, fetch_all_batched,
+};
 use crate::storage::postgres::{embedded_datasets, embedders};
 use crate::storage::s3 as s3_storage;
 use semantic_explorer_core::encryption::EncryptionService;
@@ -342,10 +344,14 @@ async fn recover_failed_batches(ctx: &ReconciliationContext) -> Result<usize> {
                     // Re-create and publish the job
                     // Get embedded datasets for this transform to find the right one
                     let embedded_datasets_list =
-                        embedded_datasets::get_embedded_datasets_for_transform(
-                            &ctx.pool,
-                            transform.dataset_transform_id,
-                        )
+                        fetch_all_batched(INTERNAL_BATCH_SIZE, |limit, offset| {
+                            embedded_datasets::get_embedded_datasets_for_transform(
+                                &ctx.pool,
+                                transform.dataset_transform_id,
+                                limit,
+                                offset,
+                            )
+                        })
                         .await?;
 
                     if let Some(ed) = embedded_datasets_list.first() {
@@ -462,7 +468,10 @@ async fn recover_failed_batches(ctx: &ReconciliationContext) -> Result<usize> {
 
 /// Cleanup orphaned pending batches older than 24 hours (#7)
 async fn cleanup_orphaned_batches(ctx: &ReconciliationContext) -> Result<usize> {
-    let orphaned = pending_batches::get_orphaned_pending_batches(&ctx.pool, 24).await?;
+    let orphaned = fetch_all_batched(INTERNAL_BATCH_SIZE, |limit, offset| {
+        pending_batches::get_orphaned_pending_batches(&ctx.pool, 24, limit, offset)
+    })
+    .await?;
 
     if orphaned.is_empty() {
         return Ok(0);

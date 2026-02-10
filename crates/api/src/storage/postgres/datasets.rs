@@ -15,16 +15,26 @@ const GET_DATASET_QUERY: &str = r#"
 
 const GET_DATASETS_PAGINATED_QUERY: &str = r#"
     SELECT d.dataset_id, d.title, d.details, d.owner_id, d.owner_display_name, d.tags, d.is_public, d.item_count, d.total_chunks, d.created_at, d.updated_at,
-        COALESCE((SELECT COUNT(*) FROM dataset_transforms dt WHERE dt.source_dataset_id = d.dataset_id), 0)::bigint AS transform_count
+        COALESCE(dt_stats.transform_count, 0)::bigint AS transform_count
     FROM datasets d
+    LEFT JOIN (
+        SELECT source_dataset_id, COUNT(*) AS transform_count
+        FROM dataset_transforms
+        GROUP BY source_dataset_id
+    ) dt_stats ON dt_stats.source_dataset_id = d.dataset_id
     ORDER BY d.created_at DESC
     LIMIT $1 OFFSET $2
 "#;
 
 const GET_DATASETS_PAGINATED_SEARCH_QUERY: &str = r#"
     SELECT d.dataset_id, d.title, d.details, d.owner_id, d.owner_display_name, d.tags, d.is_public, d.item_count, d.total_chunks, d.created_at, d.updated_at,
-        COALESCE((SELECT COUNT(*) FROM dataset_transforms dt WHERE dt.source_dataset_id = d.dataset_id), 0)::bigint AS transform_count
+        COALESCE(dt_stats.transform_count, 0)::bigint AS transform_count
     FROM datasets d
+    LEFT JOIN (
+        SELECT source_dataset_id, COUNT(*) AS transform_count
+        FROM dataset_transforms
+        GROUP BY source_dataset_id
+    ) dt_stats ON dt_stats.source_dataset_id = d.dataset_id
     WHERE d.owner_id = $3 AND (d.title ILIKE $4 OR d.details ILIKE $4 OR $5 = ANY(d.tags))
     ORDER BY d.created_at DESC
     LIMIT $1 OFFSET $2
@@ -103,6 +113,7 @@ const GET_DATASET_ITEMS_MODIFIED_SINCE_QUERY: &str = r#"
     FROM dataset_items
     WHERE dataset_id = $1 AND COALESCE(updated_at, created_at) >= $2
     ORDER BY COALESCE(updated_at, created_at) ASC, item_id ASC
+    LIMIT $3 OFFSET $4
 "#;
 
 /// Get the dataset's version (updated_at timestamp) for efficient stats refresh (#4)
@@ -130,6 +141,7 @@ const GET_PUBLIC_DATASETS_QUERY: &str = r#"
     FROM datasets
     WHERE is_public = TRUE
     ORDER BY created_at DESC
+    LIMIT $1 OFFSET $2
 "#;
 
 const GET_RECENT_PUBLIC_DATASETS_QUERY: &str = r#"
@@ -149,6 +161,15 @@ const GRAB_PUBLIC_DATASET_QUERY: &str = r#"
         RETURNING dataset_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at
     )
     SELECT * FROM new_dataset
+"#;
+
+/// Copy all items from one dataset to another in a single INSERT...SELECT statement.
+/// This avoids N+1 inserts and N trigger firings in separate transactions.
+const COPY_DATASET_ITEMS_QUERY: &str = r#"
+    INSERT INTO dataset_items (dataset_id, title, chunks, metadata)
+    SELECT $1, title, chunks, metadata
+    FROM dataset_items
+    WHERE dataset_id = $2
 "#;
 
 const CREATE_DATASET_ITEMS_BATCH: &str = r#"
@@ -580,19 +601,23 @@ pub(crate) async fn get_dataset_items_modified_since(
     pool: &Pool<Postgres>,
     dataset_id: i32,
     since_timestamp: Option<DateTime<Utc>>,
+    limit: i64,
+    offset: i64,
 ) -> Result<Vec<DatasetItem>> {
     let query = if let Some(timestamp) = since_timestamp {
         sqlx::query_as::<_, DatasetItem>(GET_DATASET_ITEMS_MODIFIED_SINCE_QUERY)
             .bind(dataset_id)
             .bind(timestamp)
+            .bind(limit)
+            .bind(offset)
             .fetch_all(pool)
             .await?
     } else {
-        // If no timestamp provided, return all items
+        // If no timestamp provided, return all items (still respecting caller's pagination)
         sqlx::query_as::<_, DatasetItem>(GET_DATASET_ITEMS_QUERY)
             .bind(dataset_id)
-            .bind(i64::MAX)
-            .bind(0)
+            .bind(limit)
+            .bind(offset)
             .fetch_all(pool)
             .await?
     };
@@ -665,9 +690,15 @@ pub(crate) async fn delete_dataset_item(
 }
 
 #[tracing::instrument(name = "database.get_public_datasets", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT"))]
-pub(crate) async fn get_public_datasets(pool: &Pool<Postgres>) -> Result<Vec<Dataset>> {
+pub(crate) async fn get_public_datasets(
+    pool: &Pool<Postgres>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<Dataset>> {
     let start = Instant::now();
     let result = sqlx::query_as::<_, Dataset>(GET_PUBLIC_DATASETS_QUERY)
+        .bind(limit)
+        .bind(offset)
         .fetch_all(pool)
         .await;
 
@@ -719,30 +750,27 @@ pub(crate) async fn grab_public_dataset(
     record_database_query("INSERT", "datasets", duration, success);
 
     let new_dataset = result?;
-    tx.commit().await?;
 
-    // Copy dataset items from source to new dataset
-    match get_dataset_items(pool, dataset_id, 0, 10000).await {
-        Ok(source_items) => {
-            for item in source_items {
-                if let Err(e) = create_dataset_item(
-                    pool,
-                    owner_id,
-                    new_dataset.dataset_id,
-                    &item.title,
-                    &item.chunks,
-                    item.metadata,
-                )
-                .await
-                {
-                    tracing::warn!(
-                        source_item_id = item.item_id,
-                        new_dataset_id = new_dataset.dataset_id,
-                        error = %e,
-                        "Failed to copy dataset item"
-                    );
-                }
-            }
+    // Copy all items in a single INSERT...SELECT (avoids N+1 inserts and N trigger firings)
+    let copy_start = Instant::now();
+    let copy_result = sqlx::query(COPY_DATASET_ITEMS_QUERY)
+        .bind(new_dataset.dataset_id)
+        .bind(dataset_id)
+        .execute(&mut *tx)
+        .await;
+
+    let copy_duration = copy_start.elapsed().as_secs_f64();
+    let copy_success = copy_result.is_ok();
+    record_database_query("INSERT", "dataset_items", copy_duration, copy_success);
+
+    match copy_result {
+        Ok(result) => {
+            tracing::info!(
+                source_dataset_id = dataset_id,
+                new_dataset_id = new_dataset.dataset_id,
+                rows_copied = result.rows_affected(),
+                "Copied dataset items via INSERT...SELECT"
+            );
         }
         Err(e) => {
             tracing::error!(
@@ -751,10 +779,10 @@ pub(crate) async fn grab_public_dataset(
                 error = %e,
                 "Failed to copy dataset items for grabbed dataset"
             );
-            // Note: We don't fail the whole operation if item copy fails
-            // The dataset record is already created
+            // Don't fail the whole operation if item copy fails
         }
     }
 
+    tx.commit().await?;
     Ok(new_dataset)
 }

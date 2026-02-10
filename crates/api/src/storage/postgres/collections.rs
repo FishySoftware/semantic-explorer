@@ -10,21 +10,37 @@ use semantic_explorer_core::owner_info::OwnerInfo;
 // SQL queries - RLS policies handle owner filtering automatically
 const GET_COLLECTION_QUERY: &str = r#"
     SELECT c.collection_id, c.title, c.details, c.owner_id, c.owner_display_name, c.tags, c.is_public, c.created_at, c.updated_at, c.file_count,
-        COALESCE((SELECT COUNT(*) FROM transform_processed_files tpf
-            JOIN collection_transforms ct ON ct.collection_transform_id = tpf.transform_id AND tpf.transform_type = 'collection'
-            WHERE ct.collection_id = c.collection_id AND tpf.process_status = 'failed'), 0)::bigint AS failed_file_count,
-        COALESCE((SELECT COUNT(*) FROM collection_transforms ct WHERE ct.collection_id = c.collection_id), 0)::bigint AS transform_count
+        COALESCE(ct_stats.failed_count, 0)::bigint AS failed_file_count,
+        COALESCE(ct_stats.transform_count, 0)::bigint AS transform_count
     FROM collections c
+    LEFT JOIN (
+        SELECT ct.collection_id,
+            COUNT(*) FILTER (WHERE tpf.process_status = 'failed') AS failed_count,
+            COUNT(DISTINCT ct.collection_transform_id) AS transform_count
+        FROM collection_transforms ct
+        LEFT JOIN transform_processed_files tpf
+            ON tpf.transform_type = 'collection'
+            AND tpf.transform_id = ct.collection_transform_id
+        GROUP BY ct.collection_id
+    ) ct_stats ON ct_stats.collection_id = c.collection_id
     WHERE c.collection_id = $1
 "#;
 
 const GET_COLLECTIONS_PAGINATED_QUERY: &str = r#"
     SELECT c.collection_id, c.title, c.details, c.owner_id, c.owner_display_name, c.tags, c.is_public, c.created_at, c.updated_at, c.file_count,
-        COALESCE((SELECT COUNT(*) FROM transform_processed_files tpf
-            JOIN collection_transforms ct ON ct.collection_transform_id = tpf.transform_id AND tpf.transform_type = 'collection'
-            WHERE ct.collection_id = c.collection_id AND tpf.process_status = 'failed'), 0)::bigint AS failed_file_count,
-        COALESCE((SELECT COUNT(*) FROM collection_transforms ct WHERE ct.collection_id = c.collection_id), 0)::bigint AS transform_count
+        COALESCE(ct_stats.failed_count, 0)::bigint AS failed_file_count,
+        COALESCE(ct_stats.transform_count, 0)::bigint AS transform_count
     FROM collections c
+    LEFT JOIN (
+        SELECT ct.collection_id,
+            COUNT(*) FILTER (WHERE tpf.process_status = 'failed') AS failed_count,
+            COUNT(DISTINCT ct.collection_transform_id) AS transform_count
+        FROM collection_transforms ct
+        LEFT JOIN transform_processed_files tpf
+            ON tpf.transform_type = 'collection'
+            AND tpf.transform_id = ct.collection_transform_id
+        GROUP BY ct.collection_id
+    ) ct_stats ON ct_stats.collection_id = c.collection_id
     ORDER BY c.created_at DESC
     LIMIT $1 OFFSET $2
 "#;
@@ -35,11 +51,19 @@ const COUNT_COLLECTIONS_QUERY: &str = r#"
 
 const SEARCH_COLLECTIONS_QUERY: &str = r#"
     SELECT c.collection_id, c.title, c.details, c.owner_id, c.owner_display_name, c.tags, c.is_public, c.created_at, c.updated_at, c.file_count,
-        COALESCE((SELECT COUNT(*) FROM transform_processed_files tpf
-            JOIN collection_transforms ct ON ct.collection_transform_id = tpf.transform_id AND tpf.transform_type = 'collection'
-            WHERE ct.collection_id = c.collection_id AND tpf.process_status = 'failed'), 0)::bigint AS failed_file_count,
-        COALESCE((SELECT COUNT(*) FROM collection_transforms ct WHERE ct.collection_id = c.collection_id), 0)::bigint AS transform_count
+        COALESCE(ct_stats.failed_count, 0)::bigint AS failed_file_count,
+        COALESCE(ct_stats.transform_count, 0)::bigint AS transform_count
     FROM collections c
+    LEFT JOIN (
+        SELECT ct.collection_id,
+            COUNT(*) FILTER (WHERE tpf.process_status = 'failed') AS failed_count,
+            COUNT(DISTINCT ct.collection_transform_id) AS transform_count
+        FROM collection_transforms ct
+        LEFT JOIN transform_processed_files tpf
+            ON tpf.transform_type = 'collection'
+            AND tpf.transform_id = ct.collection_transform_id
+        GROUP BY ct.collection_id
+    ) ct_stats ON ct_stats.collection_id = c.collection_id
     WHERE c.owner_id = $1 AND (c.title ILIKE $2 OR c.details ILIKE $2 OR $3 = ANY(c.tags))
     ORDER BY c.created_at DESC
     LIMIT $4 OFFSET $5
@@ -71,23 +95,39 @@ const UPDATE_COLLECTION_QUERY: &str = r#"
 // Public collections don't require RLS context
 const GET_PUBLIC_COLLECTIONS_QUERY: &str = r#"
     SELECT c.collection_id, c.title, c.details, c.owner_id, c.owner_display_name, c.tags, c.is_public, c.created_at, c.updated_at, c.file_count,
-        COALESCE((SELECT COUNT(*) FROM transform_processed_files tpf
-            JOIN collection_transforms ct ON ct.collection_transform_id = tpf.transform_id AND tpf.transform_type = 'collection'
-            WHERE ct.collection_id = c.collection_id AND tpf.process_status = 'failed'), 0)::bigint AS failed_file_count,
-        COALESCE((SELECT COUNT(*) FROM collection_transforms ct WHERE ct.collection_id = c.collection_id), 0)::bigint AS transform_count
+        COALESCE(ct_stats.failed_count, 0)::bigint AS failed_file_count,
+        COALESCE(ct_stats.transform_count, 0)::bigint AS transform_count
     FROM collections c
+    LEFT JOIN (
+        SELECT ct.collection_id,
+            COUNT(*) FILTER (WHERE tpf.process_status = 'failed') AS failed_count,
+            COUNT(DISTINCT ct.collection_transform_id) AS transform_count
+        FROM collection_transforms ct
+        LEFT JOIN transform_processed_files tpf
+            ON tpf.transform_type = 'collection'
+            AND tpf.transform_id = ct.collection_transform_id
+        GROUP BY ct.collection_id
+    ) ct_stats ON ct_stats.collection_id = c.collection_id
     WHERE c.is_public = TRUE
     ORDER BY c.created_at DESC
-    LIMIT 1000
+    LIMIT $1 OFFSET $2
 "#;
 
 const GET_RECENT_PUBLIC_COLLECTIONS_QUERY: &str = r#"
     SELECT c.collection_id, c.title, c.details, c.owner_id, c.owner_display_name, c.tags, c.is_public, c.created_at, c.updated_at, c.file_count,
-        COALESCE((SELECT COUNT(*) FROM transform_processed_files tpf
-            JOIN collection_transforms ct ON ct.collection_transform_id = tpf.transform_id AND tpf.transform_type = 'collection'
-            WHERE ct.collection_id = c.collection_id AND tpf.process_status = 'failed'), 0)::bigint AS failed_file_count,
-        COALESCE((SELECT COUNT(*) FROM collection_transforms ct WHERE ct.collection_id = c.collection_id), 0)::bigint AS transform_count
+        COALESCE(ct_stats.failed_count, 0)::bigint AS failed_file_count,
+        COALESCE(ct_stats.transform_count, 0)::bigint AS transform_count
     FROM collections c
+    LEFT JOIN (
+        SELECT ct.collection_id,
+            COUNT(*) FILTER (WHERE tpf.process_status = 'failed') AS failed_count,
+            COUNT(DISTINCT ct.collection_transform_id) AS transform_count
+        FROM collection_transforms ct
+        LEFT JOIN transform_processed_files tpf
+            ON tpf.transform_type = 'collection'
+            AND tpf.transform_id = ct.collection_transform_id
+        GROUP BY ct.collection_id
+    ) ct_stats ON ct_stats.collection_id = c.collection_id
     WHERE c.is_public = TRUE
     ORDER BY c.updated_at DESC
     LIMIT $1
@@ -272,9 +312,15 @@ pub(crate) async fn delete_collection(
 }
 
 #[tracing::instrument(name = "database.get_public_collections", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT"))]
-pub(crate) async fn get_public_collections(pool: &Pool<Postgres>) -> Result<Vec<Collection>> {
+pub(crate) async fn get_public_collections(
+    pool: &Pool<Postgres>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<Collection>> {
     let start = Instant::now();
     let result = sqlx::query_as::<_, Collection>(GET_PUBLIC_COLLECTIONS_QUERY)
+        .bind(limit)
+        .bind(offset)
         .fetch_all(pool)
         .await;
 

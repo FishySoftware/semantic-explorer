@@ -2,7 +2,10 @@ use crate::audit::{ResourceType, events};
 use crate::auth::AuthenticatedUser;
 use crate::errors::{bad_request, not_found};
 use crate::storage::postgres::dataset_transform_stats::reconcile_from_batches;
-use crate::storage::postgres::{dataset_transform_batches, dataset_transforms, embedded_datasets};
+use crate::storage::postgres::{
+    INTERNAL_BATCH_SIZE, dataset_transform_batches, dataset_transforms, embedded_datasets,
+    fetch_all_batched,
+};
 use crate::transforms::dataset::models::{
     CreateDatasetTransform, DatasetTransform, DatasetTransformStats, UpdateDatasetTransform,
 };
@@ -295,16 +298,22 @@ pub async fn delete_dataset_transform(
     let dataset_transform_id = path.into_inner();
 
     // Get all embedded datasets for this transform so we can delete their Qdrant collections
-    let embedded_datasets_list =
-        match embedded_datasets::get_embedded_datasets_for_transform(&pool, dataset_transform_id)
-            .await
-        {
-            Ok(datasets) => datasets,
-            Err(e) => {
-                error!("Failed to fetch embedded datasets for deletion: {}", e);
-                return not_found(format!("Failed to fetch embedded datasets: {}", e));
-            }
-        };
+    let embedded_datasets_list = match fetch_all_batched(INTERNAL_BATCH_SIZE, |limit, offset| {
+        embedded_datasets::get_embedded_datasets_for_transform(
+            &pool,
+            dataset_transform_id,
+            limit,
+            offset,
+        )
+    })
+    .await
+    {
+        Ok(datasets) => datasets,
+        Err(e) => {
+            error!("Failed to fetch embedded datasets for deletion: {}", e);
+            return not_found(format!("Failed to fetch embedded datasets: {}", e));
+        }
+    };
 
     // Delete Qdrant collections for all embedded datasets
     for embedded_dataset in embedded_datasets_list {
@@ -741,18 +750,24 @@ pub async fn get_dataset_transform_detailed_stats(
         };
 
     // Get all embedded datasets for this transform
-    let embedded_datasets_list =
-        match embedded_datasets::get_embedded_datasets_for_transform(&pool, dataset_transform_id)
-            .await
-        {
-            Ok(eds) => eds,
-            Err(e) => {
-                error!("Failed to get embedded datasets: {}", e);
-                return HttpResponse::InternalServerError().json(serde_json::json!({
-                    "error": format!("Failed to get embedded datasets: {}", e)
-                }));
-            }
-        };
+    let embedded_datasets_list = match fetch_all_batched(INTERNAL_BATCH_SIZE, |limit, offset| {
+        embedded_datasets::get_embedded_datasets_for_transform(
+            &pool,
+            dataset_transform_id,
+            limit,
+            offset,
+        )
+    })
+    .await
+    {
+        Ok(eds) => eds,
+        Err(e) => {
+            error!("Failed to get embedded datasets: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to get embedded datasets: {}", e)
+            }));
+        }
+    };
 
     // Get stats for all embedded datasets in a single batch query (eliminates N+1)
     let embedded_dataset_ids: Vec<i32> = embedded_datasets_list

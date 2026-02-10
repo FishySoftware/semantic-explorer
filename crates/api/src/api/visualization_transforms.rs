@@ -673,12 +673,26 @@ pub async fn get_visualization(
     }
 }
 
+#[derive(Deserialize, Debug)]
+pub struct VisualizationsByDatasetParams {
+    #[serde(default = "default_viz_limit")]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
+}
+fn default_viz_limit() -> i64 {
+    50
+}
+const MAX_VIZ_LIMIT: i64 = 200;
+
 #[utoipa::path(
     get,
     path = "/api/embedded-datasets/{id}/visualizations",
     tag = "Visualization Transforms",
     params(
-        ("id" = i32, Path, description = "Embedded Dataset ID")
+        ("id" = i32, Path, description = "Embedded Dataset ID"),
+        ("limit" = i64, Query, description = "Maximum number of results"),
+        ("offset" = i64, Query, description = "Offset for pagination"),
     ),
     responses(
         (status = 200, description = "List of visualization transforms for the embedded dataset", body = Vec<VisualizationTransform>),
@@ -692,8 +706,11 @@ pub async fn get_visualizations_by_dataset(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
     path: Path<i32>,
+    Query(params): Query<VisualizationsByDatasetParams>,
 ) -> impl Responder {
     let embedded_dataset_id = path.into_inner();
+    let limit = params.limit.clamp(1, MAX_VIZ_LIMIT);
+    let offset = params.offset.max(0);
 
     // Verify embedded dataset exists and belongs to user
     match embedded_datasets::get_embedded_dataset(&pool, &user.as_owner(), embedded_dataset_id)
@@ -716,6 +733,8 @@ pub async fn get_visualizations_by_dataset(
         &pool,
         embedded_dataset_id,
         &user.as_owner(),
+        limit,
+        offset,
     )
     .await
     {

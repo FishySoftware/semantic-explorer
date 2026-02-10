@@ -1,24 +1,29 @@
 use anyhow::Result;
 use sqlx::{Pool, Postgres};
+use std::time::Instant;
 
 use crate::transforms::collection::models::{
     CollectionTransform, CollectionTransformStats, FailedFileWithTransform, ProcessedFile,
 };
 use semantic_explorer_core::models::PaginatedResponse;
+use semantic_explorer_core::observability::record_database_query;
 use semantic_explorer_core::owner_info::OwnerInfo;
 
-fn validate_sort_field(sort_by: &str) -> Result<String> {
+fn validate_sort_field(sort_by: &str) -> Result<&'static str> {
     match sort_by {
-        "title" | "is_enabled" | "created_at" | "updated_at" | "chunk_size" => {
-            Ok(sort_by.to_string())
-        }
+        "title" => Ok("title"),
+        "is_enabled" => Ok("is_enabled"),
+        "created_at" => Ok("created_at"),
+        "updated_at" => Ok("updated_at"),
+        "chunk_size" => Ok("chunk_size"),
         _ => anyhow::bail!("Invalid sort field: {}", sort_by),
     }
 }
 
-fn validate_sort_direction(direction: &str) -> Result<String> {
+fn validate_sort_direction(direction: &str) -> Result<&'static str> {
     match direction.to_lowercase().as_str() {
-        "asc" | "desc" => Ok(direction.to_uppercase()),
+        "asc" => Ok("ASC"),
+        "desc" => Ok("DESC"),
         _ => anyhow::bail!("Invalid sort direction: {}", direction),
     }
 }
@@ -167,22 +172,179 @@ const COUNT_COLLECTION_TRANSFORMS_QUERY: &str =
 const COUNT_COLLECTION_TRANSFORMS_WITH_SEARCH_QUERY: &str =
     "SELECT COUNT(*) as count FROM collection_transforms WHERE title ILIKE $1 AND owner_id = $2";
 
-// Note: ORDER BY clause is built dynamically with validated identifiers
-// Column names cannot be parameterized in PostgreSQL, so we validate and use format!
-const GET_COLLECTION_TRANSFORMS_PAGINATED_BASE: &str = r#"
+// Static sort query variants for plan caching
+// Each sort field/direction combination is a separate const
+const CT_PAGINATED_TITLE_ASC: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
            chunk_size, job_config, created_at, updated_at
     FROM collection_transforms
     WHERE owner_id = $1
+    ORDER BY title ASC LIMIT $2 OFFSET $3
 "#;
-
-const GET_COLLECTION_TRANSFORMS_PAGINATED_WITH_SEARCH_BASE: &str = r#"
+const CT_PAGINATED_TITLE_DESC: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
            chunk_size, job_config, created_at, updated_at
     FROM collection_transforms
-    WHERE title ILIKE $1
-    AND owner_id = $2
+    WHERE owner_id = $1
+    ORDER BY title DESC LIMIT $2 OFFSET $3
 "#;
+const CT_PAGINATED_IS_ENABLED_ASC: &str = r#"
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
+           chunk_size, job_config, created_at, updated_at
+    FROM collection_transforms
+    WHERE owner_id = $1
+    ORDER BY is_enabled ASC LIMIT $2 OFFSET $3
+"#;
+const CT_PAGINATED_IS_ENABLED_DESC: &str = r#"
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
+           chunk_size, job_config, created_at, updated_at
+    FROM collection_transforms
+    WHERE owner_id = $1
+    ORDER BY is_enabled DESC LIMIT $2 OFFSET $3
+"#;
+const CT_PAGINATED_CREATED_AT_ASC: &str = r#"
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
+           chunk_size, job_config, created_at, updated_at
+    FROM collection_transforms
+    WHERE owner_id = $1
+    ORDER BY created_at ASC LIMIT $2 OFFSET $3
+"#;
+const CT_PAGINATED_CREATED_AT_DESC: &str = r#"
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
+           chunk_size, job_config, created_at, updated_at
+    FROM collection_transforms
+    WHERE owner_id = $1
+    ORDER BY created_at DESC LIMIT $2 OFFSET $3
+"#;
+const CT_PAGINATED_UPDATED_AT_ASC: &str = r#"
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
+           chunk_size, job_config, created_at, updated_at
+    FROM collection_transforms
+    WHERE owner_id = $1
+    ORDER BY updated_at ASC LIMIT $2 OFFSET $3
+"#;
+const CT_PAGINATED_UPDATED_AT_DESC: &str = r#"
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
+           chunk_size, job_config, created_at, updated_at
+    FROM collection_transforms
+    WHERE owner_id = $1
+    ORDER BY updated_at DESC LIMIT $2 OFFSET $3
+"#;
+const CT_PAGINATED_CHUNK_SIZE_ASC: &str = r#"
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
+           chunk_size, job_config, created_at, updated_at
+    FROM collection_transforms
+    WHERE owner_id = $1
+    ORDER BY chunk_size ASC LIMIT $2 OFFSET $3
+"#;
+const CT_PAGINATED_CHUNK_SIZE_DESC: &str = r#"
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
+           chunk_size, job_config, created_at, updated_at
+    FROM collection_transforms
+    WHERE owner_id = $1
+    ORDER BY chunk_size DESC LIMIT $2 OFFSET $3
+"#;
+
+const CT_SEARCH_TITLE_ASC: &str = r#"
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
+           chunk_size, job_config, created_at, updated_at
+    FROM collection_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY title ASC LIMIT $3 OFFSET $4
+"#;
+const CT_SEARCH_TITLE_DESC: &str = r#"
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
+           chunk_size, job_config, created_at, updated_at
+    FROM collection_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY title DESC LIMIT $3 OFFSET $4
+"#;
+const CT_SEARCH_IS_ENABLED_ASC: &str = r#"
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
+           chunk_size, job_config, created_at, updated_at
+    FROM collection_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY is_enabled ASC LIMIT $3 OFFSET $4
+"#;
+const CT_SEARCH_IS_ENABLED_DESC: &str = r#"
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
+           chunk_size, job_config, created_at, updated_at
+    FROM collection_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY is_enabled DESC LIMIT $3 OFFSET $4
+"#;
+const CT_SEARCH_CREATED_AT_ASC: &str = r#"
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
+           chunk_size, job_config, created_at, updated_at
+    FROM collection_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY created_at ASC LIMIT $3 OFFSET $4
+"#;
+const CT_SEARCH_CREATED_AT_DESC: &str = r#"
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
+           chunk_size, job_config, created_at, updated_at
+    FROM collection_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY created_at DESC LIMIT $3 OFFSET $4
+"#;
+const CT_SEARCH_UPDATED_AT_ASC: &str = r#"
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
+           chunk_size, job_config, created_at, updated_at
+    FROM collection_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY updated_at ASC LIMIT $3 OFFSET $4
+"#;
+const CT_SEARCH_UPDATED_AT_DESC: &str = r#"
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
+           chunk_size, job_config, created_at, updated_at
+    FROM collection_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY updated_at DESC LIMIT $3 OFFSET $4
+"#;
+const CT_SEARCH_CHUNK_SIZE_ASC: &str = r#"
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
+           chunk_size, job_config, created_at, updated_at
+    FROM collection_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY chunk_size ASC LIMIT $3 OFFSET $4
+"#;
+const CT_SEARCH_CHUNK_SIZE_DESC: &str = r#"
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
+           chunk_size, job_config, created_at, updated_at
+    FROM collection_transforms
+    WHERE title ILIKE $1 AND owner_id = $2
+    ORDER BY chunk_size DESC LIMIT $3 OFFSET $4
+"#;
+
+fn get_ct_paginated_query(sort_field: &str, sort_dir: &str) -> &'static str {
+    match (sort_field, sort_dir) {
+        ("title", "ASC") => CT_PAGINATED_TITLE_ASC,
+        ("title", "DESC") => CT_PAGINATED_TITLE_DESC,
+        ("is_enabled", "ASC") => CT_PAGINATED_IS_ENABLED_ASC,
+        ("is_enabled", "DESC") => CT_PAGINATED_IS_ENABLED_DESC,
+        ("created_at", "ASC") => CT_PAGINATED_CREATED_AT_ASC,
+        ("updated_at", "ASC") => CT_PAGINATED_UPDATED_AT_ASC,
+        ("updated_at", "DESC") => CT_PAGINATED_UPDATED_AT_DESC,
+        ("chunk_size", "ASC") => CT_PAGINATED_CHUNK_SIZE_ASC,
+        ("chunk_size", "DESC") => CT_PAGINATED_CHUNK_SIZE_DESC,
+        _ => CT_PAGINATED_CREATED_AT_DESC, // default
+    }
+}
+
+fn get_ct_search_query(sort_field: &str, sort_dir: &str) -> &'static str {
+    match (sort_field, sort_dir) {
+        ("title", "ASC") => CT_SEARCH_TITLE_ASC,
+        ("title", "DESC") => CT_SEARCH_TITLE_DESC,
+        ("is_enabled", "ASC") => CT_SEARCH_IS_ENABLED_ASC,
+        ("is_enabled", "DESC") => CT_SEARCH_IS_ENABLED_DESC,
+        ("created_at", "ASC") => CT_SEARCH_CREATED_AT_ASC,
+        ("updated_at", "ASC") => CT_SEARCH_UPDATED_AT_ASC,
+        ("updated_at", "DESC") => CT_SEARCH_UPDATED_AT_DESC,
+        ("chunk_size", "ASC") => CT_SEARCH_CHUNK_SIZE_ASC,
+        ("chunk_size", "DESC") => CT_SEARCH_CHUNK_SIZE_DESC,
+        _ => CT_SEARCH_CREATED_AT_DESC, // default
+    }
+}
 
 // CRUD operations
 pub async fn get_collection_transform(
@@ -190,14 +352,19 @@ pub async fn get_collection_transform(
     owner: &str,
     collection_transform_id: i32,
 ) -> Result<CollectionTransform> {
+    let start = Instant::now();
     let mut tx = pool.begin().await?;
     super::rls::set_rls_user_tx(&mut tx, owner).await?;
 
-    let transform = sqlx::query_as::<_, CollectionTransform>(GET_COLLECTION_TRANSFORM_QUERY)
+    let result = sqlx::query_as::<_, CollectionTransform>(GET_COLLECTION_TRANSFORM_QUERY)
         .bind(collection_transform_id)
         .fetch_one(&mut *tx)
-        .await?;
+        .await;
 
+    let duration = start.elapsed().as_secs_f64();
+    record_database_query("SELECT", "collection_transforms", duration, result.is_ok());
+
+    let transform = result?;
     tx.commit().await?;
     Ok(transform)
 }
@@ -228,6 +395,7 @@ pub async fn get_collection_transforms_paginated(
     let sort_field = validate_sort_field(sort_by)?;
     let sort_dir = validate_sort_direction(sort_direction)?;
 
+    let start = Instant::now();
     let mut tx = pool.begin().await?;
     super::rls::set_rls_user_tx(&mut tx, owner).await?;
 
@@ -241,13 +409,10 @@ pub async fn get_collection_transforms_paginated(
             .await?;
         let total = count_result.0;
 
-        // Build query with validated identifiers (column names cannot be parameterized)
-        let query_str = format!(
-            "{} ORDER BY {} {} LIMIT $3 OFFSET $4",
-            GET_COLLECTION_TRANSFORMS_PAGINATED_WITH_SEARCH_BASE, sort_field, sort_dir
-        );
+        // Use static query variant for plan caching
+        let query_str = get_ct_search_query(sort_field, sort_dir);
 
-        let items = sqlx::query_as::<_, CollectionTransform>(&query_str)
+        let items = sqlx::query_as::<_, CollectionTransform>(query_str)
             .bind(&search_pattern)
             .bind(owner)
             .bind(limit)
@@ -263,13 +428,10 @@ pub async fn get_collection_transforms_paginated(
             .await?;
         let total = count_result.0;
 
-        // Build query with validated identifiers (column names cannot be parameterized)
-        let query_str = format!(
-            "{} ORDER BY {} {} LIMIT $2 OFFSET $3",
-            GET_COLLECTION_TRANSFORMS_PAGINATED_BASE, sort_field, sort_dir
-        );
+        // Use static query variant for plan caching
+        let query_str = get_ct_paginated_query(sort_field, sort_dir);
 
-        let items = sqlx::query_as::<_, CollectionTransform>(&query_str)
+        let items = sqlx::query_as::<_, CollectionTransform>(query_str)
             .bind(owner)
             .bind(limit)
             .bind(offset)
@@ -278,6 +440,9 @@ pub async fn get_collection_transforms_paginated(
 
         (total, items)
     };
+
+    let duration = start.elapsed().as_secs_f64();
+    record_database_query("SELECT", "collection_transforms", duration, true);
 
     tx.commit().await?;
 

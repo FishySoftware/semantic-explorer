@@ -212,7 +212,7 @@ impl DatabaseConfig {
                 .context("DB_MIN_CONNECTIONS must be a number")?,
             acquire_timeout: Duration::from_secs(
                 env::var("DB_ACQUIRE_TIMEOUT_SECS")
-                    .unwrap_or_else(|_| "30".to_string())
+                    .unwrap_or_else(|_| "5".to_string())
                     .parse()
                     .context("DB_ACQUIRE_TIMEOUT_SECS must be a number")?,
             ),

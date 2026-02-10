@@ -74,7 +74,7 @@
 
 	async function fetchSessions() {
 		try {
-			const response = await fetch('/api/chat/sessions');
+			const response = await fetch('/api/chat/sessions?limit=200');
 			if (!response.ok) {
 				throw new Error(`Failed to fetch chat sessions: ${response.statusText}`);
 			}

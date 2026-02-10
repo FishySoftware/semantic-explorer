@@ -25,6 +25,21 @@ use crate::{
     errors::ApiError,
     storage::postgres::chat,
 };
+
+const MAX_CHAT_SESSIONS_LIMIT: i64 = 200;
+const DEFAULT_CHAT_SESSIONS_LIMIT: i64 = 50;
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ChatSessionsParams {
+    #[serde(default = "default_chat_sessions_limit")]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
+}
+
+fn default_chat_sessions_limit() -> i64 {
+    DEFAULT_CHAT_SESSIONS_LIMIT
+}
 use semantic_explorer_core::{
     config::{EmbeddingInferenceConfig, LlmInferenceConfig, WorkerConfig},
     encryption::EncryptionService,
@@ -69,6 +84,10 @@ pub(crate) async fn create_chat_session(
         (status = 200, description = "OK", body = ChatSessions),
         (status = 500, description = "Internal Server Error"),
     ),
+    params(
+        ("limit" = Option<i64>, Query, description = "Max sessions to return (1-200, default 50)"),
+        ("offset" = Option<i64>, Query, description = "Number of sessions to skip (default 0)"),
+    ),
     tag = "Chat",
 )]
 #[get("/api/chat/sessions")]
@@ -76,8 +95,11 @@ pub(crate) async fn create_chat_session(
 pub(crate) async fn get_chat_sessions(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
+    params: Query<ChatSessionsParams>,
 ) -> impl Responder {
-    match chat::get_chat_sessions(&pool.into_inner(), &user.as_owner()).await {
+    let limit = params.limit.clamp(1, MAX_CHAT_SESSIONS_LIMIT);
+    let offset = params.offset.max(0);
+    match chat::get_chat_sessions(&pool.into_inner(), &user.as_owner(), limit, offset).await {
         Ok(sessions) => HttpResponse::Ok().json(sessions),
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch chat sessions");

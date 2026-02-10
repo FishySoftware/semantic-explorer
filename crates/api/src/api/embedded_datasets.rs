@@ -18,6 +18,35 @@ use qdrant_client::qdrant::{
 use qdrant_client::qdrant::{PointId, ScrollPointsBuilder};
 use semantic_explorer_core::validation;
 use serde::{Deserialize, Serialize};
+
+const MAX_EMBEDDED_DATASETS_LIMIT: i64 = 200;
+const DEFAULT_EMBEDDED_DATASETS_LIMIT: i64 = 50;
+const MAX_PROCESSED_BATCHES_LIMIT: i64 = 5000;
+const DEFAULT_PROCESSED_BATCHES_LIMIT: i64 = 100;
+
+#[derive(Debug, Deserialize)]
+pub struct EmbeddedDatasetsPaginationParams {
+    #[serde(default = "default_embedded_datasets_limit")]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
+}
+
+fn default_embedded_datasets_limit() -> i64 {
+    DEFAULT_EMBEDDED_DATASETS_LIMIT
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProcessedBatchesPaginationParams {
+    #[serde(default = "default_processed_batches_limit")]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
+}
+
+fn default_processed_batches_limit() -> i64 {
+    DEFAULT_PROCESSED_BATCHES_LIMIT
+}
 use sqlx::{Pool, Postgres};
 use tracing::{error, info, warn};
 use utoipa::ToSchema;
@@ -555,7 +584,9 @@ pub async fn get_point_vector(
     path = "/api/embedded-datasets/{id}/processed-batches",
     tag = "Embedded Datasets",
     params(
-        ("id" = i32, Path, description = "Embedded Dataset ID")
+        ("id" = i32, Path, description = "Embedded Dataset ID"),
+        ("limit" = Option<i64>, Query, description = "Max batches to return (1-5000, default 100)"),
+        ("offset" = Option<i64>, Query, description = "Number of batches to skip (default 0)"),
     ),
     responses(
         (status = 200, description = "Processed batches", body = Vec<EmbeddedDatasetProcessedBatch>),
@@ -569,21 +600,33 @@ pub async fn get_processed_batches(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
     path: Path<i32>,
+    params: Query<ProcessedBatchesPaginationParams>,
 ) -> impl Responder {
     let embedded_dataset_id = path.into_inner();
+    let limit = params.limit.clamp(1, MAX_PROCESSED_BATCHES_LIMIT);
+    let offset = params.offset.max(0);
 
     match embedded_datasets::get_embedded_dataset(&pool, &user.as_owner(), embedded_dataset_id)
         .await
     {
-        Ok(_) => match embedded_datasets::get_processed_batches(&pool, embedded_dataset_id).await {
-            Ok(batches) => HttpResponse::Ok().json(batches),
-            Err(e) => {
-                error!("Failed to get processed batches: {}", e);
-                HttpResponse::InternalServerError().json(serde_json::json!({
-                    "error": format!("Failed to get processed batches: {}", e)
-                }))
+        Ok(_) => {
+            match embedded_datasets::get_processed_batches(
+                &pool,
+                embedded_dataset_id,
+                limit,
+                offset,
+            )
+            .await
+            {
+                Ok(batches) => HttpResponse::Ok().json(batches),
+                Err(e) => {
+                    error!("Failed to get processed batches: {}", e);
+                    HttpResponse::InternalServerError().json(serde_json::json!({
+                        "error": format!("Failed to get processed batches: {}", e)
+                    }))
+                }
             }
-        },
+        }
         Err(e) => {
             error!("Embedded dataset not found: {}", e);
             not_found(format!("Embedded dataset not found: {}", e))
@@ -596,7 +639,9 @@ pub async fn get_processed_batches(
     path = "/api/datasets/{dataset_id}/embedded-datasets",
     tag = "Embedded Datasets",
     params(
-        ("dataset_id" = i32, Path, description = "Dataset ID")
+        ("dataset_id" = i32, Path, description = "Dataset ID"),
+        ("limit" = Option<i64>, Query, description = "Max results to return (1-200, default 50)"),
+        ("offset" = Option<i64>, Query, description = "Number of results to skip (default 0)"),
     ),
     responses(
         (status = 200, description = "Embedded datasets for dataset (across all transforms)", body = Vec<EmbeddedDataset>),
@@ -609,11 +654,16 @@ pub async fn get_embedded_datasets_for_dataset(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
     path: Path<i32>,
+    params: Query<EmbeddedDatasetsPaginationParams>,
 ) -> impl Responder {
+    let limit = params.limit.clamp(1, MAX_EMBEDDED_DATASETS_LIMIT);
+    let offset = params.offset.max(0);
     match embedded_datasets::get_embedded_datasets_for_dataset(
         &pool,
         &user.as_owner(),
         path.into_inner(),
+        limit,
+        offset,
     )
     .await
     {

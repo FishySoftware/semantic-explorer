@@ -29,6 +29,7 @@ use crate::storage::postgres::dataset_transforms::{
 use crate::storage::postgres::datasets;
 use crate::storage::postgres::embedded_datasets;
 use crate::storage::postgres::embedders;
+use crate::storage::postgres::{INTERNAL_BATCH_SIZE, fetch_all_batched};
 use crate::storage::s3;
 use crate::transforms::dataset::models::DatasetTransform;
 
@@ -336,10 +337,14 @@ async fn process_dataset_transform_scan(
     }
 
     // Get all embedded datasets for this transform
-    let embedded_datasets_list = embedded_datasets::get_embedded_datasets_for_transform(
-        pool,
-        transform.dataset_transform_id,
-    )
+    let embedded_datasets_list = fetch_all_batched(INTERNAL_BATCH_SIZE, |limit, offset| {
+        embedded_datasets::get_embedded_datasets_for_transform(
+            pool,
+            transform.dataset_transform_id,
+            limit,
+            offset,
+        )
+    })
     .await?;
 
     // Only refresh total_chunks_to_process if the source dataset has changed (#4)
@@ -464,9 +469,15 @@ async fn process_dataset_transform_scan(
         // The main bucket is created during infrastructure setup
 
         // Get processed batches for this embedded dataset
-        let processed_batches =
-            embedded_datasets::get_processed_batches(pool, embedded_dataset.embedded_dataset_id)
-                .await?;
+        let processed_batches = fetch_all_batched(INTERNAL_BATCH_SIZE, |limit, offset| {
+            embedded_datasets::get_processed_batches(
+                pool,
+                embedded_dataset.embedded_dataset_id,
+                limit,
+                offset,
+            )
+        })
+        .await?;
         let processed_keys: HashSet<String> = processed_batches
             .iter()
             .map(|b| b.file_key.clone())
@@ -692,11 +703,17 @@ async fn create_batches_from_dataset_items(
         embedded_dataset.embedded_dataset_id, last_processed_at, query_start_time
     );
 
-    // Fetch only items that were modified since the last processing
+    // Apply resource limits
+    let limits = ScannerLimits::new(scanner_config);
+    // Fetch at most max_items_per_scan + 1 so we can detect truncation
+    // without pulling unbounded rows from the database.
+    let fetch_limit = (limits.max_items_per_scan as i64).saturating_add(1);
     let mut items = datasets::get_dataset_items_modified_since(
         pool,
         transform.source_dataset_id,
         last_processed_at,
+        fetch_limit,
+        0,
     )
     .await?;
 
@@ -708,8 +725,6 @@ async fn create_batches_from_dataset_items(
         return Ok(0);
     }
 
-    // Apply resource limits
-    let limits = ScannerLimits::new(scanner_config);
     let was_truncated = items.len() > limits.max_items_per_scan;
     if was_truncated {
         warn!(

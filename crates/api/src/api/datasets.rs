@@ -12,7 +12,7 @@ use crate::{
         PaginatedDatasetList, PaginationParams,
     },
     errors::ApiError,
-    storage::postgres::{datasets, embedded_datasets},
+    storage::postgres::{INTERNAL_BATCH_SIZE, datasets, embedded_datasets, fetch_all_batched},
 };
 use qdrant_client::{
     Qdrant,
@@ -312,11 +312,16 @@ pub(crate) async fn delete_dataset(
     };
 
     // Get all embedded datasets for this dataset so we can delete their Qdrant collections
-    let embedded_datasets = match embedded_datasets::get_embedded_datasets_for_dataset(
-        &pool,
-        &user.as_owner(),
-        dataset_id,
-    )
+    let embedded_datasets = match fetch_all_batched(INTERNAL_BATCH_SIZE, |limit, offset| {
+        let pool = pool.clone();
+        let owner = user.as_owner();
+        async move {
+            embedded_datasets::get_embedded_datasets_for_dataset(
+                &pool, &owner, dataset_id, limit, offset,
+            )
+            .await
+        }
+    })
     .await
     {
         Ok(datasets) => datasets,
@@ -685,11 +690,16 @@ pub(crate) async fn delete_dataset_item(
     };
 
     // Get embedded datasets for this dataset to find collections to clean up
-    let embedded_datasets_list = match embedded_datasets::get_embedded_datasets_for_dataset(
-        &pool,
-        &user.as_owner(),
-        dataset_id,
-    )
+    let embedded_datasets_list = match fetch_all_batched(INTERNAL_BATCH_SIZE, |limit, offset| {
+        let pool = pool.clone();
+        let owner = user.as_owner();
+        async move {
+            embedded_datasets::get_embedded_datasets_for_dataset(
+                &pool, &owner, dataset_id, limit, offset,
+            )
+            .await
+        }
+    })
     .await
     {
         Ok(eds) => eds,

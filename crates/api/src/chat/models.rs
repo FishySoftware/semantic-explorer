@@ -20,6 +20,9 @@ pub(crate) struct ChatSession {
 #[derive(Deserialize, Serialize, ToSchema)]
 pub struct ChatSessions {
     pub sessions: Vec<ChatSession>,
+    pub total_count: i64,
+    pub limit: i64,
+    pub offset: i64,
 }
 
 #[derive(Serialize, Deserialize, ToSchema, Clone, Debug, FromRow)]

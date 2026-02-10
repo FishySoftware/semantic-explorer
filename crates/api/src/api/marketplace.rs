@@ -22,10 +22,26 @@ pub(crate) struct RecentCollectionsQuery {
     pub(crate) limit: Option<i32>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct MarketplacePaginationParams {
+    #[serde(default = "default_marketplace_limit")]
+    pub(crate) limit: i64,
+    #[serde(default)]
+    pub(crate) offset: i64,
+}
+fn default_marketplace_limit() -> i64 {
+    50
+}
+const MAX_MARKETPLACE_LIMIT: i64 = 200;
+
 #[utoipa::path(
     responses(
         (status = 200, description = "OK", body = Vec<Collection>),
         (status = 500, description = "Internal Server Error"),
+    ),
+    params(
+        ("limit" = i64, Query, description = "Maximum number of results"),
+        ("offset" = i64, Query, description = "Offset for pagination"),
     ),
     tag = "Marketplace",
 )]
@@ -34,8 +50,11 @@ pub(crate) struct RecentCollectionsQuery {
 pub(crate) async fn get_public_collections(
     _user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
+    Query(params): Query<MarketplacePaginationParams>,
 ) -> impl Responder {
-    match collections::get_public_collections(&pool.into_inner()).await {
+    let limit = params.limit.clamp(1, MAX_MARKETPLACE_LIMIT);
+    let offset = params.offset.max(0);
+    match collections::get_public_collections(&pool.into_inner(), limit, offset).await {
         Ok(collections_list) => HttpResponse::Ok().json(collections_list),
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch public collections");
@@ -166,6 +185,10 @@ pub(crate) async fn get_recent_public_llms(
         (status = 200, description = "OK", body = Vec<Dataset>),
         (status = 500, description = "Internal Server Error"),
     ),
+    params(
+        ("limit" = i64, Query, description = "Maximum number of results"),
+        ("offset" = i64, Query, description = "Offset for pagination"),
+    ),
     tag = "Marketplace",
 )]
 #[get("/api/marketplace/datasets")]
@@ -173,8 +196,11 @@ pub(crate) async fn get_recent_public_llms(
 pub(crate) async fn get_public_datasets(
     _user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
+    Query(params): Query<MarketplacePaginationParams>,
 ) -> impl Responder {
-    match datasets::get_public_datasets(&pool.into_inner()).await {
+    let limit = params.limit.clamp(1, MAX_MARKETPLACE_LIMIT);
+    let offset = params.offset.max(0);
+    match datasets::get_public_datasets(&pool.into_inner(), limit, offset).await {
         Ok(datasets_list) => HttpResponse::Ok().json(datasets_list),
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch public datasets");

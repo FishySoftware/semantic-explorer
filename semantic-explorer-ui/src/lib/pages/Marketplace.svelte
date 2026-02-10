@@ -103,8 +103,8 @@
 			error = null;
 
 			const [collectionsRes, datasetsRes, embeddersRes, llmsRes] = await Promise.all([
-				fetch('/api/marketplace/collections'),
-				fetch('/api/marketplace/datasets'),
+				fetch('/api/marketplace/collections?limit=200'),
+				fetch('/api/marketplace/datasets?limit=200'),
 				fetch('/api/marketplace/embedders'),
 				fetch('/api/marketplace/llms'),
 			]);
