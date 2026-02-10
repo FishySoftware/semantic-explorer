@@ -110,7 +110,6 @@ The collections worker:
 | Format | Extensions |
 |--------|------------|
 | EML | `.eml` |
-| MSG | `.msg` |
 
 </details>
 

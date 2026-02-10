@@ -114,9 +114,9 @@ flowchart TD
 
 | Technology      | Version | Purpose                  |
 | --------------- | ------- | ------------------------ |
-| Svelte          | 5.43    | UI framework             |
+| Svelte          | 5.50    | UI framework             |
 | TypeScript      | 5.9     | Type safety              |
-| Vite (rolldown) | 7.2     | Build tool               |
+| Vite (rolldown) | 7.3     | Build tool               |
 | Tailwind CSS    | 4.1     | Styling                  |
 | Flowbite Svelte | 1.31    | UI component library     |
 | Deck.gl         | 9.2     | WebGL visualizations     |

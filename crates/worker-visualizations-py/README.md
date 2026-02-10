@@ -87,6 +87,7 @@ graph TB
     subgraph "External APIs"
         OPENAI[OpenAI API<br/>GPT-4/3.5]
         COHERE[Cohere API<br/>Command-R]
+        INTERNAL[Internal LLM API<br/>llm-inference-api]
     end
 
     subgraph "Storage"
@@ -106,7 +107,7 @@ graph TB
     PROCESSOR --> UMAP
     UMAP --> HDBSCAN
     HDBSCAN --> LLM_NAMER
-    LLM_NAMER --> OPENAI & COHERE
+    LLM_NAMER --> OPENAI & COHERE & INTERNAL
 
     HDBSCAN --> DATAMAP
     LLM_NAMER --> DATAMAP
@@ -367,6 +368,18 @@ During processing, progress updates are published to the result topic:
 }
 ```
 
+### Internal (llm-inference-api)
+
+```json
+{
+  "provider": "internal",
+  "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "config": {}
+}
+```
+
+Uses the local `llm-inference-api` service at `LLM_INFERENCE_API_URL` (default: `http://localhost:8091`). No API key required.
+
 ## Output HTML Structure
 
 The generated HTML visualization includes:
@@ -424,7 +437,7 @@ curl http://localhost:8081/health/live
 
 #### Readiness Probe
 ```bash
-curl http://localhost:8081/ready
+curl http://localhost:8081/health/ready
 # Returns 200 OK if worker is ready to accept jobs
 # Returns 503 Service Unavailable if:
 #   - Worker is processing a job that exceeded max wait time

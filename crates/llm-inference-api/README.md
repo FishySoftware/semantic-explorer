@@ -34,9 +34,10 @@ Optional service for local LLM inference:
 | `GET` | `/health/ready` | Readiness probe |
 | `GET` | `/api/llms` | List available models |
 | `POST` | `/api/generate` | Text generation from a prompt |
-| `POST` | `/api/generate/stream` | Streaming text generation (SSE) |
 | `POST` | `/api/chat` | Chat with message history |
 | `POST` | `/api/chat/stream` | Streaming chat (SSE) |
+| `POST` | `/api/completions` | Text completion |
+| `POST` | `/api/completions/stream` | Streaming text completion (SSE) |
 | `GET` | `/swagger-ui` | Interactive API documentation |
 | `GET` | `/metrics` | Prometheus metrics |
 
@@ -44,12 +45,13 @@ Optional service for local LLM inference:
 
 ## API Endpoints
 
-### Text Generation vs Chat
+### Text Generation vs Chat vs Completions
 
 - **`/api/generate`**: Generates a response from a provided prompt
 - **`/api/chat`**: Chat with message history (structured message arrays)
+- **`/api/completions`**: Text completion (OpenAI-compatible format)
 
-Both work with instruction-tuned models, but use different request formats.
+All work with instruction-tuned models, but use different request formats. Chat and completions endpoints also support streaming via their `/stream` variants.
 
 ---
 
@@ -72,14 +74,16 @@ curl -X POST http://localhost:8091/api/generate \
 
 ### Streaming Text Generation
 
-Stream a response token-by-token:
+Stream a response token-by-token via chat:
 
 ```bash
-curl -X POST http://localhost:8091/api/generate/stream \
+curl -X POST http://localhost:8091/api/chat/stream \
   -H "Content-Type: application/json" \
   -d '{
-    "prompt": "Write a haiku about coding.",
-    "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+    "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    "messages": [
+      {"role": "user", "content": "Write a haiku about coding."}
+    ]
   }'
 ```
 

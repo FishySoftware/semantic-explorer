@@ -4,7 +4,7 @@
 
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
 ![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)
-![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)
+![Python](https://img.shields.io/badge/python-3.12%2B-blue.svg)
 ![Docker](https://img.shields.io/badge/docker-compose%20v2%2B-blue.svg)
 ![CUDA](https://img.shields.io/badge/CUDA-12.x-76B900.svg)
 
@@ -40,66 +40,91 @@ The platform uses a message-driven architecture with NATS JetStream for job orch
 
 ```mermaid
 graph TB
-    subgraph "Frontend"
-        UI[Svelte UI<br/>Port 8080]
-    end
-
     subgraph "API Layer"
+        UI[Svelte UI<br/>Served at /ui/]
         API[API Server<br/>Rust/Actix-web<br/>Port 8080]
     end
 
     subgraph "Message Queue"
-        NATS[NATS JetStream<br/>Streams: COLLECTION_TRANSFORMS<br/>DATASET_TRANSFORMS<br/>VISUALIZATION_TRANSFORMS]
+        NATS[NATS JetStream]
     end
 
-    subgraph "Worker Services"
-        WC[worker-collections<br/>File extraction & chunking]
-        WD[worker-datasets<br/>Embedding generation]
+    subgraph "Workers"
+        direction LR
+        WC[worker-collections<br/>File extraction<br/>& chunking]
+        WD[worker-datasets<br/>Embedding<br/>generation]
         WV[worker-visualizations-py<br/>UMAP + HDBSCAN]
     end
 
-    subgraph "Optional Inference APIs"
-        EMB[embedding-inference-api<br/>FastEmbed + ONNX<br/>Port 8090]
-        LLM[llm-inference-api<br/>mistral.rs<br/>Port 8091]
+    subgraph "Embedding Providers"
+        direction LR
+        EMB[Internal<br/>embedding-inference-api<br/>FastEmbed/ONNX · :8090]
+        OPENAI_EMB[OpenAI API]
+        COHERE_EMB[Cohere API]
+    end
+
+    subgraph "LLM Providers"
+        direction LR
+        LLM[Internal<br/>llm-inference-api<br/>mistral.rs · :8091]
+        OPENAI_LLM[OpenAI API]
+        COHERE_LLM[Cohere API]
     end
 
     subgraph "Data Stores"
-        PG[(PostgreSQL<br/>Metadata)]
-        QD[(Qdrant<br/>Vector Store)]
-        S3[(S3/MinIO<br/>Files)]
+        direction LR
+        PG[(PostgreSQL)]
+        QD[(Qdrant)]
+        S3[(S3 / MinIO)]
     end
 
     subgraph "Observability"
-        PROM[Prometheus<br/>Metrics]
-        QUICK[Quickwit<br/>Logs]
-        GRAF[Grafana<br/>Dashboards]
+        direction LR
         OTEL[OTEL Collector]
+        PROM[Prometheus]
+        QUICK[Quickwit]
+        GRAF[Grafana]
     end
 
-    UI -->|HTTP/REST| API
+    %% --- API Layer ---
+    UI -->|Served by| API
     API -->|Publish Jobs| NATS
+    API -->|SQL| PG
+    API -->|Vector Search| QD
+    API -->|Files| S3
+
+    %% --- API → Providers ---
+    API -->|Embed Queries| EMB
+    API -->|Embed Queries| OPENAI_EMB
+    API -->|Embed Queries| COHERE_EMB
+    API -->|Chat / RAG| LLM
+    API -->|Chat / RAG| OPENAI_LLM
+    API -->|Chat / RAG| COHERE_LLM
+
+    %% --- NATS → Workers ---
     NATS -->|Subscribe| WC
     NATS -->|Subscribe| WD
     NATS -->|Subscribe| WV
 
-    API -->|SQL| PG
-    API -->|Vector Search| QD
-    API -->|Upload/Download| S3
-
+    %% --- worker-collections ---
     WC -->|Store Chunks| PG
     WC -->|Files| S3
-    WD -->|Generate Embeddings| EMB
+
+    %% --- worker-datasets ---
+    WD -->|Embeddings| EMB
+    WD -->|Embeddings| OPENAI_EMB
+    WD -->|Embeddings| COHERE_EMB
     WD -->|Upload Vectors| QD
     WD -->|Metadata| PG
-    WV -->|Download Vectors| QD
+
+    %% --- worker-visualizations ---
+    WV -->|Fetch Vectors| QD
     WV -->|Upload HTML| S3
-    WV -->|LLM API| LLM
+    WV -->|Cluster Naming| LLM
+    WV -->|Cluster Naming| OPENAI_LLM
+    WV -->|Cluster Naming| COHERE_LLM
 
-    API -->|Metrics| OTEL
-    WC -->|Metrics| OTEL
-    WD -->|Metrics| OTEL
-    WV -->|Metrics| OTEL
-
+    %% --- Observability ---
+    API & WC & WD & WV -->|Telemetry| OTEL
     OTEL -->|Metrics| PROM
     OTEL -->|Logs| QUICK
     GRAF -->|Query| PROM
@@ -128,7 +153,7 @@ sequenceDiagram
     API->>PG: Create Collection
 
     User->>UI: Create CollectionTransform
-    UI->>API: POST /api/collection_transforms
+    UI->>API: POST /api/collection-transforms
     API->>NATS: Publish to COLLECTION_TRANSFORMS
     API-->>UI: Transform created
 
@@ -139,40 +164,40 @@ sequenceDiagram
     WC->>NATS: Publish TRANSFORM_STATUS
 
     User->>UI: Create DatasetTransform
-    UI->>API: POST /api/dataset_transforms
+    UI->>API: POST /api/dataset-transforms
     API->>NATS: Publish to DATASET_TRANSFORMS
 
     NATS->>WD: Consume job
     WD->>PG: Fetch chunks
     WD->>WD: Batch chunks
-    WD->>API: Call embedder
+    WD->>WD: Call embedding provider (Internal/OpenAI/Cohere)
     WD->>QD: Upload vectors
     WD->>PG: Create EmbeddedDataset
     WD->>NATS: Publish TRANSFORM_STATUS
 
     User->>UI: Create VisualizationTransform
-    UI->>API: POST /api/visualization_transforms
+    UI->>API: POST /api/visualization-transforms
     API->>NATS: Publish to VISUALIZATION_TRANSFORMS
 
     NATS->>WV: Consume job
     WV->>QD: Fetch all vectors
     WV->>WV: UMAP + HDBSCAN
-    WV->>API: Generate cluster names (LLM)
+    WV->>WV: Generate cluster names (Internal/OpenAI/Cohere LLM)
     WV->>S3: Upload interactive HTML
     WV->>PG: Store metadata
 
     User->>UI: Search query
     UI->>API: POST /api/search
-    API->>API: Embed query
+    API->>API: Embed query (Internal/OpenAI/Cohere)
     API->>QD: Vector search
     QD-->>API: Results with scores
     API-->>UI: Ranked results
 
     User->>UI: Chat message
     UI->>API: POST /api/chat/sessions/{id}/messages/stream (SSE)
-    API->>API: Embed message
+    API->>API: Embed message (Internal/OpenAI/Cohere)
     API->>QD: Retrieve context
-    API->>API: Call LLM with context
+    API->>API: Call LLM (Internal/OpenAI/Cohere)
     API-->>UI: Stream response
 ```
 
@@ -283,7 +308,7 @@ semantic-explorer/
 | `PATCH` | `/api/datasets/{dataset_id}` | Update dataset |
 | `DELETE` | `/api/datasets/{dataset_id}` | Delete dataset |
 | `GET` | `/api/datasets/{dataset_id}/items` | Get dataset items |
-| `GET` | `/api/datasets/{dataset_id}/items/summary` | Get dataset items summary |
+| `GET` | `/api/datasets/{dataset_id}/items-summary` | Get dataset items summary |
 | `GET` | `/api/datasets/{dataset_id}/items/{item_id}/chunks` | Get item chunks |
 | `DELETE` | `/api/datasets/{dataset_id}/items/{item_id}` | Delete dataset item |
 | `POST` | `/api/datasets/{dataset_id}/items` | Upload to dataset |
@@ -296,10 +321,13 @@ semantic-explorer/
 | `PATCH` | `/api/embedded-datasets/{embedded_dataset_id}` | Update embedded dataset |
 | `DELETE` | `/api/embedded-datasets/{embedded_dataset_id}` | Delete embedded dataset |
 | `GET` | `/api/embedded-datasets/{embedded_dataset_id}/stats` | Get statistics |
-| `GET` | `/api/embedded-datasets/{embedded_dataset_id}/batch-stats` | Get batch statistics |
+| `POST` | `/api/embedded-datasets/batch-stats` | Batch stats for multiple |
 | `GET` | `/api/embedded-datasets/{embedded_dataset_id}/points` | Get vector points |
-| `GET` | `/api/embedded-datasets/{embedded_dataset_id}/batches` | Get processed batches |
+| `GET` | `/api/embedded-datasets/{embedded_dataset_id}/points/{point_id}/vector` | Get point vector |
+| `GET` | `/api/embedded-datasets/{embedded_dataset_id}/processed-batches` | Get processed batches |
 | `GET` | `/api/datasets/{dataset_id}/embedded-datasets` | Get embedded datasets for dataset |
+| `POST` | `/api/embedded-datasets/standalone` | Create standalone embedded dataset |
+| `POST` | `/api/embedded-datasets/{embedded_dataset_id}/push-vectors` | Push vectors to embedded dataset |
 
 ### Embedders
 | Method | Endpoint | Description |
@@ -361,26 +389,42 @@ semantic-explorer/
 | `POST` | `/api/collection-transforms` | Create collection transform |
 | `PATCH` | `/api/collection-transforms/{transform_id}` | Update collection transform |
 | `DELETE` | `/api/collection-transforms/{transform_id}` | Delete collection transform |
-| `GET` | `/api/collection-transforms/{transform_id}/status` | Stream transform status (SSE) |
+| `GET` | `/api/collection-transforms/{transform_id}/stats` | Get transform statistics |
+| `POST` | `/api/collection-transforms/batch-stats` | Batch stats for multiple |
+| `GET` | `/api/collection-transforms/{transform_id}/processed-files` | List processed files |
+| `GET` | `/api/collection-transforms/stream` | Stream transform status (SSE) |
 | `POST` | `/api/collection-transforms/{transform_id}/trigger` | Trigger transform |
+| `GET` | `/api/collections/{collection_id}/transforms` | Get transforms for collection |
+| `GET` | `/api/collections/{collection_id}/failed-files` | Get failed files |
+| `GET` | `/api/datasets/{dataset_id}/collection-transforms` | Get transforms for dataset |
 | `GET` | `/api/dataset-transforms` | List dataset transforms |
 | `GET` | `/api/dataset-transforms/{transform_id}` | Get dataset transform |
 | `POST` | `/api/dataset-transforms` | Create dataset transform |
 | `PATCH` | `/api/dataset-transforms/{transform_id}` | Update dataset transform |
 | `DELETE` | `/api/dataset-transforms/{transform_id}` | Delete dataset transform |
-| `GET` | `/api/dataset-transforms/{transform_id}/status` | Stream transform status (SSE) |
+| `GET` | `/api/dataset-transforms/{transform_id}/stats` | Get transform statistics |
+| `GET` | `/api/dataset-transforms/{transform_id}/detailed-stats` | Get detailed stats |
+| `POST` | `/api/dataset-transforms-batch-stats` | Batch stats for multiple |
+| `GET` | `/api/dataset-transforms/{transform_id}/batches` | List batches |
+| `GET` | `/api/dataset-transforms/{transform_id}/batches/{batch_id}` | Get batch |
+| `GET` | `/api/dataset-transforms/{transform_id}/batches/stats` | Batch stats |
+| `POST` | `/api/dataset-transforms/{transform_id}/retry-failed` | Retry failed batches |
+| `GET` | `/api/dataset-transforms/stream` | Stream transform status (SSE) |
 | `POST` | `/api/dataset-transforms/{transform_id}/trigger` | Trigger transform |
+| `GET` | `/api/datasets/{dataset_id}/transforms` | Get transforms for dataset |
 | `GET` | `/api/visualization-transforms` | List visualization transforms |
 | `GET` | `/api/visualization-transforms/{transform_id}` | Get visualization transform |
 | `POST` | `/api/visualization-transforms` | Create visualization transform |
 | `PATCH` | `/api/visualization-transforms/{transform_id}` | Update visualization transform |
 | `DELETE` | `/api/visualization-transforms/{transform_id}` | Delete visualization transform |
-| `GET` | `/api/visualization-transforms/{transform_id}/status` | Stream transform status (SSE) |
+| `GET` | `/api/visualization-transforms/{transform_id}/stats` | Get transform statistics |
+| `GET` | `/api/visualization-transforms/{transform_id}/visualizations` | List visualizations |
+| `GET` | `/api/visualization-transforms/{transform_id}/visualizations/{visualization_id}` | Get visualization |
+| `GET` | `/api/visualization-transforms/{transform_id}/visualizations/{visualization_id}/download` | Download visualization HTML |
+| `GET` | `/api/visualizations/recent` | Get recent visualizations |
+| `GET` | `/api/embedded-datasets/{id}/visualizations` | Get visualizations by embedded dataset |
+| `GET` | `/api/visualization-transforms/stream` | Stream transform status (SSE) |
 | `POST` | `/api/visualization-transforms/{transform_id}/trigger` | Trigger transform |
-| `GET` | `/api/visualizations` | List visualizations |
-| `GET` | `/api/visualizations/{visualization_id}` | Get visualization |
-| `GET` | `/api/visualizations/{visualization_id}/html` | Download visualization HTML |
-| `GET` | `/api/visualizations/by-dataset/{dataset_id}` | Get visualizations by dataset |
 
 ### Health & System
 | Method | Endpoint | Description |
@@ -388,6 +432,7 @@ semantic-explorer/
 | `GET` | `/health/live` | Liveness probe |
 | `GET` | `/health/ready` | Readiness probe |
 | `GET` | `/api/users/@me` | Get current authenticated user |
+| `GET` | `/api/status/nats` | Get NATS connection status |
 | `GET` | `/swagger-ui` | OpenAPI/Swagger UI |
 
 ---
@@ -402,7 +447,7 @@ semantic-explorer/
 | **async-nats** | 0.46.0 | NATS JetStream client |
 | **sqlx** | 0.8.6 | PostgreSQL database client |
 | **qdrant-client** | 1.16.0 | Qdrant vector database client |
-| **aws-sdk-s3** | 1.120.0 | S3-compatible storage client |
+| **aws-sdk-s3** | 1.121.0 | S3-compatible storage client |
 | **utoipa** | 5.4.0 | OpenAPI specification generation |
 | **tokio** | 1.49.0 | Async runtime |
 | **tracing** | 0.1.43 | Structured logging |
@@ -420,11 +465,11 @@ semantic-explorer/
 
 | Technology | Version | Purpose |
 |-----------|----------|---------|
-| **Svelte** | 5.43.8 | Reactive UI framework |
-| **Vite** | 7.2.5 | Build tool (rolldown-vite) |
-| **Tailwind CSS** | 4.1.17 | Styling |
-| **Flowbite** | 4.0.1 | UI component library |
-| **Deck.gl** | 9.2.5 | WebGL visualization rendering |
+| **Svelte** | 5.50.0 | Reactive UI framework |
+| **Vite** | 7.3.1 | Build tool (rolldown-vite) |
+| **Tailwind CSS** | 4.1.18 | Styling |
+| **Flowbite Svelte** | 1.31.0 | UI component library |
+| **Deck.gl** | 9.2.6 | WebGL visualization rendering |
 | **marked** | 17.0.1 | Markdown rendering |
 | **highlight.js** | 11.11.1 | Code syntax highlighting |
 
@@ -451,7 +496,7 @@ semantic-explorer/
 - **Docker & Docker Compose** v2.0+
 - **NVIDIA GPU** (optional, for local inference APIs — CUDA 12.x required)
 - **Rust** 1.85+ (for development — Edition 2024)
-- **Python** 3.11+ (for visualization worker development)
+- **Python** 3.12+ (for visualization worker development)
 - **Node.js** 20+ (for UI development)
 
 ### Development Stack
@@ -493,7 +538,7 @@ cd deployment/helm/semantic-explorer
 helm install semantic-explorer . -f values.yaml
 ```
 
-See [`deployment/DEPLOYMENT_GUIDE.md`](deployment/DEPLOYMENT_GUIDE.md) for detailed production configuration.
+See [`deployment/helm/`](deployment/helm/) for detailed Helm chart configuration.
 
 ---
 
@@ -764,7 +809,7 @@ npm test
 | API Server | `:8080/metrics` | `:8080/health/live`, `:8080/health/ready` |
 | Embedding API | `:8090/metrics` | `:8090/health/live`, `:8090/health/ready` |
 | LLM API | `:8091/metrics` | `:8091/health/live`, `:8091/health/ready` |
-| Viz Worker | `:9093/metrics` | - |
+| Viz Worker | `:9090/metrics` | `:8081/health/live`, `:8081/health/ready` |
 
 ### Dashboards (Dev Stack)
 

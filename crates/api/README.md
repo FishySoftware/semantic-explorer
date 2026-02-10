@@ -43,6 +43,7 @@ graph TD
     end
 
     subgraph "Services"
+        direction LR
         COLL[Collections]
         DS[Datasets]
         EMB[Embedders]
@@ -52,17 +53,33 @@ graph TD
     end
 
     subgraph "Background Tasks"
+        direction LR
         SCANNER[Transform Scanners]
         LISTENER[Result Listeners]
         AUDIT[Audit Consumer]
         RECON[Reconciliation Job]
     end
 
-    subgraph "External"
+    subgraph "Infrastructure"
+        direction LR
         PG[(PostgreSQL)]
         NATS[NATS JetStream]
         QD[(Qdrant)]
         S3[(S3/MinIO)]
+    end
+
+    subgraph "Embedding Providers"
+        direction LR
+        INT_EMB[Internal<br/>embedding-inference-api]
+        OAI_EMB[OpenAI]
+        COH_EMB[Cohere]
+    end
+
+    subgraph "LLM Providers"
+        direction LR
+        INT_LLM[Internal<br/>llm-inference-api]
+        OAI_LLM[OpenAI]
+        COH_LLM[Cohere]
     end
 
     API --> AUTH --> CORS
@@ -72,8 +89,19 @@ graph TD
     DS --> PG
     EMB --> PG
     TRANS --> NATS & PG
+
     SEARCH --> QD & PG
+    SEARCH --> INT_EMB
+    SEARCH --> OAI_EMB
+    SEARCH --> COH_EMB
+
     CHAT --> QD & EMB
+    CHAT --> INT_LLM
+    CHAT --> OAI_LLM
+    CHAT --> COH_LLM
+    CHAT --> INT_EMB
+    CHAT --> OAI_EMB
+    CHAT --> COH_EMB
 
     SCANNER --> NATS & PG
     LISTENER --> NATS & PG
@@ -102,14 +130,14 @@ graph TD
 | `GET` | `/api/collections` | List collections |
 | `GET` | `/api/collections/{id}` | Get collection |
 | `POST` | `/api/collections` | Create collection |
-| `PUT` | `/api/collections/{id}` | Update collection |
+| `PATCH` | `/api/collections/{id}` | Update collection |
 | `DELETE` | `/api/collections/{id}` | Delete collection |
 | `POST` | `/api/collections/{id}/files` | Upload files |
 | `GET` | `/api/collections/{id}/files` | List files |
 | `GET` | `/api/collections/{id}/files/{path}` | Download file |
 | `DELETE` | `/api/collections/{id}/files/{path}` | Delete file |
 | `GET` | `/api/collections/search` | Search collections |
-| `GET` | `/api/collections/allowed-file-types` | List allowed file types |
+| `GET` | `/api/collections-allowed-file-types` | List allowed file types |
 
 </details>
 
@@ -121,13 +149,13 @@ graph TD
 | `GET` | `/api/datasets` | List datasets |
 | `GET` | `/api/datasets/{id}` | Get dataset |
 | `POST` | `/api/datasets` | Create dataset |
-| `PUT` | `/api/datasets/{id}` | Update dataset |
+| `PATCH` | `/api/datasets/{id}` | Update dataset |
 | `DELETE` | `/api/datasets/{id}` | Delete dataset |
 | `GET` | `/api/datasets/{id}/items` | List dataset items |
-| `GET` | `/api/datasets/{id}/items/summary` | Get items summary |
+| `GET` | `/api/datasets/{id}/items-summary` | Get items summary |
 | `GET` | `/api/datasets/{id}/items/{item_id}/chunks` | Get item chunks |
 | `DELETE` | `/api/datasets/{id}/items/{item_id}` | Delete item |
-| `POST` | `/api/datasets/{id}/upload` | Upload to dataset |
+| `POST` | `/api/datasets/{id}/items` | Upload to dataset |
 
 </details>
 
@@ -136,16 +164,18 @@ graph TD
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/embedded_datasets` | List embedded datasets |
-| `GET` | `/api/embedded_datasets/{id}` | Get embedded dataset |
-| `PUT` | `/api/embedded_datasets/{id}` | Update embedded dataset |
-| `DELETE` | `/api/embedded_datasets/{id}` | Delete embedded dataset |
-| `GET` | `/api/embedded_datasets/{id}/stats` | Get statistics |
-| `GET` | `/api/embedded_datasets/{id}/points` | List vector points |
-| `GET` | `/api/embedded_datasets/{id}/points/{point_id}/vector` | Get point vector |
-| `GET` | `/api/embedded_datasets/{id}/batches` | Get processed batches |
-| `GET` | `/api/embedded_datasets/batch-stats` | Batch stats for multiple |
-| `GET` | `/api/embedded_datasets/by-dataset/{dataset_id}` | Get by source dataset |
+| `GET` | `/api/embedded-datasets` | List embedded datasets |
+| `GET` | `/api/embedded-datasets/{id}` | Get embedded dataset |
+| `PATCH` | `/api/embedded-datasets/{id}` | Update embedded dataset |
+| `DELETE` | `/api/embedded-datasets/{id}` | Delete embedded dataset |
+| `GET` | `/api/embedded-datasets/{id}/stats` | Get statistics |
+| `GET` | `/api/embedded-datasets/{id}/points` | List vector points |
+| `GET` | `/api/embedded-datasets/{id}/points/{point_id}/vector` | Get point vector |
+| `GET` | `/api/embedded-datasets/{id}/processed-batches` | Get processed batches |
+| `POST` | `/api/embedded-datasets/batch-stats` | Batch stats for multiple |
+| `GET` | `/api/datasets/{dataset_id}/embedded-datasets` | Get by source dataset |
+| `POST` | `/api/embedded-datasets/standalone` | Create standalone embedded dataset |
+| `POST` | `/api/embedded-datasets/{id}/push-vectors` | Push vectors to embedded dataset |
 
 </details>
 
@@ -157,7 +187,7 @@ graph TD
 | `GET` | `/api/embedders` | List embedders |
 | `GET` | `/api/embedders/{id}` | Get embedder |
 | `POST` | `/api/embedders` | Create embedder |
-| `PUT` | `/api/embedders/{id}` | Update embedder |
+| `PATCH` | `/api/embedders/{id}` | Update embedder |
 | `DELETE` | `/api/embedders/{id}` | Delete embedder |
 | `POST` | `/api/embedders/{id}/test` | Test embedder connection |
 
@@ -171,7 +201,7 @@ graph TD
 | `GET` | `/api/llms` | List LLMs |
 | `GET` | `/api/llms/{id}` | Get LLM |
 | `POST` | `/api/llms` | Create LLM |
-| `PUT` | `/api/llms/{id}` | Update LLM |
+| `PATCH` | `/api/llms/{id}` | Update LLM |
 | `DELETE` | `/api/llms/{id}` | Delete LLM |
 
 </details>
@@ -192,18 +222,19 @@ graph TD
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/collection_transforms` | List transforms |
-| `GET` | `/api/collection_transforms/{id}` | Get transform |
-| `POST` | `/api/collection_transforms` | Create transform |
-| `PUT` | `/api/collection_transforms/{id}` | Update transform |
-| `DELETE` | `/api/collection_transforms/{id}` | Delete transform |
-| `POST` | `/api/collection_transforms/{id}/trigger` | Trigger execution |
-| `GET` | `/api/collection_transforms/{id}/stats` | Get statistics |
-| `GET` | `/api/collection_transforms/{id}/files` | List processed files |
-| `GET` | `/api/collection_transforms/stream` | SSE status stream |
-| `GET` | `/api/collection_transforms/batch-stats` | Batch stats |
-| `GET` | `/api/collection_transforms/by-collection/{id}` | Get by collection |
-| `GET` | `/api/collection_transforms/by-dataset/{id}` | Get by dataset |
+| `GET` | `/api/collection-transforms` | List transforms |
+| `GET` | `/api/collection-transforms/{id}` | Get transform |
+| `POST` | `/api/collection-transforms` | Create transform |
+| `PATCH` | `/api/collection-transforms/{id}` | Update transform |
+| `DELETE` | `/api/collection-transforms/{id}` | Delete transform |
+| `POST` | `/api/collection-transforms/{id}/trigger` | Trigger execution |
+| `GET` | `/api/collection-transforms/{id}/stats` | Get statistics |
+| `GET` | `/api/collection-transforms/{id}/processed-files` | List processed files |
+| `POST` | `/api/collection-transforms/batch-stats` | Batch stats |
+| `GET` | `/api/collection-transforms/stream` | SSE status stream |
+| `GET` | `/api/collections/{collection_id}/transforms` | Get by collection |
+| `GET` | `/api/collections/{collection_id}/failed-files` | Get failed files |
+| `GET` | `/api/datasets/{dataset_id}/collection-transforms` | Get by dataset |
 
 </details>
 
@@ -212,20 +243,21 @@ graph TD
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/dataset_transforms` | List transforms |
-| `GET` | `/api/dataset_transforms/{id}` | Get transform |
-| `POST` | `/api/dataset_transforms` | Create transform |
-| `PUT` | `/api/dataset_transforms/{id}` | Update transform |
-| `DELETE` | `/api/dataset_transforms/{id}` | Delete transform |
-| `POST` | `/api/dataset_transforms/{id}/trigger` | Trigger execution |
-| `GET` | `/api/dataset_transforms/{id}/stats` | Get statistics |
-| `GET` | `/api/dataset_transforms/{id}/detailed-stats` | Get detailed stats |
-| `GET` | `/api/dataset_transforms/{id}/batches` | List batches |
-| `GET` | `/api/dataset_transforms/{id}/batches/{batch_id}` | Get batch |
-| `GET` | `/api/dataset_transforms/{id}/batches/{batch_id}/stats` | Batch stats |
-| `GET` | `/api/dataset_transforms/stream` | SSE status stream |
-| `GET` | `/api/dataset_transforms/batch-stats` | Batch stats |
-| `GET` | `/api/dataset_transforms/by-dataset/{id}` | Get by dataset |
+| `GET` | `/api/dataset-transforms` | List transforms |
+| `GET` | `/api/dataset-transforms/{id}` | Get transform |
+| `POST` | `/api/dataset-transforms` | Create transform |
+| `PATCH` | `/api/dataset-transforms/{id}` | Update transform |
+| `DELETE` | `/api/dataset-transforms/{id}` | Delete transform |
+| `POST` | `/api/dataset-transforms/{id}/trigger` | Trigger execution |
+| `GET` | `/api/dataset-transforms/{id}/stats` | Get statistics |
+| `GET` | `/api/dataset-transforms/{id}/detailed-stats` | Get detailed stats |
+| `GET` | `/api/dataset-transforms/{id}/batches` | List batches |
+| `GET` | `/api/dataset-transforms/{id}/batches/{batch_id}` | Get batch |
+| `GET` | `/api/dataset-transforms/{id}/batches/stats` | Batch stats |
+| `POST` | `/api/dataset-transforms/{id}/retry-failed` | Retry failed batches |
+| `POST` | `/api/dataset-transforms-batch-stats` | Batch stats for multiple |
+| `GET` | `/api/dataset-transforms/stream` | SSE status stream |
+| `GET` | `/api/datasets/{dataset_id}/transforms` | Get by dataset |
 
 </details>
 
@@ -240,19 +272,19 @@ Visualization transforms generate interactive 2D scatter plots from high-dimensi
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/visualization_transforms` | List transforms |
-| `GET` | `/api/visualization_transforms/{id}` | Get transform |
-| `POST` | `/api/visualization_transforms` | Create transform |
-| `PUT` | `/api/visualization_transforms/{id}` | Update transform |
-| `DELETE` | `/api/visualization_transforms/{id}` | Delete transform |
-| `POST` | `/api/visualization_transforms/{id}/trigger` | Trigger execution |
-| `GET` | `/api/visualization_transforms/{id}/stats` | Get statistics |
-| `GET` | `/api/visualization_transforms/stream` | SSE status stream |
-| `GET` | `/api/visualizations` | List visualizations |
-| `GET` | `/api/visualizations/{id}` | Get visualization |
-| `GET` | `/api/visualizations/{id}/html` | Download HTML |
-| `GET` | `/api/visualizations/by-dataset/{id}` | Get by dataset |
+| `GET` | `/api/visualization-transforms` | List transforms |
+| `GET` | `/api/visualization-transforms/{id}` | Get transform |
+| `POST` | `/api/visualization-transforms` | Create transform |
+| `PATCH` | `/api/visualization-transforms/{id}` | Update transform |
+| `DELETE` | `/api/visualization-transforms/{id}` | Delete transform |
+| `POST` | `/api/visualization-transforms/{id}/trigger` | Trigger execution |
+| `GET` | `/api/visualization-transforms/{id}/stats` | Get statistics |
+| `GET` | `/api/visualization-transforms/{id}/visualizations` | List visualizations |
+| `GET` | `/api/visualization-transforms/{id}/visualizations/{visualization_id}` | Get visualization |
+| `GET` | `/api/visualization-transforms/{id}/visualizations/{visualization_id}/download` | Download HTML |
 | `GET` | `/api/visualizations/recent` | Get recent |
+| `GET` | `/api/embedded-datasets/{id}/visualizations` | Get by embedded dataset |
+| `GET` | `/api/visualization-transforms/stream` | SSE status stream |
 
 </details>
 
@@ -276,7 +308,7 @@ Visualization transforms generate interactive 2D scatter plots from high-dimensi
 | `DELETE` | `/api/chat/sessions/{id}` | Delete session |
 | `GET` | `/api/chat/sessions/{id}/messages` | List messages |
 | `POST` | `/api/chat/sessions/{id}/messages` | Send message |
-| `GET` | `/api/chat/sessions/{id}/messages/stream` | Stream message (SSE) |
+| `POST` | `/api/chat/sessions/{id}/messages/stream` | Stream message (SSE) |
 | `POST` | `/api/chat/sessions/{id}/messages/{msg_id}/regenerate` | Regenerate message |
 
 </details>
@@ -308,6 +340,7 @@ Visualization transforms generate interactive 2D scatter plots from high-dimensi
 |--------|----------|-------------|
 | `GET` | `/swagger-ui` | Interactive API documentation |
 | `GET` | `/api/users/@me` | Get current user info |
+| `GET` | `/api/status/nats` | NATS connection status |
 
 </details>
 
@@ -354,8 +387,6 @@ This service uses shared configuration from `semantic-explorer-core`. See the [r
 | `WORKER_DATASET_BATCH_SIZE` | `1000` | Batch size for dataset processing |
 | `WORKER_S3_DELETE_BATCH_SIZE` | `1000` | Batch size for S3 delete operations |
 | `WORKER_QDRANT_UPLOAD_CHUNK_SIZE` | `200` | Chunk size for Qdrant uploads |
-| `NATS_REQUEST_TIMEOUT_SECS` | `30` | NATS request timeout in seconds |
-| `NATS_BATCH_TIMEOUT_SECS` | `300` | NATS batch operation timeout in seconds |
 
 > **Note:** NATS consumer tuning, circuit breaker, retry policy, and embedding retry parameters
 > are hardcoded with production-tested defaults and no longer require environment variables.

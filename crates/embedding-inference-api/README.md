@@ -31,6 +31,7 @@ Optional service for local embedding generation:
 |--------|----------|-------------|
 | `GET` | `/health/live` | Liveness probe |
 | `GET` | `/health/ready` | Readiness probe |
+| `GET` | `/health/status` | Detailed status |
 | `GET` | `/api/embedders` | List available embedding models |
 | `POST` | `/api/embed` | Generate embeddings |
 | `POST` | `/api/embed/batch` | Batch embedding generation |
@@ -85,7 +86,7 @@ curl -X POST http://localhost:8090/api/rerank \
 | `INFERENCE_PORT` | `8090` | Server port |
 | `INFERENCE_ALLOWED_RERANK_MODELS` | - | Comma-separated reranker list or `*` |
 | `INFERENCE_MAX_BATCH_SIZE` | `128` | Maximum batch size per request |
-| `INFERENCE_MAX_CONCURRENT_REQUESTS` | `4` | Max concurrent embedding requests |
+| `INFERENCE_MAX_CONCURRENT_REQUESTS` | `2` | Max concurrent embedding requests |
 | `INFERENCE_QUEUE_TIMEOUT_MS` | `5000` | How long to queue requests before 503 |
 | `INFERENCE_MODEL_PATH` | - | Custom ONNX model directory |
 | `HF_HOME` | - | HuggingFace cache directory |
