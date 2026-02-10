@@ -393,7 +393,7 @@
 			} else if (formProvider === 'cohere') {
 				formBatchSize = 96;
 			} else if (formProvider === 'internal') {
-				formBatchSize = 256;
+				formBatchSize = 128;
 			} else {
 				formBatchSize = 100;
 			}

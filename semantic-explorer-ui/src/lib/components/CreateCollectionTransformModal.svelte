@@ -60,7 +60,6 @@
 	let autoCreateDatasetTransform = $state(false);
 	let datasetTransformName = $state('');
 	let selectedDatasetTransformEmbedderIds = $state<number[]>([]);
-	let datasetTransformBatchSize = $state<number | null>(null);
 
 	$effect(() => {
 		if (open) {
@@ -310,7 +309,6 @@
 							title: datasetTransformName.trim() || `${transformTitle}-embeddings`,
 							source_dataset_id: targetDatasetId,
 							embedder_ids: selectedDatasetTransformEmbedderIds,
-							embedding_batch_size: datasetTransformBatchSize,
 						}),
 					});
 
@@ -320,7 +318,6 @@
 							title: `${transformTitle}-embeddings`,
 							source_dataset_id: targetDatasetId,
 							embedder_ids: selectedDatasetTransformEmbedderIds,
-							embedding_batch_size: datasetTransformBatchSize,
 						});
 						toastStore.error(
 							'Failed to create dataset transform. Please check your selections and try again.'
@@ -352,7 +349,6 @@
 		autoCreateDatasetTransform = false;
 		datasetTransformName = '';
 		selectedDatasetTransformEmbedderIds = [];
-		datasetTransformBatchSize = null;
 		extractionStrategy = 'plain_text';
 		preserveFormatting = false;
 		extractTables = true;
@@ -851,31 +847,6 @@
 									{/each}
 								</div>
 							{/if}
-						</div>
-
-						<!-- Embedding Batch Size -->
-						<div>
-							<label
-								for="dataset-transform-batch-size"
-								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-							>
-								Embedding Batch Size <span class="text-xs text-gray-500 dark:text-gray-400"
-									>(optional)</span
-								>
-							</label>
-							<input
-								id="dataset-transform-batch-size"
-								type="number"
-								bind:value={datasetTransformBatchSize}
-								min="1"
-								max="1000"
-								placeholder="Leave empty for default"
-								class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
-							/>
-							<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-								Number of embeddings to process per batch. Lower values use less memory, higher
-								values process faster.
-							</p>
 						</div>
 					</div>
 				{/if}

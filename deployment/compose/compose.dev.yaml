@@ -277,7 +277,7 @@ services:
   #     - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
   #     - INFERENCE_ALLOWED_EMBEDDING_MODELS=sentence-transformers/all-MiniLM-L6-v2
   #     - INFERENCE_ALLOWED_RERANK_MODELS=jinaai/jina-reranker-v2-base-multilingual
-  #     - INFERENCE_MAX_BATCH_SIZE=256
+  #     - INFERENCE_MAX_BATCH_SIZE=128
   #     - INFERENCE_MAX_CONCURRENT_REQUESTS=5
   #     - GPU_PRESSURE_THRESHOLD=95.0
   #     # CUDA memory arena size limit (e.g. '4G', '512M', '8589934592')

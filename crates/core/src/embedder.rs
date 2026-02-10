@@ -12,7 +12,7 @@ use crate::models::EmbedderConfig;
 
 const DEFAULT_OPENAI_BATCH_SIZE: usize = 2048;
 const DEFAULT_COHERE_BATCH_SIZE: usize = 96;
-const DEFAULT_LOCAL_BATCH_SIZE: usize = 256;
+const DEFAULT_LOCAL_BATCH_SIZE: usize = 128;
 
 // Global semaphore to limit concurrent embedding API requests
 static EMBEDDING_SEMAPHORE: OnceLock<Arc<Semaphore>> = OnceLock::new();

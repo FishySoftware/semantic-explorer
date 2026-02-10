@@ -42,7 +42,6 @@
 	let selectedDatasetId = $state<number | null>(null);
 	let selectedEmbedderIds = $state<number[]>([]);
 	let transformTitle = $state('');
-	let embeddingBatchSize = $state<number | null>(null);
 
 	// Auto-generate title when opening the modal for new transforms (not when editing)
 	$effect(() => {
@@ -60,7 +59,6 @@
 			transformTitle = editingTransform.title;
 			selectedDatasetId = editingTransform.source_dataset_id;
 			selectedEmbedderIds = [...editingTransform.embedder_ids];
-			embeddingBatchSize = editingTransform.job_config?.embedding_batch_size || null;
 		}
 	});
 
@@ -149,16 +147,11 @@
 				? {
 						title: transformTitle.trim(),
 						embedder_ids: selectedEmbedderIds,
-						job_config:
-							embeddingBatchSize !== null
-								? { embedding_batch_size: embeddingBatchSize }
-								: undefined,
 					}
 				: {
 						title: transformTitle.trim(),
 						source_dataset_id: selectedDatasetId,
 						embedder_ids: selectedEmbedderIds,
-						embedding_batch_size: embeddingBatchSize,
 					};
 
 			const response = await fetch(url, {
@@ -202,7 +195,6 @@
 		transformTitle = '';
 		selectedDatasetId = datasetId ?? null;
 		selectedEmbedderIds = [];
-		embeddingBatchSize = null;
 		error = null;
 		open = false;
 		// Don't clear editingTransform - let parent handle that
@@ -333,31 +325,6 @@
 						{/each}
 					</div>
 				{/if}
-			</div>
-
-			<!-- Embedding Batch Size -->
-			<div>
-				<label
-					for="embedding-batch-size"
-					class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-				>
-					Embedding Batch Size <span class="text-xs text-gray-500 dark:text-gray-400"
-						>(optional)</span
-					>
-				</label>
-				<input
-					id="embedding-batch-size"
-					type="number"
-					bind:value={embeddingBatchSize}
-					min="1"
-					max="1000"
-					placeholder="Leave empty for default"
-					class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white text-sm"
-				/>
-				<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-					Number of embeddings to process per batch. Lower values use less memory, higher values
-					process faster.
-				</p>
 			</div>
 		</div>
 

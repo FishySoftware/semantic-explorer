@@ -84,7 +84,7 @@ curl -X POST http://localhost:8090/api/rerank \
 | `INFERENCE_HOSTNAME` | `0.0.0.0` | Server bind address |
 | `INFERENCE_PORT` | `8090` | Server port |
 | `INFERENCE_ALLOWED_RERANK_MODELS` | - | Comma-separated reranker list or `*` |
-| `INFERENCE_MAX_BATCH_SIZE` | `256` | Maximum batch size per request |
+| `INFERENCE_MAX_BATCH_SIZE` | `128` | Maximum batch size per request |
 | `INFERENCE_MAX_CONCURRENT_REQUESTS` | `4` | Max concurrent embedding requests |
 | `INFERENCE_QUEUE_TIMEOUT_MS` | `5000` | How long to queue requests before 503 |
 | `INFERENCE_MODEL_PATH` | - | Custom ONNX model directory |
@@ -177,48 +177,6 @@ CUDA support via ONNX Runtime:
 - CUDNN Flash Attention for improved performance
 
 **Supported CUDA Compute Capabilities**: 7.5, 8.0, 8.6, 8.9, 9.0
-
----
-
-## Performance Tuning
-
-### Understanding Throughput
-
-The embedding API uses a semaphore-based backpressure system:
-
-1. **Request arrives** → tries to acquire a permit (waits up to `QUEUE_TIMEOUT_MS`)
-2. **Permit acquired** → request is processed by the model
-3. **Timeout** → returns 503 with Retry-After header
-
-**Key insight**: With GPU inference, the GPU can only process one batch at a time. Multiple concurrent requests are serialized at the model level. The semaphore prevents memory exhaustion from too many queued requests.
-
-### Tuning Parameters
-
-| Scenario | `MAX_CONCURRENT_REQUESTS` | `QUEUE_TIMEOUT_MS` | Notes |
-|----------|---------------------------|--------------------| ------|
-| Low-latency | 2-4 | 1000-2000 | Fail fast, client retries |
-| High-throughput | 4-8 | 5000-10000 | Allow queuing |
-| Batch processing | 8-16 | 30000 | Deep queue, maximize GPU utilization |
-
-### Monitoring Performance
-
-Watch these log patterns:
-- `"Embedding service at capacity after queue timeout"` → Increase `MAX_CONCURRENT_REQUESTS` or `QUEUE_TIMEOUT_MS`
-- Consistently slow batches (>2s for 256 items) → Check GPU utilization, consider smaller batch size
-- Variable latency → Normal for GPU; first request may be slower (CUDA warmup)
-
-### Batch Size Considerations
-
-- **256** (default): Good for most models, saturates GPU compute
-- **128**: Lower latency, useful for smaller models
-- **512**: Higher throughput for larger models with sufficient VRAM
-
-### Client-Side Best Practices
-
-1. **Use batch endpoint** (`/api/embed/batch`) instead of single embed
-2. **Respect Retry-After** header on 503 responses
-3. **Implement exponential backoff** for transient failures
-4. **Pre-batch texts** client-side to match `MAX_BATCH_SIZE`
 
 ---
 

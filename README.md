@@ -629,7 +629,7 @@ variables while maintaining the same resilience behavior.
 | `INFERENCE_PORT` | `8090` | No | Server port |
 | `INFERENCE_ALLOWED_EMBEDDING_MODELS` | - | **Yes** | Comma-separated model list |
 | `INFERENCE_ALLOWED_RERANK_MODELS` | - | No | Comma-separated reranker list |
-| `INFERENCE_MAX_BATCH_SIZE` | `256` | No | Max batch size |
+| `INFERENCE_MAX_BATCH_SIZE` | `128` | No | Max batch size |
 | `INFERENCE_MAX_CONCURRENT_REQUESTS` | `2` | No | Concurrent request limit |
 | `HF_HOME` | `/models` | No | HuggingFace cache directory |
 

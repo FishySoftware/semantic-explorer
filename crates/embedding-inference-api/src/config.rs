@@ -243,7 +243,7 @@ impl ModelConfig {
             all_rerank_models,
             allowed_rerank_models,
             max_batch_size: env::var("INFERENCE_MAX_BATCH_SIZE")
-                .unwrap_or_else(|_| "256".to_string())
+                .unwrap_or_else(|_| "128".to_string())
                 .parse()
                 .context("INFERENCE_MAX_BATCH_SIZE must be a number")?,
             max_concurrent_requests: env::var("INFERENCE_MAX_CONCURRENT_REQUESTS")
@@ -382,7 +382,7 @@ mod tests {
             ],
             all_rerank_models: false,
             allowed_rerank_models: vec![],
-            max_batch_size: 256,
+            max_batch_size: 128,
             max_concurrent_requests: 2,
             queue_timeout_ms: 5000,
             gpu_pressure_threshold: 95.0,
@@ -410,7 +410,7 @@ mod tests {
             allowed_embedding_models: vec![],
             all_rerank_models: true,
             allowed_rerank_models: vec![],
-            max_batch_size: 256,
+            max_batch_size: 128,
             max_concurrent_requests: 2,
             queue_timeout_ms: 5000,
             gpu_pressure_threshold: 95.0,
@@ -432,7 +432,7 @@ mod tests {
             ],
             all_rerank_models: false,
             allowed_rerank_models: vec!["BAAI/bge-reranker-base".to_string()],
-            max_batch_size: 256,
+            max_batch_size: 128,
             max_concurrent_requests: 2,
             queue_timeout_ms: 5000,
             gpu_pressure_threshold: 95.0,
@@ -459,7 +459,7 @@ mod tests {
             allowed_embedding_models: vec!["BAAI/bge-small-en-v1.5".to_string()],
             all_rerank_models: false,
             allowed_rerank_models: vec![],
-            max_batch_size: 256,
+            max_batch_size: 128,
             max_concurrent_requests: 2,
             queue_timeout_ms: 5000,
             gpu_pressure_threshold: 95.0,

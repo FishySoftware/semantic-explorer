@@ -205,7 +205,7 @@ The `embedder` module supports these providers:
 |----------|-------|-------------------|-------|
 | OpenAI | `openai` | 2048 | Requires `api_key` |
 | Cohere | `cohere` | 96 | Requires `api_key`, supports `input_type` |
-| Internal | `internal` | 256 | Uses `EMBEDDING_INFERENCE_API_URL` |
+| Internal | `internal` | 128 | Uses `EMBEDDING_INFERENCE_API_URL` |
 
 ---
 
