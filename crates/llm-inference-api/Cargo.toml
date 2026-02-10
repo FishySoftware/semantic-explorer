@@ -12,36 +12,22 @@ name = "llm-inference-api"
 [features]
 default = []
 
-# This crate is excluded from the workspace to isolate its candle-core dependency
-# (mistralrs v0.7.0 requires candle-core 0.9.2, while fastembed in embedding-inference-api requires 0.9.1)
-
 [dependencies]
-# Core library (shared types, config, etc.)
-semantic-explorer-core = { path = "../core" }
-
-# Web framework
-actix-web = { version = "4.12.1", features = ["actix-tls", "rustls-0_23"] }
-actix-cors = "0.7.1"
-actix-web-prom = { version = "0.10.0", features = ["process"] }
-
-# OpenAPI
-utoipa = { version = "5.4.0", features = ["actix_extras", "auto_into_responses"] }
-utoipa-actix-web = "0.1.2"
-utoipa-swagger-ui = { version = "9.0.2", features = ["actix-web", "reqwest", "vendored"] }
-
-# Serialization
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.149"
-
-# Utilities
-anyhow = "1.0.101"
-dotenvy = "0.15.7"
-tracing = "0.1.43"
-tokio = { version = "1.49.0", features = ["full"] }
-futures = "0.3.31"
-async-stream = "0.3.6"
-
-# LLM inference (isolated from workspace due to candle-core version requirements)
+semantic-explorer-core = { workspace = true }
+actix-web = { workspace = true }
+actix-cors = { workspace = true }
+actix-web-prom = { workspace = true }
+utoipa = { workspace = true }
+utoipa-actix-web = { workspace = true }
+utoipa-swagger-ui = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+dotenvy = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+futures = { workspace = true }
+async-stream = { workspace = true }
 mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs", tag = "v0.7.0", features = ["cuda", "flash-attn", "cudnn"] }
 
 [lints.clippy]

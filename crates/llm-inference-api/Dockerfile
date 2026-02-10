@@ -2,9 +2,6 @@
 # Designed for NVIDIA GPUs with CUDA 12.x/13.x and cuDNN 9.x
 # Uses mistral.rs v0.7.0 with FP8 optimizations for H100/H200 GPUs
 #
-# This crate is excluded from the main workspace to isolate its candle-core
-# dependency (mistralrs v0.7.0 uses candle 0.9.2, while fastembed uses 0.9.1)
-#
 # Requirements:
 #   - mistral.rs v0.7.0+ with CUDA support
 #   - CUDA 12.9.1 or 13.1.1 (from base image)
@@ -54,33 +51,24 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
 WORKDIR /usr/src/app
 
 ##### Planner stage - analyze dependencies
-# Note: llm-inference-api is excluded from the main workspace but depends on crates/core
-# It has its own Cargo.lock for isolated dependency resolution
 FROM chef AS planner
-# Copy the core crate (dependency) and llm-inference-api crate
-COPY crates/core ./crates/core
-COPY crates/llm-inference-api ./crates/llm-inference-api
-# Run chef prepare from the llm-inference-api directory
-WORKDIR /usr/src/app/crates/llm-inference-api
-RUN cargo chef prepare --recipe-path /usr/src/app/recipe.json
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+RUN cargo chef prepare --recipe-path recipe.json
 
 ##### Builder stage - build dependencies first, then app
 FROM chef AS builder
 ARG CUDA_COMPUTE_CAP=90
 ENV CUDA_COMPUTE_CAP=${CUDA_COMPUTE_CAP}
 
+# Copy recipe and build dependencies (cached if Cargo.toml/Cargo.lock unchanged)
 COPY --from=planner /usr/src/app/recipe.json recipe.json
-COPY crates/core ./crates/core
-COPY crates/llm-inference-api/Cargo.toml crates/llm-inference-api/Cargo.lock ./crates/llm-inference-api/
-RUN mkdir -p ./crates/llm-inference-api/src && echo "" > ./crates/llm-inference-api/src/main.rs
-WORKDIR /usr/src/app/crates/llm-inference-api
-RUN cargo chef cook --release --recipe-path /usr/src/app/recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json -p llm-inference-api
 
-# Now copy full source and build (only rebuilds if source changed)
-WORKDIR /usr/src/app
-COPY crates/llm-inference-api ./crates/llm-inference-api
-WORKDIR /usr/src/app/crates/llm-inference-api
-RUN cargo build --release
+# Now copy source and build (only rebuilds if source changed)
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+RUN cargo build --release -p llm-inference-api
 
 # Define a non-root user with home directory
 RUN useradd -u 10001 -m -d /home/appuser appuser
@@ -97,8 +85,8 @@ RUN apt-get update && apt-get install -yq \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy binary (built from crates/llm-inference-api, target is in that directory)
-COPY --from=builder /usr/src/app/crates/llm-inference-api/target/release/llm-inference-api /usr/local/bin/llm-inference-api
+# Copy binary
+COPY --from=builder /usr/src/app/target/release/llm-inference-api /usr/local/bin/llm-inference-api
 COPY --from=builder /etc/passwd /etc/passwd
 
 # Create directories for models cache and HuggingFace cache

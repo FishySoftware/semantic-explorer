@@ -2,7 +2,7 @@ use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use anyhow::{Result, anyhow};
 use base64::{Engine, engine::general_purpose::STANDARD as base64_engine};
-use rand::Rng;
+use rand::RngExt;
 use std::env;
 
 /// Encryption service for API keys and secrets
