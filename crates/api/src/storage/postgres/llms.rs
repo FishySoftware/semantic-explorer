@@ -17,30 +17,31 @@ pub(crate) struct PaginatedResult<T> {
 const GET_LLM_QUERY: &str = r#"
     SELECT llm_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at
     FROM llms
-    WHERE llm_id = $1
+    WHERE llm_id = $1 AND owner_id = $2
 "#;
 
 const GET_LLMS_QUERY: &str = r#"
     SELECT llm_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at
     FROM llms
+    WHERE owner_id = $1
     ORDER BY created_at DESC
-    LIMIT $1 OFFSET $2
+    LIMIT $2 OFFSET $3
 "#;
 
 const GET_LLMS_WITH_SEARCH_QUERY: &str = r#"
     SELECT llm_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at
     FROM llms
-    WHERE name ILIKE $1
+    WHERE owner_id = $1 AND name ILIKE $2
     ORDER BY created_at DESC
-    LIMIT $2 OFFSET $3
+    LIMIT $3 OFFSET $4
 "#;
 
 const COUNT_LLMS_QUERY: &str = r#"
-    SELECT COUNT(*) as count FROM llms
+    SELECT COUNT(*) as count FROM llms WHERE owner_id = $1
 "#;
 
 const COUNT_LLMS_SEARCH_QUERY: &str = r#"
-    SELECT COUNT(*) as count FROM llms WHERE name ILIKE $1
+    SELECT COUNT(*) as count FROM llms WHERE owner_id = $1 AND name ILIKE $2
 "#;
 
 const GET_PUBLIC_LLMS_QUERY: &str = r#"
@@ -65,7 +66,7 @@ const CREATE_LLM_QUERY: &str = r#"
 "#;
 
 const DELETE_LLM_QUERY: &str = r#"
-    DELETE FROM llms WHERE llm_id = $1
+    DELETE FROM llms WHERE llm_id = $1 AND owner_id = $2
 "#;
 
 const UPDATE_LLM_QUERY: &str = r#"
@@ -76,13 +77,13 @@ const UPDATE_LLM_QUERY: &str = r#"
         config = COALESCE($5, config),
         is_public = COALESCE($6, is_public),
         updated_at = NOW()
-    WHERE llm_id = $1
+    WHERE llm_id = $1 AND owner_id = $7
     RETURNING llm_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at
 "#;
 
 const GRAB_PUBLIC_LLM_QUERY: &str = r#"
     INSERT INTO llms (name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, model, config, is_public, created_at, updated_at)
-    SELECT name || ' - grabbed', $1, $2, provider, base_url, api_key_encrypted, model, config, FALSE, NOW(), NOW()
+    SELECT name || '-grabbed', $1, $2, provider, base_url, api_key_encrypted, model, config, FALSE, NOW(), NOW()
     FROM llms
     WHERE llm_id = $3 AND is_public = TRUE
     RETURNING llm_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at
@@ -95,13 +96,11 @@ pub(crate) async fn get_llm(
     llm_id: i32,
     encryption: &EncryptionService,
 ) -> Result<LargeLanguageModel> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, user.as_str()).await?;
-
     let start = Instant::now();
     let result = sqlx::query_as::<_, LargeLanguageModel>(GET_LLM_QUERY)
         .bind(llm_id)
-        .fetch_one(&mut *tx)
+        .bind(user.as_owner())
+        .fetch_one(pool)
         .await;
 
     let duration = start.elapsed().as_secs_f64();
@@ -109,7 +108,31 @@ pub(crate) async fn get_llm(
     record_database_query("SELECT", "llms", duration, success);
 
     let llm = result?;
-    tx.commit().await?;
+    decrypt_llm_api_key(encryption, llm)
+}
+
+/// Get LLM by ID using a pre-hashed owner_id directly.
+/// Use this when the caller already has the hashed owner_id (e.g., from a transform record)
+/// to avoid double-hashing through AuthenticatedUser.as_owner().
+#[tracing::instrument(name = "database.get_llm_by_owner_id", skip(pool, encryption), fields(database.system = "postgresql", database.operation = "SELECT", owner_id = %owner_id, llm_id = %llm_id))]
+pub(crate) async fn get_llm_by_owner_id(
+    pool: &Pool<Postgres>,
+    owner_id: &str,
+    llm_id: i32,
+    encryption: &EncryptionService,
+) -> Result<LargeLanguageModel> {
+    let start = Instant::now();
+    let result = sqlx::query_as::<_, LargeLanguageModel>(GET_LLM_QUERY)
+        .bind(llm_id)
+        .bind(owner_id)
+        .fetch_one(pool)
+        .await;
+
+    let duration = start.elapsed().as_secs_f64();
+    let success = result.is_ok();
+    record_database_query("SELECT", "llms", duration, success);
+
+    let llm = result?;
     decrypt_llm_api_key(encryption, llm)
 }
 
@@ -121,21 +144,20 @@ pub(crate) async fn get_llms(
     offset: i64,
     encryption: &EncryptionService,
 ) -> Result<PaginatedResult<LargeLanguageModel>> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, user.as_str()).await?;
-
     // Get total count
     let count_result = sqlx::query_as::<_, (i64,)>(COUNT_LLMS_QUERY)
-        .fetch_one(&mut *tx)
+        .bind(user.as_owner())
+        .fetch_one(pool)
         .await?;
     let total_count = count_result.0;
 
     // Get paginated results
     let start = Instant::now();
     let result = sqlx::query_as::<_, LargeLanguageModel>(GET_LLMS_QUERY)
+        .bind(user.as_owner())
         .bind(limit)
         .bind(offset)
-        .fetch_all(&mut *tx)
+        .fetch_all(pool)
         .await;
 
     let duration = start.elapsed().as_secs_f64();
@@ -143,7 +165,6 @@ pub(crate) async fn get_llms(
     record_database_query("SELECT", "llms", duration, success);
 
     let llms = result?;
-    tx.commit().await?;
     let decrypted = decrypt_llms_api_keys(encryption, llms)?;
 
     Ok(PaginatedResult {
@@ -163,25 +184,24 @@ pub(crate) async fn get_llms_with_search(
     offset: i64,
     encryption: &EncryptionService,
 ) -> Result<PaginatedResult<LargeLanguageModel>> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, user.as_str()).await?;
-
     let search_pattern = format!("%{}%", search_query);
 
     // Get total count
     let count_result = sqlx::query_as::<_, (i64,)>(COUNT_LLMS_SEARCH_QUERY)
+        .bind(user.as_owner())
         .bind(&search_pattern)
-        .fetch_one(&mut *tx)
+        .fetch_one(pool)
         .await?;
     let total_count = count_result.0;
 
     // Get paginated results
     let start = Instant::now();
     let result = sqlx::query_as::<_, LargeLanguageModel>(GET_LLMS_WITH_SEARCH_QUERY)
+        .bind(user.as_owner())
         .bind(&search_pattern)
         .bind(limit)
         .bind(offset)
-        .fetch_all(&mut *tx)
+        .fetch_all(pool)
         .await;
 
     let duration = start.elapsed().as_secs_f64();
@@ -189,7 +209,6 @@ pub(crate) async fn get_llms_with_search(
     record_database_query("SELECT", "llms", duration, success);
 
     let llms = result?;
-    tx.commit().await?;
     let decrypted = decrypt_llms_api_keys(encryption, llms)?;
 
     Ok(PaginatedResult {
@@ -246,9 +265,6 @@ pub(crate) async fn create_llm(
     // Encrypt API key before storing
     let encrypted_api_key = encrypt_api_key(encryption, &create_llm.api_key)?;
 
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, &user.as_owner()).await?;
-
     let start = Instant::now();
     let result = sqlx::query_as::<_, LargeLanguageModel>(CREATE_LLM_QUERY)
         .bind(&create_llm.name)
@@ -260,7 +276,7 @@ pub(crate) async fn create_llm(
         .bind(&create_llm.model)
         .bind(&create_llm.config)
         .bind(create_llm.is_public)
-        .fetch_one(&mut *tx)
+        .fetch_one(pool)
         .await;
 
     let duration = start.elapsed().as_secs_f64();
@@ -268,7 +284,6 @@ pub(crate) async fn create_llm(
     record_database_query("INSERT", "llms", duration, success);
 
     let llm = result?;
-    tx.commit().await?;
     // Decrypt api_key in response so it can be used immediately
     decrypt_llm_api_key(encryption, llm)
 }
@@ -279,13 +294,11 @@ pub(crate) async fn delete_llm(
     user: &AuthenticatedUser,
     llm_id: i32,
 ) -> Result<()> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, user.as_str()).await?;
-
     let start = Instant::now();
     let result = sqlx::query(DELETE_LLM_QUERY)
         .bind(llm_id)
-        .execute(&mut *tx)
+        .bind(user.as_owner())
+        .execute(pool)
         .await;
 
     let duration = start.elapsed().as_secs_f64();
@@ -293,7 +306,6 @@ pub(crate) async fn delete_llm(
     record_database_query("DELETE", "llms", duration, success);
 
     result?;
-    tx.commit().await?;
     Ok(())
 }
 
@@ -308,9 +320,6 @@ pub(crate) async fn update_llm(
     // Encrypt API key if provided
     let encrypted_api_key = encrypt_api_key(encryption, &update_llm.api_key)?;
 
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, user.as_str()).await?;
-
     let start = Instant::now();
     let result = sqlx::query_as::<_, LargeLanguageModel>(UPDATE_LLM_QUERY)
         .bind(llm_id)
@@ -319,7 +328,8 @@ pub(crate) async fn update_llm(
         .bind(&encrypted_api_key)
         .bind(&update_llm.config)
         .bind(update_llm.is_public)
-        .fetch_one(&mut *tx)
+        .bind(user.as_owner())
+        .fetch_one(pool)
         .await;
 
     let duration = start.elapsed().as_secs_f64();
@@ -327,7 +337,6 @@ pub(crate) async fn update_llm(
     record_database_query("UPDATE", "llms", duration, success);
 
     let llm = result?;
-    tx.commit().await?;
     // Decrypt api_key in response
     decrypt_llm_api_key(encryption, llm)
 }
@@ -339,16 +348,13 @@ pub(crate) async fn grab_public_llm(
     llm_id: i32,
     encryption: &EncryptionService,
 ) -> Result<LargeLanguageModel> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, &user.as_owner()).await?;
-
     let start = Instant::now();
     // The encrypted key is copied from the source LLM to the new one
     let result = sqlx::query_as::<_, LargeLanguageModel>(GRAB_PUBLIC_LLM_QUERY)
         .bind(user.as_owner())
         .bind(&**user)
         .bind(llm_id)
-        .fetch_one(&mut *tx)
+        .fetch_one(pool)
         .await;
 
     let duration = start.elapsed().as_secs_f64();
@@ -356,7 +362,6 @@ pub(crate) async fn grab_public_llm(
     record_database_query("INSERT", "llms", duration, success);
 
     let llm = result?;
-    tx.commit().await?;
     // Decrypt api_key for the response
     decrypt_llm_api_key(encryption, llm)
 }

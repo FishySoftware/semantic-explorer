@@ -364,6 +364,12 @@ semantic-explorer/
 | `GET` | `/api/marketplace/llms/recent` | Get recent public LLMs |
 | `POST` | `/api/marketplace/llms/{id}/grab` | Grab public LLM |
 
+### Inference APIs
+| Method | Endpoint | Description |
+|---------|----------|-------------|
+| `GET` | `/api/embedding-inference/models` | List available embedding models from inference API |
+| `GET` | `/api/llm-inference/models` | List available LLM models from inference API |
+
 ### Search
 | Method | Endpoint | Description |
 |---------|----------|-------------|
@@ -447,7 +453,7 @@ semantic-explorer/
 | **async-nats** | 0.46.0 | NATS JetStream client |
 | **sqlx** | 0.8.6 | PostgreSQL database client |
 | **qdrant-client** | 1.16.0 | Qdrant vector database client |
-| **aws-sdk-s3** | 1.121.0 | S3-compatible storage client |
+| **aws-sdk-s3** | 1.123.0 | S3-compatible storage client |
 | **utoipa** | 5.4.0 | OpenAPI specification generation |
 | **tokio** | 1.49.0 | Async runtime |
 | **tracing** | 0.1.43 | Structured logging |
@@ -685,7 +691,7 @@ variables while maintaining the same resilience behavior.
 | `LLM_INFERENCE_HOSTNAME` | `0.0.0.0` | No | Server bind address |
 | `LLM_INFERENCE_PORT` | `8091` | No | Server port |
 | `LLM_ALLOWED_MODELS` | - | **Yes** | Comma-separated list of allowed model IDs |
-| `LLM_MAX_CONCURRENT_REQUESTS` | `2` | No | Concurrent request limit |
+| `LLM_MAX_CONCURRENT_REQUESTS` | `10` | No | Concurrent request limit |
 | `LLM_DEFAULT_TEMPERATURE` | `0.7` | No | Default sampling temperature |
 | `LLM_DEFAULT_TOP_P` | `0.9` | No | Default top-p sampling |
 | `LLM_DEFAULT_MAX_TOKENS` | `512` | No | Default max tokens |

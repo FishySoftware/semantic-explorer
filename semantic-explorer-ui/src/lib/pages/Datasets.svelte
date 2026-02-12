@@ -42,6 +42,8 @@
 	let creating = $state(false);
 	let createError = $state<string | null>(null);
 
+	let userEditedTitle = $state(false);
+
 	let datasetPendingDelete = $state<Dataset | null>(null);
 
 	// Selection state for bulk operations
@@ -53,7 +55,7 @@
 	let selectedDatasetForTransform = $state<number | null>(null);
 
 	$effect(() => {
-		if (showCreateForm && !editingDataset && !newTitle) {
+		if (showCreateForm && !editingDataset && !userEditedTitle && !newTitle) {
 			const now = new Date();
 			const date = now.toISOString().split('T')[0];
 			const time = now.toTimeString().split(' ')[0].replace(/:/g, '').slice(0, 4);
@@ -134,6 +136,7 @@
 				newTitle = '';
 				newDetails = '';
 				newTags = '';
+				userEditedTitle = false;
 				showCreateForm = false;
 				editingDataset = null;
 			} else {
@@ -142,6 +145,7 @@
 				newTitle = '';
 				newDetails = '';
 				newTags = '';
+				userEditedTitle = false;
 				showCreateForm = false;
 				editingDataset = null;
 				handleViewDataset(savedDataset.dataset_id);
@@ -331,6 +335,7 @@
 						id="dataset-title"
 						type="text"
 						bind:value={newTitle}
+						oninput={() => (userEditedTitle = true)}
 						placeholder="Enter dataset title"
 						class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
 						required
@@ -395,6 +400,7 @@
 							newTitle = '';
 							newDetails = '';
 							newTags = '';
+							userEditedTitle = false;
 							createError = null;
 						}}
 						class="btn-secondary"

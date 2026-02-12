@@ -10,7 +10,7 @@ use semantic_explorer_core::observability::record_database_query;
 
 const GET_DATASET_QUERY: &str = r#"
     SELECT dataset_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at FROM datasets
-    WHERE dataset_id = $1
+    WHERE dataset_id = $1 AND owner_id = $2
 "#;
 
 const GET_DATASETS_PAGINATED_QUERY: &str = r#"
@@ -22,8 +22,9 @@ const GET_DATASETS_PAGINATED_QUERY: &str = r#"
         FROM dataset_transforms
         GROUP BY source_dataset_id
     ) dt_stats ON dt_stats.source_dataset_id = d.dataset_id
+    WHERE d.owner_id = $1
     ORDER BY d.created_at DESC
-    LIMIT $1 OFFSET $2
+    LIMIT $2 OFFSET $3
 "#;
 
 const GET_DATASETS_PAGINATED_SEARCH_QUERY: &str = r#"
@@ -41,7 +42,7 @@ const GET_DATASETS_PAGINATED_SEARCH_QUERY: &str = r#"
 "#;
 
 const COUNT_DATASETS_QUERY: &str = r#"
-    SELECT COUNT(*) as count FROM datasets
+    SELECT COUNT(*) as count FROM datasets WHERE owner_id = $1
 "#;
 
 const COUNT_DATASETS_SEARCH_QUERY: &str = r#"
@@ -55,7 +56,7 @@ const CREATE_DATASET_QUERY: &str = r#"
 "#;
 
 const DELETE_DATASET_QUERY: &str = r#"
-    DELETE FROM datasets WHERE dataset_id = $1
+    DELETE FROM datasets WHERE dataset_id = $1 AND owner_id = $2
     RETURNING dataset_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at
 "#;
 
@@ -126,7 +127,7 @@ const GET_DATASET_VERSION_QUERY: &str = r#"
 const UPDATE_DATASET_QUERY: &str = r#"
     UPDATE datasets
     SET title = $1, details = $2, tags = $3, is_public = $4, updated_at = NOW()
-    WHERE dataset_id = $5
+    WHERE dataset_id = $5 AND owner_id = $6
     RETURNING dataset_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at
 "#;
 
@@ -157,7 +158,7 @@ const GRAB_PUBLIC_DATASET_QUERY: &str = r#"
         SELECT dataset_id, title, details, tags FROM datasets WHERE dataset_id = $1 AND is_public = TRUE
     ), new_dataset AS (
         INSERT INTO datasets (title, details, owner_id, owner_display_name, tags, is_public)
-        SELECT title || ' - grabbed', details, $2, $3, tags, FALSE FROM source
+        SELECT title || '-grabbed', details, $2, $3, tags, FALSE FROM source
         RETURNING dataset_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at
     )
     SELECT * FROM new_dataset
@@ -189,22 +190,18 @@ pub(crate) async fn get_dataset(
     owner_id: &str,
     dataset_id: i32,
 ) -> Result<Dataset> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
-
     let start = Instant::now();
     let result = sqlx::query_as::<_, Dataset>(GET_DATASET_QUERY)
         .bind(dataset_id)
-        .fetch_one(&mut *tx)
+        .bind(owner_id)
+        .fetch_one(pool)
         .await;
 
     let duration = start.elapsed().as_secs_f64();
     let success = result.is_ok();
     record_database_query("SELECT", "datasets", duration, success);
 
-    let dataset = result?;
-    tx.commit().await?;
-    Ok(dataset)
+    Ok(result?)
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -238,13 +235,11 @@ pub(crate) async fn get_datasets_paginated(
     limit: i64,
     offset: i64,
 ) -> Result<PaginatedDatasetsResult> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
-
     // Get total count
     let start_count = Instant::now();
     let count_result: (i64,) = sqlx::query_as(COUNT_DATASETS_QUERY)
-        .fetch_one(&mut *tx)
+        .bind(owner_id)
+        .fetch_one(pool)
         .await?;
     let duration_count = start_count.elapsed().as_secs_f64();
     record_database_query("SELECT", "datasets", duration_count, true);
@@ -254,9 +249,10 @@ pub(crate) async fn get_datasets_paginated(
     // Get paginated items
     let start = Instant::now();
     let result = sqlx::query_as::<_, DatasetWithStatsRow>(GET_DATASETS_PAGINATED_QUERY)
+        .bind(owner_id)
         .bind(limit)
         .bind(offset)
-        .fetch_all(&mut *tx)
+        .fetch_all(pool)
         .await;
 
     let duration = start.elapsed().as_secs_f64();
@@ -264,7 +260,6 @@ pub(crate) async fn get_datasets_paginated(
     record_database_query("SELECT", "datasets", duration, success);
 
     let items = result?;
-    tx.commit().await?;
     Ok(PaginatedDatasetsResult {
         items,
         total_count,
@@ -281,9 +276,6 @@ pub(crate) async fn get_datasets_paginated_search(
     limit: i64,
     offset: i64,
 ) -> Result<PaginatedDatasetsResult> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
-
     let search_pattern = format!("%{}%", search_query);
 
     // Get total count
@@ -292,7 +284,7 @@ pub(crate) async fn get_datasets_paginated_search(
         .bind(owner_id)
         .bind(&search_pattern)
         .bind(search_query)
-        .fetch_one(&mut *tx)
+        .fetch_one(pool)
         .await?;
     let duration_count = start_count.elapsed().as_secs_f64();
     record_database_query("SELECT", "datasets", duration_count, true);
@@ -307,7 +299,7 @@ pub(crate) async fn get_datasets_paginated_search(
         .bind(owner_id)
         .bind(&search_pattern)
         .bind(search_query)
-        .fetch_all(&mut *tx)
+        .fetch_all(pool)
         .await;
 
     let duration = start.elapsed().as_secs_f64();
@@ -315,7 +307,6 @@ pub(crate) async fn get_datasets_paginated_search(
     record_database_query("SELECT", "datasets", duration, success);
 
     let items = result?;
-    tx.commit().await?;
     Ok(PaginatedDatasetsResult {
         items,
         total_count,
@@ -334,9 +325,6 @@ pub(crate) async fn create_dataset(
     tags: &[String],
     is_public: bool,
 ) -> Result<Dataset> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
-
     let start = Instant::now();
     let result = sqlx::query_as::<_, Dataset>(CREATE_DATASET_QUERY)
         .bind(title)
@@ -345,16 +333,14 @@ pub(crate) async fn create_dataset(
         .bind(owner_display_name)
         .bind(tags)
         .bind(is_public)
-        .fetch_one(&mut *tx)
+        .fetch_one(pool)
         .await;
 
     let duration = start.elapsed().as_secs_f64();
     let success = result.is_ok();
     record_database_query("INSERT", "datasets", duration, success);
 
-    let dataset = result?;
-    tx.commit().await?;
-    Ok(dataset)
+    Ok(result?)
 }
 
 #[tracing::instrument(name = "database.delete_dataset", skip(pool), fields(database.system = "postgresql", database.operation = "DELETE", dataset_id = %dataset_id, owner_id = %owner_id))]
@@ -363,13 +349,11 @@ pub(crate) async fn delete_dataset(
     dataset_id: i32,
     owner_id: &str,
 ) -> Result<()> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
-
     let start = Instant::now();
     let result = sqlx::query(DELETE_DATASET_QUERY)
         .bind(dataset_id)
-        .execute(&mut *tx)
+        .bind(owner_id)
+        .execute(pool)
         .await;
 
     let duration = start.elapsed().as_secs_f64();
@@ -377,7 +361,6 @@ pub(crate) async fn delete_dataset(
     record_database_query("DELETE", "datasets", duration, success);
 
     result?;
-    tx.commit().await?;
     Ok(())
 }
 
@@ -390,19 +373,15 @@ pub(crate) async fn create_dataset_item(
     chunks: &[ChunkWithMetadata],
     metadata: serde_json::Value,
 ) -> Result<DatasetItem> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
-
     let chunks_json = serde_json::to_value(chunks)?;
     let item = sqlx::query_as::<_, DatasetItem>(INSERT_DATASET_ITEM_QUERY)
         .bind(dataset_id)
         .bind(title)
         .bind(&chunks_json)
         .bind(&metadata)
-        .fetch_one(&mut *tx)
+        .fetch_one(pool)
         .await?;
 
-    tx.commit().await?;
     Ok(item)
 }
 
@@ -410,7 +389,6 @@ pub(crate) async fn create_dataset_item(
 /// Returns a tuple of (successfully inserted items, failed titles)
 pub(crate) async fn create_dataset_items_batch(
     pool: &Pool<Postgres>,
-    owner_id: &str,
     dataset_id: i32,
     items: Vec<(String, Vec<ChunkWithMetadata>, serde_json::Value)>,
 ) -> Result<(Vec<DatasetItem>, Vec<String>)> {
@@ -422,7 +400,6 @@ pub(crate) async fn create_dataset_items_batch(
     }
 
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
     let mut successful = Vec::new();
     let mut failed = Vec::new();
@@ -647,9 +624,6 @@ pub(crate) async fn update_dataset(
     tags: &[String],
     is_public: bool,
 ) -> Result<Dataset> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
-
     let start = Instant::now();
     let result = sqlx::query_as::<_, Dataset>(UPDATE_DATASET_QUERY)
         .bind(title)
@@ -657,16 +631,15 @@ pub(crate) async fn update_dataset(
         .bind(tags)
         .bind(is_public)
         .bind(dataset_id)
-        .fetch_one(&mut *tx)
+        .bind(owner_id)
+        .fetch_one(pool)
         .await;
 
     let duration = start.elapsed().as_secs_f64();
     let success = result.is_ok();
     record_database_query("UPDATE", "datasets", duration, success);
 
-    let dataset = result?;
-    tx.commit().await?;
-    Ok(dataset)
+    Ok(result?)
 }
 
 #[tracing::instrument(name = "database.delete_dataset_item", skip(pool), fields(database.system = "postgresql", database.operation = "DELETE", item_id = %item_id, dataset_id = %dataset_id))]
@@ -735,7 +708,6 @@ pub(crate) async fn grab_public_dataset(
     dataset_id: i32,
 ) -> Result<Dataset> {
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
     let start = Instant::now();
     let result = sqlx::query_as::<_, Dataset>(GRAB_PUBLIC_DATASET_QUERY)

@@ -705,8 +705,12 @@ pub async fn get_dataset_transforms_for_dataset(
     pool: Data<Pool<Postgres>>,
     path: Path<i32>,
 ) -> impl Responder {
-    match dataset_transforms::get_dataset_transforms_for_dataset(&pool, &user, path.into_inner())
-        .await
+    match dataset_transforms::get_dataset_transforms_for_dataset(
+        &pool,
+        &user.as_owner(),
+        path.into_inner(),
+    )
+    .await
     {
         Ok(transforms) => HttpResponse::Ok().json(transforms),
         Err(e) => {
@@ -740,14 +744,19 @@ pub async fn get_dataset_transform_detailed_stats(
     let dataset_transform_id = path.into_inner();
 
     // Verify the transform exists and user has access
-    let transform =
-        match dataset_transforms::get_dataset_transform(&pool, &user, dataset_transform_id).await {
-            Ok(t) => t,
-            Err(e) => {
-                error!("Dataset transform not found: {}", e);
-                return not_found(format!("Dataset transform not found: {}", e));
-            }
-        };
+    let transform = match dataset_transforms::get_dataset_transform(
+        &pool,
+        &user.as_owner(),
+        dataset_transform_id,
+    )
+    .await
+    {
+        Ok(t) => t,
+        Err(e) => {
+            error!("Dataset transform not found: {}", e);
+            return not_found(format!("Dataset transform not found: {}", e));
+        }
+    };
 
     // Get all embedded datasets for this transform
     let embedded_datasets_list = match fetch_all_batched(INTERNAL_BATCH_SIZE, |limit, offset| {
@@ -775,16 +784,19 @@ pub async fn get_dataset_transform_detailed_stats(
         .map(|ed| ed.embedded_dataset_id)
         .collect();
 
-    let stats_map =
-        match embedded_datasets::get_batch_embedded_dataset_stats(&pool, &embedded_dataset_ids)
-            .await
-        {
-            Ok(map) => map,
-            Err(e) => {
-                error!("Failed to get batch embedded dataset stats: {}", e);
-                std::collections::HashMap::new()
-            }
-        };
+    let stats_map = match embedded_datasets::get_batch_embedded_dataset_stats(
+        &pool,
+        &user.as_owner(),
+        &embedded_dataset_ids,
+    )
+    .await
+    {
+        Ok(map) => map,
+        Err(e) => {
+            error!("Failed to get batch embedded dataset stats: {}", e);
+            std::collections::HashMap::new()
+        }
+    };
 
     // Build per-embedder stats using the batch-fetched data
     let per_embedder_stats: Vec<serde_json::Value> = embedded_datasets_list

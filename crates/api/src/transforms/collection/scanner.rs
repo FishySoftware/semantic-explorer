@@ -10,7 +10,6 @@ use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::models::{CollectionTransformJob, EmbedderConfig};
 use semantic_explorer_core::observability::record_scanner_items_discovered;
 
-use crate::auth::AuthenticatedUser;
 use crate::storage::postgres::collection_transforms::{
     get_active_collection_transforms_privileged, get_collection_transform_privileged,
     get_processed_files,
@@ -114,9 +113,9 @@ async fn get_embedder_config_for_chunking(
         }
     };
 
-    // Fetch the embedder (convert owner to AuthenticatedUser for storage layer)
-    let user = AuthenticatedUser(owner.to_string());
-    let embedder = embedders::get_embedder(pool, &user, embedder_id, encryption).await?;
+    // Fetch the embedder using pre-hashed owner_id directly
+    let embedder =
+        embedders::get_embedder_by_owner_id(pool, owner, embedder_id, encryption).await?;
 
     // Extract model from embedder config - required field
     let model = embedder

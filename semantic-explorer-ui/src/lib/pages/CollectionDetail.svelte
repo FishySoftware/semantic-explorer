@@ -69,6 +69,19 @@
 		last_run_stats?: Record<string, any>;
 	}
 
+	interface DatasetTransform {
+		dataset_transform_id: number;
+		title: string;
+		source_dataset_id: number;
+		embedder_ids: number[];
+		owner_id: string;
+		owner_display_name: string;
+		is_enabled: boolean;
+		job_config: any;
+		created_at: string;
+		updated_at: string;
+	}
+
 	interface ProcessedFile {
 		id: number;
 		transform_type: string;
@@ -104,8 +117,10 @@
 	let collectionPendingDelete = $state(false);
 
 	let collectionTransforms = $state<CollectionTransform[]>([]);
+	let datasetTransforms = $state<DatasetTransform[]>([]);
 	let transformsLoading = $state(false);
 	let collectionTransformStatsMap = $state<Map<number, any>>(new Map());
+	let datasetTransformStatsMap = $state<Map<number, any>>(new Map());
 
 	let transformModalOpen = $state(false);
 	let activeTab = $state('files');
@@ -224,6 +239,8 @@
 					fetchCollectionTransformStats(status.collection_transform_id);
 					// Refresh failed files in case the status changed
 					fetchFailedFiles();
+					// Also refresh dataset transforms (may have new stats from embedding)
+					fetchDatasetTransformsForCollectionTargets();
 				}
 			},
 			onMaxRetriesReached: () => {
@@ -233,7 +250,6 @@
 	}
 
 	// Cleanup polling on unmount is handled by controller.stop()
-
 	async function fetchCollectionTransforms() {
 		try {
 			transformsLoading = true;
@@ -248,6 +264,9 @@
 				for (const transform of collectionTransforms) {
 					fetchCollectionTransformStats(transform.collection_transform_id);
 				}
+
+				// Fetch dataset transforms for each target dataset
+				await fetchDatasetTransformsForCollectionTargets();
 			}
 		} catch (e) {
 			toastStore.error(formatError(e, 'Failed to load transforms'));
@@ -266,6 +285,48 @@
 			}
 		} catch (e) {
 			console.error(e);
+		}
+	}
+
+	async function fetchDatasetTransformStats(transformId: number) {
+		try {
+			const response = await fetch(`/api/dataset-transforms/${transformId}/stats`);
+			if (response.ok) {
+				const stats = await response.json();
+				datasetTransformStatsMap.set(transformId, stats);
+				datasetTransformStatsMap = datasetTransformStatsMap; // Trigger reactivity
+			}
+		} catch (e) {
+			console.error(e);
+		}
+	}
+
+	async function fetchDatasetTransformsForCollectionTargets() {
+		// Get unique dataset IDs from collection transforms
+		const datasetIds = [...new Set(collectionTransforms.map((t) => t.dataset_id))];
+		const allTransforms: DatasetTransform[] = [];
+
+		await Promise.all(
+			datasetIds.map(async (datasetId) => {
+				try {
+					const response = await fetch(`/api/datasets/${datasetId}/transforms`);
+					if (response.ok) {
+						const transforms: DatasetTransform[] = await response.json();
+						allTransforms.push(...transforms);
+					}
+				} catch (e) {
+					console.error(`Failed to fetch dataset transforms for dataset ${datasetId}:`, e);
+				}
+			})
+		);
+
+		datasetTransforms = allTransforms.sort(
+			(a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+		);
+
+		// Fetch stats for each dataset transform
+		for (const transform of datasetTransforms) {
+			fetchDatasetTransformStats(transform.dataset_transform_id);
 		}
 	}
 
@@ -1339,6 +1400,33 @@
 										loading={transformsLoading}
 									/>
 								</div>
+
+								<!-- Dataset Transforms: associated embedding transforms -->
+								{#if datasetTransforms.length > 0}
+									<div class="mt-6">
+										<h3
+											class="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3 flex items-center gap-2"
+										>
+											<span
+												class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-xs font-bold"
+											>
+												{datasetTransforms.length}
+											</span>
+											Dataset Transforms (Embeddings)
+										</h3>
+										<p class="text-sm text-gray-600 dark:text-gray-400 mb-3">
+											Embedding transforms that process items from the target datasets
+										</p>
+										<TransformsList
+											transforms={datasetTransforms.map((t) => ({
+												...t,
+												last_run_stats: datasetTransformStatsMap.get(t.dataset_transform_id),
+											}))}
+											type="dataset"
+											loading={transformsLoading}
+										/>
+									</div>
+								{/if}
 							{/if}
 						</div>
 					</div>
@@ -1592,8 +1680,8 @@
 	collectionTitle={collection?.title}
 	onSuccess={() => {
 		transformModalOpen = false;
-		// Redirect to datasets page to monitor transform progress
-		window.location.hash = '#/datasets';
+		activeTab = 'transforms';
+		fetchCollectionTransforms();
 	}}
 />
 

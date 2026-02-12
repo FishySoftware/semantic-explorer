@@ -9,7 +9,6 @@ use semantic_explorer_core::models::{
     LLMConfig, QdrantConnectionConfig, VisualizationConfig, VisualizationTransformJob,
 };
 
-use crate::auth::AuthenticatedUser;
 use crate::storage::postgres::{embedded_datasets, llms, visualization_transforms};
 
 /// Trigger a visualization transform scan manually
@@ -170,10 +169,9 @@ pub async fn trigger_visualization_transform_scan(
 
     let topic_naming_llm_id = visualization_config.topic_naming_llm_id;
 
-    // Get LLM config if specified (convert owner to AuthenticatedUser for storage layer)
+    // Get LLM config if specified
     let llm_config = if let Some(llm_id) = topic_naming_llm_id {
-        let user = AuthenticatedUser(owner.to_string());
-        let llm = llms::get_llm(pool, &user, llm_id, encryption).await?;
+        let llm = llms::get_llm_by_owner_id(pool, owner, llm_id, encryption).await?;
 
         // Log LLM config details for debugging
         let has_api_key = llm.api_key.is_some();

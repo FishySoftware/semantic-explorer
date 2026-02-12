@@ -41,7 +41,8 @@
 	let formApiKey = $state('');
 	let formConfig = $state('{}');
 	let formIsPublic = $state(false);
-	let nameManuallyEdited = $state(false);
+	let formError = $state<string | null>(null);
+	let saving = $state(false);
 
 	let testStatus = $state<'idle' | 'testing' | 'success' | 'error'>('idle');
 	let testMessage = $state('');
@@ -236,23 +237,13 @@
 		formProvider = 'internal';
 		formApiKey = '';
 		formIsPublic = false;
-		nameManuallyEdited = false;
+		formError = null;
 		updateProviderDefaults();
 
 		testStatus = 'idle';
 		testMessage = '';
 		showCreateForm = true;
 	}
-
-	$effect(() => {
-		if (showCreateForm && !editingLLM && !nameManuallyEdited && !formName) {
-			const model = localModel === '__custom__' ? customModel : localModel;
-			if (model && typeof model === 'string') {
-				const cleanModel = model.split('/').pop()?.toLowerCase() || model.toLowerCase();
-				formName = cleanModel;
-			}
-		}
-	});
 
 	function openEditForm(llm: LLM) {
 		editingLLM = llm;
@@ -300,18 +291,37 @@
 	}
 
 	async function saveLLM() {
-		error = null;
+		formError = null;
+
+		// Client-side validation
+		if (!formName.trim()) {
+			formError = 'Name is required.';
+			return;
+		}
+
+		let config: Record<string, any>;
 		try {
-			const config = JSON.parse(formConfig);
+			config = JSON.parse(formConfig);
+		} catch {
+			formError = 'Configuration must be valid JSON.';
+			return;
+		}
 
-			// Extract model from config - it should be there
-			const model = config.model;
-			if (!model) {
-				throw new Error('Model is required in configuration');
-			}
+		const model = config.model;
+		if (!model) {
+			formError = 'A model must be selected or specified in the configuration.';
+			return;
+		}
 
+		if (formProvider !== 'internal' && !formBaseUrl.trim()) {
+			formError = 'Base URL is required for external providers.';
+			return;
+		}
+
+		saving = true;
+		try {
 			const body: any = {
-				name: formName,
+				name: formName.trim(),
 				provider: formProvider,
 				model,
 				base_url: formBaseUrl,
@@ -330,24 +340,39 @@
 			});
 
 			if (!response.ok) {
-				const errorText = await response.text();
-				console.error('Failed to save LLM:', errorText);
-				throw new Error(`Failed to save LLM: ${response.status}`);
+				let detail = '';
+				try {
+					const errorBody = await response.json();
+					detail =
+						errorBody.error || errorBody.message || errorBody.detail || JSON.stringify(errorBody);
+				} catch {
+					detail = await response.text();
+				}
+				const msg = detail
+					? `Failed to save LLM (${response.status}): ${detail}`
+					: `Failed to save LLM (${response.status})`;
+				formError = msg;
+				toastStore.error(msg);
+				return;
 			}
 
 			const newLLM = await response.json();
 			showCreateForm = false;
 
 			if (!editingLLM) {
-				// Fetch updated list and then redirect to show the new LLM
 				await fetchLLMs();
 				window.location.hash = `#/llms?name=${encodeURIComponent(newLLM.name)}`;
 			} else {
 				await fetchLLMs();
 			}
+			toastStore.success(`LLM ${editingLLM ? 'updated' : 'created'} successfully!`);
 		} catch (e: any) {
 			console.error('Error saving LLM:', e);
-			error = e.message || 'Failed to save LLM';
+			const msg = formatError(e, 'Failed to save LLM');
+			formError = msg;
+			toastStore.error(msg);
+		} finally {
+			saving = false;
 		}
 	}
 
@@ -519,10 +544,16 @@
 							id="llm-name"
 							type="text"
 							bind:value={formName}
-							oninput={() => (nameManuallyEdited = true)}
-							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-							placeholder="My LLM"
+							required
+							class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white {!formName.trim() &&
+							formError
+								? 'border-red-500 dark:border-red-500'
+								: 'border-gray-300 dark:border-gray-600'}"
+							placeholder="Enter a name for this LLM"
 						/>
+						{#if !formName.trim() && formError}
+							<p class="mt-1 text-sm text-red-600 dark:text-red-400">Name is required</p>
+						{/if}
 					</div>
 					<div>
 						<div>
@@ -705,9 +736,20 @@
 								Testing connection...
 							</div>
 						{/if}
+						{#if formError}
+							<div
+								class="p-3 bg-red-100 dark:bg-red-900/20 border border-red-300 dark:border-red-700 text-red-800 dark:text-red-300 rounded-lg text-sm"
+							>
+								{formError}
+							</div>
+						{/if}
 						<div class="flex gap-3">
-							<button type="submit" class="btn-primary">
-								{editingLLM ? 'Update' : 'Create'}
+							<button type="submit" class="btn-primary" disabled={saving}>
+								{#if saving}
+									Saving...
+								{:else}
+									{editingLLM ? 'Update' : 'Create'}
+								{/if}
 							</button>
 							<button
 								type="button"
@@ -807,7 +849,6 @@
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold w-[15%]">Provider</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold w-[30%]">Model</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold w-[10%]">Public</TableHeadCell>
-					<TableHeadCell class="px-4 py-3 text-sm font-semibold w-[15%]">Owner</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center w-[10%]"
 						>Actions</TableHeadCell
 					>
@@ -851,11 +892,12 @@
 										Yes
 									</span>
 								{:else}
-									<span class="text-gray-500 dark:text-gray-400 text-sm">No</span>
+									<span
+										class="inline-block px-2 py-1 bg-gray-100 dark:bg-gray-700/30 text-gray-500 dark:text-gray-400 rounded text-sm font-medium"
+									>
+										No
+									</span>
 								{/if}
-							</TableBodyCell>
-							<TableBodyCell class="px-4 py-3">
-								<span class="text-gray-700 dark:text-gray-300">{llm.owner_display_name}</span>
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3 text-center">
 								<ActionMenu

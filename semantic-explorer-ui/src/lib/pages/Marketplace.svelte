@@ -9,7 +9,7 @@
 		collection_id: number;
 		title: string;
 		details: string | null;
-		owner: string;
+		owner_display_name: string;
 		tags: string[];
 		is_public: boolean;
 		created_at?: string;
@@ -19,7 +19,7 @@
 		dataset_id: number;
 		title: string;
 		details: string | null;
-		owner: string;
+		owner_display_name: string;
 		tags: string[];
 		is_public: boolean;
 		created_at?: string;
@@ -28,7 +28,7 @@
 	interface Embedder {
 		embedder_id: number;
 		name: string;
-		owner: string;
+		owner_display_name: string;
 		provider: string;
 		base_url: string;
 		dimensions: number;
@@ -39,7 +39,7 @@
 	interface LLM {
 		llm_id: number;
 		name: string;
-		owner: string;
+		owner_display_name: string;
 		provider: string;
 		base_url: string;
 		is_public: boolean;
@@ -54,7 +54,7 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
-	let activeTab = $state<'collections' | 'datasets' | 'embedders' | 'llms'>('collections');
+	let activeTab = $state<'all' | 'collections' | 'datasets' | 'embedders' | 'llms'>('all');
 	let grabbingId = $state<number | null>(null);
 	let searchQuery = $state('');
 
@@ -67,13 +67,15 @@
 
 	function getFilteredCollections() {
 		return collections.filter(
-			(c) => matchesSearch(c.title) || matchesSearch(c.details) || matchesSearch(c.owner)
+			(c) =>
+				matchesSearch(c.title) || matchesSearch(c.details) || matchesSearch(c.owner_display_name)
 		);
 	}
 
 	function getFilteredDatasets() {
 		return datasets.filter(
-			(d) => matchesSearch(d.title) || matchesSearch(d.details) || matchesSearch(d.owner)
+			(d) =>
+				matchesSearch(d.title) || matchesSearch(d.details) || matchesSearch(d.owner_display_name)
 		);
 	}
 
@@ -82,7 +84,7 @@
 			(e) =>
 				matchesSearch(e.name) ||
 				matchesSearch(e.provider) ||
-				matchesSearch(e.owner) ||
+				matchesSearch(e.owner_display_name) ||
 				matchesSearch(e.base_url)
 		);
 	}
@@ -92,7 +94,7 @@
 			(l) =>
 				matchesSearch(l.name) ||
 				matchesSearch(l.provider) ||
-				matchesSearch(l.owner) ||
+				matchesSearch(l.owner_display_name) ||
 				matchesSearch(l.base_url)
 		);
 	}
@@ -229,6 +231,18 @@
 	<div class="flex gap-2 border-b border-gray-200 dark:border-gray-700">
 		<button
 			class="px-4 py-2 border-b-2 font-medium text-sm transition-colors"
+			class:border-blue-600={activeTab === 'all'}
+			class:text-blue-600={activeTab === 'all'}
+			class:border-transparent={activeTab !== 'all'}
+			class:text-gray-600={activeTab !== 'all'}
+			class:dark:text-gray-400={activeTab !== 'all'}
+			class:dark:text-blue-400={activeTab === 'all'}
+			onclick={() => (activeTab = 'all')}
+		>
+			All ({collections.length + datasets.length + embedders.length + llms.length})
+		</button>
+		<button
+			class="px-4 py-2 border-b-2 font-medium text-sm transition-colors"
 			class:border-blue-600={activeTab === 'collections'}
 			class:text-blue-600={activeTab === 'collections'}
 			class:border-transparent={activeTab !== 'collections'}
@@ -294,6 +308,258 @@
 		<div class="bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 p-4 rounded-lg">
 			<p>{error}</p>
 		</div>
+	{:else if activeTab === 'all'}
+		{@const filteredCollections = getFilteredCollections()}
+		{@const filteredDatasets = getFilteredDatasets()}
+		{@const filteredEmbedders = getFilteredEmbedders()}
+		{@const filteredLLMs = getFilteredLLMs()}
+		{#if filteredCollections.length === 0 && filteredDatasets.length === 0 && filteredEmbedders.length === 0 && filteredLLMs.length === 0}
+			<div class="bg-gray-50 dark:bg-gray-800 rounded-lg p-8 text-center">
+				<p class="text-gray-600 dark:text-gray-400">
+					{searchQuery ? 'No resources match your search' : 'No public resources available'}
+				</p>
+			</div>
+		{:else}
+			<!-- Collections Section -->
+			{#if filteredCollections.length > 0}
+				<div>
+					<h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-3">
+						Collections
+						<span class="text-sm font-normal text-gray-500 dark:text-gray-400"
+							>({filteredCollections.length})</span
+						>
+					</h2>
+					<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+						{#each filteredCollections as collection (collection.collection_id)}
+							<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 flex flex-col gap-3">
+								<div>
+									<h3 class="font-semibold text-gray-900 dark:text-white mb-1">
+										{collection.title}
+									</h3>
+									{#if collection.owner_display_name}<p
+											class="text-sm text-gray-600 dark:text-gray-400"
+										>
+											by {collection.owner_display_name}
+										</p>{/if}
+								</div>
+								{#if collection.details}
+									<p class="text-sm text-gray-700 dark:text-gray-300">
+										{collection.details}
+									</p>
+								{/if}
+								{#if collection.tags.length > 0}
+									<div class="flex flex-wrap gap-2">
+										{#each collection.tags as tag (tag)}
+											<span
+												class="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs font-medium"
+											>
+												{tag}
+											</span>
+										{/each}
+									</div>
+								{/if}
+								<div
+									class="flex justify-between items-center mt-auto pt-3 border-t border-gray-200 dark:border-gray-700"
+								>
+									<span class="text-xs text-gray-500 dark:text-gray-400"
+										>{collection.created_at ? formatDate(collection.created_at, false) : ''}</span
+									>
+									<button
+										onclick={() => grabCollection(collection.collection_id)}
+										disabled={grabbingId === collection.collection_id}
+										class="px-3 py-1 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white text-sm font-medium rounded transition-colors"
+									>
+										{grabbingId === collection.collection_id ? 'Grabbing...' : 'Grab'}
+									</button>
+								</div>
+							</div>
+						{/each}
+					</div>
+				</div>
+			{/if}
+
+			<!-- Datasets Section -->
+			{#if filteredDatasets.length > 0}
+				<div>
+					<h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-3">
+						Datasets
+						<span class="text-sm font-normal text-gray-500 dark:text-gray-400"
+							>({filteredDatasets.length})</span
+						>
+					</h2>
+					<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+						{#each filteredDatasets as dataset (dataset.dataset_id)}
+							<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 flex flex-col gap-3">
+								<div>
+									<h3 class="font-semibold text-gray-900 dark:text-white mb-1">
+										{dataset.title}
+									</h3>
+									{#if dataset.owner_display_name}<p
+											class="text-sm text-gray-600 dark:text-gray-400"
+										>
+											by {dataset.owner_display_name}
+										</p>{/if}
+								</div>
+								{#if dataset.details}
+									<p class="text-sm text-gray-700 dark:text-gray-300">
+										{dataset.details}
+									</p>
+								{/if}
+								{#if dataset.tags.length > 0}
+									<div class="flex flex-wrap gap-2">
+										{#each dataset.tags as tag (tag)}
+											<span
+												class="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs font-medium"
+											>
+												{tag}
+											</span>
+										{/each}
+									</div>
+								{/if}
+								<div
+									class="flex justify-between items-center mt-auto pt-3 border-t border-gray-200 dark:border-gray-700"
+								>
+									<span class="text-xs text-gray-500 dark:text-gray-400"
+										>{dataset.created_at ? formatDate(dataset.created_at, false) : ''}</span
+									>
+									<button
+										onclick={() => grabDataset(dataset.dataset_id)}
+										disabled={grabbingId === dataset.dataset_id}
+										class="px-3 py-1 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white text-sm font-medium rounded transition-colors"
+									>
+										{grabbingId === dataset.dataset_id ? 'Grabbing...' : 'Grab'}
+									</button>
+								</div>
+							</div>
+						{/each}
+					</div>
+				</div>
+			{/if}
+
+			<!-- Embedders Section -->
+			{#if filteredEmbedders.length > 0}
+				<div>
+					<h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-3">
+						Embedders
+						<span class="text-sm font-normal text-gray-500 dark:text-gray-400"
+							>({filteredEmbedders.length})</span
+						>
+					</h2>
+					<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+						{#each filteredEmbedders as embedder (embedder.embedder_id)}
+							<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 flex flex-col gap-3">
+								<div>
+									<h3 class="font-semibold text-gray-900 dark:text-white mb-1">
+										{embedder.name}
+									</h3>
+									{#if embedder.owner_display_name}<p
+											class="text-sm text-gray-600 dark:text-gray-400"
+										>
+											by {embedder.owner_display_name}
+										</p>{/if}
+								</div>
+								<div class="space-y-2 text-sm">
+									<div class="flex gap-2">
+										<span class="font-medium text-gray-600 dark:text-gray-400 min-w-fit"
+											>Provider:</span
+										>
+										<span class="text-gray-700 dark:text-gray-300">{embedder.provider}</span>
+									</div>
+									<div class="flex gap-2">
+										<span class="font-medium text-gray-600 dark:text-gray-400 min-w-fit"
+											>Dimensions:</span
+										>
+										<span class="text-gray-700 dark:text-gray-300">{embedder.dimensions}</span>
+									</div>
+									{#if embedder.provider !== 'internal'}
+										<div class="flex gap-2">
+											<span class="font-medium text-gray-600 dark:text-gray-400 min-w-fit"
+												>Base URL:</span
+											>
+											<span class="text-gray-700 dark:text-gray-300 font-mono text-xs break-all">
+												{embedder.base_url}
+											</span>
+										</div>
+									{/if}
+								</div>
+								<div
+									class="flex justify-between items-center mt-auto pt-3 border-t border-gray-200 dark:border-gray-700"
+								>
+									<span class="text-xs text-gray-500 dark:text-gray-400"
+										>{embedder.created_at ? formatDate(embedder.created_at, false) : ''}</span
+									>
+									<button
+										onclick={() => grabEmbedder(embedder.embedder_id)}
+										disabled={grabbingId === embedder.embedder_id}
+										class="px-3 py-1 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white text-sm font-medium rounded transition-colors"
+									>
+										{grabbingId === embedder.embedder_id ? 'Grabbing...' : 'Grab'}
+									</button>
+								</div>
+							</div>
+						{/each}
+					</div>
+				</div>
+			{/if}
+
+			<!-- LLMs Section -->
+			{#if filteredLLMs.length > 0}
+				<div>
+					<h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-3">
+						LLMs
+						<span class="text-sm font-normal text-gray-500 dark:text-gray-400"
+							>({filteredLLMs.length})</span
+						>
+					</h2>
+					<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+						{#each filteredLLMs as llm (llm.llm_id)}
+							<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 flex flex-col gap-3">
+								<div>
+									<h3 class="font-semibold text-gray-900 dark:text-white mb-1">
+										{llm.name}
+									</h3>
+									{#if llm.owner_display_name}<p class="text-sm text-gray-600 dark:text-gray-400">
+											by {llm.owner_display_name}
+										</p>{/if}
+								</div>
+								<div class="space-y-2 text-sm">
+									<div class="flex gap-2">
+										<span class="font-medium text-gray-600 dark:text-gray-400 min-w-fit"
+											>Provider:</span
+										>
+										<span class="text-gray-700 dark:text-gray-300">{llm.provider}</span>
+									</div>
+									{#if llm.provider !== 'internal'}
+										<div class="flex gap-2">
+											<span class="font-medium text-gray-600 dark:text-gray-400 min-w-fit"
+												>Base URL:</span
+											>
+											<span class="text-gray-700 dark:text-gray-300 font-mono text-xs break-all">
+												{llm.base_url}
+											</span>
+										</div>
+									{/if}
+								</div>
+								<div
+									class="flex justify-between items-center mt-auto pt-3 border-t border-gray-200 dark:border-gray-700"
+								>
+									<span class="text-xs text-gray-500 dark:text-gray-400"
+										>{llm.created_at ? formatDate(llm.created_at, false) : ''}</span
+									>
+									<button
+										onclick={() => grabLLM(llm.llm_id)}
+										disabled={grabbingId === llm.llm_id}
+										class="px-3 py-1 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white text-sm font-medium rounded transition-colors"
+									>
+										{grabbingId === llm.llm_id ? 'Grabbing...' : 'Grab'}
+									</button>
+								</div>
+							</div>
+						{/each}
+					</div>
+				</div>
+			{/if}
+		{/if}
 	{:else if activeTab === 'collections'}
 		{#if getFilteredCollections().length === 0}
 			<div class="bg-gray-50 dark:bg-gray-800 rounded-lg p-8 text-center">
@@ -309,7 +575,11 @@
 							<h3 class="font-semibold text-gray-900 dark:text-white mb-1">
 								{collection.title}
 							</h3>
-							<p class="text-sm text-gray-600 dark:text-gray-400">by {collection.owner}</p>
+							{#if collection.owner_display_name}<p
+									class="text-sm text-gray-600 dark:text-gray-400"
+								>
+									by {collection.owner_display_name}
+								</p>{/if}
 						</div>
 						{#if collection.details}
 							<p class="text-sm text-gray-700 dark:text-gray-300">
@@ -360,7 +630,9 @@
 							<h3 class="font-semibold text-gray-900 dark:text-white mb-1">
 								{dataset.title}
 							</h3>
-							<p class="text-sm text-gray-600 dark:text-gray-400">by {dataset.owner}</p>
+							{#if dataset.owner_display_name}<p class="text-sm text-gray-600 dark:text-gray-400">
+									by {dataset.owner_display_name}
+								</p>{/if}
 						</div>
 						{#if dataset.details}
 							<p class="text-sm text-gray-700 dark:text-gray-300">
@@ -411,7 +683,9 @@
 							<h3 class="font-semibold text-gray-900 dark:text-white mb-1">
 								{embedder.name}
 							</h3>
-							<p class="text-sm text-gray-600 dark:text-gray-400">by {embedder.owner}</p>
+							{#if embedder.owner_display_name}<p class="text-sm text-gray-600 dark:text-gray-400">
+									by {embedder.owner_display_name}
+								</p>{/if}
 						</div>
 						<div class="space-y-2 text-sm">
 							<div class="flex gap-2">
@@ -426,14 +700,17 @@
 								>
 								<span class="text-gray-700 dark:text-gray-300">{embedder.dimensions}</span>
 							</div>
-							<div class="flex gap-2">
-								<span class="font-medium text-gray-600 dark:text-gray-400 min-w-fit">Base URL:</span
-								>
-								>
-								<span class="text-gray-700 dark:text-gray-300 font-mono text-xs break-all">
-									{embedder.base_url}
-								</span>
-							</div>
+							{#if embedder.provider !== 'internal'}
+								<div class="flex gap-2">
+									<span class="font-medium text-gray-600 dark:text-gray-400 min-w-fit"
+										>Base URL:</span
+									>
+									>
+									<span class="text-gray-700 dark:text-gray-300 font-mono text-xs break-all">
+										{embedder.base_url}
+									</span>
+								</div>
+							{/if}
 						</div>
 						<div
 							class="flex justify-between items-center mt-auto pt-3 border-t border-gray-200 dark:border-gray-700"
@@ -469,7 +746,9 @@
 							<h3 class="font-semibold text-gray-900 dark:text-white mb-1">
 								{llm.name}
 							</h3>
-							<p class="text-sm text-gray-600 dark:text-gray-400">by {llm.owner}</p>
+							{#if llm.owner_display_name}<p class="text-sm text-gray-600 dark:text-gray-400">
+									by {llm.owner_display_name}
+								</p>{/if}
 						</div>
 						<div class="space-y-2 text-sm">
 							<div class="flex gap-2">
@@ -478,14 +757,17 @@
 								>
 								<span class="text-gray-700 dark:text-gray-300">{llm.provider}</span>
 							</div>
-							<div class="flex gap-2">
-								<span class="font-medium text-gray-600 dark:text-gray-400 min-w-fit">Base URL:</span
-								>
-								>
-								<span class="text-gray-700 dark:text-gray-300 font-mono text-xs break-all">
-									{llm.base_url}
-								</span>
-							</div>
+							{#if llm.provider !== 'internal'}
+								<div class="flex gap-2">
+									<span class="font-medium text-gray-600 dark:text-gray-400 min-w-fit"
+										>Base URL:</span
+									>
+									>
+									<span class="text-gray-700 dark:text-gray-300 font-mono text-xs break-all">
+										{llm.base_url}
+									</span>
+								</div>
+							{/if}
 						</div>
 						<div
 							class="flex justify-between items-center mt-auto pt-3 border-t border-gray-200 dark:border-gray-700"

@@ -193,6 +193,8 @@ sequenceDiagram
 | `models.py` | Pydantic data models for jobs and results |
 | `storage.py` | S3 storage operations |
 | `llm_namer.py` | LLM-based cluster topic naming |
+| `font_initializer.py` | Offline font loading and initialization on startup |
+| `font_patcher.py` | HTML post-processing to embed fonts as base64 data URLs |
 | `observability.py` | OpenTelemetry tracing and metrics |
 
 ## Environment Variables

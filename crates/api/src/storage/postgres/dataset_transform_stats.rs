@@ -76,7 +76,7 @@ const GET_STATS_QUERY: &str = r#"
         dts.first_processing_at
     FROM dataset_transforms dt
     LEFT JOIN dataset_transform_stats dts ON dts.dataset_transform_id = dt.dataset_transform_id
-    WHERE dt.dataset_transform_id = $1
+    WHERE dt.dataset_transform_id = $1 AND dt.owner_id = $2
 "#;
 
 const REFRESH_TOTAL_CHUNKS_QUERY: &str = r#"
@@ -111,7 +111,7 @@ const GET_BATCH_STATS_QUERY: &str = r#"
         dts.first_processing_at
     FROM dataset_transforms dt
     LEFT JOIN dataset_transform_stats dts ON dts.dataset_transform_id = dt.dataset_transform_id
-    WHERE dt.dataset_transform_id = ANY($1)
+    WHERE dt.dataset_transform_id = ANY($1) AND dt.owner_id = $2
     ORDER BY dt.dataset_transform_id
 "#;
 
@@ -198,12 +198,11 @@ pub async fn get_stats(
     dataset_transform_id: i32,
 ) -> Result<Option<DatasetTransformStats>> {
     let start = Instant::now();
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
 
     let result = sqlx::query_as::<_, DatasetTransformStats>(GET_STATS_QUERY)
         .bind(dataset_transform_id)
-        .fetch_optional(&mut *tx)
+        .bind(owner_id)
+        .fetch_optional(pool)
         .await;
 
     let duration = start.elapsed().as_secs_f64();
@@ -221,7 +220,6 @@ pub async fn get_stats(
         )
     })?;
 
-    tx.commit().await?;
     Ok(stats)
 }
 
@@ -230,34 +228,26 @@ pub async fn get_batch_stats(
     owner_id: &str,
     dataset_transform_ids: &[i32],
 ) -> Result<Vec<DatasetTransformStats>> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
-
     let stats = sqlx::query_as::<_, DatasetTransformStats>(GET_BATCH_STATS_QUERY)
         .bind(dataset_transform_ids)
-        .fetch_all(&mut *tx)
+        .bind(owner_id)
+        .fetch_all(pool)
         .await
         .context("Failed to get batch dataset transform stats")?;
 
-    tx.commit().await?;
     Ok(stats)
 }
 
 pub async fn refresh_total_chunks(
     pool: &Pool<Postgres>,
-    owner_id: &str,
     dataset_transform_id: i32,
 ) -> Result<Option<i64>> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
-
     let result = sqlx::query_scalar::<_, i64>(REFRESH_TOTAL_CHUNKS_QUERY)
         .bind(dataset_transform_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(pool)
         .await
         .context("Failed to refresh total chunks to process")?;
 
-    tx.commit().await?;
     Ok(result)
 }
 

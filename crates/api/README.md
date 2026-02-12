@@ -309,7 +309,7 @@ Visualization transforms generate interactive 2D scatter plots from high-dimensi
 | `GET` | `/api/chat/sessions/{id}/messages` | List messages |
 | `POST` | `/api/chat/sessions/{id}/messages` | Send message |
 | `POST` | `/api/chat/sessions/{id}/messages/stream` | Stream message (SSE) |
-| `POST` | `/api/chat/sessions/{id}/messages/{msg_id}/regenerate` | Regenerate message |
+| `POST` | `/api/chat/messages/{message_id}/regenerate` | Regenerate message |
 
 </details>
 

@@ -37,6 +37,13 @@ const GET_DATASET_TRANSFORM_QUERY: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
            job_config, created_at, updated_at
     FROM dataset_transforms
+    WHERE dataset_transform_id = $1 AND owner_id = $2
+"#;
+
+const GET_DATASET_TRANSFORM_PRIVILEGED_QUERY: &str = r#"
+    SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
+           job_config, created_at, updated_at
+    FROM dataset_transforms
     WHERE dataset_transform_id = $1
 "#;
 
@@ -44,7 +51,7 @@ const GET_DATASET_TRANSFORMS_FOR_DATASET_QUERY: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
            job_config, created_at, updated_at
     FROM dataset_transforms
-    WHERE source_dataset_id = $1
+    WHERE source_dataset_id = $1 AND owner_id = $2
     ORDER BY created_at DESC
 "#;
 
@@ -70,14 +77,14 @@ const UPDATE_DATASET_TRANSFORM_QUERY: &str = r#"
         embedder_ids = COALESCE($4, embedder_ids),
         job_config = COALESCE($5, job_config),
         updated_at = NOW()
-    WHERE dataset_transform_id = $1
+    WHERE dataset_transform_id = $1 AND owner_id = $6
     RETURNING dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
               job_config, created_at, updated_at
 "#;
 
 const DELETE_DATASET_TRANSFORM_QUERY: &str = r#"
     DELETE FROM dataset_transforms
-    WHERE dataset_transform_id = $1
+    WHERE dataset_transform_id = $1 AND owner_id = $2
 "#;
 
 const COUNT_DATASET_TRANSFORMS_QUERY: &str =
@@ -227,8 +234,7 @@ fn get_dt_search_query(sort_field: &str, sort_dir: &str) -> &'static str {
     }
 }
 
-const VERIFY_DATASET_TRANSFORM_OWNERSHIP_QUERY: &str =
-    "SELECT dataset_transform_id FROM dataset_transforms WHERE dataset_transform_id = ANY($1)";
+const VERIFY_DATASET_TRANSFORM_OWNERSHIP_QUERY: &str = "SELECT dataset_transform_id FROM dataset_transforms WHERE dataset_transform_id = ANY($1) AND owner_id = $2";
 
 // Old expensive query removed - now using dataset_transform_stats table
 // See dataset_transform_stats::get_stats() for the replacement
@@ -239,29 +245,26 @@ pub async fn get_dataset_transform(
     dataset_transform_id: i32,
 ) -> Result<DatasetTransform> {
     let start = Instant::now();
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner).await?;
 
     let result = sqlx::query_as::<_, DatasetTransform>(GET_DATASET_TRANSFORM_QUERY)
         .bind(dataset_transform_id)
-        .fetch_one(&mut *tx)
+        .bind(owner)
+        .fetch_one(pool)
         .await;
 
     let duration = start.elapsed().as_secs_f64();
     record_database_query("SELECT", "dataset_transforms", duration, result.is_ok());
 
     let transform = result?;
-    tx.commit().await?;
     Ok(transform)
 }
 
-/// **PRIVILEGED OPERATION** - Get a specific dataset transform by ID, bypassing RLS.
 /// Used by scanner workers that need to process triggers for specific transforms.
 pub async fn get_dataset_transform_privileged(
     pool: &Pool<Postgres>,
     dataset_transform_id: i32,
 ) -> Result<DatasetTransform> {
-    let transform = sqlx::query_as::<_, DatasetTransform>(GET_DATASET_TRANSFORM_QUERY)
+    let transform = sqlx::query_as::<_, DatasetTransform>(GET_DATASET_TRANSFORM_PRIVILEGED_QUERY)
         .bind(dataset_transform_id)
         .fetch_one(pool)
         .await?;
@@ -282,8 +285,6 @@ pub async fn get_dataset_transforms_paginated(
     let sort_dir = validate_sort_direction(sort_direction)?;
 
     let start = Instant::now();
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner).await?;
 
     let (total_count, transforms) = if let Some(search_term) = search {
         let search_pattern = format!("%{}%", search_term);
@@ -291,7 +292,7 @@ pub async fn get_dataset_transforms_paginated(
         let count_result: (i64,) = sqlx::query_as(COUNT_DATASET_TRANSFORMS_WITH_SEARCH_QUERY)
             .bind(&search_pattern)
             .bind(owner)
-            .fetch_one(&mut *tx)
+            .fetch_one(pool)
             .await?;
         let total = count_result.0;
 
@@ -303,14 +304,14 @@ pub async fn get_dataset_transforms_paginated(
             .bind(owner)
             .bind(limit)
             .bind(offset)
-            .fetch_all(&mut *tx)
+            .fetch_all(pool)
             .await?;
 
         (total, items)
     } else {
         let count_result: (i64,) = sqlx::query_as(COUNT_DATASET_TRANSFORMS_QUERY)
             .bind(owner)
-            .fetch_one(&mut *tx)
+            .fetch_one(pool)
             .await?;
         let total = count_result.0;
 
@@ -321,7 +322,7 @@ pub async fn get_dataset_transforms_paginated(
             .bind(owner)
             .bind(limit)
             .bind(offset)
-            .fetch_all(&mut *tx)
+            .fetch_all(pool)
             .await?;
 
         (total, items)
@@ -329,8 +330,6 @@ pub async fn get_dataset_transforms_paginated(
 
     let duration = start.elapsed().as_secs_f64();
     record_database_query("SELECT", "dataset_transforms", duration, true);
-
-    tx.commit().await?;
 
     Ok(PaginatedResponse {
         items: transforms,
@@ -345,29 +344,21 @@ pub async fn get_dataset_transforms_for_dataset(
     owner: &str,
     dataset_id: i32,
 ) -> Result<Vec<DatasetTransform>> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner).await?;
-
     let transforms =
         sqlx::query_as::<_, DatasetTransform>(GET_DATASET_TRANSFORMS_FOR_DATASET_QUERY)
             .bind(dataset_id)
-            .fetch_all(&mut *tx)
+            .bind(owner)
+            .fetch_all(pool)
             .await?;
 
-    tx.commit().await?;
     Ok(transforms)
 }
 
-/// **PRIVILEGED OPERATION** - Bypasses RLS for system worker access
 ///
 /// This function intentionally bypasses Row-Level Security to fetch ALL active
 /// dataset transforms across all users. It should ONLY be called by system
 /// workers (dataset-transforms worker) that need to process transforms for
 /// all users.
-///
-/// For user-specific queries from API endpoints, use:
-/// - `get_dataset_transform()` with RLS context
-/// - `get_dataset_transforms_paginated()` with RLS context
 ///
 /// # Returns
 /// All enabled dataset transforms regardless of ownership
@@ -389,7 +380,6 @@ pub async fn create_dataset_transform(
     job_config: &serde_json::Value,
 ) -> Result<(DatasetTransform, Vec<EmbeddedDataset>)> {
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
-    super::rls::set_rls_user_tx(&mut tx, &owner.owner_id).await?;
 
     // Step 1: Get source dataset total_chunks to calculate total_chunks_to_process
     let total_chunks: i64 = sqlx::query_scalar(GET_SOURCE_DATASET_TOTAL_CHUNKS_QUERY)
@@ -456,7 +446,6 @@ pub async fn update_dataset_transform(
     job_config: Option<&serde_json::Value>,
 ) -> Result<(DatasetTransform, Vec<EmbeddedDataset>)> {
     let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner).await?;
 
     // Update the Dataset Transform
     let transform = sqlx::query_as::<_, DatasetTransform>(UPDATE_DATASET_TRANSFORM_QUERY)
@@ -465,6 +454,7 @@ pub async fn update_dataset_transform(
         .bind(is_enabled)
         .bind(embedder_ids.map(|ids| ids.to_vec()))
         .bind(job_config)
+        .bind(owner)
         .fetch_one(&mut *tx)
         .await?;
 
@@ -486,16 +476,13 @@ pub async fn delete_dataset_transform(
     owner: &str,
     dataset_transform_id: i32,
 ) -> Result<()> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner).await?;
-
     // Cascading deletes will handle embedded datasets and processed files
     sqlx::query(DELETE_DATASET_TRANSFORM_QUERY)
         .bind(dataset_transform_id)
-        .execute(&mut *tx)
+        .bind(owner)
+        .execute(pool)
         .await?;
 
-    tx.commit().await?;
     Ok(())
 }
 
@@ -512,15 +499,12 @@ pub async fn verify_dataset_transform_ownership(
         return Ok(Vec::new());
     }
 
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner).await?;
-
     let owned_ids: Vec<(i32,)> = sqlx::query_as(VERIFY_DATASET_TRANSFORM_OWNERSHIP_QUERY)
         .bind(dataset_transform_ids)
-        .fetch_all(&mut *tx)
+        .bind(owner)
+        .fetch_all(pool)
         .await?;
 
-    tx.commit().await?;
     Ok(owned_ids.into_iter().map(|(id,)| id).collect())
 }
 

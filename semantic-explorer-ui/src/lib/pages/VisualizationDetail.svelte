@@ -275,6 +275,7 @@
 	async function viewVisualization(visualization: Visualization) {
 		selectedVisualization = visualization;
 		htmlContent = null;
+		activeTab = 'overview';
 		if (visualization.status === 'completed' && visualization.html_s3_key) {
 			await loadHtml(visualization);
 		}
@@ -309,15 +310,16 @@
 
 		try {
 			const response = await fetch(
-				`/api/visualization-transforms/${visualizationTransformId}/visualizations/${visualization.visualization_id}/download?download=true`
+				`/api/visualization-transforms/${visualizationTransformId}/visualizations/${visualization.visualization_id}/download`
 			);
 
 			if (!response.ok) {
 				throw new Error(`Failed to download HTML: ${response.statusText}`);
 			}
 
-			// Create a blob and download it
-			const blob = await response.blob();
+			// Read as text since the response is HTML, then create a blob for download
+			const text = await response.text();
+			const blob = new Blob([text], { type: 'text/html' });
 			const url = window.URL.createObjectURL(blob);
 			const a = document.createElement('a');
 			a.href = url;

@@ -32,6 +32,13 @@ const GET_COLLECTION_TRANSFORM_QUERY: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
            chunk_size, job_config, created_at, updated_at
     FROM collection_transforms
+    WHERE collection_transform_id = $1 AND owner_id = $2
+"#;
+
+const GET_COLLECTION_TRANSFORM_PRIVILEGED_QUERY: &str = r#"
+    SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
+           chunk_size, job_config, created_at, updated_at
+    FROM collection_transforms
     WHERE collection_transform_id = $1
 "#;
 
@@ -39,7 +46,7 @@ const GET_COLLECTION_TRANSFORMS_FOR_COLLECTION_QUERY: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
            chunk_size, job_config, created_at, updated_at
     FROM collection_transforms
-    WHERE collection_id = $1
+    WHERE collection_id = $1 AND owner_id = $2
     ORDER BY created_at DESC
 "#;
 
@@ -47,7 +54,7 @@ const GET_COLLECTION_TRANSFORMS_FOR_DATASET_QUERY: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
            chunk_size, job_config, created_at, updated_at
     FROM collection_transforms
-    WHERE dataset_id = $1
+    WHERE dataset_id = $1 AND owner_id = $2
     ORDER BY created_at DESC
 "#;
 
@@ -73,14 +80,14 @@ const UPDATE_COLLECTION_TRANSFORM_QUERY: &str = r#"
         chunk_size = COALESCE($4, chunk_size),
         job_config = COALESCE($5, job_config),
         updated_at = NOW()
-    WHERE collection_transform_id = $1
+    WHERE collection_transform_id = $1 AND owner_id = $6
     RETURNING collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
               chunk_size, job_config, created_at, updated_at
 "#;
 
 const DELETE_COLLECTION_TRANSFORM_QUERY: &str = r#"
     DELETE FROM collection_transforms
-    WHERE collection_transform_id = $1
+    WHERE collection_transform_id = $1 AND owner_id = $2
 "#;
 
 const GET_COLLECTION_TRANSFORM_STATS_QUERY: &str = r#"
@@ -125,9 +132,10 @@ const GET_FAILED_FILES_FOR_COLLECTION_QUERY: &str = r#"
     INNER JOIN collection_transforms ct ON ct.collection_transform_id = tpf.transform_id
     WHERE tpf.transform_type = 'collection'
       AND ct.collection_id = $1
+      AND ct.owner_id = $2
       AND tpf.process_status = 'failed'
     ORDER BY tpf.processed_at DESC
-    LIMIT $2 OFFSET $3
+    LIMIT $3 OFFSET $4
 "#;
 
 const COUNT_FAILED_FILES_FOR_COLLECTION_QUERY: &str = r#"
@@ -136,6 +144,7 @@ const COUNT_FAILED_FILES_FOR_COLLECTION_QUERY: &str = r#"
     INNER JOIN collection_transforms ct ON ct.collection_transform_id = tpf.transform_id
     WHERE tpf.transform_type = 'collection'
       AND ct.collection_id = $1
+      AND ct.owner_id = $2
       AND tpf.process_status = 'failed'
 "#;
 
@@ -353,32 +362,30 @@ pub async fn get_collection_transform(
     collection_transform_id: i32,
 ) -> Result<CollectionTransform> {
     let start = Instant::now();
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner).await?;
 
     let result = sqlx::query_as::<_, CollectionTransform>(GET_COLLECTION_TRANSFORM_QUERY)
         .bind(collection_transform_id)
-        .fetch_one(&mut *tx)
+        .bind(owner)
+        .fetch_one(pool)
         .await;
 
     let duration = start.elapsed().as_secs_f64();
     record_database_query("SELECT", "collection_transforms", duration, result.is_ok());
 
     let transform = result?;
-    tx.commit().await?;
     Ok(transform)
 }
 
-/// **PRIVILEGED OPERATION** - Get a specific collection transform by ID, bypassing RLS.
 /// Used by scanner workers that need to process triggers for specific transforms.
 pub async fn get_collection_transform_privileged(
     pool: &Pool<Postgres>,
     collection_transform_id: i32,
 ) -> Result<CollectionTransform> {
-    let transform = sqlx::query_as::<_, CollectionTransform>(GET_COLLECTION_TRANSFORM_QUERY)
-        .bind(collection_transform_id)
-        .fetch_one(pool)
-        .await?;
+    let transform =
+        sqlx::query_as::<_, CollectionTransform>(GET_COLLECTION_TRANSFORM_PRIVILEGED_QUERY)
+            .bind(collection_transform_id)
+            .fetch_one(pool)
+            .await?;
     Ok(transform)
 }
 
@@ -396,8 +403,6 @@ pub async fn get_collection_transforms_paginated(
     let sort_dir = validate_sort_direction(sort_direction)?;
 
     let start = Instant::now();
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner).await?;
 
     let (total_count, transforms) = if let Some(search_term) = search {
         let search_pattern = format!("%{}%", search_term);
@@ -405,7 +410,7 @@ pub async fn get_collection_transforms_paginated(
         let count_result: (i64,) = sqlx::query_as(COUNT_COLLECTION_TRANSFORMS_WITH_SEARCH_QUERY)
             .bind(&search_pattern)
             .bind(owner)
-            .fetch_one(&mut *tx)
+            .fetch_one(pool)
             .await?;
         let total = count_result.0;
 
@@ -417,14 +422,14 @@ pub async fn get_collection_transforms_paginated(
             .bind(owner)
             .bind(limit)
             .bind(offset)
-            .fetch_all(&mut *tx)
+            .fetch_all(pool)
             .await?;
 
         (total, items)
     } else {
         let count_result: (i64,) = sqlx::query_as(COUNT_COLLECTION_TRANSFORMS_QUERY)
             .bind(owner)
-            .fetch_one(&mut *tx)
+            .fetch_one(pool)
             .await?;
         let total = count_result.0;
 
@@ -435,7 +440,7 @@ pub async fn get_collection_transforms_paginated(
             .bind(owner)
             .bind(limit)
             .bind(offset)
-            .fetch_all(&mut *tx)
+            .fetch_all(pool)
             .await?;
 
         (total, items)
@@ -443,8 +448,6 @@ pub async fn get_collection_transforms_paginated(
 
     let duration = start.elapsed().as_secs_f64();
     record_database_query("SELECT", "collection_transforms", duration, true);
-
-    tx.commit().await?;
 
     Ok(PaginatedResponse {
         items: transforms,
@@ -459,16 +462,13 @@ pub async fn get_collection_transforms_for_collection(
     owner: &str,
     collection_id: i32,
 ) -> Result<Vec<CollectionTransform>> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner).await?;
-
     let transforms =
         sqlx::query_as::<_, CollectionTransform>(GET_COLLECTION_TRANSFORMS_FOR_COLLECTION_QUERY)
             .bind(collection_id)
-            .fetch_all(&mut *tx)
+            .bind(owner)
+            .fetch_all(pool)
             .await?;
 
-    tx.commit().await?;
     Ok(transforms)
 }
 
@@ -477,29 +477,21 @@ pub async fn get_collection_transforms_for_dataset(
     owner: &str,
     dataset_id: i32,
 ) -> Result<Vec<CollectionTransform>> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner).await?;
-
     let transforms =
         sqlx::query_as::<_, CollectionTransform>(GET_COLLECTION_TRANSFORMS_FOR_DATASET_QUERY)
             .bind(dataset_id)
-            .fetch_all(&mut *tx)
+            .bind(owner)
+            .fetch_all(pool)
             .await?;
 
-    tx.commit().await?;
     Ok(transforms)
 }
 
-/// **PRIVILEGED OPERATION** - Bypasses RLS for system worker access
 ///
 /// This function intentionally bypasses Row-Level Security to fetch ALL active
 /// collection transforms across all users. It should ONLY be called by system
 /// workers (collection-transforms worker) that need to process transforms for
 /// all users
-///
-/// For user-specific queries from API endpoints, use:
-/// - `get_collection_transform()` with RLS context
-/// - `get_collection_transforms_paginated()` with RLS context
 ///
 /// # Returns
 /// All enabled collection transforms regardless of ownership
@@ -522,9 +514,6 @@ pub async fn create_collection_transform(
     chunk_size: i32,
     job_config: &serde_json::Value,
 ) -> Result<CollectionTransform> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, &owner.owner_id).await?;
-
     let transform = sqlx::query_as::<_, CollectionTransform>(CREATE_COLLECTION_TRANSFORM_QUERY)
         .bind(title)
         .bind(collection_id)
@@ -533,10 +522,9 @@ pub async fn create_collection_transform(
         .bind(&owner.owner_display_name)
         .bind(chunk_size)
         .bind(job_config)
-        .fetch_one(&mut *tx)
+        .fetch_one(pool)
         .await?;
 
-    tx.commit().await?;
     Ok(transform)
 }
 
@@ -549,19 +537,16 @@ pub async fn update_collection_transform(
     chunk_size: Option<i32>,
     job_config: Option<&serde_json::Value>,
 ) -> Result<CollectionTransform> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner).await?;
-
     let transform = sqlx::query_as::<_, CollectionTransform>(UPDATE_COLLECTION_TRANSFORM_QUERY)
         .bind(collection_transform_id)
         .bind(title)
         .bind(is_enabled)
         .bind(chunk_size)
         .bind(job_config)
-        .fetch_one(&mut *tx)
+        .bind(owner)
+        .fetch_one(pool)
         .await?;
 
-    tx.commit().await?;
     Ok(transform)
 }
 
@@ -570,15 +555,12 @@ pub async fn delete_collection_transform(
     owner: &str,
     collection_transform_id: i32,
 ) -> Result<()> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner).await?;
-
     sqlx::query(DELETE_COLLECTION_TRANSFORM_QUERY)
         .bind(collection_transform_id)
-        .execute(&mut *tx)
+        .bind(owner)
+        .execute(pool)
         .await?;
 
-    tx.commit().await?;
     Ok(())
 }
 
@@ -656,23 +638,20 @@ pub async fn get_failed_files_for_collection(
     limit: i64,
     offset: i64,
 ) -> Result<PaginatedResponse<FailedFileWithTransform>> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner).await?;
-
     let count_result: (i64,) = sqlx::query_as(COUNT_FAILED_FILES_FOR_COLLECTION_QUERY)
         .bind(collection_id)
-        .fetch_one(&mut *tx)
+        .bind(owner)
+        .fetch_one(pool)
         .await?;
     let total_count = count_result.0;
 
     let files = sqlx::query_as::<_, FailedFileWithTransform>(GET_FAILED_FILES_FOR_COLLECTION_QUERY)
         .bind(collection_id)
+        .bind(owner)
         .bind(limit)
         .bind(offset)
-        .fetch_all(&mut *tx)
+        .fetch_all(pool)
         .await?;
-
-    tx.commit().await?;
 
     Ok(PaginatedResponse {
         items: files,

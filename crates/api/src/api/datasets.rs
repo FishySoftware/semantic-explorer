@@ -403,37 +403,32 @@ pub(crate) async fn upload_to_dataset(
         .map(|item| (item.title, item.chunks, item.metadata))
         .collect();
 
-    let (completed, failed) = match datasets::create_dataset_items_batch(
-        &pool,
-        &user.as_owner(),
-        dataset.dataset_id,
-        batch_items,
-    )
-    .await
-    {
-        Ok((items, failed_titles)) => {
-            let item_duration = item_start.elapsed().as_secs_f64();
-            semantic_explorer_core::observability::record_document_upload(
-                "dataset",
-                item_duration,
-                true,
-            );
-            (
-                items.into_iter().map(|item| item.title).collect(),
-                failed_titles,
-            )
-        }
-        Err(e) => {
-            let item_duration = item_start.elapsed().as_secs_f64();
-            semantic_explorer_core::observability::record_document_upload(
-                "dataset",
-                item_duration,
-                false,
-            );
-            error!("error batch uploading items to dataset '{dataset_id}': {e:?}");
-            return ApiError::Internal(format!("failed to upload items: {}", e)).error_response();
-        }
-    };
+    let (completed, failed) =
+        match datasets::create_dataset_items_batch(&pool, dataset.dataset_id, batch_items).await {
+            Ok((items, failed_titles)) => {
+                let item_duration = item_start.elapsed().as_secs_f64();
+                semantic_explorer_core::observability::record_document_upload(
+                    "dataset",
+                    item_duration,
+                    true,
+                );
+                (
+                    items.into_iter().map(|item| item.title).collect(),
+                    failed_titles,
+                )
+            }
+            Err(e) => {
+                let item_duration = item_start.elapsed().as_secs_f64();
+                semantic_explorer_core::observability::record_document_upload(
+                    "dataset",
+                    item_duration,
+                    false,
+                );
+                error!("error batch uploading items to dataset '{dataset_id}': {e:?}");
+                return ApiError::Internal(format!("failed to upload items: {}", e))
+                    .error_response();
+            }
+        };
 
     HttpResponse::Ok().json(CreateDatasetItemsResponse { completed, failed })
 }

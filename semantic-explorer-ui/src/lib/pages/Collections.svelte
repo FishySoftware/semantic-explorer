@@ -41,6 +41,8 @@
 	let creating = $state(false);
 	let createError = $state<string | null>(null);
 
+	let userEditedTitle = $state(false);
+
 	let collectionPendingDelete = $state<Collection | null>(null);
 
 	// Selection state for bulk operations
@@ -52,7 +54,7 @@
 	let selectedCollectionForTransform = $state<number | null>(null);
 
 	$effect(() => {
-		if (showCreateForm && !newTitle) {
+		if (showCreateForm && !userEditedTitle && !newTitle) {
 			const now = new Date();
 			const date = now.toISOString().split('T')[0];
 			const time = now.toTimeString().split(' ')[0].replace(/:/g, '').slice(0, 4);
@@ -123,8 +125,8 @@
 			newTitle = '';
 			newDetails = '';
 			newTags = '';
+			userEditedTitle = false;
 			showCreateForm = false;
-			toastStore.success('Collection created successfully');
 			handleViewCollection(newCollection.collection_id);
 		} catch (e) {
 			const message = formatError(e, 'Failed to create collection');
@@ -303,6 +305,7 @@
 						id="collection-title"
 						type="text"
 						bind:value={newTitle}
+						oninput={() => (userEditedTitle = true)}
 						placeholder="Enter collection title"
 						class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
 						required
@@ -360,6 +363,7 @@
 							newTitle = '';
 							newDetails = '';
 							newTags = '';
+							userEditedTitle = false;
 							createError = null;
 						}}
 						class="btn-secondary"

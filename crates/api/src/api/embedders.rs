@@ -162,7 +162,12 @@ pub(crate) async fn create_embedder(
     encryption: Data<EncryptionService>,
     create_embedder: Json<CreateEmbedder>,
 ) -> impl Responder {
-    let payload = create_embedder.into_inner();
+    let mut payload = create_embedder.into_inner();
+
+    // Default api_key to "dummy" if not provided or empty.
+    if payload.api_key.as_ref().is_none_or(|k| k.is_empty()) {
+        payload.api_key = Some("dummy".to_string());
+    }
 
     if let Err(e) = validation::validate_title(&payload.name) {
         return ApiError::Validation(e).error_response();

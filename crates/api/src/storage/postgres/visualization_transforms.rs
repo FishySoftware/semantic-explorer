@@ -199,17 +199,13 @@ pub async fn get_visualization_with_owner(
     transform_id: i32,
     owner: &str,
 ) -> Result<Visualization> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner).await?;
-
     let visualization = sqlx::query_as::<_, Visualization>(GET_VISUALIZATION_WITH_OWNER_QUERY)
         .bind(visualization_id)
         .bind(transform_id)
         .bind(owner)
-        .fetch_one(&mut *tx)
+        .fetch_one(pool)
         .await?;
 
-    tx.commit().await?;
     Ok(visualization)
 }
 
@@ -244,16 +240,12 @@ pub async fn get_recent_visualizations(
     owner: &str,
     limit: i64,
 ) -> Result<Vec<Visualization>> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner).await?;
-
     let visualizations = sqlx::query_as::<_, Visualization>(GET_RECENT_VISUALIZATIONS_QUERY)
         .bind(owner)
         .bind(limit)
-        .fetch_all(&mut *tx)
+        .fetch_all(pool)
         .await?;
 
-    tx.commit().await?;
     Ok(visualizations)
 }
 
@@ -318,7 +310,7 @@ const UPDATE_VISUALIZATION_TRANSFORM_QUERY: &str = r#"
         is_enabled = COALESCE($3, is_enabled),
         visualization_config = COALESCE($4, visualization_config),
         updated_at = NOW()
-    WHERE visualization_transform_id = $1
+    WHERE visualization_transform_id = $1 AND owner_id = $5
     RETURNING visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
               reduced_collection_name, topics_collection_name, visualization_config,
               last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
@@ -326,7 +318,7 @@ const UPDATE_VISUALIZATION_TRANSFORM_QUERY: &str = r#"
 
 const DELETE_VISUALIZATION_TRANSFORM_QUERY: &str = r#"
     DELETE FROM visualization_transforms
-    WHERE visualization_transform_id = $1
+    WHERE visualization_transform_id = $1 AND owner_id = $2
 "#;
 
 const UPDATE_VISUALIZATION_TRANSFORM_STATUS_QUERY: &str = r#"
@@ -561,8 +553,6 @@ pub async fn get_visualization_transforms_paginated(
     let sort_dir = validate_sort_direction(sort_direction)?;
 
     let start = Instant::now();
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner).await?;
 
     let (total_count, transforms) = if let Some(search_term) = search {
         let search_pattern = format!("%{}%", search_term);
@@ -570,7 +560,7 @@ pub async fn get_visualization_transforms_paginated(
         let count_result: (i64,) = sqlx::query_as(COUNT_VISUALIZATION_TRANSFORMS_WITH_SEARCH_QUERY)
             .bind(&search_pattern)
             .bind(owner)
-            .fetch_one(&mut *tx)
+            .fetch_one(pool)
             .await?;
         let total = count_result.0;
 
@@ -582,14 +572,14 @@ pub async fn get_visualization_transforms_paginated(
             .bind(owner)
             .bind(limit)
             .bind(offset)
-            .fetch_all(&mut *tx)
+            .fetch_all(pool)
             .await?;
 
         (total, items)
     } else {
         let count_result: (i64,) = sqlx::query_as(COUNT_VISUALIZATION_TRANSFORMS_QUERY)
             .bind(owner)
-            .fetch_one(&mut *tx)
+            .fetch_one(pool)
             .await?;
         let total = count_result.0;
 
@@ -600,7 +590,7 @@ pub async fn get_visualization_transforms_paginated(
             .bind(owner)
             .bind(limit)
             .bind(offset)
-            .fetch_all(&mut *tx)
+            .fetch_all(pool)
             .await?;
 
         (total, items)
@@ -608,8 +598,6 @@ pub async fn get_visualization_transforms_paginated(
 
     let duration = start.elapsed().as_secs_f64();
     record_database_query("SELECT", "visualization_transforms", duration, true);
-
-    tx.commit().await?;
 
     Ok(PaginatedResponse {
         items: transforms,
@@ -639,9 +627,6 @@ pub async fn create_visualization_transform(
     owner_display_name: &str,
     visualization_config: &serde_json::Value,
 ) -> Result<VisualizationTransform> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner_id).await?;
-
     let transform =
         sqlx::query_as::<_, VisualizationTransform>(CREATE_VISUALIZATION_TRANSFORM_QUERY)
             .bind(title)
@@ -650,10 +635,9 @@ pub async fn create_visualization_transform(
             .bind(owner_display_name)
             .bind(true) // is_enabled
             .bind(visualization_config)
-            .fetch_one(&mut *tx)
+            .fetch_one(pool)
             .await?;
 
-    tx.commit().await?;
     Ok(transform)
 }
 
@@ -665,19 +649,16 @@ pub async fn update_visualization_transform(
     is_enabled: Option<bool>,
     visualization_config: Option<&serde_json::Value>,
 ) -> Result<VisualizationTransform> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner).await?;
-
     let transform =
         sqlx::query_as::<_, VisualizationTransform>(UPDATE_VISUALIZATION_TRANSFORM_QUERY)
             .bind(id)
             .bind(title)
             .bind(is_enabled)
             .bind(visualization_config)
-            .fetch_one(&mut *tx)
+            .bind(owner)
+            .fetch_one(pool)
             .await?;
 
-    tx.commit().await?;
     Ok(transform)
 }
 
@@ -686,15 +667,12 @@ pub async fn delete_visualization_transform(
     id: i32,
     owner: &str,
 ) -> Result<()> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner).await?;
-
     sqlx::query(DELETE_VISUALIZATION_TRANSFORM_QUERY)
         .bind(id)
-        .execute(&mut *tx)
+        .bind(owner)
+        .execute(pool)
         .await?;
 
-    tx.commit().await?;
     Ok(())
 }
 
@@ -705,9 +683,6 @@ pub async fn get_visualization_transforms_by_embedded_dataset(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<VisualizationTransform>> {
-    let mut tx = pool.begin().await?;
-    super::rls::set_rls_user_tx(&mut tx, owner).await?;
-
     let transforms = sqlx::query_as::<_, VisualizationTransform>(
         GET_VISUALIZATION_TRANSFORMS_BY_EMBEDDED_DATASET_QUERY,
     )
@@ -715,10 +690,9 @@ pub async fn get_visualization_transforms_by_embedded_dataset(
     .bind(owner)
     .bind(limit)
     .bind(offset)
-    .fetch_all(&mut *tx)
+    .fetch_all(pool)
     .await?;
 
-    tx.commit().await?;
     Ok(transforms)
 }
 

@@ -52,8 +52,9 @@
 	let customInputType = $state('');
 	let customEmbeddingTypes = $state('');
 	let customTruncate = $state('');
-	let userEditedName = $state(false);
 	let inferenceModels = $state<string[]>([]);
+	let formError = $state<string | null>(null);
+	let saving = $state(false);
 	let inferenceModelDimensions = $state<Record<string, number>>({});
 	let localModelsForDisplay = $derived([...inferenceModels].sort((a, b) => a.localeCompare(b)));
 
@@ -274,24 +275,13 @@
 		formProvider = 'internal';
 		formApiKey = '';
 		formIsPublic = false;
+		formError = null;
 		updateProviderDefaults();
 
 		testStatus = 'idle';
 		testMessage = '';
-		userEditedName = false; // Reset the flag
 		showCreateForm = true;
 	}
-
-	$effect(() => {
-		// Auto-generate name when creating (not editing) and user hasn't manually typed one
-		if (showCreateForm && !editingEmbedder && !userEditedName) {
-			const model = localModel === '__custom__' ? customModel : localModel;
-			if (model) {
-				const cleanModel = model.split('/').pop()?.toLowerCase() || model.toLowerCase();
-				formName = cleanModel;
-			}
-		}
-	});
 
 	function openEditForm(embedder: Embedder) {
 		editingEmbedder = embedder;
@@ -366,8 +356,8 @@
 				localModel = defaults.models?.[0] || '';
 				customModel = '';
 			} else {
-				// For external providers, reset local model and use provider's default model
-				localModel = '';
+				// For external providers, use provider's default model for name auto-generation
+				localModel = defaults.models?.[0] || '';
 				customModel = '';
 				// Update the config with the provider's default model
 				let config: Record<string, any> = {};
@@ -408,11 +398,36 @@
 	}
 
 	async function saveEmbedder() {
-		error = null;
+		formError = null;
+
+		// Client-side validation
+		if (!formName.trim()) {
+			formError = 'Name is required.';
+			return;
+		}
+
+		let config: Record<string, any>;
 		try {
-			const config = JSON.parse(formConfig);
+			config = JSON.parse(formConfig);
+		} catch {
+			formError = 'Configuration must be valid JSON.';
+			return;
+		}
+
+		if (!config.model) {
+			formError = 'A model must be selected or specified in the configuration.';
+			return;
+		}
+
+		if (formProvider !== 'internal' && !formBaseUrl.trim()) {
+			formError = 'Base URL is required for external providers.';
+			return;
+		}
+
+		saving = true;
+		try {
 			const body: any = {
-				name: formName,
+				name: formName.trim(),
 				provider: formProvider,
 				base_url: formBaseUrl,
 				api_key: formApiKey || null,
@@ -436,9 +451,20 @@
 			});
 
 			if (!response.ok) {
-				const errorText = await response.text();
-				console.error('Failed to save embedder:', errorText);
-				throw new Error(`Failed to save embedder: ${response.status}`);
+				let detail = '';
+				try {
+					const errorBody = await response.json();
+					detail =
+						errorBody.error || errorBody.message || errorBody.detail || JSON.stringify(errorBody);
+				} catch {
+					detail = await response.text();
+				}
+				const msg = detail
+					? `Failed to save embedder (${response.status}): ${detail}`
+					: `Failed to save embedder (${response.status})`;
+				formError = msg;
+				toastStore.error(msg);
+				return;
 			}
 
 			showCreateForm = false;
@@ -446,7 +472,11 @@
 			await fetchEmbedders();
 		} catch (e: any) {
 			console.error('Error saving embedder:', e);
-			error = e.message || 'Failed to save embedder';
+			const msg = formatError(e, 'Failed to save embedder');
+			formError = msg;
+			toastStore.error(msg);
+		} finally {
+			saving = false;
 		}
 	}
 
@@ -622,12 +652,16 @@
 							id="embedder-name"
 							type="text"
 							bind:value={formName}
-							oninput={() => {
-								userEditedName = true;
-							}}
-							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-							placeholder="My Embedder"
+							required
+							class="w-full px-3 py-2 border rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white {!formName.trim() &&
+							formError
+								? 'border-red-500 dark:border-red-500'
+								: 'border-gray-300 dark:border-gray-600'}"
+							placeholder="Enter a name for this embedder"
 						/>
+						{#if !formName.trim() && formError}
+							<p class="mt-1 text-sm text-red-600 dark:text-red-400">Name is required</p>
+						{/if}
 					</div>
 					<div>
 						<div>
@@ -1038,9 +1072,20 @@
 								Testing connection...
 							</div>
 						{/if}
+						{#if formError}
+							<div
+								class="p-3 bg-red-100 dark:bg-red-900/20 border border-red-300 dark:border-red-700 text-red-800 dark:text-red-300 rounded-lg text-sm"
+							>
+								{formError}
+							</div>
+						{/if}
 						<div class="flex gap-3">
-							<button type="submit" class="btn-primary">
-								{editingEmbedder ? 'Update' : 'Create'}
+							<button type="submit" class="btn-primary" disabled={saving}>
+								{#if saving}
+									Saving...
+								{:else}
+									{editingEmbedder ? 'Update' : 'Create'}
+								{/if}
 							</button>
 							{#if formProvider !== 'internal'}
 								<button
@@ -1159,7 +1204,7 @@
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center"
 						>Dimensions</TableHeadCell
 					>
-					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Owner</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Public</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Actions</TableHeadCell>
 				</TableHead>
 				<TableBody>
@@ -1199,7 +1244,19 @@
 								</span>
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3">
-								<span class="text-gray-700 dark:text-gray-300">{embedder.owner}</span>
+								{#if embedder.is_public}
+									<span
+										class="inline-block px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded text-sm font-medium"
+									>
+										Yes
+									</span>
+								{:else}
+									<span
+										class="inline-block px-2 py-1 bg-gray-100 dark:bg-gray-700/30 text-gray-500 dark:text-gray-400 rounded text-sm font-medium"
+									>
+										No
+									</span>
+								{/if}
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3 text-center">
 								<ActionMenu

@@ -21,8 +21,8 @@ async-nats = { version = "0.46.0" }
 async-stream = { version = "0.3.6" }
 futures = { version = "0.3.31" }
 futures-util = { version = "0.3.31" }
-aws-sdk-s3 = {version = "1.121.0", features = ["behavior-version-latest"] }
-aws-config = { version = "1.8.12", features = ["rustls", "behavior-version-latest"] }
+aws-sdk-s3 = {version = "1.123.0", features = ["behavior-version-latest"] }
+aws-config = { version = "1.8.14", features = ["rustls", "behavior-version-latest"] }
 qdrant-client = { version = "1.16.0"}
 sqlx = { version = "0.8.6", features = ["runtime-tokio-rustls", "postgres", "chrono", "time", "migrate", "macros", "json"], default-features = false }
 utoipa = { version = "5.4.0", features = ["actix_extras", "auto_into_responses"] }
@@ -90,7 +90,6 @@ tree-sitter-yaml = { version = "0.7.2" }
 tree-sitter-html = { version = "0.23.2" }
 tree-sitter-css = { version = "0.25.0" }
 tree-sitter-bash = { version = "0.25.1" }
-
 
 semantic-explorer-core = { path = "crates/core" }
 

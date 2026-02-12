@@ -550,7 +550,7 @@ pub(crate) async fn stream_chat_message(
     }
 
     let message_id = assistant_message.message_id;
-    let owner = user.0.clone();
+    let owner = user.as_owner();
     let postgres_pool_clone = pool.clone();
     let encryption_clone = encryption.clone();
     let llm_inference_url = llm_inference_config.url.clone();
@@ -754,7 +754,7 @@ pub(crate) async fn regenerate_chat_message(
     let message_id = message_id.into_inner();
 
     // Get the message and verify ownership
-    let message = match chat::get_message_by_id(&pool, message_id, &user.0).await {
+    let message = match chat::get_message_by_id(&pool, message_id, &user.as_owner()).await {
         Ok(msg) => msg,
         Err(e) => {
             tracing::error!(error = %e, message_id, "message not found");
@@ -862,7 +862,7 @@ pub(crate) async fn regenerate_chat_message(
         message_id,
         &transformed_content,
         "complete",
-        &user.0,
+        &user.as_owner(),
     )
     .await
     {

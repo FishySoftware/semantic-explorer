@@ -127,6 +127,11 @@
 			const data = (await response.json()) as PaginatedResponse<VisualizationTransform>;
 			transforms = data.items;
 
+			// Expand all transforms by default
+			for (const t of transforms) {
+				expandedTransforms.add(t.visualization_transform_id);
+			}
+
 			// Load completed visualizations and embedded dataset details for each transform
 			await Promise.all([
 				loadCompletedVisualizations(),
@@ -382,15 +387,16 @@
 
 			// Download the HTML file
 			const downloadResponse = await fetch(
-				`/api/visualization-transforms/${viz.visualization_transform_id}/visualizations/${completed.visualization_id}/download?download=true`
+				`/api/visualization-transforms/${viz.visualization_transform_id}/visualizations/${completed.visualization_id}/download`
 			);
 
 			if (!downloadResponse.ok) {
 				throw new Error(`Failed to download HTML: ${downloadResponse.statusText}`);
 			}
 
-			// Create a blob and download it
-			const blob = await downloadResponse.blob();
+			// Read as text since the response is HTML, then create a blob for download
+			const text = await downloadResponse.text();
+			const blob = new Blob([text], { type: 'text/html' });
 			const url = window.URL.createObjectURL(blob);
 			const a = document.createElement('a');
 			a.href = url;
@@ -913,12 +919,9 @@
 									</TableBodyCell>
 									<TableBodyCell class="px-4 py-1.5">
 										<div class="flex items-center gap-2 pl-5">
-											<a
-												href="#/visualizations/{run.visualization_id}/details"
-												class="text-xs text-blue-600 dark:text-blue-400 hover:underline"
-											>
+											<span class="text-xs text-gray-700 dark:text-gray-300">
 												Run #{run.visualization_id}
-											</a>
+											</span>
 										</div>
 									</TableBodyCell>
 									<TableBodyCell class="px-4 py-1.5">
@@ -977,7 +980,8 @@
 															`/api/visualization-transforms/${viz.visualization_transform_id}/visualizations/${run.visualization_id}/download`
 														);
 														if (!resp.ok) throw new Error(resp.statusText);
-														const blob = await resp.blob();
+														const text = await resp.text();
+														const blob = new Blob([text], { type: 'text/html' });
 														const url = window.URL.createObjectURL(blob);
 														const a = document.createElement('a');
 														a.href = url;

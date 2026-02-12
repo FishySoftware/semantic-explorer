@@ -10,7 +10,6 @@ pub(crate) mod datasets;
 pub(crate) mod embedded_datasets;
 pub(crate) mod embedders;
 pub(crate) mod llms;
-pub(crate) mod rls;
 pub(crate) mod visualization_transforms;
 
 use actix_web::rt::{spawn, time::interval};

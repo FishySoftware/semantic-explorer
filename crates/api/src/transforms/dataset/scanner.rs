@@ -368,7 +368,6 @@ async fn process_dataset_transform_scan(
         );
         if let Err(e) = crate::storage::postgres::dataset_transform_stats::refresh_total_chunks(
             pool,
-            &transform.owner_id,
             transform.dataset_transform_id,
         )
         .await

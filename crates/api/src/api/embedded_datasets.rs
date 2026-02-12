@@ -292,7 +292,13 @@ pub async fn get_embedded_dataset_stats(
         .await
     {
         Ok(_) => {
-            match embedded_datasets::get_embedded_dataset_stats(&pool, embedded_dataset_id).await {
+            match embedded_datasets::get_embedded_dataset_stats(
+                &pool,
+                &user.as_owner(),
+                embedded_dataset_id,
+            )
+            .await
+            {
                 Ok(stats) => HttpResponse::Ok().json(stats),
                 Err(e) => {
                     error!("Failed to get stats: {}", e);
@@ -352,7 +358,13 @@ pub async fn get_batch_embedded_dataset_stats(
         }
     }
 
-    match embedded_datasets::get_batch_embedded_dataset_stats(&pool, embedded_dataset_ids).await {
+    match embedded_datasets::get_batch_embedded_dataset_stats(
+        &pool,
+        &user.as_owner(),
+        embedded_dataset_ids,
+    )
+    .await
+    {
         Ok(stats_map) => HttpResponse::Ok().json(stats_map),
         Err(e) => {
             error!("Failed to get batch stats: {}", e);
