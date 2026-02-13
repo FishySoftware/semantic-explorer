@@ -386,6 +386,10 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     networks:
       - semantic-explorer-net
 
@@ -407,6 +411,10 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     networks:
       - semantic-explorer-net
 
@@ -428,6 +436,10 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     networks:
       - semantic-explorer-net
 
@@ -449,6 +461,10 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     networks:
       - semantic-explorer-net
 
@@ -508,6 +524,8 @@ services:
       start_period: 30s
     deploy:
       resources:
+        limits:
+          memory: 4g
         reservations:
           devices:
             - driver: nvidia
@@ -523,6 +541,12 @@ services:
       POSTGRES_USER: user
       POSTGRES_PASSWORD: password
       POSTGRES_DB: explorer
+    command: >
+      postgres
+      -c shared_buffers=256MB
+      -c work_mem=16MB
+      -c maintenance_work_mem=128MB
+      -c effective_cache_size=512MB
     volumes:
       - postgres_data:/var/lib/postgresql/data:rw
     ports:
@@ -533,6 +557,10 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
     networks:
       - semantic-explorer-net
 
@@ -545,6 +573,38 @@ services:
       - "9187:9187"
     depends_on:
       - postgres
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+    networks:
+      - semantic-explorer-net
+
+  # Valkey (Redis-compatible) - shared cache for bearer tokens and resources
+  valkey:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    command: >
+      valkey-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --appendonly no
+      --save ""
+      --loglevel notice
+    ports:
+      - "6379:6379"
+    volumes:
+      - valkey_data:/data:rw
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 300m
     networks:
       - semantic-explorer-net
 
@@ -562,6 +622,10 @@ services:
       - "5556:5556"
       - "5557:5557"
       - "5558:5558"
+    deploy:
+      resources:
+        limits:
+          memory: 128m
     networks:
       - semantic-explorer-net
 
@@ -595,6 +659,10 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
     networks:
       - semantic-explorer-net
 
@@ -630,6 +698,10 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
     networks:
       - semantic-explorer-net
 
@@ -665,6 +737,10 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
     networks:
       - semantic-explorer-net
 
@@ -682,6 +758,10 @@ services:
       - RUST_LOG=info
     command: ["run"]
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2g
     networks:
       - semantic-explorer-net
 
@@ -690,6 +770,7 @@ services:
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.size=1GB'
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
       - '--web.enable-lifecycle'
@@ -702,6 +783,10 @@ services:
       - ./prometheus.dev.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus:rw
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1g
     networks:
       - semantic-explorer-net
 
@@ -720,6 +805,10 @@ services:
       - quickwit
       - prometheus
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256m
     networks:
       - semantic-explorer-net
 
@@ -740,6 +829,10 @@ services:
       - prometheus
       - quickwit
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256m
     networks:
       - semantic-explorer-net
       
@@ -750,6 +843,7 @@ volumes:
   minio_data_3:
   minio_data_4:
   postgres_data:
+  valkey_data:
   dex_data:
   nats_data_1:
   nats_data_2:

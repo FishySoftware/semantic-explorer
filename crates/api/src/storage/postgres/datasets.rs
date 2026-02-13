@@ -15,7 +15,8 @@ const GET_DATASET_QUERY: &str = r#"
 
 const GET_DATASETS_PAGINATED_QUERY: &str = r#"
     SELECT d.dataset_id, d.title, d.details, d.owner_id, d.owner_display_name, d.tags, d.is_public, d.item_count, d.total_chunks, d.created_at, d.updated_at,
-        COALESCE(dt_stats.transform_count, 0)::bigint AS transform_count
+        COALESCE(dt_stats.transform_count, 0)::bigint AS transform_count,
+        COUNT(*) OVER() AS total_count
     FROM datasets d
     LEFT JOIN (
         SELECT source_dataset_id, COUNT(*) AS transform_count
@@ -29,7 +30,8 @@ const GET_DATASETS_PAGINATED_QUERY: &str = r#"
 
 const GET_DATASETS_PAGINATED_SEARCH_QUERY: &str = r#"
     SELECT d.dataset_id, d.title, d.details, d.owner_id, d.owner_display_name, d.tags, d.is_public, d.item_count, d.total_chunks, d.created_at, d.updated_at,
-        COALESCE(dt_stats.transform_count, 0)::bigint AS transform_count
+        COALESCE(dt_stats.transform_count, 0)::bigint AS transform_count,
+        COUNT(*) OVER() AS total_count
     FROM datasets d
     LEFT JOIN (
         SELECT source_dataset_id, COUNT(*) AS transform_count
@@ -39,14 +41,6 @@ const GET_DATASETS_PAGINATED_SEARCH_QUERY: &str = r#"
     WHERE d.owner_id = $3 AND (d.title ILIKE $4 OR d.details ILIKE $4 OR $5 = ANY(d.tags))
     ORDER BY d.created_at DESC
     LIMIT $1 OFFSET $2
-"#;
-
-const COUNT_DATASETS_QUERY: &str = r#"
-    SELECT COUNT(*) as count FROM datasets WHERE owner_id = $1
-"#;
-
-const COUNT_DATASETS_SEARCH_QUERY: &str = r#"
-    SELECT COUNT(*) as count FROM datasets WHERE owner_id = $1 AND (title ILIKE $2 OR details ILIKE $2 OR $3 = ANY(tags))
 "#;
 
 const CREATE_DATASET_QUERY: &str = r#"
@@ -218,6 +212,7 @@ pub(crate) struct DatasetWithStatsRow {
     pub(crate) created_at: Option<DateTime<Utc>>,
     pub(crate) updated_at: Option<DateTime<Utc>>,
     pub(crate) transform_count: i64,
+    pub(crate) total_count: i64,
 }
 
 #[derive(Debug)]
@@ -235,18 +230,6 @@ pub(crate) async fn get_datasets_paginated(
     limit: i64,
     offset: i64,
 ) -> Result<PaginatedDatasetsResult> {
-    // Get total count
-    let start_count = Instant::now();
-    let count_result: (i64,) = sqlx::query_as(COUNT_DATASETS_QUERY)
-        .bind(owner_id)
-        .fetch_one(pool)
-        .await?;
-    let duration_count = start_count.elapsed().as_secs_f64();
-    record_database_query("SELECT", "datasets", duration_count, true);
-
-    let total_count = count_result.0;
-
-    // Get paginated items
     let start = Instant::now();
     let result = sqlx::query_as::<_, DatasetWithStatsRow>(GET_DATASETS_PAGINATED_QUERY)
         .bind(owner_id)
@@ -260,6 +243,7 @@ pub(crate) async fn get_datasets_paginated(
     record_database_query("SELECT", "datasets", duration, success);
 
     let items = result?;
+    let total_count = items.first().map_or(0, |r| r.total_count);
     Ok(PaginatedDatasetsResult {
         items,
         total_count,
@@ -278,20 +262,6 @@ pub(crate) async fn get_datasets_paginated_search(
 ) -> Result<PaginatedDatasetsResult> {
     let search_pattern = format!("%{}%", search_query);
 
-    // Get total count
-    let start_count = Instant::now();
-    let count_result: (i64,) = sqlx::query_as(COUNT_DATASETS_SEARCH_QUERY)
-        .bind(owner_id)
-        .bind(&search_pattern)
-        .bind(search_query)
-        .fetch_one(pool)
-        .await?;
-    let duration_count = start_count.elapsed().as_secs_f64();
-    record_database_query("SELECT", "datasets", duration_count, true);
-
-    let total_count = count_result.0;
-
-    // Get paginated items
     let start = Instant::now();
     let result = sqlx::query_as::<_, DatasetWithStatsRow>(GET_DATASETS_PAGINATED_SEARCH_QUERY)
         .bind(limit)
@@ -307,6 +277,7 @@ pub(crate) async fn get_datasets_paginated_search(
     record_database_query("SELECT", "datasets", duration, success);
 
     let items = result?;
+    let total_count = items.first().map_or(0, |r| r.total_count);
     Ok(PaginatedDatasetsResult {
         items,
         total_count,

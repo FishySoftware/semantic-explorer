@@ -9,6 +9,7 @@ use crate::storage::postgres::{
 use crate::transforms::dataset::models::{
     CreateDatasetTransform, DatasetTransform, DatasetTransformStats, UpdateDatasetTransform,
 };
+use semantic_explorer_core::config::S3Config;
 use semantic_explorer_core::models::PaginatedResponse;
 use semantic_explorer_core::validation;
 
@@ -287,12 +288,14 @@ pub async fn update_dataset_transform(
     ),
 )]
 #[delete("/api/dataset-transforms/{id}")]
-#[tracing::instrument(name = "delete_dataset_transform", skip(user, pool, qdrant_client, req), fields(dataset_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "delete_dataset_transform", skip(user, pool, qdrant_client, s3_client, s3_config, req), fields(dataset_transform_id = %path.as_ref()))]
 pub async fn delete_dataset_transform(
     user: AuthenticatedUser,
     req: HttpRequest,
     pool: Data<Pool<Postgres>>,
     qdrant_client: Data<Qdrant>,
+    s3_client: Data<aws_sdk_s3::Client>,
+    s3_config: Data<S3Config>,
     path: Path<i32>,
 ) -> impl Responder {
     let dataset_transform_id = path.into_inner();
@@ -315,8 +318,8 @@ pub async fn delete_dataset_transform(
         }
     };
 
-    // Delete Qdrant collections for all embedded datasets
-    for embedded_dataset in embedded_datasets_list {
+    // Delete Qdrant collections and clean up S3 batch files for all embedded datasets
+    for embedded_dataset in &embedded_datasets_list {
         if let Err(e) = qdrant_client
             .delete_collection(&embedded_dataset.collection_name)
             .await
@@ -326,6 +329,37 @@ pub async fn delete_dataset_transform(
                 embedded_dataset.collection_name, embedded_dataset.embedded_dataset_id, e
             );
             // Continue with other collections even if one fails
+        }
+
+        // Clean up S3 batch files so in-flight workers fail fast on download
+        // instead of wasting embedding tokens on orphaned jobs
+        let prefix = format!(
+            "embedded-datasets/embedded-dataset-{}/",
+            embedded_dataset.embedded_dataset_id
+        );
+        match semantic_explorer_core::storage::delete_files_by_prefix(
+            &s3_client,
+            &s3_config.bucket_name,
+            &prefix,
+        )
+        .await
+        {
+            Ok(count) => {
+                if count > 0 {
+                    info!(
+                        embedded_dataset_id = embedded_dataset.embedded_dataset_id,
+                        deleted_files = count,
+                        "Cleaned up S3 batch files for deleted embedded dataset"
+                    );
+                }
+            }
+            Err(e) => {
+                error!(
+                    "Failed to cleanup S3 batch files for embedded dataset {}: {}",
+                    embedded_dataset.embedded_dataset_id, e
+                );
+                // Continue with deletion even if S3 cleanup fails
+            }
         }
     }
 

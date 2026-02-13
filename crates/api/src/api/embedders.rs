@@ -279,6 +279,7 @@ pub(crate) async fn update_embedder(
     responses(
         (status = 204, description = "No Content"),
         (status = 404, description = "Not Found"),
+        (status = 409, description = "Conflict - embedder has associated embedded datasets"),
         (status = 500, description = "Internal Server Error"),
     ),
     params(
@@ -294,7 +295,28 @@ pub(crate) async fn delete_embedder(
     pool: Data<Pool<Postgres>>,
     embedder_id: Path<i32>,
 ) -> impl Responder {
-    match embedders::delete_embedder(&pool.into_inner(), &user, *embedder_id).await {
+    let pool = pool.into_inner();
+
+    // Check for associated embedded datasets before deleting
+    match crate::storage::postgres::embedded_datasets::count_by_embedder(&pool, &user, *embedder_id)
+        .await
+    {
+        Ok(count) if count > 0 => {
+            return ApiError::Conflict(format!(
+                "Cannot delete embedder: {} embedded dataset(s) still reference it. Delete them first.",
+                count
+            ))
+            .error_response();
+        }
+        Err(e) => {
+            tracing::error!(error = %e, embedder_id = %embedder_id, "failed to check embedded datasets for embedder");
+            return ApiError::Internal(format!("error checking embedder dependencies: {:?}", e))
+                .error_response();
+        }
+        _ => {}
+    }
+
+    match embedders::delete_embedder(&pool, &user, *embedder_id).await {
         Ok(()) => {
             events::resource_deleted_with_request(
                 &req,

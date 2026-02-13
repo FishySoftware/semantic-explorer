@@ -467,6 +467,59 @@ Prometheus metrics available at `/metrics`.
 
 OIDC authentication required for all `/api/*` endpoints. Health endpoints are unauthenticated.
 
+The API supports two authentication methods:
+
+**1. Bearer Token (recommended for programmatic access)**
+
+Pass the access token in the `Authorization` header:
+
+```bash
+curl 'https://your-instance.example.com/api/users/@me' \
+  -H 'Authorization: Bearer <ACCESS_TOKEN>'
+```
+
+```python
+import requests
+
+headers = {'Authorization': 'Bearer <ACCESS_TOKEN>'}
+response = requests.get('https://your-instance.example.com/api/users/@me', headers=headers)
+print(response.json())
+```
+
+**2. Cookie-based (browser sessions)**
+
+Handled automatically by the OIDC login flow. The browser stores an `HttpOnly` session cookie.
+
+**Obtaining a Bearer Token**
+
+*From an active browser session:*
+
+```bash
+# If you're already logged in via the browser, retrieve your token:
+curl 'https://your-instance.example.com/api/auth/token' \
+  -b 'access_token=<SESSION_COOKIE>'
+```
+
+*Programmatic OIDC flow (for API clients / CLI tools):*
+
+```bash
+# Step 1: Get the authorization URL
+curl 'https://your-instance.example.com/api/auth/authorize'
+# Returns: { "authorization_url": "...", "nonce": "...", "pkce_verifier": "..." }
+
+# Step 2: Open the authorization_url in a browser, authenticate, and capture the ?code= parameter
+
+# Step 3: Exchange the code for tokens
+curl -X POST 'https://your-instance.example.com/api/token' \
+  -H 'Content-Type: application/json' \
+  -d '{"code": "<AUTH_CODE>", "nonce": "<NONCE>"}'
+# Returns: { "access_token": "...", "token_type": "Bearer", ... }
+
+# Step 4: Use the access_token as a Bearer token
+curl 'https://your-instance.example.com/api/users/@me' \
+  -H 'Authorization: Bearer <ACCESS_TOKEN>'
+```
+
 ### Encryption
 
 API keys for embedders and LLMs are encrypted with AES-256-GCM before storage.

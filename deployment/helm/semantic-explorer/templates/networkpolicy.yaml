@@ -71,6 +71,22 @@ spec:
     ports:
     - protocol: TCP
       port: 6334
+  # Allow Valkey (Redis-compatible cache)
+  {{- if or .Values.valkey.enabled .Values.valkey.external.enabled }}
+  - to:
+    {{- if .Values.valkey.enabled }}
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: valkey
+          app.kubernetes.io/instance: {{ .Release.Name }}
+    {{- else }}
+    - ipBlock:
+        cidr: 0.0.0.0/0  # External Valkey - allow all (should be restricted in production)
+    {{- end }}
+    ports:
+    - protocol: TCP
+      port: 6379
+  {{- end }}
   # Allow OpenTelemetry Collector
   {{- if .Values.observability.otelCollector.enabled }}
   - to:

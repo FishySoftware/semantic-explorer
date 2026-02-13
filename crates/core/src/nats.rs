@@ -200,6 +200,17 @@ pub async fn initialize_jetstream(client: &Client, nats_config: &NatsConfig) -> 
     // Ensure durable consumers exist for all worker types.
     // This ensures consumers survive worker restarts and cluster disruptions.
     // Workers will bind to existing consumers rather than creating new ones.
+    let collection_consumer_config = create_transform_file_consumer_config();
+    ensure_consumer(
+        &jetstream,
+        "COLLECTION_TRANSFORMS",
+        collection_consumer_config,
+    )
+    .await?;
+
+    let dataset_consumer_config = create_dataset_transform_consumer_config();
+    ensure_consumer(&jetstream, "DATASET_TRANSFORMS", dataset_consumer_config).await?;
+
     let vis_consumer_config = create_visualization_consumer_config();
     ensure_consumer(&jetstream, "VISUALIZATION_TRANSFORMS", vis_consumer_config).await?;
 

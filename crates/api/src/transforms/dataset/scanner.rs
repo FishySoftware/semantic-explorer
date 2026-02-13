@@ -427,15 +427,18 @@ async fn process_dataset_transform_scan(
         .collect();
 
     for embedded_dataset in embedded_datasets_list {
-        // Get embedder from pre-fetched map
-        let embedder = embedders_map
-            .get(&embedded_dataset.embedder_id)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Embedder {} not found in batch fetch",
-                    embedded_dataset.embedder_id
-                )
-            })?;
+        // Get embedder from pre-fetched map (skip if embedder was deleted)
+        let embedder = match embedders_map.get(&embedded_dataset.embedder_id) {
+            Some(e) => e,
+            None => {
+                warn!(
+                    embedded_dataset_id = embedded_dataset.embedded_dataset_id,
+                    embedder_id = embedded_dataset.embedder_id,
+                    "Skipping embedded dataset: embedder no longer exists"
+                );
+                continue;
+            }
+        };
 
         let model = embedder
             .config

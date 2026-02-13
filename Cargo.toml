@@ -15,7 +15,6 @@ actix-cors = { version = "0.7.1" }
 actix-multipart = { version = "0.7.2" }
 thiserror = { version = "2.0.18" }
 actix-files = {version = "0.6.9", features = ["actix-server"]}
-actix_web_openidconnect = { version = "0.3.2"}
 actix-web-prom = {version = "0.10.0", features = ["process"]}
 async-nats = { version = "0.46.0" }
 async-stream = { version = "0.3.6" }
@@ -90,6 +89,7 @@ tree-sitter-yaml = { version = "0.7.2" }
 tree-sitter-html = { version = "0.23.2" }
 tree-sitter-css = { version = "0.25.0" }
 tree-sitter-bash = { version = "0.25.1" }
+redis = { version = "1.0.3", features = ["tokio-comp", "tokio-rustls-comp", "connection-manager", "tls-rustls"] }
 
 semantic-explorer-core = { path = "crates/core" }
 

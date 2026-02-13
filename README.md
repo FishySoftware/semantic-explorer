@@ -32,7 +32,7 @@ Semantic Explorer is a microservices-based platform that enables organizations t
 6. **Chat with documents** via RAG (Retrieval-Augmented Generation) with streaming responses
 7. **Share resources** through a public marketplace for collaboration
 
-The platform uses a message-driven architecture with NATS JetStream for job orchestration, PostgreSQL for metadata, Qdrant for vector storage, and S3 for file storage.
+The platform uses a message-driven architecture with NATS JetStream for job orchestration, PostgreSQL for metadata, Qdrant for vector storage, Valkey for caching, and S3 for file storage.
 
 ---
 
@@ -75,6 +75,7 @@ graph TB
         PG[(PostgreSQL)]
         QD[(Qdrant)]
         S3[(S3 / MinIO)]
+        VK[(Valkey Cache)]
     end
 
     subgraph "Observability"
@@ -89,6 +90,7 @@ graph TB
     UI -->|Served by| API
     API -->|Publish Jobs| NATS
     API -->|SQL| PG
+    API -->|Cache| VK
     API -->|Vector Search| QD
     API -->|Files| S3
 
@@ -486,6 +488,7 @@ semantic-explorer/
 | **PostgreSQL 16.3** | Metadata storage |
 | **Qdrant (GPU)** | Vector storage and search |
 | **MinIO** | Distributed S3-compatible storage (4-node cluster) |
+| **Valkey 8** | Shared cache for bearer tokens and resources (optional, Redis-compatible) |
 | **NATS 2.10** | Message queue (3-node JetStream cluster) |
 | **Dex** | OIDC authentication provider |
 | **Prometheus** | Metrics collection |
@@ -848,6 +851,30 @@ OIDC_CLIENT_SECRET=your-secret
 ```
 
 Development includes Dex OIDC provider for testing.
+
+#### API Authentication (Bearer Token)
+
+All `/api/*` endpoints require authentication. Use the `Authorization: Bearer` header for programmatic access:
+
+```bash
+curl 'https://your-instance.example.com/api/users/@me' \
+  -H 'Authorization: Bearer <ACCESS_TOKEN>'
+```
+
+```python
+import requests
+
+headers = {'Authorization': 'Bearer <ACCESS_TOKEN>'}
+response = requests.get('https://your-instance.example.com/api/users/@me', headers=headers)
+print(response.json())
+```
+
+**Obtaining a token:**
+
+1. **From the UI**: Log in via the browser, then use `GET /api/auth/token` to retrieve your session's access token.
+2. **Programmatic flow**: Use `GET /api/auth/authorize` to get an OIDC authorization URL, authenticate, then exchange the code via `POST /api/token`.
+
+See the [API README](crates/api/README.md) for the full authentication flow.
 
 ### Encryption
 

@@ -79,7 +79,7 @@
 				Important Notes
 			</h4>
 			<ul class="list-disc list-inside text-sm text-yellow-800 dark:text-yellow-400 space-y-1">
-				<li>Authentication is required via the access_token cookie</li>
+				<li>Authentication is required via the <code>Authorization: Bearer</code> header</li>
 				<li>Each item's chunks array must contain at least one chunk</li>
 				<li>The items array must contain at least one item</li>
 				<li>Metadata can be any valid JSON object</li>

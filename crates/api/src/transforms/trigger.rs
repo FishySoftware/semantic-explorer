@@ -20,7 +20,7 @@ use aws_sdk_s3::Client as S3Client;
 use futures_util::StreamExt;
 use sqlx::{Pool, Postgres};
 use std::time::Duration;
-use tracing::{error, info, warn};
+use tracing::{Instrument, error, info, warn};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use semantic_explorer_core::encryption::EncryptionService;
@@ -213,8 +213,14 @@ async fn process_trigger(ctx: &ScannerContext, msg: &Message) -> Result<()> {
         otel.kind = "consumer"
     );
     let _ = span.set_parent(parent_context);
-    let _guard = span.enter();
 
+    // Use .instrument(span) instead of span.enter() to correctly track
+    // the span across .await points in async code
+    process_trigger_inner(ctx, msg).instrument(span).await
+}
+
+/// Inner function that does the actual trigger processing, instrumented by the caller
+async fn process_trigger_inner(ctx: &ScannerContext, msg: &Message) -> Result<()> {
     // Parse trigger
     let trigger: ScanTrigger = serde_json::from_slice(&msg.payload)?;
 

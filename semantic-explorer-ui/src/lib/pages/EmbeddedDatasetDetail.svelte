@@ -772,7 +772,9 @@
 								</li>
 								<li>Maximum 1000 points per request</li>
 								<li>Points with existing IDs will be updated (upsert behavior)</li>
-								<li>Authentication is required via the access_token cookie</li>
+								<li>
+									Authentication is required via the <code>Authorization: Bearer</code> header
+								</li>
 								<li>
 									Standalone datasets cannot be used for Search or Chat (no embedder for query
 									embedding)

@@ -49,6 +49,9 @@ pub enum ApiError {
     /// Unauthorized access (401) - Ready for Phase 5.2 migration
     #[error("{0}")]
     Unauthorized(String),
+    /// Conflict - resource has dependencies (409)
+    #[error("{0}")]
+    Conflict(String),
     /// Internal server error (500)
     #[error("{0}")]
     Internal(String),
@@ -66,6 +69,7 @@ impl ResponseError for ApiError {
             ApiError::NotFound(_) => StatusCode::NOT_FOUND,
             ApiError::BadRequest(_) => StatusCode::BAD_REQUEST,
             ApiError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            ApiError::Conflict(_) => StatusCode::CONFLICT,
             ApiError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::Validation(_) => StatusCode::BAD_REQUEST,
@@ -79,6 +83,7 @@ impl ResponseError for ApiError {
             ApiError::NotFound(msg) => ("NotFound", msg.clone()),
             ApiError::BadRequest(msg) => ("BadRequest", msg.clone()),
             ApiError::Unauthorized(msg) => ("Unauthorized", msg.clone()),
+            ApiError::Conflict(msg) => ("Conflict", msg.clone()),
             ApiError::Internal(msg) => ("InternalServerError", msg.clone()),
             ApiError::Database(e) => {
                 // Log the actual error for debugging but don't expose to client

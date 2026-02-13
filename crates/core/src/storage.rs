@@ -333,3 +333,77 @@ pub async fn delete_file_by_key(client: &Client, bucket: &str, key: &str) -> Res
     result?;
     Ok(())
 }
+
+/// Delete all files under a given S3 prefix.
+/// Used to clean up batch files when transforms/embedded datasets are deleted.
+/// Workers that attempt to download deleted batch files will fail fast,
+/// preventing wasted embedding tokens on orphaned jobs.
+#[tracing::instrument(name = "s3.delete_files_by_prefix", skip(client), fields(storage.system = "s3", bucket = %bucket, prefix = %prefix))]
+pub async fn delete_files_by_prefix(client: &Client, bucket: &str, prefix: &str) -> Result<usize> {
+    let start = Instant::now();
+    let mut deleted_count = 0usize;
+
+    tracing::info!(
+        bucket = %bucket,
+        prefix = %prefix,
+        "Deleting all files under S3 prefix"
+    );
+
+    let mut paginator = client
+        .list_objects_v2()
+        .bucket(bucket)
+        .prefix(prefix)
+        .into_paginator()
+        .send();
+
+    while let Some(result) = paginator.next().await {
+        let output = result?;
+        for obj in output.contents() {
+            if let Some(key) = obj.key() {
+                if let Err(e) = client.delete_object().bucket(bucket).key(key).send().await {
+                    tracing::warn!(
+                        bucket = %bucket,
+                        key = %key,
+                        error = %e,
+                        "Failed to delete file during prefix cleanup (continuing)"
+                    );
+                } else {
+                    deleted_count += 1;
+                }
+            }
+        }
+    }
+
+    let duration = start.elapsed().as_secs_f64();
+    record_storage_operation("delete_prefix", duration, None, deleted_count > 0);
+    tracing::info!(
+        bucket = %bucket,
+        prefix = %prefix,
+        deleted_count,
+        duration_ms = duration * 1000.0,
+        "Completed S3 prefix cleanup"
+    );
+
+    Ok(deleted_count)
+}
+
+/// Check if a file exists in S3 by performing a lightweight HEAD request.
+/// Returns true if the file exists, false if not found.
+/// Used by workers to verify batch files still exist before expensive operations.
+#[tracing::instrument(name = "s3.file_exists", skip(client), fields(storage.system = "s3", bucket = %bucket, key = %key))]
+pub async fn file_exists(client: &Client, bucket: &str, key: &str) -> Result<bool> {
+    match client.head_object().bucket(bucket).key(key).send().await {
+        Ok(_) => Ok(true),
+        Err(e) => {
+            let err_str = format!("{e:?}");
+            if err_str.contains("NotFound")
+                || err_str.contains("404")
+                || err_str.contains("NoSuchKey")
+            {
+                Ok(false)
+            } else {
+                Err(anyhow::anyhow!("Failed to check file existence: {}", e))
+            }
+        }
+    }
+}

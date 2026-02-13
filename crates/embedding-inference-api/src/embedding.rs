@@ -174,7 +174,7 @@ pub(crate) fn get_all_available_embedding_models(config: &ModelConfig) -> Vec<Av
     let onnx_models = TextEmbedding::list_supported_models()
         .into_iter()
         .filter(|m| {
-            m.model_file.eq("onnx/model.onnx") && // Remove optimized and quantized variants (not GPU friendly)
+            (m.model_file.eq("onnx/model.onnx") || m.model_file.eq("model.onnx")) && // Remove optimized and quantized variants (not GPU friendly)
             !m.model_code.contains("-zh-") && // Remove Chinese-specific models
             !m.model_code.eq("onnx-community/embeddinggemma-300m-ONNX") // Remove Gemma (not GPU friendly)
         })

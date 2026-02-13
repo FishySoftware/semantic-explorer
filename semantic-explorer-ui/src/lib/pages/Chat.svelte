@@ -429,7 +429,9 @@
 						{#each currentMessages as message (message.message_id)}
 							<ChatMessage
 								{message}
-								embeddedDatasetId={currentSession.embedded_dataset_id}
+								sourceDatasetId={embeddedDatasets.find(
+									(d) => d.embedded_dataset_id === currentSession?.embedded_dataset_id
+								)?.source_dataset_id}
 								onRegenerate={async (messageId) => {
 									if (chatStream) {
 										await chatStream.regenerateMessage(messageId);

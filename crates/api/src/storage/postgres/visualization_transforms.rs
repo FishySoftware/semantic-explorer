@@ -1,6 +1,6 @@
 use anyhow::Result;
 use sqlx::{
-    Pool, Postgres,
+    FromRow, Pool, Postgres,
     types::chrono::{DateTime, Utc},
 };
 use std::time::Instant;
@@ -8,6 +8,54 @@ use std::time::Instant;
 use crate::transforms::visualization::models::{Visualization, VisualizationTransform};
 use semantic_explorer_core::models::PaginatedResponse;
 use semantic_explorer_core::observability::record_database_query;
+
+/// Helper struct for paginated queries that include total_count via COUNT(*) OVER()
+#[derive(Debug, Clone, FromRow)]
+struct VisualizationTransformWithCount {
+    pub visualization_transform_id: i32,
+    pub title: String,
+    pub embedded_dataset_id: i32,
+    pub owner_id: String,
+    pub owner_display_name: String,
+    pub is_enabled: bool,
+    pub reduced_collection_name: Option<String>,
+    pub topics_collection_name: Option<String>,
+    pub visualization_config: serde_json::Value,
+    pub last_run_status: Option<String>,
+    pub last_run_at: Option<DateTime<Utc>>,
+    pub last_error: Option<String>,
+    pub last_run_stats: Option<serde_json::Value>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub total_count: i64,
+}
+
+impl VisualizationTransformWithCount {
+    fn into_parts(rows: Vec<Self>) -> (i64, Vec<VisualizationTransform>) {
+        let total_count = rows.first().map_or(0, |r| r.total_count);
+        let items = rows
+            .into_iter()
+            .map(|r| VisualizationTransform {
+                visualization_transform_id: r.visualization_transform_id,
+                title: r.title,
+                embedded_dataset_id: r.embedded_dataset_id,
+                owner_id: r.owner_id,
+                owner_display_name: r.owner_display_name,
+                is_enabled: r.is_enabled,
+                reduced_collection_name: r.reduced_collection_name,
+                topics_collection_name: r.topics_collection_name,
+                visualization_config: r.visualization_config,
+                last_run_status: r.last_run_status,
+                last_run_at: r.last_run_at,
+                last_error: r.last_error,
+                last_run_stats: r.last_run_stats,
+                created_at: r.created_at,
+                updated_at: r.updated_at,
+            })
+            .collect();
+        (total_count, items)
+    }
+}
 
 /// Builder for updating visualization fields.
 ///
@@ -341,16 +389,12 @@ const GET_VISUALIZATION_TRANSFORMS_BY_EMBEDDED_DATASET_QUERY: &str = r#"
     LIMIT $3 OFFSET $4
 "#;
 
-const COUNT_VISUALIZATION_TRANSFORMS_QUERY: &str =
-    "SELECT COUNT(*) as count FROM visualization_transforms WHERE owner_id = $1";
-const COUNT_VISUALIZATION_TRANSFORMS_WITH_SEARCH_QUERY: &str =
-    "SELECT COUNT(*) as count FROM visualization_transforms WHERE title ILIKE $1 AND owner_id = $2";
-
 // Static sort query variants for plan caching
 const VT_PAGINATED_TITLE_ASC: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,
-           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at,
+           COUNT(*) OVER() AS total_count
     FROM visualization_transforms
     WHERE owner_id = $1
     ORDER BY title ASC LIMIT $2 OFFSET $3
@@ -358,7 +402,8 @@ const VT_PAGINATED_TITLE_ASC: &str = r#"
 const VT_PAGINATED_TITLE_DESC: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,
-           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at,
+           COUNT(*) OVER() AS total_count
     FROM visualization_transforms
     WHERE owner_id = $1
     ORDER BY title DESC LIMIT $2 OFFSET $3
@@ -366,7 +411,8 @@ const VT_PAGINATED_TITLE_DESC: &str = r#"
 const VT_PAGINATED_IS_ENABLED_ASC: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,
-           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at,
+           COUNT(*) OVER() AS total_count
     FROM visualization_transforms
     WHERE owner_id = $1
     ORDER BY is_enabled ASC LIMIT $2 OFFSET $3
@@ -374,7 +420,8 @@ const VT_PAGINATED_IS_ENABLED_ASC: &str = r#"
 const VT_PAGINATED_IS_ENABLED_DESC: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,
-           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at,
+           COUNT(*) OVER() AS total_count
     FROM visualization_transforms
     WHERE owner_id = $1
     ORDER BY is_enabled DESC LIMIT $2 OFFSET $3
@@ -382,7 +429,8 @@ const VT_PAGINATED_IS_ENABLED_DESC: &str = r#"
 const VT_PAGINATED_LAST_RUN_STATUS_ASC: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,
-           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at,
+           COUNT(*) OVER() AS total_count
     FROM visualization_transforms
     WHERE owner_id = $1
     ORDER BY last_run_status ASC LIMIT $2 OFFSET $3
@@ -390,7 +438,8 @@ const VT_PAGINATED_LAST_RUN_STATUS_ASC: &str = r#"
 const VT_PAGINATED_LAST_RUN_STATUS_DESC: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,
-           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at,
+           COUNT(*) OVER() AS total_count
     FROM visualization_transforms
     WHERE owner_id = $1
     ORDER BY last_run_status DESC LIMIT $2 OFFSET $3
@@ -398,7 +447,8 @@ const VT_PAGINATED_LAST_RUN_STATUS_DESC: &str = r#"
 const VT_PAGINATED_CREATED_AT_ASC: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,
-           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at,
+           COUNT(*) OVER() AS total_count
     FROM visualization_transforms
     WHERE owner_id = $1
     ORDER BY created_at ASC LIMIT $2 OFFSET $3
@@ -406,7 +456,8 @@ const VT_PAGINATED_CREATED_AT_ASC: &str = r#"
 const VT_PAGINATED_CREATED_AT_DESC: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,
-           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at,
+           COUNT(*) OVER() AS total_count
     FROM visualization_transforms
     WHERE owner_id = $1
     ORDER BY created_at DESC LIMIT $2 OFFSET $3
@@ -414,7 +465,8 @@ const VT_PAGINATED_CREATED_AT_DESC: &str = r#"
 const VT_PAGINATED_UPDATED_AT_ASC: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,
-           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at,
+           COUNT(*) OVER() AS total_count
     FROM visualization_transforms
     WHERE owner_id = $1
     ORDER BY updated_at ASC LIMIT $2 OFFSET $3
@@ -422,7 +474,8 @@ const VT_PAGINATED_UPDATED_AT_ASC: &str = r#"
 const VT_PAGINATED_UPDATED_AT_DESC: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,
-           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at,
+           COUNT(*) OVER() AS total_count
     FROM visualization_transforms
     WHERE owner_id = $1
     ORDER BY updated_at DESC LIMIT $2 OFFSET $3
@@ -431,7 +484,8 @@ const VT_PAGINATED_UPDATED_AT_DESC: &str = r#"
 const VT_SEARCH_TITLE_ASC: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,
-           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at,
+           COUNT(*) OVER() AS total_count
     FROM visualization_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY title ASC LIMIT $3 OFFSET $4
@@ -439,7 +493,8 @@ const VT_SEARCH_TITLE_ASC: &str = r#"
 const VT_SEARCH_TITLE_DESC: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,
-           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at,
+           COUNT(*) OVER() AS total_count
     FROM visualization_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY title DESC LIMIT $3 OFFSET $4
@@ -447,7 +502,8 @@ const VT_SEARCH_TITLE_DESC: &str = r#"
 const VT_SEARCH_IS_ENABLED_ASC: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,
-           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at,
+           COUNT(*) OVER() AS total_count
     FROM visualization_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY is_enabled ASC LIMIT $3 OFFSET $4
@@ -455,7 +511,8 @@ const VT_SEARCH_IS_ENABLED_ASC: &str = r#"
 const VT_SEARCH_IS_ENABLED_DESC: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,
-           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at,
+           COUNT(*) OVER() AS total_count
     FROM visualization_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY is_enabled DESC LIMIT $3 OFFSET $4
@@ -463,7 +520,8 @@ const VT_SEARCH_IS_ENABLED_DESC: &str = r#"
 const VT_SEARCH_LAST_RUN_STATUS_ASC: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,
-           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at,
+           COUNT(*) OVER() AS total_count
     FROM visualization_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY last_run_status ASC LIMIT $3 OFFSET $4
@@ -471,7 +529,8 @@ const VT_SEARCH_LAST_RUN_STATUS_ASC: &str = r#"
 const VT_SEARCH_LAST_RUN_STATUS_DESC: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,
-           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at,
+           COUNT(*) OVER() AS total_count
     FROM visualization_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY last_run_status DESC LIMIT $3 OFFSET $4
@@ -479,7 +538,8 @@ const VT_SEARCH_LAST_RUN_STATUS_DESC: &str = r#"
 const VT_SEARCH_CREATED_AT_ASC: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,
-           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at,
+           COUNT(*) OVER() AS total_count
     FROM visualization_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY created_at ASC LIMIT $3 OFFSET $4
@@ -487,7 +547,8 @@ const VT_SEARCH_CREATED_AT_ASC: &str = r#"
 const VT_SEARCH_CREATED_AT_DESC: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,
-           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at,
+           COUNT(*) OVER() AS total_count
     FROM visualization_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY created_at DESC LIMIT $3 OFFSET $4
@@ -495,7 +556,8 @@ const VT_SEARCH_CREATED_AT_DESC: &str = r#"
 const VT_SEARCH_UPDATED_AT_ASC: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,
-           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at,
+           COUNT(*) OVER() AS total_count
     FROM visualization_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY updated_at ASC LIMIT $3 OFFSET $4
@@ -503,7 +565,8 @@ const VT_SEARCH_UPDATED_AT_ASC: &str = r#"
 const VT_SEARCH_UPDATED_AT_DESC: &str = r#"
     SELECT visualization_transform_id, title, embedded_dataset_id, owner_id, owner_display_name, is_enabled,
            reduced_collection_name, topics_collection_name, visualization_config,
-           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at
+           last_run_status, last_run_at, last_error, last_run_stats, created_at, updated_at,
+           COUNT(*) OVER() AS total_count
     FROM visualization_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY updated_at DESC LIMIT $3 OFFSET $4
@@ -557,17 +620,10 @@ pub async fn get_visualization_transforms_paginated(
     let (total_count, transforms) = if let Some(search_term) = search {
         let search_pattern = format!("%{}%", search_term);
 
-        let count_result: (i64,) = sqlx::query_as(COUNT_VISUALIZATION_TRANSFORMS_WITH_SEARCH_QUERY)
-            .bind(&search_pattern)
-            .bind(owner)
-            .fetch_one(pool)
-            .await?;
-        let total = count_result.0;
-
-        // Use static query variant for plan caching
+        // Use static query variant for plan caching (includes COUNT(*) OVER())
         let query_str = get_vt_search_query(sort_field, sort_dir);
 
-        let items = sqlx::query_as::<_, VisualizationTransform>(query_str)
+        let rows = sqlx::query_as::<_, VisualizationTransformWithCount>(query_str)
             .bind(&search_pattern)
             .bind(owner)
             .bind(limit)
@@ -575,25 +631,19 @@ pub async fn get_visualization_transforms_paginated(
             .fetch_all(pool)
             .await?;
 
-        (total, items)
+        VisualizationTransformWithCount::into_parts(rows)
     } else {
-        let count_result: (i64,) = sqlx::query_as(COUNT_VISUALIZATION_TRANSFORMS_QUERY)
-            .bind(owner)
-            .fetch_one(pool)
-            .await?;
-        let total = count_result.0;
-
-        // Use static query variant for plan caching
+        // Use static query variant for plan caching (includes COUNT(*) OVER())
         let query_str = get_vt_paginated_query(sort_field, sort_dir);
 
-        let items = sqlx::query_as::<_, VisualizationTransform>(query_str)
+        let rows = sqlx::query_as::<_, VisualizationTransformWithCount>(query_str)
             .bind(owner)
             .bind(limit)
             .bind(offset)
             .fetch_all(pool)
             .await?;
 
-        (total, items)
+        VisualizationTransformWithCount::into_parts(rows)
     };
 
     let duration = start.elapsed().as_secs_f64();

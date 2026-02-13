@@ -1,0 +1,90 @@
+{
+  "annotations": { "list": [] },
+  "description": "Valkey (Redis-compatible) cache metrics for Semantic Explorer",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "gridPos": { "h": 3, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "code": { "language": "plaintext", "showLineNumbers": false }, "content": "# Valkey Cache Metrics\n\nThis dashboard monitors the Valkey (Redis-compatible) cache layer used for bearer token and resource caching across API replicas.", "mode": "markdown" },
+      "title": "",
+      "transparent": true,
+      "type": "text"
+    },
+    {
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [{ "options": { "0": { "color": "red", "index": 1, "text": "Disconnected" }, "1": { "color": "green", "index": 0, "text": "Connected" } }, "type": "value" }], "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] } } },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 3 },
+      "id": 2,
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
+      "targets": [{ "expr": "valkey_connected", "legendFormat": "Status", "refId": "A" }],
+      "title": "Connection Status",
+      "type": "stat"
+    },
+    {
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "axisCenteredZero": false, "drawStyle": "line", "fillOpacity": 20, "lineWidth": 2, "pointSize": 5, "showPoints": "never" }, "unit": "percentunit" } },
+      "gridPos": { "h": 8, "w": 10, "x": 4, "y": 3 },
+      "id": 3,
+      "options": { "legend": { "calcs": ["mean", "lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [{ "expr": "sum(rate(valkey_cache_hits_total[5m])) / (sum(rate(valkey_cache_hits_total[5m])) + sum(rate(valkey_cache_misses_total[5m])))", "legendFormat": "Hit Rate", "refId": "A" }],
+      "title": "Cache Hit Rate (5m)",
+      "type": "timeseries"
+    },
+    {
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" }, "unit": "ops" } },
+      "gridPos": { "h": 8, "w": 10, "x": 14, "y": 3 },
+      "id": 4,
+      "options": { "legend": { "calcs": ["mean", "lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [{ "expr": "sum(rate(valkey_cache_hits_total[1m])) by (cache_type)", "legendFormat": "hits ({{cache_type}})", "refId": "A" }, { "expr": "sum(rate(valkey_cache_misses_total[1m])) by (cache_type)", "legendFormat": "misses ({{cache_type}})", "refId": "B" }],
+      "title": "Cache Operations Rate",
+      "type": "timeseries"
+    },
+    {
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 134217728 }, { "color": "red", "value": 234881024 }] }, "unit": "bytes" } },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 7 },
+      "id": 5,
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
+      "targets": [{ "expr": "valkey_used_memory_bytes", "refId": "A" }],
+      "title": "Memory Usage",
+      "type": "stat"
+    },
+    {
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" }, "unit": "s" } },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 11 },
+      "id": 6,
+      "options": { "legend": { "calcs": ["mean", "max", "p99"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [{ "expr": "histogram_quantile(0.50, sum(rate(valkey_operation_duration_bucket[5m])) by (le, operation))", "legendFormat": "p50 {{operation}}", "refId": "A" }, { "expr": "histogram_quantile(0.95, sum(rate(valkey_operation_duration_bucket[5m])) by (le, operation))", "legendFormat": "p95 {{operation}}", "refId": "B" }, { "expr": "histogram_quantile(0.99, sum(rate(valkey_operation_duration_bucket[5m])) by (le, operation))", "legendFormat": "p99 {{operation}}", "refId": "C" }],
+      "title": "Operation Latency",
+      "type": "timeseries"
+    },
+    {
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" }, "unit": "short" } },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 11 },
+      "id": 7,
+      "options": { "legend": { "calcs": ["mean", "lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [{ "expr": "valkey_connected_clients", "legendFormat": "Connected Clients", "refId": "A" }, { "expr": "sum(rate(valkey_cache_errors_total[5m])) by (operation)", "legendFormat": "Errors ({{operation}})", "refId": "B" }],
+      "title": "Clients & Errors",
+      "type": "timeseries"
+    },
+    {
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" }, "unit": "short" } },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 19 },
+      "id": 8,
+      "options": { "legend": { "calcs": ["mean", "lastNotNull"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [{ "expr": "valkey_keyspace_hits", "legendFormat": "Keyspace Hits", "refId": "A" }, { "expr": "valkey_keyspace_misses", "legendFormat": "Keyspace Misses", "refId": "B" }],
+      "title": "Valkey Server Keyspace Stats",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 38,
+  "tags": ["valkey", "cache", "semantic-explorer"],
+  "time": { "from": "now-1h", "to": "now" },
+  "title": "Valkey Cache",
+  "uid": "semantic-explorer-valkey",
+  "version": 1
+}

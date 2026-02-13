@@ -81,6 +81,34 @@ async fn main() -> Result<()> {
     let s3_client = storage::s3::initialize_client().await?;
     let qdrant_client = storage::qdrant::initialize_client(&config.qdrant).await?;
     let pool = storage::postgres::initialize_pool(&config.database).await?;
+
+    // Initialize Valkey (Redis-compatible) shared cache.
+    // Optional — the system degrades gracefully if Valkey is unavailable.
+    let valkey_clients = match storage::valkey::initialize_client(&config.valkey).await {
+        Ok(write_conn) => {
+            info!("Valkey primary connected");
+            // Try to connect to read replica; fall back to primary if unavailable
+            let read_conn = match storage::valkey::initialize_read_client(&config.valkey).await {
+                Ok(conn) => {
+                    info!("Valkey read replica connected");
+                    conn
+                }
+                Err(_) => {
+                    info!("No Valkey read replica configured — using primary for reads");
+                    write_conn.clone()
+                }
+            };
+            Some(storage::valkey::ValkeyClients {
+                write: write_conn,
+                read: read_conn,
+            })
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Valkey not available – running without shared cache");
+            None
+        }
+    };
+
     let openid_client =
         auth::oidc::initialize_client(format!("{public_url}/auth_callback"), &config.oidc).await?;
     let nats_client = async_nats::connect(&config.nats.url).await?;
@@ -162,6 +190,34 @@ async fn main() -> Result<()> {
     };
     transforms::dataset::reconciliation::start_reconciliation_job(reconciliation_ctx);
 
+    // Start background Valkey metrics polling (every 30s)
+    let _valkey_stats_handle = if let Some(ref clients) = valkey_clients {
+        let stats_conn = clients.read.clone();
+        Some(tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            loop {
+                interval.tick().await;
+                let healthy = storage::valkey::health_check(&stats_conn).await;
+                semantic_explorer_core::observability::record_valkey_connected(healthy);
+                if let Some(info) = storage::valkey::get_info(&stats_conn).await {
+                    let memory =
+                        storage::valkey::parse_info_field(&info, "used_memory").unwrap_or(0.0);
+                    let clients = storage::valkey::parse_info_field(&info, "connected_clients")
+                        .unwrap_or(0.0);
+                    let hits =
+                        storage::valkey::parse_info_field(&info, "keyspace_hits").unwrap_or(0.0);
+                    let misses =
+                        storage::valkey::parse_info_field(&info, "keyspace_misses").unwrap_or(0.0);
+                    semantic_explorer_core::observability::record_valkey_server_stats(
+                        memory, clients, hits, misses,
+                    );
+                }
+            }
+        }))
+    } else {
+        None
+    };
+
     let server = HttpServer::new(move || {
         // Build CORS configuration based on allowed origins
         let cors = if cors_origins.is_empty() {
@@ -211,6 +267,12 @@ async fn main() -> Result<()> {
             .wrap(Compress::default())
             .wrap(openid_client.get_middleware())
             .configure(openid_client.configure_open_id())
+            .configure(|cfg| {
+                // Register Valkey clients (read + write) if available
+                if let Some(ref clients) = valkey_clients {
+                    cfg.app_data(web::Data::new(clients.clone()));
+                }
+            })
             .app_data(web::Data::new(s3_client.clone()))
             .app_data(web::Data::new(config.s3.clone()))
             .app_data(web::Data::new(qdrant_client.clone()))

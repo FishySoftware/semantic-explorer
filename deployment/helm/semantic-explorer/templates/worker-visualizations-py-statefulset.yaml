@@ -79,11 +79,24 @@ spec:
           - sh
           - -c
           - |
-            echo "Waiting for Qdrant at {{ include "semantic-explorer.qdrant.host" . }}:{{ include "semantic-explorer.qdrant.port" . }}..."
-            until nc -z {{ include "semantic-explorer.qdrant.host" . }} {{ include "semantic-explorer.qdrant.port" . }}; do
-              echo "Qdrant not ready, waiting..."
+            QDRANT_HOST="{{ include "semantic-explorer.qdrant.host" . }}"
+            QDRANT_REST_PORT="6333"
+            echo "Waiting for Qdrant cluster health at ${QDRANT_HOST}:${QDRANT_REST_PORT}..."
+            # Phase 1: Wait for HTTP to be reachable
+            until wget -qO- "http://${QDRANT_HOST}:${QDRANT_REST_PORT}/healthz" >/dev/null 2>&1; do
+              echo "Qdrant REST API not reachable, waiting..."
               sleep 2
             done
+            echo "Qdrant REST API is reachable"
+            # Phase 2: Wait for cluster consensus (majority of peers connected)
+            {{- if and (not .Values.qdrant.external.enabled) (gt (int .Values.qdrant.replicaCount) 1) }}
+            echo "Waiting for Qdrant cluster consensus..."
+            until wget -qO- "http://${QDRANT_HOST}:${QDRANT_REST_PORT}/cluster" 2>/dev/null | grep -q '"state":"Follower"\|"state":"Leader"'; do
+              echo "Qdrant cluster not ready (consensus not formed), waiting..."
+              sleep 3
+            done
+            echo "Qdrant cluster consensus is ready!"
+            {{- end }}
             echo "Qdrant is ready!"
         resources:
           requests:

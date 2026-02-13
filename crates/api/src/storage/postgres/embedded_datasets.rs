@@ -18,6 +18,55 @@ pub struct EmbeddedDatasetInfo {
     pub embedder_id: i32,
 }
 
+/// Helper struct for paginated queries that include total_count via COUNT(*) OVER()
+#[derive(FromRow)]
+struct EmbeddedDatasetWithCount {
+    pub embedded_dataset_id: i32,
+    pub title: String,
+    pub dataset_transform_id: i32,
+    pub source_dataset_id: i32,
+    pub embedder_id: i32,
+    pub owner_id: String,
+    pub owner_display_name: String,
+    pub collection_name: String,
+    pub dimensions: Option<i32>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub last_processed_at: Option<DateTime<Utc>>,
+    pub source_dataset_version: Option<DateTime<Utc>>,
+    pub total_count: i64,
+}
+
+impl EmbeddedDatasetWithCount {
+    fn into_parts(rows: Vec<Self>) -> (Vec<EmbeddedDataset>, i64) {
+        let total_count = rows.first().map_or(0, |r| r.total_count);
+        let datasets = rows
+            .into_iter()
+            .map(|r| EmbeddedDataset {
+                embedded_dataset_id: r.embedded_dataset_id,
+                title: r.title,
+                dataset_transform_id: r.dataset_transform_id,
+                source_dataset_id: r.source_dataset_id,
+                embedder_id: r.embedder_id,
+                owner_id: r.owner_id,
+                owner_display_name: r.owner_display_name,
+                collection_name: r.collection_name,
+                dimensions: r.dimensions,
+                created_at: r.created_at,
+                updated_at: r.updated_at,
+                last_processed_at: r.last_processed_at,
+                source_dataset_version: r.source_dataset_version,
+            })
+            .collect();
+        (datasets, total_count)
+    }
+}
+
+const COUNT_EMBEDDED_DATASETS_BY_EMBEDDER_QUERY: &str = r#"
+    SELECT COUNT(*) FROM embedded_datasets
+    WHERE embedder_id = $1 AND owner_id = $2
+"#;
+
 const GET_EMBEDDED_DATASET_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
            owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
@@ -33,21 +82,10 @@ const GET_EMBEDDED_DATASET_BY_ID_QUERY: &str = r#"
     WHERE embedded_dataset_id = $1
 "#;
 
-const COUNT_EMBEDDED_DATASETS_QUERY: &str = r#"
-    SELECT COUNT(*)
-    FROM embedded_datasets
-    WHERE owner_id = $1
-"#;
-
-const COUNT_EMBEDDED_DATASETS_SEARCH_QUERY: &str = r#"
-    SELECT COUNT(*)
-    FROM embedded_datasets
-    WHERE owner_id = $1 AND title ILIKE $2
-"#;
-
 const GET_EMBEDDED_DATASETS_PAGINATED_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
+           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version,
+           COUNT(*) OVER() AS total_count
     FROM embedded_datasets
     WHERE owner_id = $1
     ORDER BY created_at DESC
@@ -56,7 +94,8 @@ const GET_EMBEDDED_DATASETS_PAGINATED_QUERY: &str = r#"
 
 const GET_EMBEDDED_DATASETS_WITH_SEARCH_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
+           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version,
+           COUNT(*) OVER() AS total_count
     FROM embedded_datasets
     WHERE owner_id = $1 AND title ILIKE $2
     ORDER BY created_at DESC
@@ -307,6 +346,27 @@ const CREATE_STANDALONE_EMBEDDED_DATASET_QUERY: &str = r#"
               owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
 "#;
 
+/// Count how many embedded datasets reference a given embedder.
+#[tracing::instrument(name = "database.count_embedded_datasets_by_embedder", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT"))]
+pub async fn count_by_embedder(
+    pool: &Pool<Postgres>,
+    user: &crate::auth::AuthenticatedUser,
+    embedder_id: i32,
+) -> Result<i64> {
+    let start = Instant::now();
+    let result = sqlx::query_as::<_, (i64,)>(COUNT_EMBEDDED_DATASETS_BY_EMBEDDER_QUERY)
+        .bind(embedder_id)
+        .bind(user.as_owner())
+        .fetch_one(pool)
+        .await;
+
+    let duration = start.elapsed().as_secs_f64();
+    let success = result.is_ok();
+    record_database_query("SELECT", "embedded_datasets", duration, success);
+
+    Ok(result?.0)
+}
+
 pub async fn get_embedded_dataset(
     pool: &Pool<Postgres>,
     owner: &str,
@@ -348,23 +408,14 @@ pub async fn get_embedded_datasets_paginated(
     limit: i64,
     offset: i64,
 ) -> Result<(Vec<EmbeddedDataset>, i64)> {
-    // Get total count
-    let count_result = sqlx::query_as::<_, (i64,)>(COUNT_EMBEDDED_DATASETS_QUERY)
+    let rows = sqlx::query_as::<_, EmbeddedDatasetWithCount>(GET_EMBEDDED_DATASETS_PAGINATED_QUERY)
         .bind(owner)
-        .fetch_one(pool)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
         .await?;
-    let total_count = count_result.0;
 
-    // Get paginated results
-    let embedded_datasets =
-        sqlx::query_as::<_, EmbeddedDataset>(GET_EMBEDDED_DATASETS_PAGINATED_QUERY)
-            .bind(owner)
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(pool)
-            .await?;
-
-    Ok((embedded_datasets, total_count))
+    Ok(EmbeddedDatasetWithCount::into_parts(rows))
 }
 
 pub async fn get_embedded_datasets_with_search(
@@ -376,17 +427,8 @@ pub async fn get_embedded_datasets_with_search(
 ) -> Result<(Vec<EmbeddedDataset>, i64)> {
     let search_pattern = format!("%{}%", search_query);
 
-    // Get total count with search filter
-    let count_result = sqlx::query_as::<_, (i64,)>(COUNT_EMBEDDED_DATASETS_SEARCH_QUERY)
-        .bind(owner)
-        .bind(&search_pattern)
-        .fetch_one(pool)
-        .await?;
-    let total_count = count_result.0;
-
-    // Get paginated results with search filter
-    let embedded_datasets =
-        sqlx::query_as::<_, EmbeddedDataset>(GET_EMBEDDED_DATASETS_WITH_SEARCH_QUERY)
+    let rows =
+        sqlx::query_as::<_, EmbeddedDatasetWithCount>(GET_EMBEDDED_DATASETS_WITH_SEARCH_QUERY)
             .bind(owner)
             .bind(&search_pattern)
             .bind(limit)
@@ -394,7 +436,7 @@ pub async fn get_embedded_datasets_with_search(
             .fetch_all(pool)
             .await?;
 
-    Ok((embedded_datasets, total_count))
+    Ok(EmbeddedDatasetWithCount::into_parts(rows))
 }
 
 pub async fn get_embedded_datasets_for_dataset(

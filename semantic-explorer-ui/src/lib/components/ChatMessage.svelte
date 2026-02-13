@@ -5,11 +5,11 @@
 
 	interface Props {
 		message: ChatMessage;
-		embeddedDatasetId?: number;
+		sourceDatasetId?: number;
 		onRegenerate?: (_messageId: number) => void;
 	}
 
-	let { message, embeddedDatasetId, onRegenerate }: Props = $props();
+	let { message, sourceDatasetId, onRegenerate }: Props = $props();
 
 	// State for collapsible chunks
 	let chunksExpanded = $state(false);
@@ -163,10 +163,9 @@
 				<div class="text-xs font-semibold mb-2 text-gray-600 dark:text-gray-400">References</div>
 				<div class="flex flex-wrap gap-2">
 					{#each getDeduplicatedReferences(message.retrieved_documents) as ref (ref.title)}
-						{@const datasetId = embeddedDatasetId || message.embedded_dataset_id}
-						{#if datasetId}
+						{#if sourceDatasetId}
 							<a
-								href="#/datasets/{datasetId}/details?search={encodeURIComponent(ref.title)}"
+								href="#/datasets/{sourceDatasetId}/details?search={encodeURIComponent(ref.title)}"
 								class="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors"
 							>
 								<span class="font-medium">{ref.title}</span>

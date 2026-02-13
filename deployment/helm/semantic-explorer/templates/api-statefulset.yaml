@@ -98,12 +98,50 @@ spec:
           - sh
           - -c
           - |
-            echo "Waiting for Qdrant at {{ include "semantic-explorer.qdrant.host" . }}:{{ include "semantic-explorer.qdrant.port" . }}..."
-            until nc -z {{ include "semantic-explorer.qdrant.host" . }} {{ include "semantic-explorer.qdrant.port" . }}; do
-              echo "Qdrant not ready, waiting..."
+            QDRANT_HOST="{{ include "semantic-explorer.qdrant.host" . }}"
+            QDRANT_REST_PORT="6333"
+            echo "Waiting for Qdrant cluster health at ${QDRANT_HOST}:${QDRANT_REST_PORT}..."
+            # Phase 1: Wait for HTTP to be reachable
+            until wget -qO- "http://${QDRANT_HOST}:${QDRANT_REST_PORT}/healthz" >/dev/null 2>&1; do
+              echo "Qdrant REST API not reachable, waiting..."
               sleep 2
             done
+            echo "Qdrant REST API is reachable"
+            # Phase 2: Wait for cluster consensus (majority of peers connected)
+            {{- if and (not .Values.qdrant.external.enabled) (gt (int .Values.qdrant.replicaCount) 1) }}
+            echo "Waiting for Qdrant cluster consensus..."
+            until wget -qO- "http://${QDRANT_HOST}:${QDRANT_REST_PORT}/cluster" 2>/dev/null | grep -q '"state":"Follower"\|"state":"Leader"'; do
+              echo "Qdrant cluster not ready (consensus not formed), waiting..."
+              sleep 3
+            done
+            echo "Qdrant cluster consensus is ready!"
+            {{- end }}
             echo "Qdrant is ready!"
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+      {{- end }}
+      {{- if and .Values.valkey.enabled (not .Values.valkey.external.enabled) }}
+      - name: wait-for-valkey
+        image: {{ include "semantic-explorer.initContainer.image" . }}
+        securityContext:
+          {{- include "semantic-explorer.initContainer.securityContext" . | nindent 10 }}
+        command:
+          - sh
+          - -c
+          - |
+            VALKEY_HOST="{{ .Release.Name }}-valkey-master"
+            VALKEY_PORT="6379"
+            echo "Waiting for Valkey at ${VALKEY_HOST}:${VALKEY_PORT}..."
+            until nc -z ${VALKEY_HOST} ${VALKEY_PORT}; do
+              echo "Valkey not ready, waiting..."
+              sleep 2
+            done
+            echo "Valkey is ready!"
         resources:
           requests:
             cpu: 10m
@@ -182,6 +220,35 @@ spec:
           value: {{ include "semantic-explorer.nats.url" . }}
         - name: QDRANT_URL
           value: {{ include "semantic-explorer.qdrant.url" . }}
+        {{- $valkeyUrl := include "semantic-explorer.valkey.url" . }}
+        {{- if $valkeyUrl }}
+        - name: VALKEY_URL
+          value: {{ $valkeyUrl }}
+        {{- $valkeyReadUrl := include "semantic-explorer.valkey.readUrl" . }}
+        {{- if $valkeyReadUrl }}
+        - name: VALKEY_READ_URL
+          value: {{ $valkeyReadUrl }}
+        {{- end }}
+        {{- if or .Values.valkey.enabled .Values.valkey.external.enabled }}
+        - name: VALKEY_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "semantic-explorer.valkey.secretName" . }}
+              key: {{ include "semantic-explorer.valkey.passwordKey" . }}
+        {{- end }}
+        - name: VALKEY_TLS_ENABLED
+          value: {{ if .Values.valkey.external.enabled }}{{ .Values.valkey.external.tlsEnabled | default false | quote }}{{ else }}"false"{{ end }}
+        - name: VALKEY_POOL_SIZE
+          value: {{ .Values.valkey.connection.poolSize | default 10 | quote }}
+        - name: VALKEY_BEARER_CACHE_TTL_SECS
+          value: {{ .Values.valkey.connection.bearerCacheTtlSecs | default 120 | quote }}
+        - name: VALKEY_RESOURCE_CACHE_TTL_SECS
+          value: {{ .Values.valkey.connection.resourceCacheTtlSecs | default 300 | quote }}
+        - name: VALKEY_CONNECT_TIMEOUT_SECS
+          value: {{ .Values.valkey.connection.connectTimeoutSecs | default 5 | quote }}
+        - name: VALKEY_RESPONSE_TIMEOUT_SECS
+          value: {{ .Values.valkey.connection.responseTimeoutSecs | default 2 | quote }}
+        {{- end }}
         - name: OIDC_ISSUER_URL
           value: {{ include "semantic-explorer.oidc.issuerUrl" . }}
         - name: OIDC_CLIENT_ID

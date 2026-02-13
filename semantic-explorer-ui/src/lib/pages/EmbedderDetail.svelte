@@ -312,7 +312,8 @@
 			});
 
 			if (!response.ok) {
-				throw new Error(`Failed to delete embedder: ${response.statusText}`);
+				const body = await response.json().catch(() => null);
+				throw new Error(body?.message || `Failed to delete embedder: ${response.statusText}`);
 			}
 
 			toastStore.success('Embedder deleted successfully');

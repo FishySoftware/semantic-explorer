@@ -17,15 +17,15 @@
 	let accessToken = $state<string>('');
 	let copied = $state(false);
 
-	function getAccessToken(): string {
-		const cookies = document.cookie.split(';');
-		for (const cookie of cookies) {
-			const [name, value] = cookie.trim().split('=');
-			if (name === 'access_token') {
-				return value;
-			}
+	async function fetchAccessToken(): Promise<string> {
+		try {
+			const res = await fetch('/api/auth/token', { credentials: 'include' });
+			if (!res.ok) return '';
+			const data = await res.json();
+			return data.access_token || '';
+		} catch {
+			return '';
 		}
-		return '';
 	}
 
 	function getCurlExample(): string {
@@ -35,7 +35,7 @@
 		let curl = `curl '${fullUrl}'`;
 
 		if (accessToken) {
-			curl += ` \\\n  -b 'access_token=${accessToken}'`;
+			curl += ` \\\n  -H 'Authorization: Bearer ${accessToken}'`;
 		}
 
 		if (method !== 'GET') {
@@ -57,7 +57,7 @@
 		let python = `import requests\n\n`;
 
 		if (accessToken) {
-			python += `cookies = {'access_token': '${accessToken}'}\n`;
+			python += `headers = {'Authorization': 'Bearer ${accessToken}'}\n`;
 		}
 
 		if (body) {
@@ -68,7 +68,7 @@
 		python += `    '${fullUrl}'`;
 
 		if (accessToken) {
-			python += `,\n    cookies=cookies`;
+			python += `,\n    headers=headers`;
 		}
 
 		if (body) {
@@ -91,8 +91,8 @@
 		}
 	}
 
-	onMount(() => {
-		accessToken = getAccessToken();
+	onMount(async () => {
+		accessToken = await fetchAccessToken();
 	});
 </script>
 
@@ -111,7 +111,7 @@
 				<div
 					class="p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg text-yellow-800 dark:text-yellow-400 text-sm"
 				>
-					⚠️ No access token found in cookies. You may need to authenticate first.
+					⚠️ No access token found. You may need to log in first.
 				</div>
 			{/if}
 

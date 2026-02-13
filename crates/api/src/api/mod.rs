@@ -15,6 +15,7 @@ pub(crate) mod status;
 pub(crate) mod visualization_transforms;
 
 use crate::auth::extract_user;
+use crate::auth::openid_middleware::Authenticated;
 use actix_files::NamedFile;
 use actix_web::{
     HttpRequest, HttpResponse, Responder,
@@ -22,7 +23,6 @@ use actix_web::{
     get,
     web::{Data, redirect},
 };
-use actix_web_openidconnect::openid_middleware::Authenticated;
 use std::path::PathBuf;
 use tracing::error;
 

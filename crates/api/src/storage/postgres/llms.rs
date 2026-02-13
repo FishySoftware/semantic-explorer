@@ -6,12 +6,54 @@ use crate::auth::AuthenticatedUser;
 use crate::llms::models::{CreateLLM, LargeLanguageModel, UpdateLargeLanguageModel};
 use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::observability::record_database_query;
+use sqlx::types::chrono::{DateTime, Utc};
 
 pub(crate) struct PaginatedResult<T> {
     pub(crate) items: Vec<T>,
     pub(crate) total_count: i64,
     pub(crate) limit: i64,
     pub(crate) offset: i64,
+}
+
+/// Helper struct for paginated queries that include total_count via COUNT(*) OVER()
+#[derive(sqlx::FromRow)]
+struct LlmWithCount {
+    pub llm_id: i32,
+    pub name: String,
+    pub owner_id: String,
+    pub owner_display_name: String,
+    pub provider: String,
+    pub base_url: String,
+    #[sqlx(rename = "api_key_encrypted")]
+    pub api_key: Option<String>,
+    pub config: serde_json::Value,
+    pub is_public: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub total_count: i64,
+}
+
+impl LlmWithCount {
+    fn into_parts(rows: Vec<Self>) -> (Vec<LargeLanguageModel>, i64) {
+        let total_count = rows.first().map_or(0, |r| r.total_count);
+        let llms = rows
+            .into_iter()
+            .map(|r| LargeLanguageModel {
+                llm_id: r.llm_id,
+                name: r.name,
+                owner_id: r.owner_id,
+                owner_display_name: r.owner_display_name,
+                provider: r.provider,
+                base_url: r.base_url,
+                api_key: r.api_key,
+                config: r.config,
+                is_public: r.is_public,
+                created_at: r.created_at,
+                updated_at: r.updated_at,
+            })
+            .collect();
+        (llms, total_count)
+    }
 }
 
 const GET_LLM_QUERY: &str = r#"
@@ -21,7 +63,8 @@ const GET_LLM_QUERY: &str = r#"
 "#;
 
 const GET_LLMS_QUERY: &str = r#"
-    SELECT llm_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at
+    SELECT llm_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at,
+        COUNT(*) OVER() AS total_count
     FROM llms
     WHERE owner_id = $1
     ORDER BY created_at DESC
@@ -29,19 +72,12 @@ const GET_LLMS_QUERY: &str = r#"
 "#;
 
 const GET_LLMS_WITH_SEARCH_QUERY: &str = r#"
-    SELECT llm_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at
+    SELECT llm_id, name, owner_id, owner_display_name, provider, base_url, api_key_encrypted, config, is_public, created_at, updated_at,
+        COUNT(*) OVER() AS total_count
     FROM llms
     WHERE owner_id = $1 AND name ILIKE $2
     ORDER BY created_at DESC
     LIMIT $3 OFFSET $4
-"#;
-
-const COUNT_LLMS_QUERY: &str = r#"
-    SELECT COUNT(*) as count FROM llms WHERE owner_id = $1
-"#;
-
-const COUNT_LLMS_SEARCH_QUERY: &str = r#"
-    SELECT COUNT(*) as count FROM llms WHERE owner_id = $1 AND name ILIKE $2
 "#;
 
 const GET_PUBLIC_LLMS_QUERY: &str = r#"
@@ -144,16 +180,8 @@ pub(crate) async fn get_llms(
     offset: i64,
     encryption: &EncryptionService,
 ) -> Result<PaginatedResult<LargeLanguageModel>> {
-    // Get total count
-    let count_result = sqlx::query_as::<_, (i64,)>(COUNT_LLMS_QUERY)
-        .bind(user.as_owner())
-        .fetch_one(pool)
-        .await?;
-    let total_count = count_result.0;
-
-    // Get paginated results
     let start = Instant::now();
-    let result = sqlx::query_as::<_, LargeLanguageModel>(GET_LLMS_QUERY)
+    let result = sqlx::query_as::<_, LlmWithCount>(GET_LLMS_QUERY)
         .bind(user.as_owner())
         .bind(limit)
         .bind(offset)
@@ -164,7 +192,7 @@ pub(crate) async fn get_llms(
     let success = result.is_ok();
     record_database_query("SELECT", "llms", duration, success);
 
-    let llms = result?;
+    let (llms, total_count) = LlmWithCount::into_parts(result?);
     let decrypted = decrypt_llms_api_keys(encryption, llms)?;
 
     Ok(PaginatedResult {
@@ -186,17 +214,8 @@ pub(crate) async fn get_llms_with_search(
 ) -> Result<PaginatedResult<LargeLanguageModel>> {
     let search_pattern = format!("%{}%", search_query);
 
-    // Get total count
-    let count_result = sqlx::query_as::<_, (i64,)>(COUNT_LLMS_SEARCH_QUERY)
-        .bind(user.as_owner())
-        .bind(&search_pattern)
-        .fetch_one(pool)
-        .await?;
-    let total_count = count_result.0;
-
-    // Get paginated results
     let start = Instant::now();
-    let result = sqlx::query_as::<_, LargeLanguageModel>(GET_LLMS_WITH_SEARCH_QUERY)
+    let result = sqlx::query_as::<_, LlmWithCount>(GET_LLMS_WITH_SEARCH_QUERY)
         .bind(user.as_owner())
         .bind(&search_pattern)
         .bind(limit)
@@ -208,7 +227,7 @@ pub(crate) async fn get_llms_with_search(
     let success = result.is_ok();
     record_database_query("SELECT", "llms", duration, success);
 
-    let llms = result?;
+    let (llms, total_count) = LlmWithCount::into_parts(result?);
     let decrypted = decrypt_llms_api_keys(encryption, llms)?;
 
     Ok(PaginatedResult {

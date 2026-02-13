@@ -2,6 +2,8 @@ use actix_web_prom::PrometheusMetrics;
 use anyhow::Result;
 use std::env;
 
+pub(crate) mod valkey_metrics;
+
 pub(crate) fn init_observability() -> Result<PrometheusMetrics> {
     let service_name = env::var("SERVICE_NAME").unwrap_or_else(|_| "semantic-explorer".to_string());
     let otlp_endpoint = env::var("OTEL_EXPORTER_OTLP_ENDPOINT")

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sqlx::types::chrono::Utc;
+use sqlx::types::chrono::{DateTime, Utc};
 use sqlx::{Pool, Postgres};
 use std::collections::HashMap;
 use std::time::Instant;
@@ -10,6 +10,40 @@ use crate::chat::models::{
 };
 use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::observability::record_database_query;
+
+/// Helper struct for paginated queries that include total_count via COUNT(*) OVER()
+#[derive(sqlx::FromRow)]
+struct ChatSessionWithCount {
+    pub session_id: String,
+    pub owner_id: String,
+    pub owner_display_name: String,
+    pub embedded_dataset_id: i32,
+    pub llm_id: i32,
+    pub title: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub total_count: i64,
+}
+
+impl ChatSessionWithCount {
+    fn into_parts(rows: Vec<Self>) -> (Vec<ChatSession>, i64) {
+        let total_count = rows.first().map_or(0, |r| r.total_count);
+        let sessions = rows
+            .into_iter()
+            .map(|r| ChatSession {
+                session_id: r.session_id,
+                owner_id: r.owner_id,
+                owner_display_name: r.owner_display_name,
+                embedded_dataset_id: r.embedded_dataset_id,
+                llm_id: r.llm_id,
+                title: r.title,
+                created_at: r.created_at,
+                updated_at: r.updated_at,
+            })
+            .collect();
+        (sessions, total_count)
+    }
+}
 
 const CREATE_SESSION_QUERY: &str = r#"
     INSERT INTO chat_sessions (session_id, owner_id, owner_display_name, embedded_dataset_id, llm_id, title, created_at, updated_at)
@@ -24,15 +58,12 @@ const GET_SESSION_QUERY: &str = r#"
 "#;
 
 const GET_SESSIONS_QUERY: &str = r#"
-    SELECT session_id, owner_id, owner_display_name, embedded_dataset_id, llm_id, title, created_at, updated_at
+    SELECT session_id, owner_id, owner_display_name, embedded_dataset_id, llm_id, title, created_at, updated_at,
+        COUNT(*) OVER() AS total_count
     FROM chat_sessions
     WHERE owner_id = $1
     ORDER BY updated_at DESC
     LIMIT $2 OFFSET $3
-"#;
-
-const COUNT_SESSIONS_QUERY: &str = r#"
-    SELECT COUNT(*) as count FROM chat_sessions WHERE owner_id = $1
 "#;
 
 const DELETE_SESSION_QUERY: &str = r#"
@@ -165,13 +196,7 @@ pub(crate) async fn get_chat_sessions(
 ) -> Result<ChatSessions> {
     let start = Instant::now();
 
-    let count_result: (i64,) = sqlx::query_as(COUNT_SESSIONS_QUERY)
-        .bind(owner_id)
-        .fetch_one(pool)
-        .await?;
-    let total_count = count_result.0;
-
-    let result = sqlx::query_as::<_, ChatSession>(GET_SESSIONS_QUERY)
+    let result = sqlx::query_as::<_, ChatSessionWithCount>(GET_SESSIONS_QUERY)
         .bind(owner_id)
         .bind(limit)
         .bind(offset)
@@ -182,7 +207,7 @@ pub(crate) async fn get_chat_sessions(
     let success = result.is_ok();
     record_database_query("SELECT", "chat_sessions", duration, success);
 
-    let sessions = result?;
+    let (sessions, total_count) = ChatSessionWithCount::into_parts(result?);
     Ok(ChatSessions {
         sessions,
         total_count,
