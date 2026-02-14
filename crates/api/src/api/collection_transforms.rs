@@ -47,11 +47,6 @@ fn default_sort_direction() -> String {
     "desc".to_string()
 }
 
-#[derive(Deserialize, utoipa::ToSchema, Debug)]
-pub struct BatchCollectionTransformStatsRequest {
-    pub collection_transform_ids: Vec<i32>,
-}
-
 #[derive(Debug, serde::Deserialize)]
 pub struct SSEStreamQuery {
     pub collection_id: Option<i32>,
@@ -389,63 +384,6 @@ pub async fn get_collection_transform_stats(
         Err(e) => {
             error!("Collection transform not found: {}", e);
             not_found(format!("Collection transform not found: {}", e))
-        }
-    }
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/collection-transforms/batch-stats",
-    tag = "Collection Transforms",
-    request_body = BatchCollectionTransformStatsRequest,
-    responses(
-        (status = 200, description = "Batch transform statistics"),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Collection transform not found"),
-    ),
-)]
-#[post("/api/collection-transforms/batch-stats")]
-#[tracing::instrument(name = "get_batch_collection_transform_stats", skip(user, pool))]
-pub async fn get_batch_collection_transform_stats(
-    user: AuthenticatedUser,
-    pool: Data<Pool<Postgres>>,
-    body: Json<BatchCollectionTransformStatsRequest>,
-) -> impl Responder {
-    let transform_ids = &body.collection_transform_ids;
-
-    // Verify ownership of all transforms in a single query (eliminates N+1)
-    let owned_ids = match collection_transforms::verify_collection_transforms_ownership_batch(
-        &pool,
-        &user.as_owner(),
-        transform_ids,
-    )
-    .await
-    {
-        Ok(ids) => ids,
-        Err(e) => {
-            error!("Failed to verify ownership: {}", e);
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": "Failed to verify ownership"
-            }));
-        }
-    };
-
-    // Check if any requested IDs are not owned by the user
-    for id in transform_ids {
-        if !owned_ids.contains(id) {
-            return HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Collection transform {} not found", id)
-            }));
-        }
-    }
-
-    match collection_transforms::get_batch_collection_transform_stats(&pool, transform_ids).await {
-        Ok(stats_map) => HttpResponse::Ok().json(stats_map),
-        Err(e) => {
-            error!("Failed to get batch stats: {}", e);
-            HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": "Failed to fetch batch statistics"
-            }))
         }
     }
 }

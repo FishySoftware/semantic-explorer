@@ -200,3 +200,72 @@ pub(crate) fn parse_info_field(info: &str, field: &str) -> Option<f64> {
 fn _cache_type_from_key(key: &str) -> &str {
     key.split(':').next().unwrap_or("unknown")
 }
+
+/// Delete all keys matching a prefix pattern using SCAN + DEL.
+/// This avoids the O(N) KEYS command and is safe for production.
+/// Returns the number of keys deleted, or 0 on error.
+pub(crate) async fn cache_del_by_prefix(conn: &ConnectionManager, prefix: &str) -> usize {
+    let start = Instant::now();
+    let mut conn = conn.clone();
+    let pattern = format!("{prefix}*");
+    let mut deleted = 0usize;
+
+    // Use SCAN to find matching keys in batches
+    let mut cursor = 0u64;
+    loop {
+        let result: Result<(u64, Vec<String>), redis::RedisError> = redis::cmd("SCAN")
+            .arg(cursor)
+            .arg("MATCH")
+            .arg(&pattern)
+            .arg("COUNT")
+            .arg(100)
+            .query_async(&mut conn)
+            .await;
+
+        match result {
+            Ok((next_cursor, keys)) => {
+                if !keys.is_empty() {
+                    let del_result: Result<(), redis::RedisError> = conn.del::<_, ()>(&keys).await;
+                    if del_result.is_ok() {
+                        deleted += keys.len();
+                    }
+                }
+                cursor = next_cursor;
+                if cursor == 0 {
+                    break;
+                }
+            }
+            Err(e) => {
+                warn!(error = %e, prefix, "Valkey SCAN failed during prefix delete");
+                valkey_metrics::record_error("DEL_PREFIX");
+                break;
+            }
+        }
+    }
+
+    let duration = start.elapsed();
+    valkey_metrics::record_operation("DEL_PREFIX", duration);
+    debug!(prefix, deleted, "Valkey DEL_PREFIX complete");
+    deleted
+}
+
+/// Invalidate all cached listing pages for a resource type and owner.
+///
+/// Call this after any create/update/delete mutation to keep the cache
+/// consistent with the database. The invalidation runs asynchronously
+/// (fire-and-forget) so it never blocks the HTTP response.
+///
+/// `resource_type` should be one of: "datasets", "collections", "embedders", "llms"
+pub(crate) fn invalidate_resource_cache(
+    valkey: Option<&actix_web::web::Data<ValkeyClients>>,
+    resource_type: &str,
+    owner_id: &str,
+) {
+    if let Some(v) = valkey {
+        let conn = v.write.clone();
+        let prefix = format!("{resource_type}:{owner_id}:");
+        actix_web::rt::spawn(async move {
+            cache_del_by_prefix(&conn, &prefix).await;
+        });
+    }
+}

@@ -261,11 +261,11 @@ async fn main() -> Result<()> {
             ));
 
         App::new()
-            .wrap(prometheus.clone())
-            .wrap(cors)
-            .wrap(security_headers)
-            .wrap(Compress::default())
             .wrap(openid_client.get_middleware())
+            .wrap(Compress::default())
+            .wrap(security_headers)
+            .wrap(cors)
+            .wrap(prometheus.clone())
             .configure(openid_client.configure_open_id())
             .configure(|cfg| {
                 // Register Valkey clients (read + write) if available
@@ -273,6 +273,7 @@ async fn main() -> Result<()> {
                     cfg.app_data(web::Data::new(clients.clone()));
                 }
             })
+            .app_data(web::Data::new(config.valkey.clone()))
             .app_data(web::Data::new(s3_client.clone()))
             .app_data(web::Data::new(config.s3.clone()))
             .app_data(web::Data::new(qdrant_client.clone()))
@@ -314,7 +315,6 @@ async fn main() -> Result<()> {
             .service(api::datasets::upload_to_dataset)
             .service(api::embedded_datasets::get_embedded_dataset)
             .service(api::embedded_datasets::get_embedded_datasets)
-            .service(api::embedded_datasets::get_batch_embedded_dataset_stats)
             .service(api::embedded_datasets::update_embedded_dataset)
             .service(api::embedded_datasets::delete_embedded_dataset)
             .service(api::embedded_datasets::get_embedded_dataset_stats)
@@ -358,14 +358,12 @@ async fn main() -> Result<()> {
             .service(api::collection_transforms::delete_collection_transform)
             .service(api::collection_transforms::trigger_collection_transform)
             .service(api::collection_transforms::get_collection_transform_stats)
-            .service(api::collection_transforms::get_batch_collection_transform_stats)
             .service(api::collection_transforms::get_processed_files)
             .service(api::collection_transforms::get_failed_files_for_collection)
             .service(api::collection_transforms::get_collection_transforms_for_collection)
             .service(api::collection_transforms::get_collection_transforms_for_dataset)
             .service(api::dataset_transforms::get_dataset_transforms)
             .service(api::dataset_transforms::stream_dataset_transform_status)
-            .service(api::dataset_transforms::get_batch_dataset_transform_stats)
             .service(api::dataset_transforms::get_dataset_transform)
             .service(api::dataset_transforms::create_dataset_transform)
             .service(api::dataset_transforms::update_dataset_transform)

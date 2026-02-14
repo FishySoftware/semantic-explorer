@@ -190,7 +190,9 @@ pub struct ValkeyConfig {
     pub tls_enabled: bool,
     /// Connection pool size (default: 10)
     pub pool_size: u32,
-    /// TTL for bearer token cache entries in seconds (default: 120)
+    /// TTL for bearer token cache entries in seconds (default: 3600).
+    /// Dex issues tokens valid for 24h; caching for 1h is safe and avoids
+    /// expensive OIDC userinfo round-trips on every request.
     pub bearer_cache_ttl_secs: u64,
     /// TTL for resource metadata cache entries in seconds (default: 300)
     pub resource_cache_ttl_secs: u64,
@@ -578,7 +580,7 @@ impl ValkeyConfig {
                 .parse()
                 .context("VALKEY_POOL_SIZE must be a number")?,
             bearer_cache_ttl_secs: env::var("VALKEY_BEARER_CACHE_TTL_SECS")
-                .unwrap_or_else(|_| "120".to_string())
+                .unwrap_or_else(|_| "3600".to_string())
                 .parse()
                 .context("VALKEY_BEARER_CACHE_TTL_SECS must be a number")?,
             resource_cache_ttl_secs: env::var("VALKEY_RESOURCE_CACHE_TTL_SECS")

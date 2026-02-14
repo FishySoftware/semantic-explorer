@@ -1,7 +1,7 @@
 <!-- eslint-disable svelte/no-at-html-tags -->
 <script lang="ts">
 	import { InfoCircleSolid } from 'flowbite-svelte-icons';
-	import { onDestroy, onMount } from 'svelte';
+	import { onMount } from 'svelte';
 	import { SvelteSet, SvelteURLSearchParams } from 'svelte/reactivity';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
@@ -10,7 +10,6 @@
 		LLM,
 		PaginatedEmbeddedDatasetList,
 		PaginatedResponse,
-		VisualizationStats as Stats,
 		VisualizationConfig,
 		VisualizationTransform,
 	} from '../types/models';
@@ -27,19 +26,11 @@
 	let transforms = $state<VisualizationTransform[]>([]);
 	let embeddedDatasets = $state<EmbeddedDataset[]>([]);
 	let llms = $state<LLM[]>([]);
-	let statsMap = $state<Record<number, Stats>>({});
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
 	let searchQuery = $state('');
 	let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-	// SSE connection state
-	let eventSource: EventSource | null = null;
-	let reconnectAttempts = 0;
-	let maxReconnectAttempts = 10;
-	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-	let isMounted = false; // Track if component is still mounted
 
 	let showCreateForm = $state(false);
 	let editingTransform = $state<VisualizationTransform | null>(null);
@@ -292,10 +283,6 @@
 				...t,
 				visualization_config: applyDefaults(t.visualization_config),
 			}));
-
-			for (const transform of transforms) {
-				fetchStatsForTransform(transform.visualization_transform_id);
-			}
 		} catch (e) {
 			const message = formatError(e, 'Failed to fetch visualization transforms');
 			error = message;
@@ -335,18 +322,6 @@
 		pageSize = newSize;
 		currentPage = 1;
 		fetchTransforms();
-	}
-
-	async function fetchStatsForTransform(transformId: number) {
-		try {
-			const response = await fetch(`/api/visualization-transforms/${transformId}/stats`);
-			if (response.ok) {
-				const stats = await response.json();
-				statsMap = { ...statsMap, [transformId]: stats };
-			}
-		} catch (e) {
-			console.error(`Failed to fetch stats for transform ${transformId}:`, e);
-		}
 	}
 
 	async function fetchEmbeddedDatasets() {
@@ -613,92 +588,14 @@
 		}
 	}
 
-	function connectSSE() {
-		// Close existing connection
-		disconnectSSE();
-
-		try {
-			eventSource = new EventSource('/api/visualization-transforms/stream');
-
-			eventSource.addEventListener('connected', () => {
-				reconnectAttempts = 0;
-			});
-
-			eventSource.addEventListener('status', (event) => {
-				try {
-					const statusUpdate = JSON.parse(event.data);
-					// Handle status update - refresh specific transform or trigger refetch
-					// API sends transform_id (generic) not visualization_transform_id
-					if (statusUpdate.transform_id) {
-						// Refresh stats for the specific transform
-						fetchStatsForTransform(statusUpdate.transform_id);
-					}
-				} catch (e) {
-					console.error('Failed to parse SSE status event:', e);
-				}
-			});
-
-			eventSource.addEventListener('closed', () => {
-				reconnectSSE();
-			});
-
-			eventSource.onerror = () => {
-				eventSource?.close();
-				eventSource = null;
-				reconnectSSE();
-			};
-		} catch (e) {
-			console.error('Failed to connect to SSE stream:', e);
-			reconnectSSE();
-		}
-	}
-
-	function reconnectSSE() {
-		if (!isMounted) {
-			// Component has been unmounted, don't attempt reconnection
-			return;
-		}
-
-		if (reconnectTimer) {
-			clearTimeout(reconnectTimer);
-		}
-
-		if (reconnectAttempts >= maxReconnectAttempts) {
-			console.error('Max SSE reconnection attempts reached');
-			return;
-		}
-
-		// Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, 64s... up to 60s max
-		const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 60000);
-		reconnectAttempts++;
-
-		reconnectTimer = setTimeout(() => {
-			if (isMounted) {
-				connectSSE();
-			}
-		}, delay);
-	}
-
-	function disconnectSSE() {
-		if (reconnectTimer) {
-			clearTimeout(reconnectTimer);
-			reconnectTimer = null;
-		}
-		if (eventSource) {
-			eventSource.close();
-			eventSource = null;
-		}
-		reconnectAttempts = 0;
-	}
+	// SSE was removed from listing page. It previously provided real-time stats updates
+	// (point_count, cluster_count) via /api/visualization-transforms/stream.
+	// Consider re-adding SSE on the detail page for live transform progress.
 
 	onMount(() => {
-		isMounted = true;
 		fetchTransforms();
 		fetchEmbeddedDatasets();
 		fetchLLMs();
-
-		// Connect to SSE stream for real-time updates
-		connectSSE();
 
 		// Check URL parameters for create action, edit action, and embedded dataset ID
 		const urlParams = new SvelteURLSearchParams(window.location.hash.split('?')[1] || '');
@@ -745,11 +642,6 @@
 			const cleanHash = window.location.hash.split('?')[0];
 			window.history.replaceState(null, '', cleanHash);
 		}
-	});
-
-	onDestroy(() => {
-		isMounted = false;
-		disconnectSSE();
 	});
 
 	function getEmbeddedDatasetTitle(embeddedDatasetId: number): string {
@@ -2502,8 +2394,6 @@
 								{/if}
 							</button>
 						</th>
-						<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Points</th>
-						<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Clusters</th>
 						<th class="px-4 py-3">
 							<button
 								type="button"
@@ -2523,7 +2413,6 @@
 				</thead>
 				<tbody>
 					{#each transforms as transform (transform.visualization_transform_id)}
-						{@const stats = statsMap[transform.visualization_transform_id]}
 						<tr
 							class="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
 						>
@@ -2564,8 +2453,6 @@
 									{transform.is_enabled ? 'Enabled' : 'Disabled'}
 								</span>
 							</td>
-							<td class="px-4 py-3">{stats?.latest_visualization?.point_count ?? '-'}</td>
-							<td class="px-4 py-3">{stats?.latest_visualization?.cluster_count ?? '-'}</td>
 							<td class="px-4 py-3">{formatDate(transform.created_at, false)}</td>
 							<td class="px-4 py-3 text-center">
 								<button

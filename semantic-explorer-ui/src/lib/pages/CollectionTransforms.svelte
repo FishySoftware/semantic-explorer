@@ -1,7 +1,7 @@
 <!-- eslint-disable svelte/no-at-html-tags -->
 <script lang="ts">
 	import { Heading } from 'flowbite-svelte';
-	import { onDestroy, onMount } from 'svelte';
+	import { onMount } from 'svelte';
 	import { SvelteSet, SvelteURLSearchParams } from 'svelte/reactivity';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import CreateCollectionTransformModal from '../components/CreateCollectionTransformModal.svelte';
@@ -12,7 +12,6 @@
 		Dataset,
 		PaginatedResponse,
 		ProcessedFile,
-		CollectionTransformStats as Stats,
 	} from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { formatDate } from '../utils/ui-helpers';
@@ -27,7 +26,6 @@
 	let transforms = $state<CollectionTransform[]>([]);
 	let collections = $state<Collection[]>([]);
 	let datasets = $state<Dataset[]>([]);
-	let statsMap = $state<Map<number, Stats>>(new Map());
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
@@ -49,17 +47,6 @@
 
 	let searchQuery = $state('');
 	let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-	// SSE connection state
-	let eventSource: EventSource | null = null;
-	let reconnectAttempts = 0;
-	let maxReconnectAttempts = 10;
-	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-	let isMounted = false; // Track if component is still mounted
-
-	// SSE batching for stats updates
-	let sseUpdateQueue = new SvelteSet<number>();
-	let sseUpdateTimer: ReturnType<typeof setTimeout> | null = null;
 
 	// Modal state
 	let showCreateModal = $state(false);
@@ -183,10 +170,6 @@
 			const data: PaginatedResponse<CollectionTransform> = await response.json();
 			transforms = data.items;
 			totalCount = data.total_count;
-
-			// Fetch stats in batch for all transforms
-			const transformIds = transforms.map((t) => t.collection_transform_id);
-			await fetchBatchStats(transformIds);
 		} catch (e) {
 			const message = formatError(e, 'Failed to fetch collection transforms');
 			error = message;
@@ -220,68 +203,6 @@
 	function handlePageChange(newPage: number) {
 		currentPage = newPage;
 		fetchTransforms();
-	}
-
-	async function fetchStatsForTransform(transformId: number) {
-		try {
-			const response = await fetch(`/api/collection-transforms/${transformId}/stats`);
-			if (response.ok) {
-				const stats = await response.json();
-				statsMap.set(transformId, stats);
-				statsMap = statsMap; // Trigger reactivity
-			}
-		} catch (e) {
-			console.error(`Failed to fetch stats for transform ${transformId}:`, e);
-		}
-	}
-
-	async function fetchBatchStats(transformIds: number[]) {
-		if (transformIds.length === 0) return;
-
-		try {
-			const response = await fetch('/api/collection-transforms/batch-stats', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ collection_transform_ids: transformIds }),
-			});
-
-			if (response.ok) {
-				const batchStats: Record<number, any> = await response.json();
-				for (const [idStr, stats] of Object.entries(batchStats)) {
-					const id = parseInt(idStr, 10);
-					statsMap.set(id, stats);
-				}
-				statsMap = statsMap; // Trigger reactivity
-			} else {
-				console.error('Failed to fetch batch stats:', await response.text());
-			}
-		} catch (e) {
-			console.error('Failed to fetch batch stats:', e);
-		}
-	}
-
-	function queueSSEStatsUpdate(transformId: number) {
-		// Add to queue
-		sseUpdateQueue.add(transformId);
-
-		// Clear existing timer
-		if (sseUpdateTimer) {
-			clearTimeout(sseUpdateTimer);
-		}
-
-		// Batch updates: wait 100ms to collect multiple events, then fetch in batch
-		sseUpdateTimer = setTimeout(() => {
-			const idsToUpdate = Array.from(sseUpdateQueue);
-			sseUpdateQueue.clear();
-
-			if (idsToUpdate.length === 1) {
-				// Single update - use individual endpoint
-				fetchStatsForTransform(idsToUpdate[0]);
-			} else {
-				// Multiple updates - use batch endpoint
-				fetchBatchStats(idsToUpdate);
-			}
-		}, 100);
 	}
 
 	function closeFailedFilesModal() {
@@ -405,90 +326,8 @@
 		}
 	}
 
-	function connectSSE() {
-		// Close existing connection
-		disconnectSSE();
-
-		try {
-			eventSource = new EventSource('/api/collection-transforms/stream');
-
-			eventSource.addEventListener('connected', () => {
-				reconnectAttempts = 0;
-			});
-
-			eventSource.addEventListener('status', (event) => {
-				try {
-					const statusUpdate = JSON.parse(event.data);
-					// Handle status update - refresh specific transform or trigger refetch
-					// API sends transform_id (generic) not collection_transform_id
-					if (statusUpdate.transform_id) {
-						// Queue stats update for batching (reduces requests during high-frequency updates)
-						queueSSEStatsUpdate(statusUpdate.transform_id);
-					}
-				} catch (e) {
-					console.error('Failed to parse SSE status event:', e);
-				}
-			});
-
-			eventSource.addEventListener('closed', () => {
-				reconnectSSE();
-			});
-
-			eventSource.onerror = () => {
-				eventSource?.close();
-				eventSource = null;
-				reconnectSSE();
-			};
-		} catch (e) {
-			console.error('Failed to connect to SSE stream:', e);
-			reconnectSSE();
-		}
-	}
-
-	function reconnectSSE() {
-		if (!isMounted) {
-			// Component has been unmounted, don't attempt reconnection
-			return;
-		}
-
-		if (reconnectTimer) {
-			clearTimeout(reconnectTimer);
-		}
-
-		if (reconnectAttempts >= maxReconnectAttempts) {
-			console.error('Max SSE reconnection attempts reached');
-			return;
-		}
-
-		// Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, 64s... up to 60s max
-		const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 60000);
-		reconnectAttempts++;
-
-		reconnectTimer = setTimeout(() => {
-			if (isMounted) {
-				connectSSE();
-			}
-		}, delay);
-	}
-
-	function disconnectSSE() {
-		if (reconnectTimer) {
-			clearTimeout(reconnectTimer);
-			reconnectTimer = null;
-		}
-		if (eventSource) {
-			eventSource.close();
-			eventSource = null;
-		}
-		reconnectAttempts = 0;
-	}
-
 	onMount(async () => {
-		isMounted = true;
 		await Promise.all([fetchTransforms(), fetchCollections(), fetchDatasets()]);
-
-		// Connect to SSE stream for real-time updates
-		connectSSE();
 
 		const hashParts = window.location.hash.split('?');
 		if (hashParts.length > 1) {
@@ -511,11 +350,6 @@
 				window.location.pathname + window.location.search + basePath
 			);
 		}
-	});
-
-	onDestroy(() => {
-		isMounted = false;
-		disconnectSSE();
 	});
 
 	function getCollectionTitle(collectionId: number): string {
@@ -675,8 +509,6 @@
 								{/if}
 							</button>
 						</th>
-						<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Files Processed</th>
-						<th class="px-4 py-3 font-semibold text-gray-900 dark:text-white">Items Created</th>
 						<th class="px-4 py-3">
 							<button
 								type="button"
@@ -696,7 +528,6 @@
 				</thead>
 				<tbody>
 					{#each transforms as transform (transform.collection_transform_id)}
-						{@const stats = statsMap.get(transform.collection_transform_id)}
 						<tr
 							class="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
 						>
@@ -744,12 +575,6 @@
 								>
 									{transform.is_enabled ? 'Enabled' : 'Disabled'}
 								</span>
-							</td>
-							<td class="px-4 py-3">
-								{stats?.total_files_processed ?? '-'}
-							</td>
-							<td class="px-4 py-3">
-								{stats?.total_items_created ?? '-'}
 							</td>
 							<td class="px-4 py-3">
 								{formatDate(transform.created_at, false)}

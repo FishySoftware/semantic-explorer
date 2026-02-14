@@ -1,11 +1,10 @@
 use anyhow::Result;
 use sqlx::{FromRow, Pool, Postgres};
-use std::time::Instant;
 
 use crate::auth::AuthenticatedUser;
 use crate::embedders::models::{CreateEmbedder, Embedder, UpdateEmbedder};
 use semantic_explorer_core::encryption::EncryptionService;
-use semantic_explorer_core::observability::record_database_query;
+use semantic_explorer_core::observability::DatabaseQueryTracker;
 use sqlx::types::chrono::{DateTime, Utc};
 
 /// Helper struct for paginated queries that include total_count via COUNT(*) OVER()
@@ -206,16 +205,14 @@ pub(crate) async fn get_embedder(
     embedder_id: i32,
     encryption: &EncryptionService,
 ) -> Result<Embedder> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "embedders");
     let result = sqlx::query_as::<_, Embedder>(GET_EMBEDDER_QUERY)
         .bind(embedder_id)
         .bind(user.as_owner())
         .fetch_one(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "embedders", duration, success);
+    tracker.finish(result.is_ok());
 
     let embedder = result?;
     decrypt_embedder_api_key(encryption, embedder)
@@ -231,16 +228,14 @@ pub(crate) async fn get_embedder_by_owner_id(
     embedder_id: i32,
     encryption: &EncryptionService,
 ) -> Result<Embedder> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "embedders");
     let result = sqlx::query_as::<_, Embedder>(GET_EMBEDDER_QUERY)
         .bind(embedder_id)
         .bind(owner_id)
         .fetch_one(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "embedders", duration, success);
+    tracker.finish(result.is_ok());
 
     let embedder = result?;
     decrypt_embedder_api_key(encryption, embedder)
@@ -258,7 +253,7 @@ pub(crate) async fn get_embedders_batch(
         return Ok(Vec::new());
     }
 
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "embedders");
 
     let result = sqlx::query_as::<_, Embedder>(GET_EMBEDDERS_BATCH)
         .bind(embedder_ids.to_vec())
@@ -266,9 +261,7 @@ pub(crate) async fn get_embedders_batch(
         .fetch_all(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "embedders", duration, success);
+    tracker.finish(result.is_ok());
 
     let embedders = result?;
     decrypt_embedders_api_keys(encryption, embedders)
@@ -282,7 +275,7 @@ pub(crate) async fn get_embedders(
     offset: i64,
     encryption: &EncryptionService,
 ) -> Result<PaginatedResult<Embedder>> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "embedders");
     let result = sqlx::query_as::<_, EmbedderWithCount>(GET_EMBEDDERS_QUERY)
         .bind(user.as_owner())
         .bind(limit)
@@ -290,9 +283,7 @@ pub(crate) async fn get_embedders(
         .fetch_all(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "embedders", duration, success);
+    tracker.finish(result.is_ok());
 
     let (embedders, total_count) = EmbedderWithCount::into_parts(result?);
     let decrypted = decrypt_embedders_api_keys(encryption, embedders)?;
@@ -316,7 +307,7 @@ pub(crate) async fn get_embedders_with_search(
 ) -> Result<PaginatedResult<Embedder>> {
     let search_pattern = format!("%{}%", search_query);
 
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "embedders");
     let result = sqlx::query_as::<_, EmbedderWithCount>(GET_EMBEDDERS_WITH_SEARCH_QUERY)
         .bind(user.as_owner())
         .bind(&search_pattern)
@@ -325,9 +316,7 @@ pub(crate) async fn get_embedders_with_search(
         .fetch_all(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "embedders", duration, success);
+    tracker.finish(result.is_ok());
 
     let (embedders, total_count) = EmbedderWithCount::into_parts(result?);
     let decrypted = decrypt_embedders_api_keys(encryption, embedders)?;
@@ -350,7 +339,7 @@ pub(crate) async fn create_embedder(
     // Encrypt API key before storing
     let encrypted_api_key = encrypt_api_key(encryption, &create_embedder.api_key)?;
 
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("INSERT", "embedders");
     let result = sqlx::query_as::<_, Embedder>(CREATE_EMBEDDER_QUERY)
         .bind(&create_embedder.name)
         .bind(user.as_owner())
@@ -368,9 +357,7 @@ pub(crate) async fn create_embedder(
         .fetch_one(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("INSERT", "embedders", duration, success);
+    tracker.finish(result.is_ok());
 
     let embedder = result?;
     // Decrypt api_key in response so it can be used immediately
@@ -383,16 +370,14 @@ pub(crate) async fn delete_embedder(
     user: &AuthenticatedUser,
     embedder_id: i32,
 ) -> Result<()> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("DELETE", "embedders");
     let result = sqlx::query(DELETE_EMBEDDER_QUERY)
         .bind(embedder_id)
         .bind(user.as_owner())
         .execute(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("DELETE", "embedders", duration, success);
+    tracker.finish(result.is_ok());
 
     result?;
     Ok(())
@@ -409,7 +394,7 @@ pub(crate) async fn update_embedder(
     // Encrypt API key if provided
     let encrypted_api_key = encrypt_api_key(encryption, &update_embedder.api_key)?;
 
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("UPDATE", "embedders");
     let result = sqlx::query_as::<_, Embedder>(UPDATE_EMBEDDER_QUERY)
         .bind(embedder_id)
         .bind(&update_embedder.name)
@@ -426,9 +411,7 @@ pub(crate) async fn update_embedder(
         .fetch_one(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("UPDATE", "embedders", duration, success);
+    tracker.finish(result.is_ok());
 
     let embedder = result?;
     // Decrypt api_key in response
@@ -440,14 +423,12 @@ pub(crate) async fn get_public_embedders(
     pool: &Pool<Postgres>,
     encryption: &EncryptionService,
 ) -> Result<Vec<Embedder>> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "embedders");
     let result = sqlx::query_as::<_, Embedder>(GET_PUBLIC_EMBEDDERS_QUERY)
         .fetch_all(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "embedders", duration, success);
+    tracker.finish(result.is_ok());
 
     decrypt_embedders_api_keys(encryption, result?)
 }
@@ -458,15 +439,13 @@ pub(crate) async fn get_recent_public_embedders(
     limit: i32,
     encryption: &EncryptionService,
 ) -> Result<Vec<Embedder>> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "embedders");
     let result = sqlx::query_as::<_, Embedder>(GET_RECENT_PUBLIC_EMBEDDERS_QUERY)
         .bind(limit)
         .fetch_all(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "embedders", duration, success);
+    tracker.finish(result.is_ok());
 
     decrypt_embedders_api_keys(encryption, result?)
 }
@@ -478,7 +457,7 @@ pub(crate) async fn grab_public_embedder(
     embedder_id: i32,
     encryption: &EncryptionService,
 ) -> Result<Embedder> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("INSERT", "embedders");
     // The encrypted key is copied from the source embedder to the new one
     let result = sqlx::query_as::<_, Embedder>(GRAB_PUBLIC_EMBEDDER_QUERY)
         .bind(user.as_owner())
@@ -487,9 +466,7 @@ pub(crate) async fn grab_public_embedder(
         .fetch_one(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("INSERT", "embedders", duration, success);
+    tracker.finish(result.is_ok());
 
     let embedder = result?;
     // Decrypt api_key for the response
@@ -502,15 +479,13 @@ pub async fn get_embedder_config(
     embedder_id: i32,
     encryption: &EncryptionService,
 ) -> Result<EmbedderConfig> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "embedders");
     let result = sqlx::query_as::<_, EmbedderConfig>(GET_EMBEDDER_BY_ID_QUERY)
         .bind(embedder_id)
         .fetch_one(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "embedders", duration, success);
+    tracker.finish(result.is_ok());
 
     // Decrypt api_key for use
     let mut config = result?;

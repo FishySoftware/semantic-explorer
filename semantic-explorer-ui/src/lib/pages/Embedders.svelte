@@ -226,13 +226,12 @@
 		}
 	}
 
-	let hasMount = false;
+	let initialFetchDone = false;
 
 	onMount(() => {
 		fetchEmbedders();
 		fetchInferenceModels();
 		extractSearchParamFromHash();
-		hasMount = true;
 	});
 
 	$effect(() => {
@@ -266,6 +265,7 @@
 			error = e.message || 'Failed to load embedders';
 		} finally {
 			loading = false;
+			initialFetchDone = true;
 		}
 	}
 
@@ -575,12 +575,9 @@
 	// Refetch when search query changes
 	// Debounce search to avoid spamming API on every keystroke
 	let searchDebounceTimeout: ReturnType<typeof setTimeout> | null = null;
-	let previousSearchQuery = '';
 
 	$effect(() => {
-		// Only trigger fetch if we've mounted and search query actually changed
-		if (hasMount && searchQuery !== previousSearchQuery) {
-			previousSearchQuery = searchQuery;
+		if (searchQuery !== undefined && initialFetchDone) {
 			currentOffset = 0; // Reset to first page when searching
 			if (searchDebounceTimeout) {
 				clearTimeout(searchDebounceTimeout);

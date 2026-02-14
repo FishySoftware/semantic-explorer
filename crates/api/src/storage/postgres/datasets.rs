@@ -3,10 +3,9 @@ use sqlx::{
     Pool, Postgres,
     types::chrono::{DateTime, Utc},
 };
-use std::time::Instant;
 
 use crate::datasets::models::{ChunkWithMetadata, Dataset, DatasetItem};
-use semantic_explorer_core::observability::record_database_query;
+use semantic_explorer_core::observability::DatabaseQueryTracker;
 
 const GET_DATASET_QUERY: &str = r#"
     SELECT dataset_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at FROM datasets
@@ -15,14 +14,8 @@ const GET_DATASET_QUERY: &str = r#"
 
 const GET_DATASETS_PAGINATED_QUERY: &str = r#"
     SELECT d.dataset_id, d.title, d.details, d.owner_id, d.owner_display_name, d.tags, d.is_public, d.item_count, d.total_chunks, d.created_at, d.updated_at,
-        COALESCE(dt_stats.transform_count, 0)::bigint AS transform_count,
         COUNT(*) OVER() AS total_count
     FROM datasets d
-    LEFT JOIN (
-        SELECT source_dataset_id, COUNT(*) AS transform_count
-        FROM dataset_transforms
-        GROUP BY source_dataset_id
-    ) dt_stats ON dt_stats.source_dataset_id = d.dataset_id
     WHERE d.owner_id = $1
     ORDER BY d.created_at DESC
     LIMIT $2 OFFSET $3
@@ -30,14 +23,8 @@ const GET_DATASETS_PAGINATED_QUERY: &str = r#"
 
 const GET_DATASETS_PAGINATED_SEARCH_QUERY: &str = r#"
     SELECT d.dataset_id, d.title, d.details, d.owner_id, d.owner_display_name, d.tags, d.is_public, d.item_count, d.total_chunks, d.created_at, d.updated_at,
-        COALESCE(dt_stats.transform_count, 0)::bigint AS transform_count,
         COUNT(*) OVER() AS total_count
     FROM datasets d
-    LEFT JOIN (
-        SELECT source_dataset_id, COUNT(*) AS transform_count
-        FROM dataset_transforms
-        GROUP BY source_dataset_id
-    ) dt_stats ON dt_stats.source_dataset_id = d.dataset_id
     WHERE d.owner_id = $3 AND (d.title ILIKE $4 OR d.details ILIKE $4 OR $5 = ANY(d.tags))
     ORDER BY d.created_at DESC
     LIMIT $1 OFFSET $2
@@ -184,16 +171,14 @@ pub(crate) async fn get_dataset(
     owner_id: &str,
     dataset_id: i32,
 ) -> Result<Dataset> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "datasets");
     let result = sqlx::query_as::<_, Dataset>(GET_DATASET_QUERY)
         .bind(dataset_id)
         .bind(owner_id)
         .fetch_one(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "datasets", duration, success);
+    tracker.finish(result.is_ok());
 
     Ok(result?)
 }
@@ -211,7 +196,6 @@ pub(crate) struct DatasetWithStatsRow {
     pub(crate) total_chunks: i64,
     pub(crate) created_at: Option<DateTime<Utc>>,
     pub(crate) updated_at: Option<DateTime<Utc>>,
-    pub(crate) transform_count: i64,
     pub(crate) total_count: i64,
 }
 
@@ -230,7 +214,7 @@ pub(crate) async fn get_datasets_paginated(
     limit: i64,
     offset: i64,
 ) -> Result<PaginatedDatasetsResult> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "datasets");
     let result = sqlx::query_as::<_, DatasetWithStatsRow>(GET_DATASETS_PAGINATED_QUERY)
         .bind(owner_id)
         .bind(limit)
@@ -238,9 +222,7 @@ pub(crate) async fn get_datasets_paginated(
         .fetch_all(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "datasets", duration, success);
+    tracker.finish(result.is_ok());
 
     let items = result?;
     let total_count = items.first().map_or(0, |r| r.total_count);
@@ -262,7 +244,7 @@ pub(crate) async fn get_datasets_paginated_search(
 ) -> Result<PaginatedDatasetsResult> {
     let search_pattern = format!("%{}%", search_query);
 
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "datasets");
     let result = sqlx::query_as::<_, DatasetWithStatsRow>(GET_DATASETS_PAGINATED_SEARCH_QUERY)
         .bind(limit)
         .bind(offset)
@@ -272,9 +254,7 @@ pub(crate) async fn get_datasets_paginated_search(
         .fetch_all(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "datasets", duration, success);
+    tracker.finish(result.is_ok());
 
     let items = result?;
     let total_count = items.first().map_or(0, |r| r.total_count);
@@ -296,7 +276,7 @@ pub(crate) async fn create_dataset(
     tags: &[String],
     is_public: bool,
 ) -> Result<Dataset> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("INSERT", "datasets");
     let result = sqlx::query_as::<_, Dataset>(CREATE_DATASET_QUERY)
         .bind(title)
         .bind(details)
@@ -307,9 +287,7 @@ pub(crate) async fn create_dataset(
         .fetch_one(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("INSERT", "datasets", duration, success);
+    tracker.finish(result.is_ok());
 
     Ok(result?)
 }
@@ -320,16 +298,14 @@ pub(crate) async fn delete_dataset(
     dataset_id: i32,
     owner_id: &str,
 ) -> Result<()> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("DELETE", "datasets");
     let result = sqlx::query(DELETE_DATASET_QUERY)
         .bind(dataset_id)
         .bind(owner_id)
         .execute(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("DELETE", "datasets", duration, success);
+    tracker.finish(result.is_ok());
 
     result?;
     Ok(())
@@ -363,8 +339,7 @@ pub(crate) async fn create_dataset_items_batch(
     dataset_id: i32,
     items: Vec<(String, Vec<ChunkWithMetadata>, serde_json::Value)>,
 ) -> Result<(Vec<DatasetItem>, Vec<String>)> {
-    use std::time::Instant;
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("INSERT", "dataset_items");
 
     if items.is_empty() {
         return Ok((Vec::new(), Vec::new()));
@@ -422,9 +397,8 @@ pub(crate) async fn create_dataset_items_batch(
 
     tx.commit().await?;
 
-    let duration = start.elapsed().as_secs_f64();
     let success = failed.is_empty();
-    record_database_query("INSERT", "dataset_items", duration, success);
+    tracker.finish(success);
 
     Ok((successful, failed))
 }
@@ -595,7 +569,7 @@ pub(crate) async fn update_dataset(
     tags: &[String],
     is_public: bool,
 ) -> Result<Dataset> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("UPDATE", "datasets");
     let result = sqlx::query_as::<_, Dataset>(UPDATE_DATASET_QUERY)
         .bind(title)
         .bind(details)
@@ -606,9 +580,7 @@ pub(crate) async fn update_dataset(
         .fetch_one(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("UPDATE", "datasets", duration, success);
+    tracker.finish(result.is_ok());
 
     Ok(result?)
 }
@@ -619,16 +591,14 @@ pub(crate) async fn delete_dataset_item(
     item_id: i32,
     dataset_id: i32,
 ) -> Result<DatasetItem> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("DELETE", "dataset_items");
     let result = sqlx::query_as::<_, DatasetItem>(DELETE_DATASET_ITEM_QUERY)
         .bind(item_id)
         .bind(dataset_id)
         .fetch_one(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("DELETE", "dataset_items", duration, success);
+    tracker.finish(result.is_ok());
 
     Ok(result?)
 }
@@ -639,16 +609,14 @@ pub(crate) async fn get_public_datasets(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<Dataset>> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "datasets");
     let result = sqlx::query_as::<_, Dataset>(GET_PUBLIC_DATASETS_QUERY)
         .bind(limit)
         .bind(offset)
         .fetch_all(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "datasets", duration, success);
+    tracker.finish(result.is_ok());
 
     Ok(result?)
 }
@@ -658,15 +626,13 @@ pub(crate) async fn get_recent_public_datasets(
     pool: &Pool<Postgres>,
     limit: i32,
 ) -> Result<Vec<Dataset>> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "datasets");
     let result = sqlx::query_as::<_, Dataset>(GET_RECENT_PUBLIC_DATASETS_QUERY)
         .bind(limit)
         .fetch_all(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "datasets", duration, success);
+    tracker.finish(result.is_ok());
 
     Ok(result?)
 }
@@ -680,7 +646,7 @@ pub(crate) async fn grab_public_dataset(
 ) -> Result<Dataset> {
     let mut tx = pool.begin().await?;
 
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("INSERT", "datasets");
     let result = sqlx::query_as::<_, Dataset>(GRAB_PUBLIC_DATASET_QUERY)
         .bind(dataset_id)
         .bind(owner_id)
@@ -688,23 +654,19 @@ pub(crate) async fn grab_public_dataset(
         .fetch_one(&mut *tx)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("INSERT", "datasets", duration, success);
+    tracker.finish(result.is_ok());
 
     let new_dataset = result?;
 
     // Copy all items in a single INSERT...SELECT (avoids N+1 inserts and N trigger firings)
-    let copy_start = Instant::now();
+    let copy_tracker = DatabaseQueryTracker::new("INSERT", "dataset_items");
     let copy_result = sqlx::query(COPY_DATASET_ITEMS_QUERY)
         .bind(new_dataset.dataset_id)
         .bind(dataset_id)
         .execute(&mut *tx)
         .await;
 
-    let copy_duration = copy_start.elapsed().as_secs_f64();
-    let copy_success = copy_result.is_ok();
-    record_database_query("INSERT", "dataset_items", copy_duration, copy_success);
+    copy_tracker.finish(copy_result.is_ok());
 
     match copy_result {
         Ok(result) => {

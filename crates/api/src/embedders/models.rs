@@ -18,7 +18,7 @@ fn default_limit() -> i64 {
     20
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub(crate) struct PaginatedEmbedderList {
     pub(crate) items: Vec<Embedder>,
     pub(crate) total_count: i64,
@@ -64,7 +64,7 @@ fn default_truncate_strategy() -> String {
     "NONE".to_string()
 }
 
-#[derive(Serialize, ToSchema, FromRow, Clone)]
+#[derive(Serialize, Deserialize, ToSchema, FromRow, Clone)]
 pub(crate) struct Embedder {
     pub(crate) embedder_id: i32,
     pub(crate) name: String,

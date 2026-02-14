@@ -1,11 +1,10 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Pool, Postgres, Row, Transaction};
-use std::time::Instant;
 use tracing::instrument;
 use utoipa::ToSchema;
 
-use semantic_explorer_core::observability::record_database_query;
+use semantic_explorer_core::observability::DatabaseQueryTracker;
 
 /// Helper struct for paginated batch queries that include total_count via COUNT(*) OVER()
 #[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
@@ -253,7 +252,7 @@ pub async fn list_batches_by_transform(
     let sort_field = validate_batch_sort_field(sort_by);
     let sort_dir = validate_batch_sort_direction(sort_direction);
 
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "dataset_transform_batches");
 
     // Get paginated results with total count via COUNT(*) OVER()
     let query = get_btf_query(sort_field, sort_dir);
@@ -264,8 +263,7 @@ pub async fn list_batches_by_transform(
         .fetch_all(pool)
         .await?;
 
-    let duration = start.elapsed().as_secs_f64();
-    record_database_query("SELECT", "dataset_transform_batches", duration, true);
+    tracker.finish(true);
 
     Ok(BatchWithCount::into_parts(rows))
 }

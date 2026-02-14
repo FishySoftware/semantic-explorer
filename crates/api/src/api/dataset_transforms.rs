@@ -653,73 +653,6 @@ pub async fn get_dataset_transform_stats(
     }
 }
 
-#[derive(Deserialize, utoipa::ToSchema, Debug)]
-pub struct BatchDatasetTransformStatsRequest {
-    pub dataset_transform_ids: Vec<i32>,
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/dataset-transforms-batch-stats",
-    tag = "Dataset Transforms",
-    request_body = BatchDatasetTransformStatsRequest,
-    responses(
-        (status = 200, description = "Batch transform statistics"),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Dataset transform not found"),
-    ),
-)]
-#[post("/api/dataset-transforms-batch-stats")]
-#[tracing::instrument(name = "get_batch_dataset_transform_stats", skip(user, pool))]
-pub async fn get_batch_dataset_transform_stats(
-    user: AuthenticatedUser,
-    pool: Data<Pool<Postgres>>,
-    body: Json<BatchDatasetTransformStatsRequest>,
-) -> impl Responder {
-    let transform_ids = &body.dataset_transform_ids;
-
-    // Verify ownership in a single batched query instead of N sequential queries
-    let owned_ids = match dataset_transforms::verify_dataset_transform_ownership(
-        &pool,
-        &user.as_owner(),
-        transform_ids,
-    )
-    .await
-    {
-        Ok(ids) => ids,
-        Err(e) => {
-            error!("Failed to verify ownership: {}", e);
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": "Failed to verify ownership"
-            }));
-        }
-    };
-
-    // Log warning if some IDs were not found/owned, but proceed with owned ones
-    if owned_ids.len() != transform_ids.len() {
-        let missing: Vec<_> = transform_ids
-            .iter()
-            .filter(|id| !owned_ids.contains(id))
-            .collect();
-        tracing::warn!(
-            "Some dataset transforms not found or not owned: {:?}",
-            missing
-        );
-    }
-
-    match dataset_transforms::get_batch_dataset_transform_stats(&pool, &user.as_owner(), &owned_ids)
-        .await
-    {
-        Ok(stats_map) => HttpResponse::Ok().json(stats_map),
-        Err(e) => {
-            error!("Failed to get batch stats: {}", e);
-            HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": "Failed to fetch batch statistics"
-            }))
-        }
-    }
-}
-
 #[utoipa::path(
     get,
     path = "/api/datasets/{dataset_id}/transforms",
@@ -812,25 +745,28 @@ pub async fn get_dataset_transform_detailed_stats(
         }
     };
 
-    // Get stats for all embedded datasets in a single batch query (eliminates N+1)
-    let embedded_dataset_ids: Vec<i32> = embedded_datasets_list
-        .iter()
-        .map(|ed| ed.embedded_dataset_id)
-        .collect();
-
-    let stats_map = match embedded_datasets::get_batch_embedded_dataset_stats(
-        &pool,
-        &user.as_owner(),
-        &embedded_dataset_ids,
-    )
-    .await
-    {
-        Ok(map) => map,
-        Err(e) => {
-            error!("Failed to get batch embedded dataset stats: {}", e);
-            std::collections::HashMap::new()
+    // Get stats for each embedded dataset individually
+    let mut stats_map = std::collections::HashMap::new();
+    for ed in &embedded_datasets_list {
+        match embedded_datasets::get_embedded_dataset_stats(
+            &pool,
+            &user.as_owner(),
+            ed.embedded_dataset_id,
+        )
+        .await
+        {
+            Ok(stats) => {
+                stats_map.insert(ed.embedded_dataset_id, stats);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to get stats for embedded dataset {}: {}",
+                    ed.embedded_dataset_id,
+                    e
+                );
+            }
         }
-    };
+    }
 
     // Build per-embedder stats using the batch-fetched data
     let per_embedder_stats: Vec<serde_json::Value> = embedded_datasets_list

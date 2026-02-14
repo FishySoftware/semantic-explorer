@@ -206,11 +206,12 @@ impl error::ResponseError for AuthError {
 }
 
 /// TTL for cached bearer token → userinfo lookups (seconds).
-const BEARER_CACHE_TTL_SECS: u64 = 60;
+/// Matches the Valkey L2 default so L1 ≤ L2.
+const BEARER_CACHE_TTL_SECS: u64 = 3600;
 
 /// Default Valkey TTL for shared bearer token cache (seconds).
-/// Overridden by `ValkeyConfig::bearer_cache_ttl_secs`.
-const DEFAULT_VALKEY_BEARER_TTL_SECS: u64 = 120;
+/// Overridden by `ValkeyConfig::bearer_cache_ttl_secs` (env `VALKEY_BEARER_CACHE_TTL_SECS`).
+const DEFAULT_VALKEY_BEARER_TTL_SECS: u64 = 3600;
 
 /// L1 in-memory cache keyed by token hash → (CachedUserInfo, insert_time).
 /// Avoids a DB round-trip on every request from the same replica.
@@ -324,14 +325,13 @@ where
                             let conn = valkey.write.clone();
                             let cache_key = format!("bearer:{token_hash}");
                             let info_clone = cached_info.clone();
+                            // Use config TTL if ValkeyConfig is registered, otherwise fallback
+                            let ttl = req
+                                .app_data::<web::Data<semantic_explorer_core::config::ValkeyConfig>>()
+                                .map(|c| c.bearer_cache_ttl_secs)
+                                .unwrap_or(DEFAULT_VALKEY_BEARER_TTL_SECS);
                             actix_web::rt::spawn(async move {
-                                valkey::cache_set(
-                                    &conn,
-                                    &cache_key,
-                                    &info_clone,
-                                    DEFAULT_VALKEY_BEARER_TTL_SECS,
-                                )
-                                .await;
+                                valkey::cache_set(&conn, &cache_key, &info_clone, ttl).await;
                             });
                         }
 
@@ -349,6 +349,8 @@ where
             match req.cookie(AuthCookies::AccessToken.to_string().as_str()) {
                 None => return Err(redirect_to_auth().into()),
                 Some(token) => {
+                    let token_hash = hash_bearer_token(token.value());
+
                     // Use cached user_info from cookie instead of calling the
                     // OIDC provider's userinfo endpoint on every request.
                     let user_info = if let Some(user_info_cookie) =
@@ -373,14 +375,47 @@ where
                             }
                         }
                     } else {
-                        match client
-                            .user_info(AccessToken::new(token.value().to_string()))
-                            .await
-                        {
-                            Ok(info) => cached_user_info_from_userinfo(&info),
-                            Err(_) => {
-                                debug!("Token not active, redirecting to auth");
-                                return Err(redirect_to_auth().into());
+                        // No user_info cookie — try Valkey L2 before hitting OIDC
+                        let valkey_hit =
+                            if let Some(valkey) = req.app_data::<web::Data<ValkeyClients>>() {
+                                let cache_key = format!("bearer:{token_hash}");
+                                valkey::cache_get::<CachedUserInfo>(&valkey.read, &cache_key).await
+                            } else {
+                                None
+                            };
+
+                        if let Some(info) = valkey_hit {
+                            info
+                        } else {
+                            match client
+                                .user_info(AccessToken::new(token.value().to_string()))
+                                .await
+                            {
+                                Ok(info) => {
+                                    let cached_info = cached_user_info_from_userinfo(&info);
+                                    // Write to Valkey L2 so other replicas / subsequent requests benefit
+                                    if let Some(valkey) = req.app_data::<web::Data<ValkeyClients>>()
+                                    {
+                                        let conn = valkey.write.clone();
+                                        let cache_key = format!("bearer:{token_hash}");
+                                        let info_clone = cached_info.clone();
+                                        let ttl =
+                                            req.app_data::<web::Data<
+                                                semantic_explorer_core::config::ValkeyConfig,
+                                            >>()
+                                            .map(|c| c.bearer_cache_ttl_secs)
+                                            .unwrap_or(DEFAULT_VALKEY_BEARER_TTL_SECS);
+                                        actix_web::rt::spawn(async move {
+                                            valkey::cache_set(&conn, &cache_key, &info_clone, ttl)
+                                                .await;
+                                        });
+                                    }
+                                    cached_info
+                                }
+                                Err(_) => {
+                                    debug!("Token not active, redirecting to auth");
+                                    return Err(redirect_to_auth().into());
+                                }
                             }
                         }
                     };

@@ -1,11 +1,10 @@
 use anyhow::Result;
 use sqlx::{Pool, Postgres};
-use std::time::Instant;
 
 use crate::auth::AuthenticatedUser;
 use crate::llms::models::{CreateLLM, LargeLanguageModel, UpdateLargeLanguageModel};
 use semantic_explorer_core::encryption::EncryptionService;
-use semantic_explorer_core::observability::record_database_query;
+use semantic_explorer_core::observability::DatabaseQueryTracker;
 use sqlx::types::chrono::{DateTime, Utc};
 
 pub(crate) struct PaginatedResult<T> {
@@ -132,16 +131,14 @@ pub(crate) async fn get_llm(
     llm_id: i32,
     encryption: &EncryptionService,
 ) -> Result<LargeLanguageModel> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "llms");
     let result = sqlx::query_as::<_, LargeLanguageModel>(GET_LLM_QUERY)
         .bind(llm_id)
         .bind(user.as_owner())
         .fetch_one(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "llms", duration, success);
+    tracker.finish(result.is_ok());
 
     let llm = result?;
     decrypt_llm_api_key(encryption, llm)
@@ -157,16 +154,14 @@ pub(crate) async fn get_llm_by_owner_id(
     llm_id: i32,
     encryption: &EncryptionService,
 ) -> Result<LargeLanguageModel> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "llms");
     let result = sqlx::query_as::<_, LargeLanguageModel>(GET_LLM_QUERY)
         .bind(llm_id)
         .bind(owner_id)
         .fetch_one(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "llms", duration, success);
+    tracker.finish(result.is_ok());
 
     let llm = result?;
     decrypt_llm_api_key(encryption, llm)
@@ -180,7 +175,7 @@ pub(crate) async fn get_llms(
     offset: i64,
     encryption: &EncryptionService,
 ) -> Result<PaginatedResult<LargeLanguageModel>> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "llms");
     let result = sqlx::query_as::<_, LlmWithCount>(GET_LLMS_QUERY)
         .bind(user.as_owner())
         .bind(limit)
@@ -188,9 +183,7 @@ pub(crate) async fn get_llms(
         .fetch_all(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "llms", duration, success);
+    tracker.finish(result.is_ok());
 
     let (llms, total_count) = LlmWithCount::into_parts(result?);
     let decrypted = decrypt_llms_api_keys(encryption, llms)?;
@@ -214,7 +207,7 @@ pub(crate) async fn get_llms_with_search(
 ) -> Result<PaginatedResult<LargeLanguageModel>> {
     let search_pattern = format!("%{}%", search_query);
 
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "llms");
     let result = sqlx::query_as::<_, LlmWithCount>(GET_LLMS_WITH_SEARCH_QUERY)
         .bind(user.as_owner())
         .bind(&search_pattern)
@@ -223,9 +216,7 @@ pub(crate) async fn get_llms_with_search(
         .fetch_all(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "llms", duration, success);
+    tracker.finish(result.is_ok());
 
     let (llms, total_count) = LlmWithCount::into_parts(result?);
     let decrypted = decrypt_llms_api_keys(encryption, llms)?;
@@ -243,14 +234,12 @@ pub(crate) async fn get_public_llms(
     pool: &Pool<Postgres>,
     encryption: &EncryptionService,
 ) -> Result<Vec<LargeLanguageModel>> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "llms");
     let result = sqlx::query_as::<_, LargeLanguageModel>(GET_PUBLIC_LLMS_QUERY)
         .fetch_all(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "llms", duration, success);
+    tracker.finish(result.is_ok());
 
     decrypt_llms_api_keys(encryption, result?)
 }
@@ -261,15 +250,13 @@ pub(crate) async fn get_recent_public_llms(
     limit: i32,
     encryption: &EncryptionService,
 ) -> Result<Vec<LargeLanguageModel>> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "llms");
     let result = sqlx::query_as::<_, LargeLanguageModel>(GET_RECENT_PUBLIC_LLMS_QUERY)
         .bind(limit)
         .fetch_all(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "llms", duration, success);
+    tracker.finish(result.is_ok());
 
     decrypt_llms_api_keys(encryption, result?)
 }
@@ -284,7 +271,7 @@ pub(crate) async fn create_llm(
     // Encrypt API key before storing
     let encrypted_api_key = encrypt_api_key(encryption, &create_llm.api_key)?;
 
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("INSERT", "llms");
     let result = sqlx::query_as::<_, LargeLanguageModel>(CREATE_LLM_QUERY)
         .bind(&create_llm.name)
         .bind(user.as_owner())
@@ -298,9 +285,7 @@ pub(crate) async fn create_llm(
         .fetch_one(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("INSERT", "llms", duration, success);
+    tracker.finish(result.is_ok());
 
     let llm = result?;
     // Decrypt api_key in response so it can be used immediately
@@ -313,16 +298,14 @@ pub(crate) async fn delete_llm(
     user: &AuthenticatedUser,
     llm_id: i32,
 ) -> Result<()> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("DELETE", "llms");
     let result = sqlx::query(DELETE_LLM_QUERY)
         .bind(llm_id)
         .bind(user.as_owner())
         .execute(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("DELETE", "llms", duration, success);
+    tracker.finish(result.is_ok());
 
     result?;
     Ok(())
@@ -339,7 +322,7 @@ pub(crate) async fn update_llm(
     // Encrypt API key if provided
     let encrypted_api_key = encrypt_api_key(encryption, &update_llm.api_key)?;
 
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("UPDATE", "llms");
     let result = sqlx::query_as::<_, LargeLanguageModel>(UPDATE_LLM_QUERY)
         .bind(llm_id)
         .bind(&update_llm.name)
@@ -351,9 +334,7 @@ pub(crate) async fn update_llm(
         .fetch_one(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("UPDATE", "llms", duration, success);
+    tracker.finish(result.is_ok());
 
     let llm = result?;
     // Decrypt api_key in response
@@ -367,7 +348,7 @@ pub(crate) async fn grab_public_llm(
     llm_id: i32,
     encryption: &EncryptionService,
 ) -> Result<LargeLanguageModel> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("INSERT", "llms");
     // The encrypted key is copied from the source LLM to the new one
     let result = sqlx::query_as::<_, LargeLanguageModel>(GRAB_PUBLIC_LLM_QUERY)
         .bind(user.as_owner())
@@ -376,9 +357,7 @@ pub(crate) async fn grab_public_llm(
         .fetch_one(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("INSERT", "llms", duration, success);
+    tracker.finish(result.is_ok());
 
     let llm = result?;
     // Decrypt api_key for the response

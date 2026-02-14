@@ -138,6 +138,7 @@
 
 	// Polling interval for auto-refresh
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
+	let isPolling = false;
 	const POLL_INTERVAL_MS = 5000;
 
 	async function fetchTransform() {
@@ -471,11 +472,14 @@
 		loading = false;
 		connectSSE();
 
-		// Auto-refresh stats and batches every 5 seconds
-		pollTimer = setInterval(() => {
-			if (isMounted) {
-				fetchDetailedStats();
-				fetchBatches();
+		// Auto-refresh stats and batches every 5 seconds, skipping if already in-flight
+		pollTimer = setInterval(async () => {
+			if (!isMounted || isPolling) return;
+			isPolling = true;
+			try {
+				await Promise.all([fetchDetailedStats(), fetchBatches()]);
+			} finally {
+				isPolling = false;
 			}
 		}, POLL_INTERVAL_MS);
 	});

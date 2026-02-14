@@ -34,7 +34,7 @@ dotenvy = { version = "0.15.7"}
 tracing = { version = "0.1.43"}
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"]}
 opentelemetry = { version = "0.31.0"}
-opentelemetry_sdk = { version = "0.31.0", features = ["rt-tokio", "opentelemetry-http"]}
+opentelemetry_sdk = { version = "0.31.0", features = ["rt-tokio", "opentelemetry-http", "spec_unstable_metrics_views"]}
 opentelemetry-otlp = { version = "0.31.0", features = ["grpc-tonic"] }
 opentelemetry-prometheus = { version = "0.31.0" }
 opentelemetry-appender-tracing = { version = "0.31.1" }

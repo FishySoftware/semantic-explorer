@@ -10,21 +10,34 @@ use opentelemetry_otlp::{LogExporter, SpanExporter, WithExportConfig};
 use opentelemetry_sdk::{
     Resource,
     logs::SdkLoggerProvider,
-    metrics::SdkMeterProvider,
+    metrics::{Aggregation, Instrument, SdkMeterProvider, Stream},
     propagation::TraceContextPropagator,
     trace::{RandomIdGenerator, Sampler, SdkTracerProvider},
 };
-use std::{env, sync::OnceLock, time::Duration};
+use std::{
+    env,
+    sync::{
+        OnceLock,
+        atomic::{AtomicI64, Ordering},
+    },
+    time::{Duration, Instant},
+};
 use tracing_subscriber::{
     EnvFilter, Layer, Registry, layer::SubscriberExt, util::SubscriberInitExt,
 };
 
+/// Global atomic counter for database queries currently in flight.
+/// Tracked via `DatabaseQueryTracker` RAII guard — incremented on creation,
+/// decremented on drop. The gauge is updated on each transition.
+static DATABASE_QUERIES_IN_FLIGHT: AtomicI64 = AtomicI64::new(0);
+
 pub struct Metrics {
     pub database_query_total: Counter<u64>,
     pub database_query_duration: Histogram<f64>,
+    pub database_queries_in_flight: Gauge<f64>,
     pub database_connection_pool_size: Gauge<f64>,
-    pub database_connection_pool_active: Gauge<f64>,
     pub database_connection_pool_idle: Gauge<f64>,
+    pub database_connection_pool_max: Gauge<f64>,
     pub storage_operations_total: Counter<u64>,
     pub storage_operation_duration: Histogram<f64>,
     pub storage_file_size_bytes: Histogram<f64>,
@@ -122,7 +135,7 @@ pub struct Metrics {
 impl Metrics {
     fn new(meter: Meter) -> Self {
         let database_query_total = meter
-            .u64_counter("database_query_total")
+            .u64_counter("database_query")
             .with_description("Total number of database queries")
             .build();
 
@@ -131,14 +144,14 @@ impl Metrics {
             .with_description("Duration of database queries in seconds")
             .build();
 
-        let database_connection_pool_size = meter
-            .f64_gauge("database_connection_pool_size")
-            .with_description("Total size of the database connection pool")
+        let database_queries_in_flight = meter
+            .f64_gauge("database_queries_in_flight")
+            .with_description("Number of database queries currently executing")
             .build();
 
-        let database_connection_pool_active = meter
-            .f64_gauge("database_connection_pool_active")
-            .with_description("Number of active database connections")
+        let database_connection_pool_size = meter
+            .f64_gauge("database_connection_pool_size")
+            .with_description("Number of connections allocated in the pool")
             .build();
 
         let database_connection_pool_idle = meter
@@ -146,8 +159,13 @@ impl Metrics {
             .with_description("Number of idle database connections")
             .build();
 
+        let database_connection_pool_max = meter
+            .f64_gauge("database_connection_pool_max")
+            .with_description("Maximum configured database connections (DB_MAX_CONNECTIONS)")
+            .build();
+
         let storage_operations_total = meter
-            .u64_counter("storage_operations_total")
+            .u64_counter("storage_operations")
             .with_description("Total number of storage operations")
             .build();
 
@@ -167,7 +185,7 @@ impl Metrics {
             .build();
 
         let worker_jobs_total = meter
-            .u64_counter("worker_jobs_total")
+            .u64_counter("worker_jobs")
             .with_description("Total number of worker jobs processed")
             .build();
 
@@ -226,7 +244,7 @@ impl Metrics {
 
         // Search performance metrics
         let search_request_total = meter
-            .u64_counter("search_request_total")
+            .u64_counter("search_request")
             .with_description("Total number of search requests")
             .build();
 
@@ -268,18 +286,18 @@ impl Metrics {
 
         // Worker job failure tracking
         let worker_job_failures_total = meter
-            .u64_counter("worker_job_failures_total")
+            .u64_counter("worker_job_failures")
             .with_description("Total number of worker job failures")
             .build();
 
         let worker_job_retries_total = meter
-            .u64_counter("worker_job_retries_total")
+            .u64_counter("worker_job_retries")
             .with_description("Total number of worker job retries")
             .build();
 
         // Inference API metrics
         let inference_embed_requests_total = meter
-            .u64_counter("inference_embed_requests_total")
+            .u64_counter("inference_embed_requests")
             .with_description("Total number of embedding requests")
             .build();
 
@@ -289,7 +307,7 @@ impl Metrics {
             .build();
 
         let inference_embed_items_total = meter
-            .u64_counter("inference_embed_items_total")
+            .u64_counter("inference_embed_items")
             .with_description("Total number of items embedded")
             .build();
 
@@ -299,7 +317,7 @@ impl Metrics {
             .build();
 
         let inference_rerank_requests_total = meter
-            .u64_counter("inference_rerank_requests_total")
+            .u64_counter("inference_rerank_requests")
             .with_description("Total number of reranking requests")
             .build();
 
@@ -309,12 +327,12 @@ impl Metrics {
             .build();
 
         let inference_rerank_documents_total = meter
-            .u64_counter("inference_rerank_documents_total")
+            .u64_counter("inference_rerank_documents")
             .with_description("Total number of documents reranked")
             .build();
 
         let inference_llm_requests_total = meter
-            .u64_counter("inference_llm_requests_total")
+            .u64_counter("inference_llm_requests")
             .with_description("Total number of LLM generation requests")
             .build();
 
@@ -324,7 +342,7 @@ impl Metrics {
             .build();
 
         let inference_llm_tokens_generated = meter
-            .u64_counter("inference_llm_tokens_generated_total")
+            .u64_counter("inference_llm_tokens_generated")
             .with_description("Total number of tokens generated by LLMs")
             .build();
 
@@ -427,7 +445,7 @@ impl Metrics {
 
         // Embedding session lifecycle metrics
         let embedding_session_resets_total = meter
-            .u64_counter("embedding_session_resets_total")
+            .u64_counter("embedding_session_resets")
             .with_description("Total number of embedding session resets due to memory thresholds")
             .build();
 
@@ -442,22 +460,22 @@ impl Metrics {
             .build();
 
         let dlq_messages_total = meter
-            .u64_counter("dlq_messages_total")
+            .u64_counter("dlq_messages")
             .with_description("Total number of messages sent to Dead Letter Queue")
             .build();
 
         let scanner_triggers_published_total = meter
-            .u64_counter("scanner_triggers_published_total")
+            .u64_counter("scanner_triggers_published")
             .with_description("Total number of scanner triggers published")
             .build();
 
         let scanner_triggers_processed_total = meter
-            .u64_counter("scanner_triggers_processed_total")
+            .u64_counter("scanner_triggers_processed")
             .with_description("Total number of scanner triggers processed")
             .build();
 
         let scanner_items_discovered_total = meter
-            .u64_counter("scanner_items_discovered_total")
+            .u64_counter("scanner_items_discovered")
             .with_description("Total number of items discovered by scanners")
             .build();
 
@@ -468,53 +486,53 @@ impl Metrics {
 
         // Scanner resilience metrics (#10)
         let scanner_backpressure_skips_total = meter
-            .u64_counter("scanner_backpressure_skips_total")
+            .u64_counter("scanner_backpressure_skips")
             .with_description("Total number of scans skipped due to backpressure")
             .build();
 
         let scanner_failed_batch_recoveries_total = meter
-            .u64_counter("scanner_failed_batch_recoveries_total")
+            .u64_counter("scanner_failed_batch_recoveries")
             .with_description("Total number of failed batches recovered by reconciliation")
             .build();
 
         let scanner_orphaned_batch_cleanups_total = meter
-            .u64_counter("scanner_orphaned_batch_cleanups_total")
+            .u64_counter("scanner_orphaned_batch_cleanups")
             .with_description("Total number of orphaned batches cleaned up")
             .build();
 
         let scanner_pending_batch_recoveries_total = meter
-            .u64_counter("scanner_pending_batch_recoveries_total")
+            .u64_counter("scanner_pending_batch_recoveries")
             .with_description("Total number of pending batches recovered")
             .build();
 
         let scanner_circuit_breaker_trips_total = meter
-            .u64_counter("scanner_circuit_breaker_trips_total")
+            .u64_counter("scanner_circuit_breaker_trips")
             .with_description("Total number of circuit breaker trips in scanner")
             .build();
 
         let scanner_batches_created_total = meter
-            .u64_counter("scanner_batches_created_total")
+            .u64_counter("scanner_batches_created")
             .with_description("Total number of batches created by scanners")
             .build();
 
         let scanner_stats_refresh_skips_total = meter
-            .u64_counter("scanner_stats_refresh_skips_total")
+            .u64_counter("scanner_stats_refresh_skips")
             .with_description("Total number of stats refreshes skipped due to unchanged dataset")
             .build();
 
         // Valkey cache metrics
         let valkey_cache_hits_total = meter
-            .u64_counter("valkey_cache_hits_total")
+            .u64_counter("valkey_cache_hits")
             .with_description("Total number of Valkey cache hits")
             .build();
 
         let valkey_cache_misses_total = meter
-            .u64_counter("valkey_cache_misses_total")
+            .u64_counter("valkey_cache_misses")
             .with_description("Total number of Valkey cache misses")
             .build();
 
         let valkey_cache_errors_total = meter
-            .u64_counter("valkey_cache_errors_total")
+            .u64_counter("valkey_cache_errors")
             .with_description("Total number of Valkey cache errors (connection failures, timeouts)")
             .build();
 
@@ -551,9 +569,10 @@ impl Metrics {
         Self {
             database_query_total,
             database_query_duration,
+            database_queries_in_flight,
             database_connection_pool_size,
-            database_connection_pool_active,
             database_connection_pool_idle,
+            database_connection_pool_max,
             storage_operations_total,
             storage_operation_duration,
             storage_file_size_bytes,
@@ -649,6 +668,63 @@ pub fn init_metrics_otel() -> Result<()> {
 
 pub fn get_metrics() -> &'static Metrics {
     METRICS.get().expect("Metrics not initialized")
+}
+
+/// RAII guard that tracks a database query from start to finish.
+///
+/// - On creation: increments the `database_queries_in_flight` gauge.
+/// - On [`finish`](DatabaseQueryTracker::finish): records duration/status metrics and decrements.
+/// - On drop (e.g. panic/early return): decrements without recording (query didn't complete).
+///
+/// # Usage
+/// ```rust,ignore
+/// let tracker = DatabaseQueryTracker::new("SELECT", "collections");
+/// let result = sqlx::query_as::<_, Row>(Q).fetch_all(pool).await;
+/// tracker.finish(result.is_ok());
+/// ```
+pub struct DatabaseQueryTracker {
+    operation: &'static str,
+    table: &'static str,
+    start: Instant,
+    finished: bool,
+}
+
+impl DatabaseQueryTracker {
+    pub fn new(operation: &'static str, table: &'static str) -> Self {
+        let prev = DATABASE_QUERIES_IN_FLIGHT.fetch_add(1, Ordering::Relaxed);
+        get_metrics()
+            .database_queries_in_flight
+            .record((prev + 1) as f64, &[]);
+        Self {
+            operation,
+            table,
+            start: Instant::now(),
+            finished: false,
+        }
+    }
+
+    /// Complete the query tracking: record duration & status, decrement in-flight.
+    pub fn finish(mut self, success: bool) {
+        self.finished = true;
+        let duration_secs = self.start.elapsed().as_secs_f64();
+        let prev = DATABASE_QUERIES_IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
+        get_metrics()
+            .database_queries_in_flight
+            .record((prev - 1) as f64, &[]);
+        record_database_query(self.operation, self.table, duration_secs, success);
+    }
+}
+
+impl Drop for DatabaseQueryTracker {
+    fn drop(&mut self) {
+        if !self.finished {
+            // Query was abandoned (panic, early return) — decrement without recording.
+            let prev = DATABASE_QUERIES_IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
+            get_metrics()
+                .database_queries_in_flight
+                .record((prev - 1) as f64, &[]);
+        }
+    }
 }
 
 pub fn record_database_query(operation: &str, table: &str, duration_secs: f64, success: bool) {
@@ -782,7 +858,7 @@ pub fn set_worker_ready(worker: &str, ready: bool) {
         .record(value, &[KeyValue::new("worker", worker.to_string())]);
 }
 
-pub fn update_database_pool_stats(size: u64, active: u64, idle: u64) {
+pub fn update_database_pool_stats(size: u64, idle: u64, max: u64) {
     let metrics = get_metrics();
 
     metrics
@@ -790,12 +866,10 @@ pub fn update_database_pool_stats(size: u64, active: u64, idle: u64) {
         .record(size as f64, &[]);
 
     metrics
-        .database_connection_pool_active
-        .record(active as f64, &[]);
-
-    metrics
         .database_connection_pool_idle
         .record(idle as f64, &[]);
+
+    metrics.database_connection_pool_max.record(max as f64, &[]);
 }
 
 // Embedded Datasets gauge update
@@ -1538,9 +1612,32 @@ pub fn init_observability_api(
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to build prometheus exporter: {}", e))?;
 
+    let duration_boundaries: Vec<f64> = vec![
+        0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0,
+        60.0, 120.0, 300.0,
+    ];
+
+    let duration_view = {
+        let boundaries = duration_boundaries.clone();
+        move |inst: &Instrument| -> Option<Stream> {
+            if inst.name().ends_with("_seconds") {
+                Stream::builder()
+                    .with_aggregation(Aggregation::ExplicitBucketHistogram {
+                        boundaries: boundaries.clone(),
+                        record_min_max: true,
+                    })
+                    .build()
+                    .ok()
+            } else {
+                None
+            }
+        }
+    };
+
     let meter_provider = SdkMeterProvider::builder()
         .with_reader(prometheus_exporter)
         .with_resource(resource.clone())
+        .with_view(duration_view)
         .build();
 
     global::set_meter_provider(meter_provider);

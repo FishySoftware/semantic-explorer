@@ -12,7 +12,10 @@ use crate::{
         PaginatedDatasetList, PaginationParams,
     },
     errors::ApiError,
-    storage::postgres::{INTERNAL_BATCH_SIZE, datasets, embedded_datasets, fetch_all_batched},
+    storage::{
+        postgres::{INTERNAL_BATCH_SIZE, datasets, embedded_datasets, fetch_all_batched},
+        valkey::{self, ValkeyClients},
+    },
 };
 use qdrant_client::{
     Qdrant,
@@ -21,7 +24,7 @@ use qdrant_client::{
         condition::ConditionOneOf, r#match::MatchValue, points_selector::PointsSelectorOneOf,
     },
 };
-use semantic_explorer_core::config::S3Config;
+use semantic_explorer_core::config::{S3Config, ValkeyConfig};
 use semantic_explorer_core::validation;
 use sqlx::{Pool, Postgres};
 use tracing::{error, info};
@@ -40,11 +43,13 @@ use tracing::{error, info};
     tag = "Datasets",
 )]
 #[get("/api/datasets")]
-#[tracing::instrument(name = "get_datasets", skip(user, pool, query))]
+#[tracing::instrument(name = "get_datasets", skip(user, pool, query, valkey, valkey_config))]
 pub(crate) async fn get_datasets(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
     query: web::Query<DatasetListParams>,
+    valkey: Option<Data<ValkeyClients>>,
+    valkey_config: Option<Data<ValkeyConfig>>,
 ) -> impl Responder {
     let pool = pool.into_inner();
 
@@ -61,7 +66,21 @@ pub(crate) async fn get_datasets(
         }
     });
 
-    // Get paginated datasets with stats
+    // Only use cache for non-search listing queries
+    let cache_key = if search_query.is_none() {
+        Some(format!("datasets:{}:{}:{}", user.as_owner(), limit, offset))
+    } else {
+        None
+    };
+
+    // L1: Check Valkey cache
+    if let (Some(key), Some(v)) = (&cache_key, &valkey) {
+        if let Some(cached) = valkey::cache_get::<PaginatedDatasetList>(&v.read, key).await {
+            return HttpResponse::Ok().json(cached);
+        }
+    }
+
+    // Cache miss — query database
     let paginated_result = match search_query {
         Some(query) => {
             match datasets::get_datasets_paginated_search(
@@ -107,7 +126,6 @@ pub(crate) async fn get_datasets(
             updated_at: d.updated_at,
             item_count: d.item_count as i64,
             total_chunks: d.total_chunks,
-            transform_count: d.transform_count,
         })
         .collect();
 
@@ -117,6 +135,39 @@ pub(crate) async fn get_datasets(
         limit: paginated_result.limit,
         offset: paginated_result.offset,
     };
+
+    // Write to cache (fire-and-forget)
+    if let (Some(key), Some(v)) = (cache_key, valkey) {
+        let conn = v.write.clone();
+        let ttl = valkey_config
+            .map(|c| c.resource_cache_ttl_secs)
+            .unwrap_or(300);
+        let resp_clone = PaginatedDatasetList {
+            items: response
+                .items
+                .iter()
+                .map(|d| DatasetWithStats {
+                    dataset_id: d.dataset_id,
+                    title: d.title.clone(),
+                    details: d.details.clone(),
+                    owner_id: d.owner_id.clone(),
+                    owner_display_name: d.owner_display_name.clone(),
+                    tags: d.tags.clone(),
+                    is_public: d.is_public,
+                    created_at: d.created_at,
+                    updated_at: d.updated_at,
+                    item_count: d.item_count,
+                    total_chunks: d.total_chunks,
+                })
+                .collect(),
+            total_count: response.total_count,
+            limit: response.limit,
+            offset: response.offset,
+        };
+        actix_web::rt::spawn(async move {
+            valkey::cache_set(&conn, &key, &resp_clone, ttl).await;
+        });
+    }
 
     HttpResponse::Ok().json(response)
 }
@@ -170,12 +221,13 @@ pub(crate) async fn get_dataset(
     tag = "Datasets",
 )]
 #[post("/api/datasets")]
-#[tracing::instrument(name = "create_dataset", skip(user, pool, create_dataset, req), fields(dataset_title = %create_dataset.title))]
+#[tracing::instrument(name = "create_dataset", skip(user, pool, create_dataset, req, valkey), fields(dataset_title = %create_dataset.title))]
 pub(crate) async fn create_dataset(
     user: AuthenticatedUser,
     req: HttpRequest,
     pool: Data<Pool<Postgres>>,
     Json(create_dataset): Json<CreateDataset>,
+    valkey: Option<Data<ValkeyClients>>,
 ) -> impl Responder {
     if let Err(e) = validation::validate_title(&create_dataset.title) {
         return ApiError::Validation(e).error_response();
@@ -214,6 +266,7 @@ pub(crate) async fn create_dataset(
         ResourceType::Dataset,
         &dataset.dataset_id.to_string(),
     );
+    valkey::invalidate_resource_cache(valkey.as_ref(), "datasets", &user.as_owner());
     HttpResponse::Created().json(dataset)
 }
 
@@ -228,12 +281,13 @@ pub(crate) async fn create_dataset(
     tag = "Datasets",
 )]
 #[patch("/api/datasets/{dataset_id}")]
-#[tracing::instrument(name = "update_dataset", skip(user, pool, update_dataset), fields(dataset_id = %dataset_id.as_ref(), dataset_title = %update_dataset.title))]
+#[tracing::instrument(name = "update_dataset", skip(user, pool, update_dataset, valkey), fields(dataset_id = %dataset_id.as_ref(), dataset_title = %update_dataset.title))]
 pub(crate) async fn update_dataset(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
     dataset_id: Path<i32>,
     Json(update_dataset): Json<CreateDataset>,
+    valkey: Option<Data<ValkeyClients>>,
 ) -> impl Responder {
     if let Err(e) = validation::validate_title(&update_dataset.title) {
         return ApiError::Validation(e).error_response();
@@ -281,6 +335,7 @@ pub(crate) async fn update_dataset(
         ResourceType::Dataset,
         &dataset_id.to_string(),
     );
+    valkey::invalidate_resource_cache(valkey.as_ref(), "datasets", &user.as_owner());
     HttpResponse::Ok().json(dataset)
 }
 
@@ -294,7 +349,7 @@ pub(crate) async fn update_dataset(
     tag = "Datasets",
 )]
 #[delete("/api/datasets/{datasets_id}")]
-#[tracing::instrument(name = "delete_dataset", skip(user, pool, qdrant_client, s3_client, s3_config, req), fields(dataset_id = %dataset_id.as_ref()))]
+#[tracing::instrument(name = "delete_dataset", skip(user, pool, qdrant_client, s3_client, s3_config, req, valkey), fields(dataset_id = %dataset_id.as_ref()))]
 pub(crate) async fn delete_dataset(
     user: AuthenticatedUser,
     req: HttpRequest,
@@ -303,6 +358,7 @@ pub(crate) async fn delete_dataset(
     s3_client: Data<aws_sdk_s3::Client>,
     s3_config: Data<S3Config>,
     dataset_id: Path<i32>,
+    valkey: Option<Data<ValkeyClients>>,
 ) -> impl Responder {
     let pool = pool.into_inner();
     let dataset_id = dataset_id.into_inner();
@@ -389,6 +445,7 @@ pub(crate) async fn delete_dataset(
                 ResourceType::Dataset,
                 &dataset_id.to_string(),
             );
+            valkey::invalidate_resource_cache(valkey.as_ref(), "datasets", &user.as_owner());
             HttpResponse::Ok().finish()
         }
         Err(e) => {

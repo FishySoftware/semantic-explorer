@@ -1,13 +1,12 @@
 use anyhow::Result;
 use sqlx::types::chrono::{DateTime, Utc};
 use sqlx::{FromRow, Pool, Postgres};
-use std::time::Instant;
 
 use crate::transforms::collection::models::{
     CollectionTransform, CollectionTransformStats, FailedFileWithTransform, ProcessedFile,
 };
 use semantic_explorer_core::models::PaginatedResponse;
-use semantic_explorer_core::observability::record_database_query;
+use semantic_explorer_core::observability::DatabaseQueryTracker;
 use semantic_explorer_core::owner_info::OwnerInfo;
 
 /// Helper struct for paginated queries that include total_count via COUNT(*) OVER()
@@ -179,28 +178,6 @@ const GET_COLLECTION_TRANSFORM_STATS_QUERY: &str = r#"
         MAX(processed_at) as last_run_at
     FROM transform_processed_files
     WHERE transform_type = 'collection' AND transform_id = $1
-"#;
-
-/// Batch query to fetch stats for multiple collection transforms in a single round-trip
-/// Eliminates N+1 pattern by using ANY($1) instead of individual queries
-const GET_BATCH_COLLECTION_TRANSFORM_STATS_QUERY: &str = r#"
-    SELECT
-        transform_id as collection_transform_id,
-        COUNT(*) as total_files_processed,
-        COUNT(*) FILTER (WHERE process_status = 'completed') as successful_files,
-        COUNT(*) FILTER (WHERE process_status = 'failed') as failed_files,
-        COALESCE(SUM(item_count) FILTER (WHERE process_status = 'completed'), 0) as total_items_created,
-        MAX(processed_at) as last_run_at
-    FROM transform_processed_files
-    WHERE transform_type = 'collection' AND transform_id = ANY($1)
-    GROUP BY transform_id
-"#;
-
-/// Batch query to verify ownership of multiple collection transforms in a single query
-const VERIFY_COLLECTION_TRANSFORMS_OWNERSHIP_BATCH_QUERY: &str = r#"
-    SELECT collection_transform_id
-    FROM collection_transforms
-    WHERE collection_transform_id = ANY($1) AND owner_id = $2
 "#;
 
 const GET_FAILED_FILES_FOR_COLLECTION_QUERY: &str = r#"
@@ -426,7 +403,7 @@ pub async fn get_collection_transform(
     owner: &str,
     collection_transform_id: i32,
 ) -> Result<CollectionTransform> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "collection_transforms");
 
     let result = sqlx::query_as::<_, CollectionTransform>(GET_COLLECTION_TRANSFORM_QUERY)
         .bind(collection_transform_id)
@@ -434,8 +411,7 @@ pub async fn get_collection_transform(
         .fetch_one(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    record_database_query("SELECT", "collection_transforms", duration, result.is_ok());
+    tracker.finish(result.is_ok());
 
     let transform = result?;
     Ok(transform)
@@ -467,7 +443,7 @@ pub async fn get_collection_transforms_paginated(
     let sort_field = validate_sort_field(sort_by)?;
     let sort_dir = validate_sort_direction(sort_direction)?;
 
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "collection_transforms");
 
     let (total_count, transforms) = if let Some(search_term) = search {
         let search_pattern = format!("%{}%", search_term);
@@ -498,8 +474,7 @@ pub async fn get_collection_transforms_paginated(
         CollectionTransformWithCount::into_parts(rows)
     };
 
-    let duration = start.elapsed().as_secs_f64();
-    record_database_query("SELECT", "collection_transforms", duration, true);
+    tracker.finish(true);
 
     Ok(PaginatedResponse {
         items: transforms,
@@ -625,51 +600,6 @@ pub async fn get_collection_transform_stats(
         .fetch_one(pool)
         .await?;
     Ok(stats)
-}
-
-/// Batch fetch stats for multiple collection transforms in a single query (eliminates N+1)
-pub async fn get_batch_collection_transform_stats(
-    pool: &Pool<Postgres>,
-    collection_transform_ids: &[i32],
-) -> Result<std::collections::HashMap<i32, CollectionTransformStats>> {
-    use std::collections::HashMap;
-
-    if collection_transform_ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-
-    let stats_list =
-        sqlx::query_as::<_, CollectionTransformStats>(GET_BATCH_COLLECTION_TRANSFORM_STATS_QUERY)
-            .bind(collection_transform_ids)
-            .fetch_all(pool)
-            .await?;
-
-    let stats_map: HashMap<i32, CollectionTransformStats> = stats_list
-        .into_iter()
-        .map(|s| (s.collection_transform_id, s))
-        .collect();
-
-    Ok(stats_map)
-}
-
-/// Verify ownership of multiple collection transforms in a single query (eliminates N+1)
-/// Returns the list of IDs that the user owns
-pub async fn verify_collection_transforms_ownership_batch(
-    pool: &Pool<Postgres>,
-    owner_id: &str,
-    collection_transform_ids: &[i32],
-) -> Result<Vec<i32>> {
-    if collection_transform_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let owned_ids: Vec<(i32,)> = sqlx::query_as(VERIFY_COLLECTION_TRANSFORMS_OWNERSHIP_BATCH_QUERY)
-        .bind(collection_transform_ids)
-        .bind(owner_id)
-        .fetch_all(pool)
-        .await?;
-
-    Ok(owned_ids.into_iter().map(|(id,)| id).collect())
 }
 
 pub async fn get_processed_files(

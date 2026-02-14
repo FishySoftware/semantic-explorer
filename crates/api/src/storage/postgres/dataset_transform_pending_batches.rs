@@ -7,11 +7,10 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Pool, Postgres};
-use std::time::Instant;
 use tracing::instrument;
 use utoipa::ToSchema;
 
-use semantic_explorer_core::observability::record_database_query;
+use semantic_explorer_core::observability::DatabaseQueryTracker;
 
 const INSERT_PENDING_BATCH_QUERY: &str = r#"
     INSERT INTO pending_batches (
@@ -121,7 +120,7 @@ pub async fn insert_pending_batch(
     pool: &Pool<Postgres>,
     req: CreatePendingBatch,
 ) -> Result<PendingBatch> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("INSERT", "pending_batches");
     // Calculate next retry time with exponential backoff (starts at 30s)
     let next_retry_at = Utc::now() + chrono::Duration::seconds(30);
 
@@ -137,8 +136,7 @@ pub async fn insert_pending_batch(
         .fetch_one(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    record_database_query("INSERT", "pending_batches", duration, result.is_ok());
+    tracker.finish(result.is_ok());
 
     let batch = result.context("Failed to insert pending batch")?;
     Ok(batch)

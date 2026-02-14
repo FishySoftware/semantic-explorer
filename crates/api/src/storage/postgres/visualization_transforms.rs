@@ -3,11 +3,10 @@ use sqlx::{
     FromRow, Pool, Postgres,
     types::chrono::{DateTime, Utc},
 };
-use std::time::Instant;
 
 use crate::transforms::visualization::models::{Visualization, VisualizationTransform};
 use semantic_explorer_core::models::PaginatedResponse;
-use semantic_explorer_core::observability::record_database_query;
+use semantic_explorer_core::observability::DatabaseQueryTracker;
 
 /// Helper struct for paginated queries that include total_count via COUNT(*) OVER()
 #[derive(Debug, Clone, FromRow)]
@@ -615,7 +614,7 @@ pub async fn get_visualization_transforms_paginated(
     let sort_field = validate_sort_field(sort_by)?;
     let sort_dir = validate_sort_direction(sort_direction)?;
 
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "visualization_transforms");
 
     let (total_count, transforms) = if let Some(search_term) = search {
         let search_pattern = format!("%{}%", search_term);
@@ -646,8 +645,7 @@ pub async fn get_visualization_transforms_paginated(
         VisualizationTransformWithCount::into_parts(rows)
     };
 
-    let duration = start.elapsed().as_secs_f64();
-    record_database_query("SELECT", "visualization_transforms", duration, true);
+    tracker.finish(true);
 
     Ok(PaginatedResponse {
         items: transforms,

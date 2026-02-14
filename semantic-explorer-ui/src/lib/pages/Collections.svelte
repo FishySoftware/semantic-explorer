@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Table, TableBody, TableBodyCell, TableHead, TableHeadCell } from 'flowbite-svelte';
+	import { onMount } from 'svelte';
 	import { SvelteSet, SvelteURLSearchParams } from 'svelte/reactivity';
 	import ActionMenu from '../components/ActionMenu.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
@@ -53,6 +54,12 @@
 	let transformModalOpen = $state(false);
 	let selectedCollectionForTransform = $state<number | null>(null);
 
+	let initialFetchDone = false;
+
+	onMount(() => {
+		fetchCollections();
+	});
+
 	$effect(() => {
 		if (showCreateForm && !userEditedTitle && !newTitle) {
 			const now = new Date();
@@ -86,6 +93,7 @@
 			toastStore.error(message);
 		} finally {
 			loading = false;
+			initialFetchDone = true;
 		}
 	}
 
@@ -169,7 +177,7 @@
 	// Debounce search to avoid spamming API on every keystroke
 	let searchDebounceTimeout: ReturnType<typeof setTimeout> | null = null;
 	$effect(() => {
-		if (searchQuery !== undefined) {
+		if (searchQuery !== undefined && initialFetchDone) {
 			currentOffset = 0; // Reset to first page when searching
 			if (searchDebounceTimeout) {
 				clearTimeout(searchDebounceTimeout);
@@ -181,19 +189,6 @@
 		return () => {
 			if (searchDebounceTimeout) {
 				clearTimeout(searchDebounceTimeout);
-			}
-		};
-	});
-
-	// Auto-refresh every 5 seconds
-	let refreshInterval: ReturnType<typeof setInterval> | null = null;
-	$effect(() => {
-		refreshInterval = setInterval(() => {
-			fetchCollections(false);
-		}, 5000);
-		return () => {
-			if (refreshInterval) {
-				clearInterval(refreshInterval);
 			}
 		};
 	});
@@ -456,9 +451,6 @@
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Description</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Tags</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Items</TableHeadCell>
-					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center"
-						>Transforms</TableHeadCell
-					>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Actions</TableHeadCell>
 				</TableHead>
 				<TableBody>
@@ -517,27 +509,8 @@
 									>
 										{collection.file_count}
 									</span>
-									{#if collection.failed_file_count && collection.failed_file_count > 0}
-										<span
-											class="inline-block px-2 py-1 ml-1 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded text-sm font-medium"
-											title="Failed items"
-										>
-											{collection.failed_file_count} failed
-										</span>
-									{/if}
 								{:else}
 									<span class="text-gray-500 dark:text-gray-400">—</span>
-								{/if}
-							</TableBodyCell>
-							<TableBodyCell class="px-4 py-3 text-center">
-								{#if collection.transform_count !== undefined && collection.transform_count !== null && collection.transform_count > 0}
-									<span
-										class="inline-block px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded text-sm font-medium"
-									>
-										{collection.transform_count}
-									</span>
-								{:else}
-									<span class="text-gray-400 dark:text-gray-500 text-xs">None</span>
 								{/if}
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3 text-center">

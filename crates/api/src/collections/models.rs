@@ -32,7 +32,7 @@ pub(crate) struct UpdateCollection {
     pub(crate) is_public: bool,
 }
 
-#[derive(Serialize, ToSchema, FromRow)]
+#[derive(Serialize, Deserialize, ToSchema, FromRow, Clone)]
 pub(crate) struct Collection {
     pub(crate) collection_id: i32,
     pub(crate) title: String,
@@ -49,10 +49,6 @@ pub(crate) struct Collection {
     pub(crate) updated_at: Option<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>>,
     #[sqlx(default)]
     pub(crate) file_count: i64,
-    #[sqlx(default)]
-    pub(crate) failed_file_count: i64,
-    #[sqlx(default)]
-    pub(crate) transform_count: i64,
 }
 
 impl Collection {
@@ -93,7 +89,7 @@ fn default_collection_limit() -> i64 {
     10
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub(crate) struct PaginatedCollections {
     pub(crate) collections: Vec<Collection>,
     pub(crate) total_count: i64,

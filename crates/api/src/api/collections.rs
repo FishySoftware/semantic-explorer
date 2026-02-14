@@ -24,10 +24,14 @@ use crate::{
             models::{DocumentUpload, PaginatedFiles},
             upload_document,
         },
+        valkey::{self, ValkeyClients},
     },
     validation::validate_upload_file,
 };
-use semantic_explorer_core::{config::S3Config, validation};
+use semantic_explorer_core::{
+    config::{S3Config, ValkeyConfig},
+    validation,
+};
 
 #[utoipa::path(
     params(
@@ -42,11 +46,16 @@ use semantic_explorer_core::{config::S3Config, validation};
     tag = "Collections",
 )]
 #[get("/api/collections")]
-#[tracing::instrument(name = "get_collections", skip(user, pool, query))]
+#[tracing::instrument(
+    name = "get_collections",
+    skip(user, pool, query, valkey, valkey_config)
+)]
 pub(crate) async fn get_collections(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
     query: web::Query<HashMap<String, String>>,
+    valkey: Option<Data<ValkeyClients>>,
+    valkey_config: Option<Data<ValkeyConfig>>,
 ) -> impl Responder {
     let pool = &pool.into_inner();
 
@@ -62,6 +71,15 @@ pub(crate) async fn get_collections(
         .unwrap_or(0)
         .max(0);
 
+    let cache_key = format!("collections:{}:{}:{}", user.as_owner(), limit, offset);
+
+    // Check Valkey cache first
+    if let Some(ref v) = valkey {
+        if let Some(cached) = valkey::cache_get::<PaginatedCollections>(&v.read, &cache_key).await {
+            return HttpResponse::Ok().json(cached);
+        }
+    }
+
     match collections::get_collections_paginated(pool, &user.as_owner(), limit, offset).await {
         Ok((collection_list, total_count)) => {
             let response = PaginatedCollections {
@@ -70,6 +88,24 @@ pub(crate) async fn get_collections(
                 limit,
                 offset,
             };
+
+            // Write to cache (fire-and-forget)
+            if let Some(v) = valkey {
+                let conn = v.write.clone();
+                let ttl = valkey_config
+                    .map(|c| c.resource_cache_ttl_secs)
+                    .unwrap_or(300);
+                let key = cache_key;
+                let resp_clone = PaginatedCollections {
+                    collections: response.collections.clone(),
+                    total_count: response.total_count,
+                    limit: response.limit,
+                    offset: response.offset,
+                };
+                actix_web::rt::spawn(async move {
+                    valkey::cache_set(&conn, &key, &resp_clone, ttl).await;
+                });
+            }
 
             HttpResponse::Ok().json(response)
         }
@@ -176,7 +212,7 @@ pub(crate) async fn search_collections(
     tag = "Collections",
 )]
 #[post("/api/collections")]
-#[tracing::instrument(name = "create_collection", skip(user, pool, s3_client, s3_config, create_collection, req), fields(collection_title = %create_collection.title))]
+#[tracing::instrument(name = "create_collection", skip(user, pool, s3_client, s3_config, create_collection, req, valkey), fields(collection_title = %create_collection.title))]
 pub(crate) async fn create_collections(
     user: AuthenticatedUser,
     req: HttpRequest,
@@ -184,6 +220,7 @@ pub(crate) async fn create_collections(
     s3_client: Data<Client>,
     s3_config: Data<S3Config>,
     Json(create_collection): Json<CreateCollection>,
+    valkey: Option<Data<ValkeyClients>>,
 ) -> impl Responder {
     let pool = pool.into_inner();
     let s3_client = s3_client.into_inner();
@@ -244,6 +281,7 @@ pub(crate) async fn create_collections(
         ResourceType::Collection,
         &collection.collection_id.to_string(),
     );
+    valkey::invalidate_resource_cache(valkey.as_ref(), "collections", &user.as_owner());
     HttpResponse::Created().json(collection)
 }
 
@@ -256,7 +294,7 @@ pub(crate) async fn create_collections(
     tag = "Collections",
 )]
 #[delete("/api/collections/{collection_id}")]
-#[tracing::instrument(name = "delete_collection", skip(user, s3_client, s3_config, pool, req), fields(collection_id = %collection_id.as_ref()))]
+#[tracing::instrument(name = "delete_collection", skip(user, s3_client, s3_config, pool, req, valkey), fields(collection_id = %collection_id.as_ref()))]
 pub(crate) async fn delete_collections(
     user: AuthenticatedUser,
     req: HttpRequest,
@@ -264,6 +302,7 @@ pub(crate) async fn delete_collections(
     s3_config: Data<S3Config>,
     pool: Data<Pool<Postgres>>,
     collection_id: Path<i32>,
+    valkey: Option<Data<ValkeyClients>>,
 ) -> impl Responder {
     let pool = pool.into_inner();
     let s3_config = s3_config.into_inner();
@@ -298,6 +337,7 @@ pub(crate) async fn delete_collections(
                 ResourceType::Collection,
                 &collection_id.to_string(),
             );
+            valkey::invalidate_resource_cache(valkey.as_ref(), "collections", &user.as_owner());
             HttpResponse::Ok().finish()
         }
         Err(e) => {
@@ -318,12 +358,13 @@ pub(crate) async fn delete_collections(
     tag = "Collections",
 )]
 #[patch("/api/collections/{collection_id}")]
-#[tracing::instrument(name = "update_collection", skip(user, pool, update_collection), fields(collection_id = %collection_id.as_ref()))]
+#[tracing::instrument(name = "update_collection", skip(user, pool, update_collection, valkey), fields(collection_id = %collection_id.as_ref()))]
 pub(crate) async fn update_collections(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
     collection_id: Path<i32>,
     Json(update_collection): Json<UpdateCollection>,
+    valkey: Option<Data<ValkeyClients>>,
 ) -> impl Responder {
     if let Err(e) = validation::validate_title(&update_collection.title) {
         return ApiError::Validation(e).error_response();
@@ -358,6 +399,7 @@ pub(crate) async fn update_collections(
                 ResourceType::Collection,
                 &collection_id.to_string(),
             );
+            valkey::invalidate_resource_cache(valkey.as_ref(), "collections", &user.as_owner());
             HttpResponse::Ok().json(collection)
         }
         Err(_) => {

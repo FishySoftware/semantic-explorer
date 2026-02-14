@@ -10,7 +10,7 @@
 		TableHeadCell,
 	} from 'flowbite-svelte';
 	import { ChevronDownOutline, ChevronRightOutline, InfoCircleSolid } from 'flowbite-svelte-icons';
-	import { onDestroy, onMount } from 'svelte';
+	import { onMount } from 'svelte';
 	import { SvelteMap, SvelteSet, SvelteURLSearchParams } from 'svelte/reactivity';
 	import ActionMenu from '../components/ActionMenu.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
@@ -30,8 +30,6 @@
 	interface Props {
 		onViewVisualization?: (_id: number) => void;
 	}
-
-	import { createPollingInterval } from '../utils/polling';
 
 	let { onViewVisualization }: Props = $props();
 
@@ -60,49 +58,9 @@
 	// Run selection state for bulk compare
 	let selectedRuns = new SvelteSet<string>(); // "transformId:vizId" keys
 
-	let pollingController: ReturnType<typeof createPollingInterval> | null = null;
-	let isLoadingTransforms = false;
-
 	onMount(async () => {
 		await loadTransforms();
-		startPolling();
 	});
-
-	onDestroy(() => {
-		stopPolling();
-	});
-
-	function startPolling() {
-		// Create managed polling with deduplication
-		pollingController = createPollingInterval(
-			async () => {
-				// Check if any transforms are processing or pending
-				const hasProcessing = transforms.some(
-					(t) => t.last_run_status === 'processing' || t.last_run_status === 'pending'
-				);
-
-				// Only load if there's processing work and we're not already loading
-				if (hasProcessing && !isLoadingTransforms) {
-					await loadTransforms();
-				}
-			},
-			{
-				interval: 3000,
-				shouldContinue: () => true, // Always continue polling
-				onError: (error) => {
-					console.error('Polling error:', error);
-					// Continue polling despite errors
-				},
-			}
-		);
-	}
-
-	function stopPolling() {
-		if (pollingController) {
-			pollingController.stop();
-			pollingController = null;
-		}
-	}
 
 	async function loadTransforms() {
 		const isInitialLoad = loading;
@@ -110,7 +68,6 @@
 			loading = true;
 		}
 		error = null;
-		isLoadingTransforms = true;
 
 		try {
 			const params = new SvelteURLSearchParams();
@@ -144,7 +101,6 @@
 				toastStore.error(error);
 			}
 		} finally {
-			isLoadingTransforms = false;
 			if (isInitialLoad) {
 				loading = false;
 			}

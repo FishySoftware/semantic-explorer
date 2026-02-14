@@ -2,6 +2,7 @@ use actix_web::{
     HttpRequest, HttpResponse, Responder, ResponseError, delete, get, patch, post,
     web::{self, Data, Json, Path},
 };
+use semantic_explorer_core::config::ValkeyConfig;
 use semantic_explorer_core::encryption::EncryptionService;
 use semantic_explorer_core::validation;
 use sqlx::{Pool, Postgres};
@@ -13,7 +14,10 @@ use crate::{
     llms::models::{
         CreateLLM, LargeLanguageModel, LlmListQuery, PaginatedLLMList, UpdateLargeLanguageModel,
     },
-    storage::postgres::llms,
+    storage::{
+        postgres::llms,
+        valkey::{self, ValkeyClients},
+    },
 };
 
 #[utoipa::path(
@@ -27,12 +31,17 @@ use crate::{
     tag = "LLMs",
 )]
 #[get("/api/llms")]
-#[tracing::instrument(name = "get_llms", skip(user, pool, query, encryption))]
+#[tracing::instrument(
+    name = "get_llms",
+    skip(user, pool, query, encryption, valkey, valkey_config)
+)]
 pub(crate) async fn get_llms(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
     encryption: Data<EncryptionService>,
     query: web::Query<LlmListQuery>,
+    valkey: Option<Data<ValkeyClients>>,
+    valkey_config: Option<Data<ValkeyConfig>>,
 ) -> impl Responder {
     let search_query = query.search.as_ref().and_then(|s| {
         let trimmed = s.trim();
@@ -43,9 +52,28 @@ pub(crate) async fn get_llms(
         }
     });
 
-    match search_query {
+    // Only cache non-search listing queries
+    let cache_key = if search_query.is_none() {
+        Some(format!(
+            "llms:{}:{}:{}",
+            user.as_owner(),
+            query.limit,
+            query.offset
+        ))
+    } else {
+        None
+    };
+
+    // Check Valkey cache first
+    if let (Some(key), Some(v)) = (&cache_key, &valkey) {
+        if let Some(cached) = valkey::cache_get::<PaginatedLLMList>(&v.read, key).await {
+            return HttpResponse::Ok().json(cached);
+        }
+    }
+
+    let result = match search_query {
         Some(q) => {
-            match llms::get_llms_with_search(
+            llms::get_llms_with_search(
                 &pool.into_inner(),
                 &user,
                 q,
@@ -54,45 +82,51 @@ pub(crate) async fn get_llms(
                 &encryption,
             )
             .await
-            {
-                Ok(result) => {
-                    let response = PaginatedLLMList {
-                        items: result.items,
-                        total_count: result.total_count,
-                        limit: result.limit,
-                        offset: result.offset,
-                    };
-                    HttpResponse::Ok().json(response)
-                }
-                Err(e) => {
-                    tracing::error!(error = %e, "failed to fetch LLMs");
-                    ApiError::Internal(format!("error fetching LLMs: {:?}", e)).error_response()
-                }
-            }
         }
-        None => match llms::get_llms(
-            &pool.into_inner(),
-            &user,
-            query.limit,
-            query.offset,
-            &encryption,
-        )
-        .await
-        {
-            Ok(result) => {
-                let response = PaginatedLLMList {
-                    items: result.items,
-                    total_count: result.total_count,
-                    limit: result.limit,
-                    offset: result.offset,
+        None => {
+            llms::get_llms(
+                &pool.into_inner(),
+                &user,
+                query.limit,
+                query.offset,
+                &encryption,
+            )
+            .await
+        }
+    };
+
+    match result {
+        Ok(result) => {
+            let response = PaginatedLLMList {
+                items: result.items,
+                total_count: result.total_count,
+                limit: result.limit,
+                offset: result.offset,
+            };
+
+            // Write to cache (fire-and-forget)
+            if let (Some(key), Some(v)) = (cache_key, valkey) {
+                let conn = v.write.clone();
+                let ttl = valkey_config
+                    .map(|c| c.resource_cache_ttl_secs)
+                    .unwrap_or(300);
+                let resp_clone = PaginatedLLMList {
+                    items: response.items.clone(),
+                    total_count: response.total_count,
+                    limit: response.limit,
+                    offset: response.offset,
                 };
-                HttpResponse::Ok().json(response)
+                actix_web::rt::spawn(async move {
+                    valkey::cache_set(&conn, &key, &resp_clone, ttl).await;
+                });
             }
-            Err(e) => {
-                tracing::error!(error = %e, "failed to fetch LLMs");
-                ApiError::Internal(format!("error fetching LLMs: {:?}", e)).error_response()
-            }
-        },
+
+            HttpResponse::Ok().json(response)
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "failed to fetch LLMs");
+            ApiError::Internal(format!("error fetching LLMs: {:?}", e)).error_response()
+        }
     }
 }
 
@@ -142,13 +176,17 @@ pub(crate) async fn get_llm(
     tag = "LLMs",
 )]
 #[post("/api/llms")]
-#[tracing::instrument(name = "create_llm", skip(user, pool, create_llm, req, encryption))]
+#[tracing::instrument(
+    name = "create_llm",
+    skip(user, pool, create_llm, req, encryption, valkey)
+)]
 pub(crate) async fn create_llm(
     user: AuthenticatedUser,
     req: HttpRequest,
     pool: Data<Pool<Postgres>>,
     encryption: Data<EncryptionService>,
     create_llm: Json<CreateLLM>,
+    valkey: Option<Data<ValkeyClients>>,
 ) -> impl Responder {
     let mut payload = create_llm.into_inner();
 
@@ -170,6 +208,7 @@ pub(crate) async fn create_llm(
                 ResourceType::LlmProvider,
                 &llm.llm_id.to_string(),
             );
+            valkey::invalidate_resource_cache(valkey.as_ref(), "llms", &user.as_owner());
             HttpResponse::Created().json(llm)
         }
         Err(e) => {
@@ -192,13 +231,14 @@ pub(crate) async fn create_llm(
     tag = "LLMs",
 )]
 #[patch("/api/llms/{llm_id}")]
-#[tracing::instrument(name = "update_llm", skip(user, pool, update_llm, encryption))]
+#[tracing::instrument(name = "update_llm", skip(user, pool, update_llm, encryption, valkey))]
 pub(crate) async fn update_llm(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
     encryption: Data<EncryptionService>,
     llm_id: Path<i32>,
     update_llm: Json<UpdateLargeLanguageModel>,
+    valkey: Option<Data<ValkeyClients>>,
 ) -> impl Responder {
     if let Some(ref name) = update_llm.name
         && let Err(e) = validation::validate_title(name)
@@ -237,6 +277,7 @@ pub(crate) async fn update_llm(
                 );
             }
 
+            valkey::invalidate_resource_cache(valkey.as_ref(), "llms", &user.as_owner());
             HttpResponse::Ok().json(llm)
         }
         Err(e) => {
@@ -258,12 +299,13 @@ pub(crate) async fn update_llm(
     tag = "LLMs",
 )]
 #[delete("/api/llms/{llm_id}")]
-#[tracing::instrument(name = "delete_llm", skip(user, pool, req))]
+#[tracing::instrument(name = "delete_llm", skip(user, pool, req, valkey))]
 pub(crate) async fn delete_llm(
     user: AuthenticatedUser,
     req: HttpRequest,
     pool: Data<Pool<Postgres>>,
     llm_id: Path<i32>,
+    valkey: Option<Data<ValkeyClients>>,
 ) -> impl Responder {
     match llms::delete_llm(&pool.into_inner(), &user, *llm_id).await {
         Ok(()) => {
@@ -274,6 +316,7 @@ pub(crate) async fn delete_llm(
                 ResourceType::LlmProvider,
                 &llm_id.to_string(),
             );
+            valkey::invalidate_resource_cache(valkey.as_ref(), "llms", &user.as_owner());
             HttpResponse::NoContent().finish()
         }
         Err(e) => {

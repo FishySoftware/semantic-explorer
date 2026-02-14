@@ -1,8 +1,5 @@
-use std::collections::HashMap;
-use std::time::Instant;
-
 use anyhow::Result;
-use semantic_explorer_core::observability::record_database_query;
+use semantic_explorer_core::observability::DatabaseQueryTracker;
 use semantic_explorer_core::owner_info::OwnerInfo;
 use sqlx::types::chrono::{DateTime, Utc};
 use sqlx::{FromRow, Pool, Postgres, Transaction};
@@ -200,34 +197,6 @@ const GET_EMBEDDED_DATASET_STATS_QUERY: &str = r#"
     WHERE ed.embedded_dataset_id = $1 AND ed.owner_id = $2
 "#;
 
-/// Batch query to fetch stats for multiple embedded datasets in a single round-trip
-/// Eliminates N+1 pattern by using ANY($1) instead of individual queries
-const GET_BATCH_EMBEDDED_DATASET_STATS_QUERY: &str = r#"
-    SELECT
-        ed.embedded_dataset_id,
-        COALESCE(COUNT(tpf.id), 0)::BIGINT as total_batches_processed,
-        COALESCE(COUNT(tpf.id) FILTER (WHERE tpf.process_status = 'completed'), 0)::BIGINT as successful_batches,
-        COALESCE(COUNT(tpf.id) FILTER (WHERE tpf.process_status = 'failed'), 0)::BIGINT as failed_batches,
-        COALESCE(COUNT(tpf.id) FILTER (WHERE tpf.process_status = 'processing'), 0)::BIGINT as processing_batches,
-        COALESCE(SUM(tpf.item_count) FILTER (WHERE tpf.process_status = 'completed'), 0)::BIGINT as total_chunks_embedded,
-        COALESCE(SUM(tpf.item_count) FILTER (WHERE tpf.process_status = 'failed'), 0)::BIGINT as total_chunks_failed,
-        COALESCE(SUM(tpf.item_count) FILTER (WHERE tpf.process_status = 'processing'), 0)::BIGINT as total_chunks_processing,
-        MAX(tpf.processed_at) as last_run_at,
-        MIN(tpf.processed_at) FILTER (WHERE tpf.process_status = 'processing') as first_processing_at,
-        AVG(tpf.processing_duration_ms) FILTER (WHERE tpf.process_status = 'completed')::BIGINT as avg_processing_duration_ms
-    FROM embedded_datasets ed
-    LEFT JOIN transform_processed_files tpf ON tpf.transform_type = 'dataset' AND tpf.transform_id = ed.embedded_dataset_id
-    WHERE ed.embedded_dataset_id = ANY($1) AND ed.owner_id = $2
-    GROUP BY ed.embedded_dataset_id
-"#;
-
-/// Batch query to verify ownership of multiple embedded datasets in a single query
-const VERIFY_EMBEDDED_DATASETS_OWNERSHIP_BATCH_QUERY: &str = r#"
-    SELECT embedded_dataset_id
-    FROM embedded_datasets
-    WHERE embedded_dataset_id = ANY($1) AND owner_id = $2
-"#;
-
 const GET_PROCESSED_BATCHES_QUERY: &str = r#"
     SELECT
         id,
@@ -353,16 +322,14 @@ pub async fn count_by_embedder(
     user: &crate::auth::AuthenticatedUser,
     embedder_id: i32,
 ) -> Result<i64> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "embedded_datasets");
     let result = sqlx::query_as::<_, (i64,)>(COUNT_EMBEDDED_DATASETS_BY_EMBEDDER_QUERY)
         .bind(embedder_id)
         .bind(user.as_owner())
         .fetch_one(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "embedded_datasets", duration, success);
+    tracker.finish(result.is_ok());
 
     Ok(result?.0)
 }
@@ -372,7 +339,7 @@ pub async fn get_embedded_dataset(
     owner: &str,
     embedded_dataset_id: i32,
 ) -> Result<EmbeddedDataset> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "embedded_datasets");
 
     let result = sqlx::query_as::<_, EmbeddedDataset>(GET_EMBEDDED_DATASET_QUERY)
         .bind(embedded_dataset_id)
@@ -380,8 +347,7 @@ pub async fn get_embedded_dataset(
         .fetch_one(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    record_database_query("SELECT", "embedded_datasets", duration, result.is_ok());
+    tracker.finish(result.is_ok());
 
     let embedded_dataset = result?;
 
@@ -557,66 +523,15 @@ pub async fn get_embedded_dataset_stats(
     owner_id: &str,
     embedded_dataset_id: i32,
 ) -> Result<EmbeddedDatasetStats> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "embedded_datasets_stats");
     let result = sqlx::query_as::<_, EmbeddedDatasetStats>(GET_EMBEDDED_DATASET_STATS_QUERY)
         .bind(embedded_dataset_id)
         .bind(owner_id)
         .fetch_one(pool)
         .await;
-    let duration = start.elapsed().as_secs_f64();
-    record_database_query(
-        "SELECT",
-        "embedded_datasets_stats",
-        duration,
-        result.is_ok(),
-    );
+    tracker.finish(result.is_ok());
     let stats = result?;
     Ok(stats)
-}
-
-/// Batch fetch stats for multiple embedded datasets in a single query (eliminates N+1)
-pub async fn get_batch_embedded_dataset_stats(
-    pool: &Pool<Postgres>,
-    owner_id: &str,
-    embedded_dataset_ids: &[i32],
-) -> Result<HashMap<i32, EmbeddedDatasetStats>> {
-    if embedded_dataset_ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-
-    let stats_list =
-        sqlx::query_as::<_, EmbeddedDatasetStats>(GET_BATCH_EMBEDDED_DATASET_STATS_QUERY)
-            .bind(embedded_dataset_ids)
-            .bind(owner_id)
-            .fetch_all(pool)
-            .await?;
-
-    let stats_map: HashMap<i32, EmbeddedDatasetStats> = stats_list
-        .into_iter()
-        .map(|s| (s.embedded_dataset_id, s))
-        .collect();
-
-    Ok(stats_map)
-}
-
-/// Verify ownership of multiple embedded datasets in a single query (eliminates N+1)
-/// Returns the list of IDs that the user owns
-pub async fn verify_embedded_datasets_ownership_batch(
-    pool: &Pool<Postgres>,
-    owner_id: &str,
-    embedded_dataset_ids: &[i32],
-) -> Result<Vec<i32>> {
-    if embedded_dataset_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let owned_ids: Vec<(i32,)> = sqlx::query_as(VERIFY_EMBEDDED_DATASETS_OWNERSHIP_BATCH_QUERY)
-        .bind(embedded_dataset_ids)
-        .bind(owner_id)
-        .fetch_all(pool)
-        .await?;
-
-    Ok(owned_ids.into_iter().map(|(id,)| id).collect())
 }
 
 pub async fn get_processed_batches(

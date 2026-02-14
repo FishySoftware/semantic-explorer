@@ -1,10 +1,9 @@
 use anyhow::Result;
 use aws_sdk_s3::Client;
 use sqlx::{Pool, Postgres};
-use std::time::Instant;
 
 use crate::collections::models::Collection;
-use semantic_explorer_core::observability::record_database_query;
+use semantic_explorer_core::observability::DatabaseQueryTracker;
 use semantic_explorer_core::owner_info::OwnerInfo;
 use sqlx::types::chrono::{DateTime, Utc};
 
@@ -21,8 +20,6 @@ struct CollectionWithCount {
     pub created_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
     pub file_count: i64,
-    pub failed_file_count: i64,
-    pub transform_count: i64,
     pub total_count: i64,
 }
 
@@ -42,8 +39,6 @@ impl CollectionWithCount {
                 created_at: r.created_at,
                 updated_at: r.updated_at,
                 file_count: r.file_count,
-                failed_file_count: r.failed_file_count,
-                transform_count: r.transform_count,
             })
             .collect();
         (collections, total_count)
@@ -51,81 +46,33 @@ impl CollectionWithCount {
 }
 
 const GET_COLLECTION_QUERY: &str = r#"
-    SELECT c.collection_id, c.title, c.details, c.owner_id, c.owner_display_name, c.tags, c.is_public, c.created_at, c.updated_at, c.file_count,
-        COALESCE(ct_stats.failed_count, 0)::bigint AS failed_file_count,
-        COALESCE(ct_stats.transform_count, 0)::bigint AS transform_count
+    SELECT c.collection_id, c.title, c.details, c.owner_id, c.owner_display_name, c.tags, c.is_public, c.created_at, c.updated_at, c.file_count
     FROM collections c
-    LEFT JOIN (
-        SELECT ct.collection_id,
-            COUNT(*) FILTER (WHERE tpf.process_status = 'failed') AS failed_count,
-            COUNT(DISTINCT ct.collection_transform_id) AS transform_count
-        FROM collection_transforms ct
-        LEFT JOIN transform_processed_files tpf
-            ON tpf.transform_type = 'collection'
-            AND tpf.transform_id = ct.collection_transform_id
-        GROUP BY ct.collection_id
-    ) ct_stats ON ct_stats.collection_id = c.collection_id
     WHERE c.collection_id = $1 AND c.owner_id = $2
 "#;
 
 const GET_COLLECTIONS_PAGINATED_QUERY: &str = r#"
-    WITH filtered AS (
-        SELECT collection_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at, file_count,
-            COUNT(*) OVER() AS total_count
-        FROM collections
-        WHERE owner_id = $1
-        ORDER BY created_at DESC
-        LIMIT $2 OFFSET $3
-    )
-    SELECT f.collection_id, f.title, f.details, f.owner_id, f.owner_display_name, f.tags, f.is_public, f.created_at, f.updated_at, f.file_count,
-        COALESCE(ct_stats.failed_count, 0)::bigint AS failed_file_count,
-        COALESCE(ct_stats.transform_count, 0)::bigint AS transform_count,
-        f.total_count
-    FROM filtered f
-    LEFT JOIN LATERAL (
-        SELECT
-            COUNT(*) FILTER (WHERE tpf.process_status = 'failed') AS failed_count,
-            COUNT(DISTINCT ct.collection_transform_id) AS transform_count
-        FROM collection_transforms ct
-        LEFT JOIN transform_processed_files tpf
-            ON tpf.transform_type = 'collection'
-            AND tpf.transform_id = ct.collection_transform_id
-        WHERE ct.collection_id = f.collection_id
-    ) ct_stats ON TRUE
-    ORDER BY f.created_at DESC
+    SELECT collection_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at, file_count,
+        COUNT(*) OVER() AS total_count
+    FROM collections
+    WHERE owner_id = $1
+    ORDER BY created_at DESC
+    LIMIT $2 OFFSET $3
 "#;
 
 const SEARCH_COLLECTIONS_QUERY: &str = r#"
-    WITH filtered AS (
-        SELECT collection_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at, file_count,
-            COUNT(*) OVER() AS total_count
-        FROM collections
-        WHERE owner_id = $1 AND (title ILIKE $2 OR details ILIKE $2 OR $3 = ANY(tags))
-        ORDER BY created_at DESC
-        LIMIT $4 OFFSET $5
-    )
-    SELECT f.collection_id, f.title, f.details, f.owner_id, f.owner_display_name, f.tags, f.is_public, f.created_at, f.updated_at, f.file_count,
-        COALESCE(ct_stats.failed_count, 0)::bigint AS failed_file_count,
-        COALESCE(ct_stats.transform_count, 0)::bigint AS transform_count,
-        f.total_count
-    FROM filtered f
-    LEFT JOIN LATERAL (
-        SELECT
-            COUNT(*) FILTER (WHERE tpf.process_status = 'failed') AS failed_count,
-            COUNT(DISTINCT ct.collection_transform_id) AS transform_count
-        FROM collection_transforms ct
-        LEFT JOIN transform_processed_files tpf
-            ON tpf.transform_type = 'collection'
-            AND tpf.transform_id = ct.collection_transform_id
-        WHERE ct.collection_id = f.collection_id
-    ) ct_stats ON TRUE
-    ORDER BY f.created_at DESC
+    SELECT collection_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at, file_count,
+        COUNT(*) OVER() AS total_count
+    FROM collections
+    WHERE owner_id = $1 AND (title ILIKE $2 OR details ILIKE $2 OR $3 = ANY(tags))
+    ORDER BY created_at DESC
+    LIMIT $4 OFFSET $5
 "#;
 
 const CREATE_COLLECTION_QUERY: &str = r#"
     INSERT INTO collections (title, details, owner_id, owner_display_name, tags, is_public)
     VALUES ($1, $2, $3, $4, $5, $6)
-    RETURNING collection_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at, file_count, 0::bigint AS failed_file_count, 0::bigint AS transform_count
+    RETURNING collection_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at, file_count
 "#;
 
 const DELETE_COLLECTION_QUERY: &str = r#"
@@ -136,57 +83,23 @@ const UPDATE_COLLECTION_QUERY: &str = r#"
     UPDATE collections
     SET title = $1, details = $2, tags = $3, is_public = $4, updated_at = NOW()
     WHERE collection_id = $5 AND owner_id = $6
-    RETURNING collection_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at, file_count, 0::bigint AS failed_file_count, 0::bigint AS transform_count
+    RETURNING collection_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at, file_count
 "#;
 
 const GET_PUBLIC_COLLECTIONS_QUERY: &str = r#"
-    WITH filtered AS (
-        SELECT collection_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at, file_count
-        FROM collections
-        WHERE is_public = TRUE
-        ORDER BY created_at DESC
-        LIMIT $1 OFFSET $2
-    )
-    SELECT f.collection_id, f.title, f.details, f.owner_id, f.owner_display_name, f.tags, f.is_public, f.created_at, f.updated_at, f.file_count,
-        COALESCE(ct_stats.failed_count, 0)::bigint AS failed_file_count,
-        COALESCE(ct_stats.transform_count, 0)::bigint AS transform_count
-    FROM filtered f
-    LEFT JOIN LATERAL (
-        SELECT
-            COUNT(*) FILTER (WHERE tpf.process_status = 'failed') AS failed_count,
-            COUNT(DISTINCT ct.collection_transform_id) AS transform_count
-        FROM collection_transforms ct
-        LEFT JOIN transform_processed_files tpf
-            ON tpf.transform_type = 'collection'
-            AND tpf.transform_id = ct.collection_transform_id
-        WHERE ct.collection_id = f.collection_id
-    ) ct_stats ON TRUE
-    ORDER BY f.created_at DESC
+    SELECT collection_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at, file_count
+    FROM collections
+    WHERE is_public = TRUE
+    ORDER BY created_at DESC
+    LIMIT $1 OFFSET $2
 "#;
 
 const GET_RECENT_PUBLIC_COLLECTIONS_QUERY: &str = r#"
-    WITH filtered AS (
-        SELECT collection_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at, file_count
-        FROM collections
-        WHERE is_public = TRUE
-        ORDER BY updated_at DESC
-        LIMIT $1
-    )
-    SELECT f.collection_id, f.title, f.details, f.owner_id, f.owner_display_name, f.tags, f.is_public, f.created_at, f.updated_at, f.file_count,
-        COALESCE(ct_stats.failed_count, 0)::bigint AS failed_file_count,
-        COALESCE(ct_stats.transform_count, 0)::bigint AS transform_count
-    FROM filtered f
-    LEFT JOIN LATERAL (
-        SELECT
-            COUNT(*) FILTER (WHERE tpf.process_status = 'failed') AS failed_count,
-            COUNT(DISTINCT ct.collection_transform_id) AS transform_count
-        FROM collection_transforms ct
-        LEFT JOIN transform_processed_files tpf
-            ON tpf.transform_type = 'collection'
-            AND tpf.transform_id = ct.collection_transform_id
-        WHERE ct.collection_id = f.collection_id
-    ) ct_stats ON TRUE
-    ORDER BY f.updated_at DESC
+    SELECT collection_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at, file_count
+    FROM collections
+    WHERE is_public = TRUE
+    ORDER BY updated_at DESC
+    LIMIT $1
 "#;
 
 const GRAB_PUBLIC_COLLECTION_QUERY: &str = r#"
@@ -194,9 +107,8 @@ const GRAB_PUBLIC_COLLECTION_QUERY: &str = r#"
     SELECT title || '-grabbed', details, $1, $2, tags, FALSE
     FROM collections
     WHERE collection_id = $3 AND is_public = TRUE
-    RETURNING collection_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at, file_count, 0::bigint AS failed_file_count, 0::bigint AS transform_count
+    RETURNING collection_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at, file_count
 "#;
-
 const INCREMENT_COLLECTION_FILE_COUNT_QUERY: &str = r#"
     UPDATE collections
     SET file_count = file_count + $2
@@ -215,16 +127,14 @@ pub(crate) async fn get_collection(
     owner_id: &str,
     collection_id: i32,
 ) -> Result<Collection> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "collections");
     let result = sqlx::query_as::<_, Collection>(GET_COLLECTION_QUERY)
         .bind(collection_id)
         .bind(owner_id)
         .fetch_one(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "collections", duration, success);
+    tracker.finish(result.is_ok());
 
     Ok(result?)
 }
@@ -236,7 +146,7 @@ pub(crate) async fn get_collections_paginated(
     limit: i64,
     offset: i64,
 ) -> Result<(Vec<Collection>, i64)> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "collections");
 
     let result = sqlx::query_as::<_, CollectionWithCount>(GET_COLLECTIONS_PAGINATED_QUERY)
         .bind(owner_id)
@@ -245,9 +155,7 @@ pub(crate) async fn get_collections_paginated(
         .fetch_all(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "collections", duration, success);
+    tracker.finish(result.is_ok());
 
     Ok(CollectionWithCount::into_parts(result?))
 }
@@ -260,7 +168,7 @@ pub(crate) async fn search_collections(
     limit: i64,
     offset: i64,
 ) -> Result<(Vec<Collection>, i64)> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "collections");
     let search_pattern = format!("%{}%", search_query);
 
     let result = sqlx::query_as::<_, CollectionWithCount>(SEARCH_COLLECTIONS_QUERY)
@@ -272,9 +180,7 @@ pub(crate) async fn search_collections(
         .fetch_all(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "collections", duration, success);
+    tracker.finish(result.is_ok());
 
     Ok(CollectionWithCount::into_parts(result?))
 }
@@ -288,7 +194,7 @@ pub(crate) async fn create_collection(
     tags: &[String],
     is_public: bool,
 ) -> Result<Collection> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("INSERT", "collections");
     let result = sqlx::query_as::<_, Collection>(CREATE_COLLECTION_QUERY)
         .bind(title)
         .bind(details)
@@ -299,9 +205,7 @@ pub(crate) async fn create_collection(
         .fetch_one(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("INSERT", "collections", duration, success);
+    tracker.finish(result.is_ok());
 
     Ok(result?)
 }
@@ -312,16 +216,14 @@ pub(crate) async fn delete_collection(
     collection_id: i32,
     owner_id: &str,
 ) -> Result<()> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("DELETE", "collections");
     let result = sqlx::query(DELETE_COLLECTION_QUERY)
         .bind(collection_id)
         .bind(owner_id)
         .execute(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("DELETE", "collections", duration, success);
+    tracker.finish(result.is_ok());
 
     result?;
     Ok(())
@@ -333,16 +235,14 @@ pub(crate) async fn get_public_collections(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<Collection>> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "collections");
     let result = sqlx::query_as::<_, Collection>(GET_PUBLIC_COLLECTIONS_QUERY)
         .bind(limit)
         .bind(offset)
         .fetch_all(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "collections", duration, success);
+    tracker.finish(result.is_ok());
 
     Ok(result?)
 }
@@ -352,15 +252,13 @@ pub(crate) async fn get_recent_public_collections(
     pool: &Pool<Postgres>,
     limit: i32,
 ) -> Result<Vec<Collection>> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("SELECT", "collections");
     let result = sqlx::query_as::<_, Collection>(GET_RECENT_PUBLIC_COLLECTIONS_QUERY)
         .bind(limit)
         .fetch_all(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "collections", duration, success);
+    tracker.finish(result.is_ok());
 
     Ok(result?)
 }
@@ -374,7 +272,7 @@ pub(crate) async fn grab_public_collection(
     owner_display_name: &str,
     collection_id: i32,
 ) -> Result<Collection> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("INSERT", "collections");
 
     // Insert and update in a single efficient query using CTE
     let result = sqlx::query_as::<_, Collection>(GRAB_PUBLIC_COLLECTION_QUERY)
@@ -384,9 +282,7 @@ pub(crate) async fn grab_public_collection(
         .fetch_one(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("INSERT", "collections", duration, success);
+    tracker.finish(result.is_ok());
 
     let new_collection = result?;
 
@@ -445,7 +341,7 @@ pub(crate) async fn update_collection(
     tags: &[String],
     is_public: bool,
 ) -> Result<Collection> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("UPDATE", "collections");
     let result = sqlx::query_as::<_, Collection>(UPDATE_COLLECTION_QUERY)
         .bind(title)
         .bind(details)
@@ -456,9 +352,7 @@ pub(crate) async fn update_collection(
         .fetch_one(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("UPDATE", "collections", duration, success);
+    tracker.finish(result.is_ok());
 
     Ok(result?)
 }
@@ -469,16 +363,14 @@ pub(crate) async fn increment_collection_file_count(
     collection_id: i32,
     increment_by: i64,
 ) -> Result<()> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("UPDATE", "collections");
     let result = sqlx::query(INCREMENT_COLLECTION_FILE_COUNT_QUERY)
         .bind(collection_id)
         .bind(increment_by)
         .execute(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("UPDATE", "collections", duration, success);
+    tracker.finish(result.is_ok());
 
     result?;
     Ok(())
@@ -490,16 +382,14 @@ pub(crate) async fn decrement_collection_file_count(
     collection_id: i32,
     decrement_by: i64,
 ) -> Result<()> {
-    let start = Instant::now();
+    let tracker = DatabaseQueryTracker::new("UPDATE", "collections");
     let result = sqlx::query(DECREMENT_COLLECTION_FILE_COUNT_QUERY)
         .bind(collection_id)
         .bind(decrement_by)
         .execute(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("UPDATE", "collections", duration, success);
+    tracker.finish(result.is_ok());
 
     result?;
     Ok(())
