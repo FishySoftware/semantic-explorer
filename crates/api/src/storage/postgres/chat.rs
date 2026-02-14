@@ -8,7 +8,6 @@ use crate::chat::models::{
     ChatMessage, ChatSession, ChatSessions, CreateChatSessionRequest, RetrievedDocument,
 };
 use semantic_explorer_core::encryption::EncryptionService;
-use semantic_explorer_core::observability::DatabaseQueryTracker;
 
 /// Helper struct for paginated queries that include total_count via COUNT(*) OVER()
 #[derive(sqlx::FromRow)]
@@ -139,7 +138,6 @@ pub(crate) async fn create_chat_session(
     owner_display_name: &str,
     request: &CreateChatSessionRequest,
 ) -> Result<ChatSession> {
-    let tracker = DatabaseQueryTracker::new("INSERT", "chat_sessions");
     let session_id = Uuid::new_v4().to_string();
 
     // Generate default title if not provided
@@ -158,8 +156,6 @@ pub(crate) async fn create_chat_session(
         .fetch_one(pool)
         .await;
 
-    tracker.finish(result.is_ok());
-
     Ok(result?)
 }
 
@@ -169,15 +165,11 @@ pub(crate) async fn get_chat_session(
     session_id: &str,
     owner_id: &str,
 ) -> Result<ChatSession> {
-    let tracker = DatabaseQueryTracker::new("SELECT", "chat_sessions");
-
     let result = sqlx::query_as::<_, ChatSession>(GET_SESSION_QUERY)
         .bind(session_id)
         .bind(owner_id)
         .fetch_one(pool)
         .await;
-
-    tracker.finish(result.is_ok());
 
     Ok(result?)
 }
@@ -189,16 +181,12 @@ pub(crate) async fn get_chat_sessions(
     limit: i64,
     offset: i64,
 ) -> Result<ChatSessions> {
-    let tracker = DatabaseQueryTracker::new("SELECT", "chat_sessions");
-
     let result = sqlx::query_as::<_, ChatSessionWithCount>(GET_SESSIONS_QUERY)
         .bind(owner_id)
         .bind(limit)
         .bind(offset)
         .fetch_all(pool)
         .await;
-
-    tracker.finish(result.is_ok());
 
     let (sessions, total_count) = ChatSessionWithCount::into_parts(result?);
     Ok(ChatSessions {
@@ -215,15 +203,11 @@ pub(crate) async fn delete_chat_session(
     session_id: &str,
     owner_id: &str,
 ) -> Result<()> {
-    let tracker = DatabaseQueryTracker::new("DELETE", "chat_sessions");
-
     let result = sqlx::query(DELETE_SESSION_QUERY)
         .bind(session_id)
         .bind(owner_id)
         .execute(pool)
         .await;
-
-    tracker.finish(result.is_ok());
 
     result?;
     Ok(())
@@ -238,7 +222,6 @@ pub(crate) async fn add_chat_message(
     documents_retrieved: Option<i32>,
     status: Option<&str>,
 ) -> Result<ChatMessage> {
-    let tracker = DatabaseQueryTracker::new("INSERT", "chat_messages");
     let result = sqlx::query_as::<_, ChatMessage>(CREATE_MESSAGE_QUERY)
         .bind(session_id)
         .bind(role)
@@ -248,8 +231,6 @@ pub(crate) async fn add_chat_message(
         .fetch_one(pool)
         .await;
 
-    tracker.finish(result.is_ok());
-
     Ok(result?)
 }
 
@@ -258,18 +239,13 @@ pub(crate) async fn get_chat_messages(
     pool: &Pool<Postgres>,
     session_id: &str,
 ) -> Result<Vec<ChatMessage>> {
-    let tracker = DatabaseQueryTracker::new("SELECT", "chat_messages");
     let result = sqlx::query_as::<_, ChatMessage>(GET_MESSAGES_QUERY)
         .bind(session_id)
         .fetch_all(pool)
         .await;
     match result {
-        Ok(messages) => {
-            tracker.finish(true);
-            Ok(messages)
-        }
+        Ok(messages) => Ok(messages),
         Err(e) => {
-            tracker.finish(false);
             tracing::error!(error = %e, session_id = %session_id, "failed to fetch chat messages");
             Err(e.into())
         }
@@ -282,15 +258,12 @@ pub(crate) async fn get_llm_details(
     encryption: &EncryptionService,
     llm_id: i32,
 ) -> Result<(String, String, String, String, Option<String>)> {
-    let tracker = DatabaseQueryTracker::new("SELECT", "llms");
     let result = sqlx::query_as::<_, (String, String, String, String, Option<String>)>(
         GET_LLM_DETAILS_QUERY,
     )
     .bind(llm_id)
     .fetch_optional(pool)
     .await;
-
-    tracker.finish(result.is_ok());
 
     let (name, provider, base_url, model, encrypted_api_key) =
         result?.ok_or_else(|| anyhow::anyhow!("LLM not found"))?;
@@ -314,8 +287,6 @@ pub(crate) async fn store_retrieved_documents(
     documents: &[RetrievedDocument],
     batch_size: usize,
 ) -> Result<()> {
-    let tracker = DatabaseQueryTracker::new("INSERT", "chat_message_retrieved_documents");
-
     if documents.is_empty() {
         return Ok(());
     }
@@ -343,8 +314,6 @@ pub(crate) async fn store_retrieved_documents(
             .await?;
     }
 
-    tracker.finish(true);
-
     Ok(())
 }
 
@@ -353,8 +322,6 @@ pub(crate) async fn get_retrieved_documents(
     pool: &Pool<Postgres>,
     message_id: i32,
 ) -> Result<Vec<RetrievedDocument>> {
-    let tracker = DatabaseQueryTracker::new("SELECT", "chat_message_retrieved_documents");
-
     let result = sqlx::query_as::<_, (Option<String>, String, f32, Option<String>)>(
         GET_RETRIEVED_DOCUMENTS_QUERY,
     )
@@ -374,8 +341,6 @@ pub(crate) async fn get_retrieved_documents(
         )
         .collect();
 
-    tracker.finish(true);
-
     Ok(documents)
 }
 
@@ -388,8 +353,6 @@ pub(crate) async fn get_batch_retrieved_documents(
     if message_ids.is_empty() {
         return Ok(HashMap::new());
     }
-
-    let tracker = DatabaseQueryTracker::new("SELECT", "chat_message_retrieved_documents");
 
     let rows = sqlx::query_as::<_, (i32, Option<String>, String, f32, Option<String>)>(
         GET_BATCH_RETRIEVED_DOCUMENTS_QUERY,
@@ -412,8 +375,6 @@ pub(crate) async fn get_batch_retrieved_documents(
             });
     }
 
-    tracker.finish(true);
-
     Ok(docs_map)
 }
 
@@ -425,8 +386,6 @@ pub(crate) async fn update_message_content_and_status(
     status: &str,
     owner: &str,
 ) -> Result<ChatMessage> {
-    let tracker = DatabaseQueryTracker::new("UPDATE", "chat_messages");
-
     let result = sqlx::query_as::<_, ChatMessage>(UPDATE_MESSAGE_CONTENT_STATUS_QUERY)
         .bind(message_id)
         .bind(content)
@@ -434,8 +393,6 @@ pub(crate) async fn update_message_content_and_status(
         .bind(owner)
         .fetch_one(pool)
         .await;
-
-    tracker.finish(result.is_ok());
 
     Ok(result?)
 }
@@ -447,16 +404,12 @@ pub(crate) async fn update_message_status(
     status: &str,
     owner: &str,
 ) -> Result<ChatMessage> {
-    let tracker = DatabaseQueryTracker::new("UPDATE", "chat_messages");
-
     let result = sqlx::query_as::<_, ChatMessage>(UPDATE_MESSAGE_STATUS_QUERY)
         .bind(message_id)
         .bind(status)
         .bind(owner)
         .fetch_one(pool)
         .await;
-
-    tracker.finish(result.is_ok());
 
     Ok(result?)
 }
@@ -467,15 +420,11 @@ pub(crate) async fn get_message_by_id(
     message_id: i32,
     owner: &str,
 ) -> Result<ChatMessage> {
-    let tracker = DatabaseQueryTracker::new("SELECT", "chat_messages");
-
     let result = sqlx::query_as::<_, ChatMessage>(GET_MESSAGE_BY_ID_QUERY)
         .bind(message_id)
         .bind(owner)
         .fetch_optional(pool)
         .await;
-
-    tracker.finish(result.is_ok());
 
     result?.ok_or_else(|| anyhow::anyhow!("Message not found"))
 }

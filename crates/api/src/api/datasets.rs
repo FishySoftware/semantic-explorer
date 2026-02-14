@@ -74,10 +74,10 @@ pub(crate) async fn get_datasets(
     };
 
     // L1: Check Valkey cache
-    if let (Some(key), Some(v)) = (&cache_key, &valkey) {
-        if let Some(cached) = valkey::cache_get::<PaginatedDatasetList>(&v.read, key).await {
-            return HttpResponse::Ok().json(cached);
-        }
+    if let (Some(key), Some(v)) = (&cache_key, &valkey)
+        && let Some(cached) = valkey::cache_get::<PaginatedDatasetList>(&v.read, key).await
+    {
+        return HttpResponse::Ok().json(cached);
     }
 
     // Cache miss — query database
@@ -350,6 +350,7 @@ pub(crate) async fn update_dataset(
 )]
 #[delete("/api/datasets/{datasets_id}")]
 #[tracing::instrument(name = "delete_dataset", skip(user, pool, qdrant_client, s3_client, s3_config, req, valkey), fields(dataset_id = %dataset_id.as_ref()))]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn delete_dataset(
     user: AuthenticatedUser,
     req: HttpRequest,

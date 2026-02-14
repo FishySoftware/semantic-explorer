@@ -74,10 +74,10 @@ pub(crate) async fn get_embedders(
     };
 
     // Check Valkey cache first
-    if let (Some(key), Some(v)) = (&cache_key, &valkey) {
-        if let Some(cached) = valkey::cache_get::<PaginatedEmbedderList>(&v.read, key).await {
-            return HttpResponse::Ok().json(cached);
-        }
+    if let (Some(key), Some(v)) = (&cache_key, &valkey)
+        && let Some(cached) = valkey::cache_get::<PaginatedEmbedderList>(&v.read, key).await
+    {
+        return HttpResponse::Ok().json(cached);
     }
 
     let result = match search_query {

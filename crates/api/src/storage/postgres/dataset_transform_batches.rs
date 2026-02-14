@@ -4,8 +4,6 @@ use sqlx::{FromRow, Pool, Postgres, Row, Transaction};
 use tracing::instrument;
 use utoipa::ToSchema;
 
-use semantic_explorer_core::observability::DatabaseQueryTracker;
-
 /// Helper struct for paginated batch queries that include total_count via COUNT(*) OVER()
 #[derive(Serialize, Deserialize, Debug, Clone, FromRow)]
 struct BatchWithCount {
@@ -252,8 +250,6 @@ pub async fn list_batches_by_transform(
     let sort_field = validate_batch_sort_field(sort_by);
     let sort_dir = validate_batch_sort_direction(sort_direction);
 
-    let tracker = DatabaseQueryTracker::new("SELECT", "dataset_transform_batches");
-
     // Get paginated results with total count via COUNT(*) OVER()
     let query = get_btf_query(sort_field, sort_dir);
     let rows = sqlx::query_as::<_, BatchWithCount>(query)
@@ -262,8 +258,6 @@ pub async fn list_batches_by_transform(
         .bind(offset)
         .fetch_all(pool)
         .await?;
-
-    tracker.finish(true);
 
     Ok(BatchWithCount::into_parts(rows))
 }

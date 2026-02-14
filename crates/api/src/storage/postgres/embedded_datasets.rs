@@ -1,5 +1,4 @@
 use anyhow::Result;
-use semantic_explorer_core::observability::DatabaseQueryTracker;
 use semantic_explorer_core::owner_info::OwnerInfo;
 use sqlx::types::chrono::{DateTime, Utc};
 use sqlx::{FromRow, Pool, Postgres, Transaction};
@@ -322,14 +321,11 @@ pub async fn count_by_embedder(
     user: &crate::auth::AuthenticatedUser,
     embedder_id: i32,
 ) -> Result<i64> {
-    let tracker = DatabaseQueryTracker::new("SELECT", "embedded_datasets");
     let result = sqlx::query_as::<_, (i64,)>(COUNT_EMBEDDED_DATASETS_BY_EMBEDDER_QUERY)
         .bind(embedder_id)
         .bind(user.as_owner())
         .fetch_one(pool)
         .await;
-
-    tracker.finish(result.is_ok());
 
     Ok(result?.0)
 }
@@ -339,15 +335,11 @@ pub async fn get_embedded_dataset(
     owner: &str,
     embedded_dataset_id: i32,
 ) -> Result<EmbeddedDataset> {
-    let tracker = DatabaseQueryTracker::new("SELECT", "embedded_datasets");
-
     let result = sqlx::query_as::<_, EmbeddedDataset>(GET_EMBEDDED_DATASET_QUERY)
         .bind(embedded_dataset_id)
         .bind(owner)
         .fetch_one(pool)
         .await;
-
-    tracker.finish(result.is_ok());
 
     let embedded_dataset = result?;
 
@@ -523,13 +515,11 @@ pub async fn get_embedded_dataset_stats(
     owner_id: &str,
     embedded_dataset_id: i32,
 ) -> Result<EmbeddedDatasetStats> {
-    let tracker = DatabaseQueryTracker::new("SELECT", "embedded_datasets_stats");
     let result = sqlx::query_as::<_, EmbeddedDatasetStats>(GET_EMBEDDED_DATASET_STATS_QUERY)
         .bind(embedded_dataset_id)
         .bind(owner_id)
         .fetch_one(pool)
         .await;
-    tracker.finish(result.is_ok());
     let stats = result?;
     Ok(stats)
 }

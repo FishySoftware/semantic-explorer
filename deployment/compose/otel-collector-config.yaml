@@ -51,7 +51,6 @@ receivers:
       network:
       paging:
       processes:
-      process:
 
 processors:
   batch:
@@ -125,7 +124,7 @@ service:
     metrics:
       receivers: [otlp, prometheus, hostmetrics]
       processors: [memory_limiter, batch, resource]
-      exporters: [prometheusremotewrite, prometheus, debug]
+      exporters: [prometheusremotewrite, prometheus]
     
     logs:
       receivers: [otlp]
@@ -136,7 +135,7 @@ service:
     logs:
       level: info
     metrics:
-      level: detailed
+      level: basic
       readers:
         - pull:
             exporter:

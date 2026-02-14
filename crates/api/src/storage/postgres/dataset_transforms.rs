@@ -6,7 +6,6 @@ use crate::storage::postgres::embedded_datasets::{
 use crate::transforms::dataset::models::{DatasetTransform, DatasetTransformStats};
 use anyhow::{Context, Result};
 use semantic_explorer_core::models::PaginatedResponse;
-use semantic_explorer_core::observability::DatabaseQueryTracker;
 use semantic_explorer_core::owner_info::OwnerInfo;
 use sqlx::types::chrono::{DateTime, Utc};
 use sqlx::{FromRow, Pool, Postgres, Transaction};
@@ -275,15 +274,11 @@ pub async fn get_dataset_transform(
     owner: &str,
     dataset_transform_id: i32,
 ) -> Result<DatasetTransform> {
-    let tracker = DatabaseQueryTracker::new("SELECT", "dataset_transforms");
-
     let result = sqlx::query_as::<_, DatasetTransform>(GET_DATASET_TRANSFORM_QUERY)
         .bind(dataset_transform_id)
         .bind(owner)
         .fetch_one(pool)
         .await;
-
-    tracker.finish(result.is_ok());
 
     let transform = result?;
     Ok(transform)
@@ -314,8 +309,6 @@ pub async fn get_dataset_transforms_paginated(
     let sort_field = validate_sort_field(sort_by)?;
     let sort_dir = validate_sort_direction(sort_direction)?;
 
-    let tracker = DatabaseQueryTracker::new("SELECT", "dataset_transforms");
-
     let (total_count, transforms) = if let Some(search_term) = search {
         let search_pattern = format!("%{}%", search_term);
 
@@ -344,8 +337,6 @@ pub async fn get_dataset_transforms_paginated(
 
         DatasetTransformWithCount::into_parts(rows)
     };
-
-    tracker.finish(true);
 
     Ok(PaginatedResponse {
         items: transforms,

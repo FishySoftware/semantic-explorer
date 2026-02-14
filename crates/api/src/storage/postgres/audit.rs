@@ -1,7 +1,6 @@
 use sqlx::{Pool, Postgres};
 
 use crate::audit::AuditEvent;
-use semantic_explorer_core::observability::DatabaseQueryTracker;
 
 const INSERT_AUDIT_EVENT_QUERY: &str = r#"
     INSERT INTO audit_events (
@@ -26,7 +25,6 @@ pub async fn store_audit_event_simple(
     pool: &Pool<Postgres>,
     event: &AuditEvent,
 ) -> Result<(), sqlx::Error> {
-    let tracker = DatabaseQueryTracker::new("INSERT", "audit_events");
     let result = sqlx::query(INSERT_AUDIT_EVENT_QUERY)
         .bind(&event.timestamp)
         .bind(format!("{:?}", event.event_type))
@@ -44,8 +42,6 @@ pub async fn store_audit_event_simple(
         .bind(event.details.as_deref())
         .execute(pool)
         .await;
-
-    tracker.finish(result.is_ok());
 
     result?;
     Ok(())

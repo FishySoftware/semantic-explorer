@@ -3,7 +3,6 @@ use aws_sdk_s3::Client;
 use sqlx::{Pool, Postgres};
 
 use crate::collections::models::Collection;
-use semantic_explorer_core::observability::DatabaseQueryTracker;
 use semantic_explorer_core::owner_info::OwnerInfo;
 use sqlx::types::chrono::{DateTime, Utc};
 
@@ -127,14 +126,11 @@ pub(crate) async fn get_collection(
     owner_id: &str,
     collection_id: i32,
 ) -> Result<Collection> {
-    let tracker = DatabaseQueryTracker::new("SELECT", "collections");
     let result = sqlx::query_as::<_, Collection>(GET_COLLECTION_QUERY)
         .bind(collection_id)
         .bind(owner_id)
         .fetch_one(pool)
         .await;
-
-    tracker.finish(result.is_ok());
 
     Ok(result?)
 }
@@ -146,16 +142,12 @@ pub(crate) async fn get_collections_paginated(
     limit: i64,
     offset: i64,
 ) -> Result<(Vec<Collection>, i64)> {
-    let tracker = DatabaseQueryTracker::new("SELECT", "collections");
-
     let result = sqlx::query_as::<_, CollectionWithCount>(GET_COLLECTIONS_PAGINATED_QUERY)
         .bind(owner_id)
         .bind(limit)
         .bind(offset)
         .fetch_all(pool)
         .await;
-
-    tracker.finish(result.is_ok());
 
     Ok(CollectionWithCount::into_parts(result?))
 }
@@ -168,7 +160,6 @@ pub(crate) async fn search_collections(
     limit: i64,
     offset: i64,
 ) -> Result<(Vec<Collection>, i64)> {
-    let tracker = DatabaseQueryTracker::new("SELECT", "collections");
     let search_pattern = format!("%{}%", search_query);
 
     let result = sqlx::query_as::<_, CollectionWithCount>(SEARCH_COLLECTIONS_QUERY)
@@ -179,8 +170,6 @@ pub(crate) async fn search_collections(
         .bind(offset)
         .fetch_all(pool)
         .await;
-
-    tracker.finish(result.is_ok());
 
     Ok(CollectionWithCount::into_parts(result?))
 }
@@ -194,7 +183,6 @@ pub(crate) async fn create_collection(
     tags: &[String],
     is_public: bool,
 ) -> Result<Collection> {
-    let tracker = DatabaseQueryTracker::new("INSERT", "collections");
     let result = sqlx::query_as::<_, Collection>(CREATE_COLLECTION_QUERY)
         .bind(title)
         .bind(details)
@@ -205,8 +193,6 @@ pub(crate) async fn create_collection(
         .fetch_one(pool)
         .await;
 
-    tracker.finish(result.is_ok());
-
     Ok(result?)
 }
 
@@ -216,14 +202,11 @@ pub(crate) async fn delete_collection(
     collection_id: i32,
     owner_id: &str,
 ) -> Result<()> {
-    let tracker = DatabaseQueryTracker::new("DELETE", "collections");
     let result = sqlx::query(DELETE_COLLECTION_QUERY)
         .bind(collection_id)
         .bind(owner_id)
         .execute(pool)
         .await;
-
-    tracker.finish(result.is_ok());
 
     result?;
     Ok(())
@@ -235,14 +218,11 @@ pub(crate) async fn get_public_collections(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<Collection>> {
-    let tracker = DatabaseQueryTracker::new("SELECT", "collections");
     let result = sqlx::query_as::<_, Collection>(GET_PUBLIC_COLLECTIONS_QUERY)
         .bind(limit)
         .bind(offset)
         .fetch_all(pool)
         .await;
-
-    tracker.finish(result.is_ok());
 
     Ok(result?)
 }
@@ -252,13 +232,10 @@ pub(crate) async fn get_recent_public_collections(
     pool: &Pool<Postgres>,
     limit: i32,
 ) -> Result<Vec<Collection>> {
-    let tracker = DatabaseQueryTracker::new("SELECT", "collections");
     let result = sqlx::query_as::<_, Collection>(GET_RECENT_PUBLIC_COLLECTIONS_QUERY)
         .bind(limit)
         .fetch_all(pool)
         .await;
-
-    tracker.finish(result.is_ok());
 
     Ok(result?)
 }
@@ -272,8 +249,6 @@ pub(crate) async fn grab_public_collection(
     owner_display_name: &str,
     collection_id: i32,
 ) -> Result<Collection> {
-    let tracker = DatabaseQueryTracker::new("INSERT", "collections");
-
     // Insert and update in a single efficient query using CTE
     let result = sqlx::query_as::<_, Collection>(GRAB_PUBLIC_COLLECTION_QUERY)
         .bind(owner_id)
@@ -281,8 +256,6 @@ pub(crate) async fn grab_public_collection(
         .bind(collection_id)
         .fetch_one(pool)
         .await;
-
-    tracker.finish(result.is_ok());
 
     let new_collection = result?;
 
@@ -341,7 +314,6 @@ pub(crate) async fn update_collection(
     tags: &[String],
     is_public: bool,
 ) -> Result<Collection> {
-    let tracker = DatabaseQueryTracker::new("UPDATE", "collections");
     let result = sqlx::query_as::<_, Collection>(UPDATE_COLLECTION_QUERY)
         .bind(title)
         .bind(details)
@@ -352,8 +324,6 @@ pub(crate) async fn update_collection(
         .fetch_one(pool)
         .await;
 
-    tracker.finish(result.is_ok());
-
     Ok(result?)
 }
 
@@ -363,14 +333,11 @@ pub(crate) async fn increment_collection_file_count(
     collection_id: i32,
     increment_by: i64,
 ) -> Result<()> {
-    let tracker = DatabaseQueryTracker::new("UPDATE", "collections");
     let result = sqlx::query(INCREMENT_COLLECTION_FILE_COUNT_QUERY)
         .bind(collection_id)
         .bind(increment_by)
         .execute(pool)
         .await;
-
-    tracker.finish(result.is_ok());
 
     result?;
     Ok(())
@@ -382,14 +349,11 @@ pub(crate) async fn decrement_collection_file_count(
     collection_id: i32,
     decrement_by: i64,
 ) -> Result<()> {
-    let tracker = DatabaseQueryTracker::new("UPDATE", "collections");
     let result = sqlx::query(DECREMENT_COLLECTION_FILE_COUNT_QUERY)
         .bind(collection_id)
         .bind(decrement_by)
         .execute(pool)
         .await;
-
-    tracker.finish(result.is_ok());
 
     result?;
     Ok(())

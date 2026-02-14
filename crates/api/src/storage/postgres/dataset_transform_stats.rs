@@ -1,7 +1,6 @@
 use crate::transforms::dataset::models::DatasetTransformStats;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use semantic_explorer_core::observability::DatabaseQueryTracker;
 use sqlx::{Pool, Postgres, Transaction};
 
 const INIT_STATS_QUERY: &str = r#"
@@ -172,15 +171,11 @@ pub async fn get_stats(
     owner_id: &str,
     dataset_transform_id: i32,
 ) -> Result<Option<DatasetTransformStats>> {
-    let tracker = DatabaseQueryTracker::new("SELECT", "dataset_transform_stats");
-
     let result = sqlx::query_as::<_, DatasetTransformStats>(GET_STATS_QUERY)
         .bind(dataset_transform_id)
         .bind(owner_id)
         .fetch_optional(pool)
         .await;
-
-    tracker.finish(result.is_ok());
 
     let stats = result.with_context(|| {
         format!(

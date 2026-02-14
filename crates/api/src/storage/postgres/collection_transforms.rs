@@ -6,7 +6,6 @@ use crate::transforms::collection::models::{
     CollectionTransform, CollectionTransformStats, FailedFileWithTransform, ProcessedFile,
 };
 use semantic_explorer_core::models::PaginatedResponse;
-use semantic_explorer_core::observability::DatabaseQueryTracker;
 use semantic_explorer_core::owner_info::OwnerInfo;
 
 /// Helper struct for paginated queries that include total_count via COUNT(*) OVER()
@@ -403,15 +402,11 @@ pub async fn get_collection_transform(
     owner: &str,
     collection_transform_id: i32,
 ) -> Result<CollectionTransform> {
-    let tracker = DatabaseQueryTracker::new("SELECT", "collection_transforms");
-
     let result = sqlx::query_as::<_, CollectionTransform>(GET_COLLECTION_TRANSFORM_QUERY)
         .bind(collection_transform_id)
         .bind(owner)
         .fetch_one(pool)
         .await;
-
-    tracker.finish(result.is_ok());
 
     let transform = result?;
     Ok(transform)
@@ -443,8 +438,6 @@ pub async fn get_collection_transforms_paginated(
     let sort_field = validate_sort_field(sort_by)?;
     let sort_dir = validate_sort_direction(sort_direction)?;
 
-    let tracker = DatabaseQueryTracker::new("SELECT", "collection_transforms");
-
     let (total_count, transforms) = if let Some(search_term) = search {
         let search_pattern = format!("%{}%", search_term);
 
@@ -473,8 +466,6 @@ pub async fn get_collection_transforms_paginated(
 
         CollectionTransformWithCount::into_parts(rows)
     };
-
-    tracker.finish(true);
 
     Ok(PaginatedResponse {
         items: transforms,

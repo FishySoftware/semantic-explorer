@@ -14,27 +14,12 @@ use opentelemetry_sdk::{
     propagation::TraceContextPropagator,
     trace::{RandomIdGenerator, Sampler, SdkTracerProvider},
 };
-use std::{
-    env,
-    sync::{
-        OnceLock,
-        atomic::{AtomicI64, Ordering},
-    },
-    time::{Duration, Instant},
-};
+use std::{env, sync::OnceLock, time::Duration};
 use tracing_subscriber::{
     EnvFilter, Layer, Registry, layer::SubscriberExt, util::SubscriberInitExt,
 };
 
-/// Global atomic counter for database queries currently in flight.
-/// Tracked via `DatabaseQueryTracker` RAII guard — incremented on creation,
-/// decremented on drop. The gauge is updated on each transition.
-static DATABASE_QUERIES_IN_FLIGHT: AtomicI64 = AtomicI64::new(0);
-
 pub struct Metrics {
-    pub database_query_total: Counter<u64>,
-    pub database_query_duration: Histogram<f64>,
-    pub database_queries_in_flight: Gauge<f64>,
     pub database_connection_pool_size: Gauge<f64>,
     pub database_connection_pool_idle: Gauge<f64>,
     pub database_connection_pool_max: Gauge<f64>,
@@ -134,21 +119,6 @@ pub struct Metrics {
 
 impl Metrics {
     fn new(meter: Meter) -> Self {
-        let database_query_total = meter
-            .u64_counter("database_query")
-            .with_description("Total number of database queries")
-            .build();
-
-        let database_query_duration = meter
-            .f64_histogram("database_query_duration_seconds")
-            .with_description("Duration of database queries in seconds")
-            .build();
-
-        let database_queries_in_flight = meter
-            .f64_gauge("database_queries_in_flight")
-            .with_description("Number of database queries currently executing")
-            .build();
-
         let database_connection_pool_size = meter
             .f64_gauge("database_connection_pool_size")
             .with_description("Number of connections allocated in the pool")
@@ -567,9 +537,6 @@ impl Metrics {
             .build();
 
         Self {
-            database_query_total,
-            database_query_duration,
-            database_queries_in_flight,
             database_connection_pool_size,
             database_connection_pool_idle,
             database_connection_pool_max,
@@ -668,86 +635,6 @@ pub fn init_metrics_otel() -> Result<()> {
 
 pub fn get_metrics() -> &'static Metrics {
     METRICS.get().expect("Metrics not initialized")
-}
-
-/// RAII guard that tracks a database query from start to finish.
-///
-/// - On creation: increments the `database_queries_in_flight` gauge.
-/// - On [`finish`](DatabaseQueryTracker::finish): records duration/status metrics and decrements.
-/// - On drop (e.g. panic/early return): decrements without recording (query didn't complete).
-///
-/// # Usage
-/// ```rust,ignore
-/// let tracker = DatabaseQueryTracker::new("SELECT", "collections");
-/// let result = sqlx::query_as::<_, Row>(Q).fetch_all(pool).await;
-/// tracker.finish(result.is_ok());
-/// ```
-pub struct DatabaseQueryTracker {
-    operation: &'static str,
-    table: &'static str,
-    start: Instant,
-    finished: bool,
-}
-
-impl DatabaseQueryTracker {
-    pub fn new(operation: &'static str, table: &'static str) -> Self {
-        let prev = DATABASE_QUERIES_IN_FLIGHT.fetch_add(1, Ordering::Relaxed);
-        get_metrics()
-            .database_queries_in_flight
-            .record((prev + 1) as f64, &[]);
-        Self {
-            operation,
-            table,
-            start: Instant::now(),
-            finished: false,
-        }
-    }
-
-    /// Complete the query tracking: record duration & status, decrement in-flight.
-    pub fn finish(mut self, success: bool) {
-        self.finished = true;
-        let duration_secs = self.start.elapsed().as_secs_f64();
-        let prev = DATABASE_QUERIES_IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
-        get_metrics()
-            .database_queries_in_flight
-            .record((prev - 1) as f64, &[]);
-        record_database_query(self.operation, self.table, duration_secs, success);
-    }
-}
-
-impl Drop for DatabaseQueryTracker {
-    fn drop(&mut self) {
-        if !self.finished {
-            // Query was abandoned (panic, early return) — decrement without recording.
-            let prev = DATABASE_QUERIES_IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
-            get_metrics()
-                .database_queries_in_flight
-                .record((prev - 1) as f64, &[]);
-        }
-    }
-}
-
-pub fn record_database_query(operation: &str, table: &str, duration_secs: f64, success: bool) {
-    let metrics = get_metrics();
-    let status = if success { "success" } else { "error" };
-
-    metrics.database_query_total.add(
-        1,
-        &[
-            KeyValue::new("operation", operation.to_string()),
-            KeyValue::new("table", table.to_string()),
-            KeyValue::new("status", status.to_string()),
-        ],
-    );
-
-    metrics.database_query_duration.record(
-        duration_secs,
-        &[
-            KeyValue::new("operation", operation.to_string()),
-            KeyValue::new("table", table.to_string()),
-            KeyValue::new("status", status.to_string()),
-        ],
-    );
 }
 
 pub fn record_storage_operation(

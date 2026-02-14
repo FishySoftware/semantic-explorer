@@ -74,10 +74,10 @@ pub(crate) async fn get_collections(
     let cache_key = format!("collections:{}:{}:{}", user.as_owner(), limit, offset);
 
     // Check Valkey cache first
-    if let Some(ref v) = valkey {
-        if let Some(cached) = valkey::cache_get::<PaginatedCollections>(&v.read, &cache_key).await {
-            return HttpResponse::Ok().json(cached);
-        }
+    if let Some(ref v) = valkey
+        && let Some(cached) = valkey::cache_get::<PaginatedCollections>(&v.read, &cache_key).await
+    {
+        return HttpResponse::Ok().json(cached);
     }
 
     match collections::get_collections_paginated(pool, &user.as_owner(), limit, offset).await {
