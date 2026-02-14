@@ -2,14 +2,13 @@
 	import {
 		Badge,
 		Modal,
-		Spinner,
 		Table,
 		TableBody,
 		TableBodyCell,
 		TableHead,
 		TableHeadCell,
 	} from 'flowbite-svelte';
-	import { ChevronDownOutline, ChevronRightOutline, InfoCircleSolid } from 'flowbite-svelte-icons';
+	import { ChevronDownOutline, ChevronRightOutline } from 'flowbite-svelte-icons';
 	import { onMount } from 'svelte';
 	import { SvelteMap, SvelteSet, SvelteURLSearchParams } from 'svelte/reactivity';
 	import ActionMenu from '../components/ActionMenu.svelte';
@@ -383,38 +382,6 @@
 		})
 	);
 
-	let pendingTransforms = $derived(
-		transforms.filter((t) => {
-			const hasPending = t.last_run_status === 'pending' || t.last_run_status === 'processing';
-			const vizList = recentVisualizations.get(t.visualization_transform_id);
-			return hasPending && !vizList?.some((vis) => vis.status === 'completed');
-		})
-	);
-
-	let processingTransforms = $derived(
-		transforms.filter((t) => {
-			const vizList = recentVisualizations.get(t.visualization_transform_id);
-			const completedViz = vizList?.find((vis) => vis.status === 'completed');
-			if (!completedViz) return false;
-
-			const isProcessing = t.last_run_status === 'pending' || t.last_run_status === 'processing';
-			if (!isProcessing) return false;
-
-			// Check if the completed visualization is from the current run
-			// If completed_at is after last_run_at, the job is done (status may be stale)
-			if (completedViz.completed_at && t.last_run_at) {
-				const completedAt = new Date(completedViz.completed_at).getTime();
-				const lastRunAt = new Date(t.last_run_at).getTime();
-				// If the visualization completed after the run started, it's done
-				if (completedAt >= lastRunAt) {
-					return false;
-				}
-			}
-
-			return true;
-		})
-	);
-
 	function toggleExpand(transformId: number) {
 		if (expandedTransforms.has(transformId)) {
 			expandedTransforms.delete(transformId);
@@ -466,84 +433,6 @@
 		title="Visualizations"
 		description="View completed interactive visualizations of your embedding spaces. Each visualization shows UMAP dimensionality reduction with HDBSCAN clustering."
 	/>
-
-	<!-- Pending Visualizations Status Tracker -->
-	{#if pendingTransforms.length > 0 || processingTransforms.length > 0}
-		<div
-			class="mb-8 bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden border border-gray-200 dark:border-gray-700"
-		>
-			<!-- Header Section -->
-			<div
-				class="bg-linear-to-r from-blue-50 to-blue-100 dark:from-blue-900/30 dark:to-blue-800/30 px-6 py-4 border-b border-blue-200 dark:border-blue-700"
-			>
-				<div class="flex items-center gap-3 mb-1">
-					<Spinner size="5" color="blue" />
-					<h2 class="text-xl font-bold text-blue-900 dark:text-blue-100">
-						Processing Visualizations
-					</h2>
-				</div>
-				<p class="text-sm text-blue-700 dark:text-blue-300 mt-2">
-					{pendingTransforms.length + processingTransforms.length} visualization{pendingTransforms.length +
-						processingTransforms.length !==
-					1
-						? 's'
-						: ''} in progress · Updates automatically
-				</p>
-			</div>
-
-			<!-- Content Section -->
-			<div class="divide-y divide-gray-200 dark:divide-gray-700">
-				{#each [...pendingTransforms, ...processingTransforms] as transform (transform.visualization_transform_id)}
-					<div class="px-6 py-4 hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors">
-						<div class="flex items-center justify-between">
-							<div class="flex-1">
-								<div class="flex items-center gap-2 mb-2">
-									<h3 class="font-semibold text-gray-900 dark:text-white text-base">
-										{transform.title}
-									</h3>
-									<Badge
-										color={transform.last_run_status === 'processing' ? 'blue' : 'yellow'}
-										class="text-xs"
-									>
-										{transform.last_run_status === 'processing' ? 'Processing' : 'Pending'}
-									</Badge>
-								</div>
-								<div
-									class="flex flex-wrap items-center gap-3 text-sm text-gray-600 dark:text-gray-400"
-								>
-									{#if transform.last_run_at}
-										<span>Started {formatDate(transform.last_run_at)}</span>
-									{/if}
-									{#if transform.last_run_stats?.point_count}
-										<span class="flex items-center">
-											<span class="inline-block w-1 h-1 bg-gray-400 rounded-full mx-2"></span>
-											{transform.last_run_stats.point_count.toLocaleString()} points
-										</span>
-									{/if}
-								</div>
-								{#if transform.last_error}
-									<div class="text-sm text-red-600 dark:text-red-400 mt-2">
-										<span class="font-medium">Error:</span>
-										{transform.last_error}
-									</div>
-								{/if}
-							</div>
-						</div>
-					</div>
-				{/each}
-			</div>
-
-			<!-- Footer Message -->
-			<div
-				class="bg-blue-50 dark:bg-blue-900/10 px-6 py-3 text-sm text-blue-700 dark:text-blue-300"
-			>
-				<span class="inline-flex items-center gap-1">
-					<InfoCircleSolid class="w-4 h-4" />
-					Visualizations will appear in the list below once generation is complete.
-				</span>
-			</div>
-		</div>
-	{/if}
 
 	{#if !loading}
 		<div class="flex gap-3 items-start">

@@ -48,9 +48,9 @@ export interface SSEConnection {
  * @example
  * ```typescript
  * const sse = createSSEConnection({
- *   url: '/api/collection-transforms/stream?collection_id=1',
+ *   url: '/api/dataset-transforms/stream?dataset_id=1',
  *   onStatus: (data) => {
- *     if (data.collection_transform_id === myTransformId) {
+ *     if (data.dataset_transform_id === myTransformId) {
  *       refreshData();
  *     }
  *   },

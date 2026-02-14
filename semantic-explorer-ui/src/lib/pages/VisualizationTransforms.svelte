@@ -414,6 +414,7 @@
 			const useSuffix = datasetIds.length > 1;
 			let createdCount = 0;
 			let lastError: string | null = null;
+			let lastCreatedId: number | null = null;
 
 			for (const embeddedDatasetId of datasetIds) {
 				const dataset = embeddedDatasets.find((d) => d.embedded_dataset_id === embeddedDatasetId);
@@ -452,6 +453,7 @@
 
 					const savedTransform = await response.json();
 					transforms = [...transforms, savedTransform];
+					lastCreatedId = savedTransform.visualization_transform_id;
 					createdCount++;
 				} catch (e) {
 					lastError = formatError(e, `Failed to create transform for dataset ${embeddedDatasetId}`);
@@ -464,7 +466,11 @@
 					`Created ${createdCount} visualization transform${createdCount !== 1 ? 's' : ''} successfully`
 				);
 				resetForm();
-				window.location.hash = '#/visualizations';
+				if (createdCount === 1 && lastCreatedId != null) {
+					window.location.hash = `#/visualization-transforms/${lastCreatedId}/details`;
+				} else {
+					window.location.hash = '#/visualization-transforms';
+				}
 			} else if (lastError) {
 				createError = lastError;
 			}

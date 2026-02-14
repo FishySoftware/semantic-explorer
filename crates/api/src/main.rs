@@ -171,24 +171,12 @@ async fn main() -> Result<()> {
     // Start trigger listener (all instances listen, NATS coordinates)
     let _scanner_listener = transforms::trigger::start_trigger_listener(scanner_ctx);
 
-    // Start trigger publisher (publishes periodic scan triggers)
+    // Start trigger publisher (publishes periodic reconciliation triggers)
     // In a multi-instance deployment, redundant triggers are deduplicated by NATS
     let _scanner_publisher = transforms::trigger::start_trigger_publisher(nats_client.clone());
 
     // Initialize audit event infrastructure (database and NATS)
     audit::events::init(pool.clone(), nats_client.clone());
-
-    // Start dataset transform reconciliation job (background reliability worker)
-    let reconciliation_ctx = transforms::dataset::reconciliation::ReconciliationContext {
-        pool: pool.clone(),
-        nats_client: nats_client.clone(),
-        s3_client: s3_client.clone(),
-        s3_bucket_name: config.s3.bucket_name.clone(),
-        config: transforms::dataset::reconciliation::ReconciliationConfig::from_env(),
-        encryption: encryption_service.clone(),
-        qdrant_config: qdrant_connection_config.clone(),
-    };
-    transforms::dataset::reconciliation::start_reconciliation_job(reconciliation_ctx);
 
     // Start background Valkey metrics polling (every 30s)
     let _valkey_stats_handle = if let Some(ref clients) = valkey_clients {

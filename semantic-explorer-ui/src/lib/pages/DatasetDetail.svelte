@@ -5,7 +5,6 @@
 	import ApiIntegrationModal from '../components/ApiIntegrationModal.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import CreateDatasetTransformModal from '../components/CreateDatasetTransformModal.svelte';
-	import DatasetTransformProgressPanel from '../components/DatasetTransformProgressPanel.svelte';
 	import LoadingState from '../components/LoadingState.svelte';
 	import TabPanel from '../components/TabPanel.svelte';
 	import TransformsList from '../components/TransformsList.svelte';
@@ -19,7 +18,6 @@
 		PaginatedItems,
 	} from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
-	import { createPollingInterval } from '../utils/polling';
 	import { createSSEConnection, type SSEConnection } from '../utils/sse';
 	import { formatDate } from '../utils/ui-helpers';
 
@@ -73,17 +71,6 @@
 		{ id: 'transforms', label: 'Transforms', icon: '🔄' },
 		{ id: 'embeddings', label: 'Embeddings', icon: '🧬' },
 	];
-
-	// Dataset Transform Progress state
-	let activeTransformProgress = $state<{
-		id: number;
-		title: string;
-		startedAt: string;
-		embedders: number[];
-	} | null>(null);
-	let transformProgressStats = $state<Record<string, any> | null>(null);
-	let transformProgressPollingController: ReturnType<typeof createPollingInterval> | null = null;
-	let isPollingTransformProgress = false;
 
 	// SSE connection for real-time transform status updates
 	let datasetSSE: SSEConnection | null = null;
@@ -215,30 +202,6 @@
 				const stats = await response.json();
 				datasetTransformStatsMap.set(transformId, stats);
 				datasetTransformStatsMap = datasetTransformStatsMap; // Trigger reactivity
-
-				// Check if this transform is currently processing and we're not already tracking it
-				if (stats.is_processing && !activeTransformProgress) {
-					// Find the transform to get its title
-					const transform = datasetTransforms.find((t) => t.dataset_transform_id === transformId);
-					if (transform) {
-						console.info(`Detected active transform ${transformId}, resuming progress tracking`);
-						activeTransformProgress = {
-							id: transformId,
-							title: transform.title,
-							startedAt: stats.first_processing_at || new Date().toISOString(),
-							embedders: transform.embedder_ids,
-						};
-						transformProgressStats = stats;
-						startTransformProgressPolling();
-					}
-				} else if (
-					stats.is_processing &&
-					activeTransformProgress &&
-					activeTransformProgress.id === transformId
-				) {
-					// Update stats for the currently tracked transform
-					transformProgressStats = stats;
-				}
 			}
 		} catch (e) {
 			console.error(e);
@@ -357,134 +320,6 @@
 			toastStore.error(formatError(e, 'Failed to load related transforms'));
 		} finally {
 			transformsLoading = false;
-		}
-	}
-
-	async function handleTransformCreated(transformId: number, transformTitle: string) {
-		// Set up progress tracking for the newly created transform
-		activeTransformProgress = {
-			id: transformId,
-			title: transformTitle,
-			startedAt: new Date().toISOString(),
-			embedders: [],
-		};
-
-		// Start polling for progress immediately
-		startTransformProgressPolling();
-
-		// Also immediately refresh transforms list (don't wait for delay)
-		fetchDatasetTransforms();
-
-		// Use retry mechanism to ensure the transform appears if initial fetch failed
-		let retryCount = 0;
-		const maxRetries = 3;
-
-		const fetchWithRetry = async () => {
-			const foundTransform = datasetTransforms.find((t) => t.dataset_transform_id === transformId);
-			if (!foundTransform && retryCount < maxRetries) {
-				retryCount++;
-				await fetchDatasetTransforms();
-				if (retryCount < maxRetries) {
-					setTimeout(fetchWithRetry, 2000); // Wait 2 seconds before retrying
-				}
-			}
-		};
-
-		// Start retrying after 1 second if transform not found initially
-		setTimeout(fetchWithRetry, 1000);
-	}
-
-	async function fetchTransformProgressStats() {
-		if (!activeTransformProgress) {
-			return;
-		}
-
-		try {
-			const response = await fetch(`/api/dataset-transforms/${activeTransformProgress.id}/stats`);
-			if (!response.ok) {
-				const errorText = await response.text();
-				console.error(
-					`Failed to fetch stats: ${response.status} ${response.statusText}`,
-					errorText
-				);
-				return;
-			}
-
-			const stats = await response.json();
-			transformProgressStats = stats;
-
-			// Also update the stats map for the transforms list
-			datasetTransformStatsMap.set(activeTransformProgress.id, stats);
-			datasetTransformStatsMap = datasetTransformStatsMap;
-
-			// Check if the transform is complete (only terminal states, not just !is_processing)
-			const terminalStatuses = ['completed', 'completed_with_errors', 'failed'];
-			const isTerminal = terminalStatuses.includes(stats.status);
-			const isIdleWithWork =
-				stats.status === 'idle' &&
-				!stats.is_processing &&
-				(stats.total_chunks_embedded > 0 || stats.total_batches_processed > 0);
-
-			if (isTerminal || isIdleWithWork) {
-				console.info(
-					`Transform ${activeTransformProgress.id} ${stats.status}, is_processing=${stats.is_processing}, stopping polling (terminal=${isTerminal}, idleWithWork=${isIdleWithWork})`
-				);
-				stopTransformProgressPolling();
-				// Refresh the transforms list to get final state
-				fetchDatasetTransforms();
-				// Keep showing the progress panel for 3 more seconds, then auto-dismiss
-				setTimeout(() => {
-					activeTransformProgress = null;
-					transformProgressStats = null;
-				}, 3000);
-			}
-		} catch (e) {
-			console.error('Failed to fetch transform progress:', e);
-			// Stop polling on persistent errors to avoid spam
-			if (e instanceof TypeError) {
-				console.error('TypeError in fetch, stopping polling');
-				stopTransformProgressPolling();
-			}
-		}
-	}
-
-	function startTransformProgressPolling() {
-		// Stops any existing polling
-		if (transformProgressPollingController) {
-			transformProgressPollingController.stop();
-		}
-
-		// Fetch stats immediately before starting interval
-		fetchTransformProgressStats();
-
-		// Create managed polling with deduplication to prevent race conditions
-		transformProgressPollingController = createPollingInterval(
-			async () => {
-				if (isPollingTransformProgress) return;
-				isPollingTransformProgress = true;
-				try {
-					await fetchTransformProgressStats();
-				} finally {
-					isPollingTransformProgress = false;
-				}
-			},
-			{
-				interval: 1000,
-				shouldContinue: () => {
-					// Continue polling only if transform is still active
-					return activeTransformProgress !== null;
-				},
-				onError: (error, retryCount) => {
-					console.debug(`Transform progress polling error (attempt ${retryCount}):`, error);
-				},
-			}
-		);
-	}
-
-	function stopTransformProgressPolling() {
-		if (transformProgressPollingController) {
-			transformProgressPollingController.stop();
-			transformProgressPollingController = null;
 		}
 	}
 
@@ -714,8 +549,6 @@
 		fetchItems();
 
 		return () => {
-			// Cleanup polling on unmount
-			stopTransformProgressPolling();
 			if (searchFetchTimeout) {
 				clearTimeout(searchFetchTimeout);
 			}
@@ -724,7 +557,6 @@
 
 	onDestroy(() => {
 		datasetSSE?.disconnect();
-		transformProgressPollingController?.stop();
 		// Clean up any pending search fetch
 		if (searchFetchTimeout) {
 			clearTimeout(searchFetchTimeout);
@@ -947,21 +779,6 @@
 					</div>
 				{/if}
 			</div>
-
-			{#if activeTransformProgress}
-				<div class="mb-6">
-					<DatasetTransformProgressPanel
-						datasetTransformId={activeTransformProgress.id}
-						title={activeTransformProgress.title}
-						sourceDatasetTitle={dataset?.title || 'Unknown Dataset'}
-						overallStatus={transformProgressStats?.status || 'processing'}
-						totalItemsProcessed={transformProgressStats?.total_chunks_embedded || 0}
-						totalItems={transformProgressStats?.total_chunks_to_process || 0}
-						startedAt={activeTransformProgress.startedAt}
-						embedderProgresses={transformProgressStats?.embedders || []}
-					/>
-				</div>
-			{/if}
 
 			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-4 mb-4">
 				<TabPanel {tabs} activeTabId={activeTab} onChange={(tabId: string) => (activeTab = tabId)}>
@@ -1497,12 +1314,10 @@
 <CreateDatasetTransformModal
 	bind:open={datasetTransformModalOpen}
 	{datasetId}
-	onSuccess={(transformId, transformTitle) => {
+	onSuccess={(transformId) => {
 		datasetTransformModalOpen = false;
-		// Start tracking progress for the new transform
-		handleTransformCreated(transformId, transformTitle);
-		// Switch to transforms tab to show progress
-		activeTab = 'transforms';
+		// Navigate to the created transform's detail page to monitor progress
+		window.location.hash = `/dataset-transforms/${transformId}/details`;
 	}}
 />
 

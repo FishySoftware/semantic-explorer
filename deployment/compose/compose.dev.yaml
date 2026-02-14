@@ -79,7 +79,7 @@ services:
   #     - LLM_INFERENCE_API_URL=http://llm-inference-api:8091
   #     - LLM_INFERENCE_API_TIMEOUT_SECS=120
   #     - ENCRYPTION_MASTER_KEY=${ENCRYPTION_MASTER_KEY:-e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4}
-  #     # Reconciliation job for transform reliability
+  #     # Reconciliation (NATS-coordinated: batch recovery + backfill scans for missed files)
   #     - RECONCILIATION_INTERVAL_SECS=300
   #     # Worker batch sizes
   #     - WORKER_SEARCH_BATCH_SIZE=200
@@ -87,7 +87,7 @@ services:
   #     - WORKER_DATASET_BATCH_SIZE=1000
   #     - WORKER_S3_DELETE_BATCH_SIZE=1000
   #     - WORKER_QDRANT_UPLOAD_CHUNK_SIZE=200
-  #     # Scanner configuration
+  #     # Dataset transform batch configuration
   #     - DATASET_SCANNER_MAX_PENDING=500
   #     - DATASET_SCANNER_BATCH_DELAY_MS=0
   #     - DATASET_SCANNER_TIMEOUT_SECS=300

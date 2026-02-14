@@ -10,7 +10,7 @@ use std::time::Duration;
 use tracing::{error, info, warn};
 
 use crate::datasets::models::ChunkWithMetadata;
-use crate::storage::postgres::{collection_transforms, datasets};
+use crate::storage::postgres::{collection_transforms, dataset_transforms, datasets};
 use semantic_explorer_core::models::CollectionTransformResult;
 use semantic_explorer_core::storage::{delete_file_by_key, get_file_with_size_check};
 
@@ -378,10 +378,59 @@ async fn handle_result(result: CollectionTransformResult, ctx: &CollectionListen
     )
     .await;
 
+    // Trigger dataset transforms for the destination dataset
+    trigger_dataset_transforms_for_dataset(
+        &ctx.pool,
+        &ctx.nats_client,
+        transform.dataset_id,
+        &result.owner_id,
+    )
+    .await;
+
     info!(
         "Successfully processed file {} with {} chunks",
         result.source_file_key, chunk_count
     );
+}
+
+/// Trigger dataset transform scans after new items are added to a dataset.
+async fn trigger_dataset_transforms_for_dataset(
+    pool: &Pool<Postgres>,
+    nats: &NatsClient,
+    dataset_id: i32,
+    owner: &str,
+) {
+    let transforms =
+        match dataset_transforms::get_dataset_transforms_for_dataset(pool, owner, dataset_id).await
+        {
+            Ok(t) => t,
+            Err(e) => {
+                warn!(
+                    "Failed to query dataset transforms for dataset {}: {}",
+                    dataset_id, e
+                );
+                return;
+            }
+        };
+
+    for transform in transforms {
+        if !transform.is_enabled {
+            continue;
+        }
+        if let Err(e) = crate::transforms::trigger::publish_targeted_trigger(
+            nats,
+            "dataset",
+            transform.dataset_transform_id,
+            owner,
+        )
+        .await
+        {
+            warn!(
+                "Failed to trigger dataset transform {} after item creation: {}",
+                transform.dataset_transform_id, e
+            );
+        }
+    }
 }
 
 /// Clean up orphaned chunk files from S3 when a transform has been deleted.

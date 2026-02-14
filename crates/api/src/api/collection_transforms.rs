@@ -215,10 +215,11 @@ pub async fn create_collection_transform(
     ),
 )]
 #[patch("/api/collection-transforms/{id}")]
-#[tracing::instrument(name = "update_collection_transform", skip(user, pool, body), fields(collection_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "update_collection_transform", skip(user, pool, nats_client, body), fields(collection_transform_id = %path.as_ref()))]
 pub async fn update_collection_transform(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
+    nats_client: Data<NatsClient>,
     path: Path<i32>,
     body: Json<UpdateCollectionTransform>,
 ) -> impl Responder {
@@ -229,6 +230,17 @@ pub async fn update_collection_transform(
     }
 
     let id = path.into_inner();
+
+    // Check if transform is being re-enabled
+    let was_disabled = if body.is_enabled == Some(true) {
+        collection_transforms::get_collection_transform(&pool, &user.as_owner(), id)
+            .await
+            .map(|t| !t.is_enabled)
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
     match collection_transforms::update_collection_transform(
         &pool,
         &user.as_owner(),
@@ -247,6 +259,17 @@ pub async fn update_collection_transform(
                 ResourceType::Transform,
                 &id.to_string(),
             );
+
+            if was_disabled
+                && let Err(e) =
+                    trigger_collection_transform_scan(&nats_client, id, &user.as_owner()).await
+            {
+                error!(
+                    "Failed to trigger scan for re-enabled collection transform {}: {}",
+                    id, e
+                );
+            }
+
             HttpResponse::Ok().json(transform)
         }
         Err(e) => {
@@ -310,10 +333,11 @@ pub async fn delete_collection_transform(
     ),
 )]
 #[post("/api/collection-transforms/{id}/trigger")]
-#[tracing::instrument(name = "trigger_collection_transform", skip(user, pool), fields(collection_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "trigger_collection_transform", skip(user, pool, nats_client), fields(collection_transform_id = %path.as_ref()))]
 pub async fn trigger_collection_transform(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
+    nats_client: Data<NatsClient>,
     path: Path<i32>,
 ) -> impl Responder {
     let collection_transform_id = path.into_inner();
@@ -325,10 +349,21 @@ pub async fn trigger_collection_transform(
     )
     .await
     {
-        Ok(_) => HttpResponse::Ok().json(serde_json::json!({
-            "message": "Collection transform triggered",
-            "collection_transform_id": collection_transform_id
-        })),
+        Ok(_) => {
+            if let Err(e) = trigger_collection_transform_scan(
+                &nats_client,
+                collection_transform_id,
+                &user.as_owner(),
+            )
+            .await
+            {
+                error!("Failed to trigger collection transform scan: {}", e);
+            }
+            HttpResponse::Ok().json(serde_json::json!({
+                "message": "Collection transform triggered",
+                "collection_transform_id": collection_transform_id
+            }))
+        }
         Err(e) => {
             error!("Collection transform not found: {}", e);
             not_found(format!("Collection transform not found: {}", e))

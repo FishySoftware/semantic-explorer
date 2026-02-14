@@ -144,9 +144,10 @@ pub async fn initialize_jetstream(client: &Client, nats_config: &NatsConfig) -> 
     )
     .await?;
 
-    // Scanner trigger stream - triggers scanner workers to check for new work
-    // Uses WorkQueue retention with max_ack_pending: 1 to ensure only one scanner
-    // processes each trigger (HA active/standby pattern)
+    // Scanner trigger stream - coordinates scanner and reconciliation work.
+    // Targeted triggers are published when data changes (file upload, item creation).
+    // Reconciliation triggers are published periodically as a safety net.
+    // Uses WorkQueue retention with max_ack_pending: 1 for HA coordination.
     ensure_stream(
         &jetstream,
         "SCANNER_TRIGGERS",
@@ -156,12 +157,13 @@ pub async fn initialize_jetstream(client: &Client, nats_config: &NatsConfig) -> 
                 "scan.trigger.collection".to_string(),
                 "scan.trigger.dataset".to_string(),
                 "scan.trigger.visualization".to_string(),
+                "scan.trigger.reconciliation".to_string(),
             ],
             retention: RetentionPolicy::WorkQueue,
-            max_age: Duration::from_secs(60 * 60), // 1 hour max age
-            max_messages: -1,                      // Unlimited (but limited per subject below)
-            duplicate_window: Duration::from_secs(60 * 60), // 60 minutes dedup
-            max_messages_per_subject: 1,           // Only one pending trigger per type
+            max_age: Duration::from_secs(60 * 60),
+            max_messages: -1,
+            duplicate_window: Duration::from_secs(60 * 60),
+            max_messages_per_subject: 10,
             num_replicas,
             ..Default::default()
         },

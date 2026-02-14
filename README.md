@@ -152,22 +152,22 @@ sequenceDiagram
     User->>UI: Upload files
     UI->>API: POST /api/collections/{id}/files
     API->>S3: Store files
-    API->>PG: Create Collection
-
-    User->>UI: Create CollectionTransform
-    UI->>API: POST /api/collection-transforms
-    API->>NATS: Publish to COLLECTION_TRANSFORMS
-    API-->>UI: Transform created
+    API->>NATS: Dispatch CollectionTransformJobs immediately
+    Note over API,NATS: Jobs dispatched inline for each enabled transform
 
     NATS->>WC: Consume job
     WC->>S3: Download files
     WC->>WC: Extract text & chunk
-    WC->>PG: Store chunks in Dataset
     WC->>NATS: Publish TRANSFORM_STATUS
 
-    User->>UI: Create DatasetTransform
-    UI->>API: POST /api/dataset-transforms
-    API->>NATS: Publish to DATASET_TRANSFORMS
+    NATS->>API: Result listener receives status
+    API->>PG: Create dataset items
+    API->>NATS: Trigger dataset transform scans
+    Note over API,NATS: Reactive trigger for each enabled dataset transform
+
+    NATS->>API: Trigger listener processes scan
+    API->>PG: Query unprocessed items, create batches
+    API->>NATS: Publish DatasetTransformJobs
 
     NATS->>WD: Consume job
     WD->>PG: Fetch chunks
@@ -647,7 +647,8 @@ See [`deployment/helm/`](deployment/helm/) for detailed Helm chart configuration
 
 | Variable | Default | Required | Description |
 |-----------|----------|----------|-------------|
-| `RECONCILIATION_INTERVAL_SECS` | `300` | No | Interval for reconciliation job (recovers failed batch publishes) |
+| `RECONCILIATION_INTERVAL_SECS` | `300` | No | Interval for NATS-coordinated reconciliation (batch recovery + backfill scans for missed files). Only one replica runs reconciliation at a time. |
+| `STUCK_BATCH_THRESHOLD_HOURS` | `2` | No | Hours after which a processing batch is considered stuck |
 
 ### Scalability & Performance
 

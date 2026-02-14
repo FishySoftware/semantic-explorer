@@ -155,9 +155,7 @@ pub async fn create_dataset_transform(
         return bad_request("At least one embedder must be specified");
     }
 
-    let job_config = serde_json::json!({
-        "embedding_batch_size": body.embedding_batch_size.unwrap_or(100),
-    });
+    let job_config = serde_json::json!({});
 
     let owner = user.to_owner_info();
     match dataset_transforms::create_dataset_transform(
@@ -224,10 +222,11 @@ pub async fn create_dataset_transform(
     ),
 )]
 #[patch("/api/dataset-transforms/{id}")]
-#[tracing::instrument(name = "update_dataset_transform", skip(user, pool, body), fields(dataset_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "update_dataset_transform", skip(user, pool, nats_client, body), fields(dataset_transform_id = %path.as_ref()))]
 pub async fn update_dataset_transform(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
+    nats_client: Data<NatsClient>,
     path: Path<i32>,
     body: Json<UpdateDatasetTransform>,
 ) -> impl Responder {
@@ -243,6 +242,17 @@ pub async fn update_dataset_transform(
     }
 
     let id = path.into_inner();
+
+    // Check if transform is being re-enabled
+    let was_disabled = if body.is_enabled == Some(true) {
+        dataset_transforms::get_dataset_transform(&pool, &user.as_owner(), id)
+            .await
+            .map(|t| !t.is_enabled)
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
     match dataset_transforms::update_dataset_transform(
         &pool,
         &user.as_owner(),
@@ -261,6 +271,22 @@ pub async fn update_dataset_transform(
                 ResourceType::Transform,
                 &id.to_string(),
             );
+
+            if was_disabled
+                && let Err(e) = crate::transforms::trigger::publish_targeted_trigger(
+                    nats_client.as_ref(),
+                    "dataset",
+                    id,
+                    &user.as_owner(),
+                )
+                .await
+            {
+                error!(
+                    "Failed to trigger scan for re-enabled dataset transform {}: {}",
+                    id, e
+                );
+            }
+
             HttpResponse::Ok().json(serde_json::json!({
                 "transform": transform,
                 "embedded_datasets": embedded_datasets,

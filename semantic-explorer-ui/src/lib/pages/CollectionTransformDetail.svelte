@@ -3,6 +3,7 @@
 	import { onDestroy, onMount } from 'svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
+	import TransformProcessingBanner from '../components/TransformProcessingBanner.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { formatDate } from '../utils/ui-helpers';
 
@@ -71,8 +72,10 @@
 	let stats = $state<Stats | null>(null);
 	let processedFiles = $state<ProcessedFile[]>([]);
 	let totalFilesCount = $state(0);
+	let collectionFileCount = $state<number | null>(null);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+	let processingDismissed = $state(false);
 
 	// Edit mode state
 	let editMode = $state(false);
@@ -88,12 +91,35 @@
 	let filesCurrentPage = $state(1);
 	let filesPageSize = $state(10);
 
-	// SSE connection state
-	let eventSource: EventSource | null = null;
-	let reconnectAttempts = 0;
-	let maxReconnectAttempts = 10;
-	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-	let isMounted = false; // Track if component is still mounted
+	// Polling interval for auto-refresh
+	let pollTimer: ReturnType<typeof setInterval> | null = null;
+	let isPolling = false;
+	const POLL_INTERVAL_MS = 5000;
+
+	// Derived: progress banner data
+	let transformProgress = $derived.by(() => {
+		if (!stats || collectionFileCount === null) return [];
+		return [
+			{
+				transformId: collectionTransformId,
+				title: transform?.title ?? 'Transform',
+				totalFiles: collectionFileCount,
+				processedFiles: Number(stats.total_files_processed),
+				successfulFiles: Number(stats.successful_files),
+				failedFiles: Number(stats.failed_files),
+			},
+		];
+	});
+
+	let hasUnprocessedFiles = $derived.by(() => {
+		if (collectionFileCount === null || collectionFileCount === 0 || !stats) return false;
+		return Number(stats.total_files_processed) < collectionFileCount;
+	});
+
+	let showProcessingBanner = $derived(
+		!processingDismissed &&
+			(hasUnprocessedFiles || (stats !== null && collectionFileCount !== null))
+	);
 
 	async function fetchTransform() {
 		try {
@@ -128,6 +154,15 @@
 
 			if (response.ok) {
 				collection = await response.json();
+			}
+
+			// Also fetch total file count for progress tracking
+			const filesResponse = await fetch(`/api/collections/${id}/files?page_size=1`, {
+				credentials: 'include',
+			});
+			if (filesResponse.ok) {
+				const filesData = await filesResponse.json();
+				collectionFileCount = filesData.total_count ?? 0;
 			}
 		} catch (e) {
 			console.error('Error fetching collection:', e);
@@ -291,88 +326,28 @@
 		}
 	}
 
-	function connectSSE() {
-		// Close existing connection first
-		disconnectSSE();
-
-		try {
-			eventSource = new EventSource('/api/collection-transforms/stream');
-
-			eventSource.addEventListener('heartbeat', () => {
-				// Keep connection alive
-			});
-
-			eventSource.addEventListener('status', (event) => {
-				try {
-					const statusUpdate = JSON.parse(event.data);
-					// If this is an update for our transform, refresh stats and files
-					// API sends transform_id (generic) not collection_transform_id
-					if (statusUpdate.transform_id === collectionTransformId) {
-						fetchStats();
-						fetchProcessedFiles();
-					}
-				} catch (e) {
-					console.error('Failed to parse SSE status event:', e);
-				}
-			});
-
-			eventSource.onerror = () => {
-				eventSource?.close();
-				eventSource = null;
-				reconnectSSE();
-			};
-
-			reconnectAttempts = 0;
-		} catch (e) {
-			console.error('Failed to connect to SSE stream:', e);
-			reconnectSSE();
-		}
-	}
-
-	function reconnectSSE() {
-		if (!isMounted) {
-			// Component has been unmounted, don't attempt reconnection
-			return;
-		}
-
-		if (reconnectAttempts >= maxReconnectAttempts) {
-			console.error('Max SSE reconnection attempts reached');
-			return;
-		}
-
-		const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 60000);
-		reconnectAttempts++;
-
-		reconnectTimer = setTimeout(() => {
-			if (isMounted) {
-				connectSSE();
-			}
-		}, delay);
-	}
-
-	function disconnectSSE() {
-		if (reconnectTimer) {
-			clearTimeout(reconnectTimer);
-			reconnectTimer = null;
-		}
-		if (eventSource) {
-			eventSource.close();
-			eventSource = null;
-		}
-		reconnectAttempts = 0;
-	}
-
 	onMount(async () => {
-		isMounted = true;
 		loading = true;
 		await Promise.all([fetchTransform(), fetchStats(), fetchProcessedFiles()]);
 		loading = false;
-		connectSSE();
+
+		// Auto-refresh stats and processed files every 5 seconds, skipping if already in-flight
+		pollTimer = setInterval(async () => {
+			if (isPolling) return;
+			isPolling = true;
+			try {
+				await Promise.all([fetchStats(), fetchProcessedFiles()]);
+			} finally {
+				isPolling = false;
+			}
+		}, POLL_INTERVAL_MS);
 	});
 
 	onDestroy(() => {
-		isMounted = false;
-		disconnectSSE();
+		if (pollTimer) {
+			clearInterval(pollTimer);
+			pollTimer = null;
+		}
 	});
 </script>
 
@@ -402,6 +377,16 @@
 			<p class="text-red-600 dark:text-red-400">{error}</p>
 		</div>
 	{:else if transform}
+		<!-- Processing Progress Banner -->
+		{#if showProcessingBanner && transformProgress.length > 0}
+			<TransformProcessingBanner
+				transforms={transformProgress}
+				onDismiss={() => {
+					processingDismissed = true;
+				}}
+			/>
+		{/if}
+
 		<!-- Transform Info Card -->
 		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
 			<div class="flex justify-between items-start mb-4">

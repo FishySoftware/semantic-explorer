@@ -2,6 +2,7 @@
 	import { Heading } from 'flowbite-svelte';
 	import { onDestroy, onMount } from 'svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
+	import DatasetTransformProgressPanel from '../components/DatasetTransformProgressPanel.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { formatDate } from '../utils/ui-helpers';
@@ -110,6 +111,7 @@
 	let error = $state<string | null>(null);
 	let retrying = $state(false);
 	let showRetryConfirm = $state(false);
+	let progressDismissed = $state(false);
 
 	// Edit mode state
 	let editMode = $state(false);
@@ -129,17 +131,48 @@
 	let batchSortBy = $state('processed_at');
 	let batchSortDirection = $state('desc');
 
-	// SSE connection state
-	let eventSource: EventSource | null = null;
-	let reconnectAttempts = 0;
-	let maxReconnectAttempts = 10;
-	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-	let isMounted = false; // Track if component is still mounted
-
 	// Polling interval for auto-refresh
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
 	let isPolling = false;
 	const POLL_INTERVAL_MS = 5000;
+
+	// Derived: progress panel data
+	let progressOverallStatus = $derived.by<
+		'processing' | 'completed' | 'completed_with_errors' | 'failed'
+	>(() => {
+		if (!stats) return 'processing';
+		if (stats.is_processing) return 'processing';
+		if (stats.status === 'completed') return 'completed';
+		if (stats.status === 'completed_with_errors') return 'completed_with_errors';
+		if (stats.status === 'failed') return 'failed';
+		return 'processing';
+	});
+
+	let embedderProgresses = $derived.by(() => {
+		if (!embedderStats.length) return [];
+		return embedderStats.map((es) => {
+			let status: 'pending' | 'processing' | 'completed' | 'failed' = 'pending';
+			if (es.error) status = 'failed';
+			else if (es.is_processing) status = 'processing';
+			else if (es.total_chunks_embedded > 0) status = 'completed';
+
+			const totalItems =
+				es.total_chunks_embedded + es.total_chunks_processing + es.total_chunks_failed;
+			return {
+				embedder_id: es.embedder_id,
+				embedder_name: es.title,
+				status,
+				items_processed: es.total_chunks_embedded,
+				total_items: totalItems,
+				embeddings_count: es.total_chunks_embedded,
+				error: es.error,
+			};
+		});
+	});
+
+	let showProgressPanel = $derived(
+		!progressDismissed && stats !== null && stats.total_chunks_to_process > 0
+	);
 
 	async function fetchTransform() {
 		try {
@@ -394,87 +427,14 @@
 		}
 	}
 
-	function connectSSE() {
-		// Close existing connection first
-		disconnectSSE();
-
-		try {
-			eventSource = new EventSource('/api/dataset-transforms/stream');
-
-			eventSource.addEventListener('heartbeat', () => {
-				// Keep connection alive
-			});
-
-			eventSource.addEventListener('status', (event) => {
-				try {
-					const statusUpdate = JSON.parse(event.data);
-					// If this is an update for our transform, refresh stats and batches
-					// API sends transform_id (generic) not dataset_transform_id
-					if (statusUpdate.transform_id === datasetTransformId) {
-						fetchDetailedStats();
-						fetchBatches();
-					}
-				} catch (e) {
-					console.error('Failed to parse SSE status event:', e);
-				}
-			});
-
-			eventSource.onerror = () => {
-				eventSource?.close();
-				eventSource = null;
-				reconnectSSE();
-			};
-
-			reconnectAttempts = 0;
-		} catch (e) {
-			console.error('Failed to connect to SSE stream:', e);
-			reconnectSSE();
-		}
-	}
-
-	function reconnectSSE() {
-		if (!isMounted) {
-			// Component has been unmounted, don't attempt reconnection
-			return;
-		}
-
-		if (reconnectAttempts >= maxReconnectAttempts) {
-			console.error('Max SSE reconnection attempts reached');
-			return;
-		}
-
-		const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 60000);
-		reconnectAttempts++;
-
-		reconnectTimer = setTimeout(() => {
-			if (isMounted) {
-				connectSSE();
-			}
-		}, delay);
-	}
-
-	function disconnectSSE() {
-		if (reconnectTimer) {
-			clearTimeout(reconnectTimer);
-			reconnectTimer = null;
-		}
-		if (eventSource) {
-			eventSource.close();
-			eventSource = null;
-		}
-		reconnectAttempts = 0;
-	}
-
 	onMount(async () => {
-		isMounted = true;
 		loading = true;
 		await Promise.all([fetchTransform(), fetchDetailedStats(), fetchBatches()]);
 		loading = false;
-		connectSSE();
 
 		// Auto-refresh stats and batches every 5 seconds, skipping if already in-flight
 		pollTimer = setInterval(async () => {
-			if (!isMounted || isPolling) return;
+			if (isPolling) return;
 			isPolling = true;
 			try {
 				await Promise.all([fetchDetailedStats(), fetchBatches()]);
@@ -485,8 +445,6 @@
 	});
 
 	onDestroy(() => {
-		isMounted = false;
-		disconnectSSE();
 		if (pollTimer) {
 			clearInterval(pollTimer);
 			pollTimer = null;
@@ -520,6 +478,20 @@
 			<p class="text-red-600 dark:text-red-400">{error}</p>
 		</div>
 	{:else if transform}
+		<!-- Processing Progress Panel -->
+		{#if showProgressPanel && stats}
+			<DatasetTransformProgressPanel
+				{datasetTransformId}
+				title={transform.title}
+				sourceDatasetTitle={sourceDataset?.title ?? `Dataset #${transform.source_dataset_id}`}
+				{embedderProgresses}
+				overallStatus={progressOverallStatus}
+				totalItemsProcessed={stats.total_chunks_embedded}
+				totalItems={stats.total_chunks_to_process}
+				startedAt={stats.first_processing_at ?? undefined}
+			/>
+		{/if}
+
 		<!-- Transform Info Card -->
 		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
 			<div class="flex justify-between items-start mb-4">

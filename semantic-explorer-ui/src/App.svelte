@@ -245,14 +245,14 @@
 	}
 
 	function viewVisualization(transformId: number) {
-		// Handle visualization navigation
-		selectedVisualizationId = transformId;
-		activeUrl = '/visualizations/detail';
-		window.location.hash = `/visualizations/${transformId}/details`;
+		// Navigate to visualization transform detail page
+		selectedVisualizationTransformId = transformId;
+		activeUrl = '/visualization-transforms/detail';
+		window.location.hash = `/visualization-transforms/${transformId}/details`;
 	}
 
 	function backToVisualizations() {
-		selectedVisualizationId = null;
+		selectedVisualizationTransformId = null;
 		activeUrl = '/visualizations';
 		window.location.hash = '/visualizations';
 	}

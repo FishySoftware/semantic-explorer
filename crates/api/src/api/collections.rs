@@ -18,7 +18,7 @@ use crate::{
     errors::ApiError,
     storage::{
         self,
-        postgres::collections,
+        postgres::{collection_transforms, collections},
         s3::{
             delete_file,
             models::{DocumentUpload, PaginatedFiles},
@@ -26,10 +26,12 @@ use crate::{
         },
         valkey::{self, ValkeyClients},
     },
+    transforms::collection::scanner::dispatch_upload_jobs,
     validation::validate_upload_file,
 };
 use semantic_explorer_core::{
     config::{S3Config, ValkeyConfig},
+    encryption::EncryptionService,
     validation,
 };
 
@@ -421,12 +423,15 @@ pub(crate) async fn update_collections(
     tag = "Collections",
 )]
 #[post("/api/collections/{collection_id}/files")]
-#[tracing::instrument(name = "upload_to_collection", skip(user, s3_client, s3_config, pool, payload), fields(collection_id = %collection_id.as_ref(), file_count = payload.files.len()))]
+#[tracing::instrument(name = "upload_to_collection", skip(user, s3_client, s3_config, pool, payload, nats_client, encryption), fields(collection_id = %collection_id.as_ref(), file_count = payload.files.len()))]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn upload_to_collection(
     user: AuthenticatedUser,
     s3_client: Data<Client>,
     s3_config: Data<S3Config>,
     pool: Data<Pool<Postgres>>,
+    nats_client: Data<async_nats::Client>,
+    encryption: Data<EncryptionService>,
     collection_id: Path<i32>,
     MultipartForm(payload): MultipartForm<CollectionUpload>,
 ) -> impl Responder {
@@ -613,18 +618,23 @@ pub(crate) async fn upload_to_collection(
     }
 
     if !completed.is_empty()
-        && let Err(e) = collections::increment_collection_file_count(
-            &pool,
-            collection_id,
-            completed.len() as i64,
-        )
-        .await
+        && let Err(e) = collections::touch_collection_updated_at(&pool, collection_id).await
     {
-        tracing::error!(
-            "Failed to increment file count for collection {}: {:?}",
+        tracing::error!(collection_id, error = %e, "Failed to touch updated_at after upload");
+    }
+
+    // Dispatch collection transform jobs for uploaded files
+    if !completed.is_empty() {
+        dispatch_upload_jobs(
+            &pool,
+            &nats_client,
+            &s3_config.bucket_name,
             collection_id,
-            e
-        );
+            &user.as_owner(),
+            &completed,
+            &encryption,
+        )
+        .await;
     }
 
     HttpResponse::Ok().json(CollectionUploadResponse { completed, failed })
@@ -831,13 +841,20 @@ pub(crate) async fn delete_collection_file(
     .await
     {
         Ok(_) => {
-            // Atomically decrement file count after successful delete
-            if let Err(e) =
-                collections::decrement_collection_file_count(&pool, collection_id, 1).await
+            if let Err(e) = collections::touch_collection_updated_at(&pool, collection_id).await {
+                tracing::error!(collection_id, error = %e, "Failed to touch updated_at after delete");
+            }
+            // Clean up processed file records so re-upload triggers reprocessing
+            if let Err(e) = collection_transforms::delete_processed_file_records(
+                &pool,
+                &file_key,
+                collection_id,
+            )
+            .await
             {
                 tracing::error!(
-                    "Failed to decrement file count for collection {}: {:?}",
-                    collection_id,
+                    "Failed to clean up processed file records for file '{}': {:?}",
+                    file_key,
                     e
                 );
             }

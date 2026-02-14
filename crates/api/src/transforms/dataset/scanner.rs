@@ -799,7 +799,7 @@ async fn create_batches_from_dataset_items(
     // Split into batches and upload to S3, then dispatch jobs
     let mut jobs_created = 0;
     let mut actual_chunks_dispatched: usize = 0;
-    let chunks_per_batch = config.embedding_batch_size * 10; // Create larger batches for efficiency
+    let chunks_per_batch = config.embedding_batch_size;
     let total_batches = all_batch_items.len().div_ceil(chunks_per_batch);
 
     // Apply max batch limit

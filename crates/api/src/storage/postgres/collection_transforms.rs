@@ -222,6 +222,15 @@ const CHECK_FILE_PROCESSED_QUERY: &str = r#"
     LIMIT 1
 "#;
 
+const DELETE_PROCESSED_FILE_QUERY: &str = r#"
+    DELETE FROM transform_processed_files
+    WHERE transform_type = 'collection'
+      AND file_key = $1
+      AND transform_id IN (
+          SELECT collection_transform_id FROM collection_transforms WHERE collection_id = $2
+      )
+"#;
+
 // Static sort query variants for plan caching
 // Each sort field/direction combination is a separate const
 const CT_PAGINATED_TITLE_ASC: &str = r#"
@@ -666,4 +675,19 @@ pub async fn is_file_already_processed(
     Ok(result
         .map(|(status,)| status == "completed")
         .unwrap_or(false))
+}
+
+/// Delete processed file records for a file key across all transforms of a collection.
+/// Called when a file is deleted from a collection.
+pub async fn delete_processed_file_records(
+    pool: &Pool<Postgres>,
+    file_key: &str,
+    collection_id: i32,
+) -> Result<u64> {
+    let result = sqlx::query(DELETE_PROCESSED_FILE_QUERY)
+        .bind(file_key)
+        .bind(collection_id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
 }

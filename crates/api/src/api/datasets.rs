@@ -13,7 +13,9 @@ use crate::{
     },
     errors::ApiError,
     storage::{
-        postgres::{INTERNAL_BATCH_SIZE, datasets, embedded_datasets, fetch_all_batched},
+        postgres::{
+            INTERNAL_BATCH_SIZE, dataset_transforms, datasets, embedded_datasets, fetch_all_batched,
+        },
         valkey::{self, ValkeyClients},
     },
 };
@@ -469,10 +471,11 @@ pub(crate) async fn delete_dataset(
     tag = "Datasets",
 )]
 #[post("/api/datasets/{dataset_id}/items")]
-#[tracing::instrument(name = "upload_to_dataset", skip(user, pool, payload), fields(dataset_id = %dataset_id.as_ref(), item_count = payload.items.len()))]
+#[tracing::instrument(name = "upload_to_dataset", skip(user, pool, nats_client, payload), fields(dataset_id = %dataset_id.as_ref(), item_count = payload.items.len()))]
 pub(crate) async fn upload_to_dataset(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
+    nats_client: Data<async_nats::Client>,
     dataset_id: Path<i32>,
     Json(payload): Json<CreateDatasetItems>,
 ) -> impl Responder {
@@ -505,7 +508,7 @@ pub(crate) async fn upload_to_dataset(
                     true,
                 );
                 (
-                    items.into_iter().map(|item| item.title).collect(),
+                    items.into_iter().map(|item| item.title).collect::<Vec<_>>(),
                     failed_titles,
                 )
             }
@@ -521,6 +524,34 @@ pub(crate) async fn upload_to_dataset(
                     .error_response();
             }
         };
+
+    // Trigger dataset transforms for items that were just created
+    if !completed.is_empty() {
+        let owner = user.as_owner();
+        if let Ok(transforms) =
+            dataset_transforms::get_dataset_transforms_for_dataset(&pool, &owner, dataset_id).await
+        {
+            for transform in transforms {
+                if !transform.is_enabled {
+                    continue;
+                }
+                if let Err(e) = crate::transforms::trigger::publish_targeted_trigger(
+                    nats_client.as_ref(),
+                    "dataset",
+                    transform.dataset_transform_id,
+                    &owner,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        "Failed to trigger dataset transform {} after item upload: {}",
+                        transform.dataset_transform_id,
+                        e
+                    );
+                }
+            }
+        }
+    }
 
     HttpResponse::Ok().json(CreateDatasetItemsResponse { completed, failed })
 }

@@ -10,6 +10,7 @@
 	import SearchInput from '../components/SearchInput.svelte';
 	import type { Collection, PaginatedCollectionList } from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
+	import { formatDate } from '../utils/ui-helpers';
 
 	let { onViewCollection: handleViewCollection } = $props<{
 		onViewCollection: (_: number) => void;
@@ -450,7 +451,7 @@
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Title</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Description</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold">Tags</TableHeadCell>
-					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Items</TableHeadCell>
+					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Updated</TableHeadCell>
 					<TableHeadCell class="px-4 py-3 text-sm font-semibold text-center">Actions</TableHeadCell>
 				</TableHead>
 				<TableBody>
@@ -503,11 +504,9 @@
 								</div>
 							</TableBodyCell>
 							<TableBodyCell class="px-4 py-3 text-center">
-								{#if collection.file_count !== undefined && collection.file_count !== null}
-									<span
-										class="inline-block px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded text-sm font-medium"
-									>
-										{collection.file_count}
+								{#if collection.updated_at}
+									<span class="text-gray-600 dark:text-gray-400 text-sm">
+										{formatDate(collection.updated_at)}
 									</span>
 								{:else}
 									<span class="text-gray-500 dark:text-gray-400">—</span>
@@ -520,14 +519,10 @@
 											label: 'View Files',
 											handler: () => onViewCollection(collection.collection_id),
 										},
-										...(collection.file_count && collection.file_count > 0
-											? [
-													{
-														label: 'Create Transform',
-														handler: () => onCreateTransform(collection.collection_id),
-													},
-												]
-											: []),
+										{
+											label: 'Create Transform',
+											handler: () => onCreateTransform(collection.collection_id),
+										},
 										{
 											label: 'Delete',
 											handler: () => requestDeleteCollection(collection),
@@ -593,10 +588,10 @@
 <CreateCollectionTransformModal
 	open={transformModalOpen}
 	collectionId={selectedCollectionForTransform}
-	onSuccess={() => {
+	onSuccess={(transformId) => {
 		transformModalOpen = false;
 		selectedCollectionForTransform = null;
-		// Redirect to datasets page to monitor transform progress
-		window.location.hash = '#/datasets';
+		// Navigate to the created transform's detail page to monitor progress
+		window.location.hash = `/collection-transforms/${transformId}/details`;
 	}}
 />

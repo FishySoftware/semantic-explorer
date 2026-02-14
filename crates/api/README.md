@@ -19,14 +19,14 @@ Provides endpoints for collection management, dataset processing, embedding gene
 The API server orchestrates all system operations:
 
 - **Collection & Dataset Management**: CRUD operations for data organization
-- **Transform Orchestration**: Publish jobs to NATS for workers to process
+- **Transform Orchestration**: Event-driven job dispatch to NATS workers
 - **Embedding Visualizations**: 2D visualizations of vector embeddings using UMAP dimensionality reduction and HDBSCAN clustering
 - **Search**: Vector search across embedded datasets
 - **Chat**: Context-aware conversations with LLM integration
 - **Real-time Updates**: Server-Sent Events (SSE) for transform progress
 - **Authentication**: OIDC integration
 - **Observability**: Prometheus metrics, OpenTelemetry tracing, structured logging
-- **Reliability**: Reconciliation job for recovering failed batch publishes
+- **Reliability**: NATS-coordinated reconciliation for recovering missed work and failed batches
 - **Circuit Breakers**: Automatic failure isolation for external services
 - **Adaptive Workers**: Workers self-pace based on downstream 503 backpressure
 
@@ -54,10 +54,10 @@ graph TD
 
     subgraph "Background Tasks"
         direction LR
-        SCANNER[Transform Scanners]
+        TRIGGER[Event-Driven Triggers]
         LISTENER[Result Listeners]
         AUDIT[Audit Consumer]
-        RECON[Reconciliation Job]
+        RECON[Reconciliation<br/>NATS-coordinated]
     end
 
     subgraph "Infrastructure"
@@ -103,9 +103,10 @@ graph TD
     CHAT --> OAI_EMB
     CHAT --> COH_EMB
 
-    SCANNER --> NATS & PG
+    TRIGGER --> NATS & PG
     LISTENER --> NATS & PG
     AUDIT --> NATS & PG
+    RECON --> NATS & PG & S3
 ```
 
 ---
@@ -376,7 +377,7 @@ This service uses shared configuration from `semantic-explorer-core`. See the [r
 | `LLM_INFERENCE_API_URL` | `http://localhost:8091` | Local LLM API |
 | `CORS_ALLOWED_ORIGINS` | - | Comma-separated allowed origins |
 | `LOG_FORMAT` | `json` | `json` or `pretty` |
-| `RECONCILIATION_INTERVAL_SECS` | `300` | Reconciliation job interval (seconds) |
+| `RECONCILIATION_INTERVAL_SECS` | `300` | NATS-coordinated reconciliation interval (batch recovery + backfill scans) |
 
 ### Worker Configuration Variables
 

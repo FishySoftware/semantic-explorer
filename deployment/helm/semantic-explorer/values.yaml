@@ -144,7 +144,7 @@ api:
     QDRANT_TIMEOUT_SECS: "30"
     QDRANT_CONNECT_TIMEOUT_SECS: "10"
     NATS_REPLICAS: "3"
-    # Reconciliation job for transform reliability (retries failed batch publishes)
+    # Reconciliation (NATS-coordinated: batch recovery + backfill scans for missed files)
     RECONCILIATION_INTERVAL_SECS: "300"
     # Worker batch sizes
     WORKER_SEARCH_BATCH_SIZE: "200"
@@ -152,7 +152,7 @@ api:
     WORKER_DATASET_BATCH_SIZE: "1000"
     WORKER_S3_DELETE_BATCH_SIZE: "1000"
     WORKER_QDRANT_UPLOAD_CHUNK_SIZE: "200"
-    # Scanner configuration
+    # Dataset transform batch configuration
     DATASET_SCANNER_MAX_PENDING: "500"
     DATASET_SCANNER_BATCH_DELAY_MS: "0"
     DATASET_SCANNER_TIMEOUT_SECS: "300"

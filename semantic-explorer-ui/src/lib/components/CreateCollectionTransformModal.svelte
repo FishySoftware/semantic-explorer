@@ -13,7 +13,6 @@
 	interface Collection {
 		collection_id: number;
 		title: string;
-		file_count?: number;
 	}
 
 	interface Dataset {
@@ -145,8 +144,7 @@
 			if (!response.ok) throw new Error('Failed to fetch collections');
 			const data = await response.json();
 			const allCollections: Collection[] = data.collections ?? [];
-			// Filter to only collections with files
-			collections = allCollections.filter((c) => (c.file_count ?? 0) > 0);
+			collections = allCollections;
 		} catch (e) {
 			console.error('Failed to fetch collections:', e);
 		} finally {
@@ -429,7 +427,7 @@
 						<option value={null}>Select a collection</option>
 						{#each collections as collection (collection.collection_id)}
 							<option value={collection.collection_id}>
-								{collection.title} ({collection.file_count ?? 0} files)
+								{collection.title}
 							</option>
 						{/each}
 					</select>
