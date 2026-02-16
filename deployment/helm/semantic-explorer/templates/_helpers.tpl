@@ -396,7 +396,7 @@ Valkey URL (master for writes)
 {{- if .Values.valkey.external.enabled }}
 {{- .Values.valkey.external.url }}
 {{- else if .Values.valkey.enabled }}
-{{- printf "redis://%s-valkey-master:%d" .Release.Name 6379 }}
+{{- printf "redis://%s-valkey:%d" .Release.Name 6379 }}
 {{- else }}
 {{- "" }}
 {{- end }}
@@ -412,9 +412,9 @@ Valkey Read URL (replica for reads, falls back to master)
 {{- .Values.valkey.external.url }}
 {{- else if .Values.valkey.enabled }}
 {{- if eq .Values.valkey.architecture "replication" }}
-{{- printf "redis://%s-valkey-replicas:%d" .Release.Name 6379 }}
+{{- printf "redis://%s-valkey-read:%d" .Release.Name 6379 }}
 {{- else }}
-{{- printf "redis://%s-valkey-master:%d" .Release.Name 6379 }}
+{{- printf "redis://%s-valkey:%d" .Release.Name 6379 }}
 {{- end }}
 {{- else }}
 {{- "" }}

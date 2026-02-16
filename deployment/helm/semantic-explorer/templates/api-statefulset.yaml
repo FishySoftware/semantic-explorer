@@ -134,7 +134,7 @@ spec:
           - sh
           - -c
           - |
-            VALKEY_HOST="{{ .Release.Name }}-valkey-master"
+            VALKEY_HOST="{{ .Release.Name }}-valkey"
             VALKEY_PORT="6379"
             echo "Waiting for Valkey at ${VALKEY_HOST}:${VALKEY_PORT}..."
             until nc -z ${VALKEY_HOST} ${VALKEY_PORT}; do
