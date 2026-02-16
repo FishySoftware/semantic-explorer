@@ -3,8 +3,8 @@ use crate::auth::AuthenticatedUser;
 use crate::errors::{bad_request, not_found};
 use crate::storage::postgres::dataset_transform_stats::reconcile_from_batches;
 use crate::storage::postgres::{
-    INTERNAL_BATCH_SIZE, dataset_transform_batches, dataset_transforms, embedded_datasets,
-    fetch_all_batched,
+    INTERNAL_BATCH_SIZE, dataset_transform_batches, dataset_transforms, datasets,
+    embedded_datasets, fetch_all_batched,
 };
 use crate::transforms::dataset::models::{
     CreateDatasetTransform, DatasetTransform, DatasetTransformStats, UpdateDatasetTransform,
@@ -344,51 +344,9 @@ pub async fn delete_dataset_transform(
         }
     };
 
-    // Delete Qdrant collections and clean up S3 batch files for all embedded datasets
-    for embedded_dataset in &embedded_datasets_list {
-        if let Err(e) = qdrant_client
-            .delete_collection(&embedded_dataset.collection_name)
-            .await
-        {
-            error!(
-                "Failed to delete Qdrant collection {} for embedded dataset {}: {}",
-                embedded_dataset.collection_name, embedded_dataset.embedded_dataset_id, e
-            );
-            // Continue with other collections even if one fails
-        }
-
-        // Clean up S3 batch files so in-flight workers fail fast on download
-        // instead of wasting embedding tokens on orphaned jobs
-        let prefix = format!(
-            "embedded-datasets/embedded-dataset-{}/",
-            embedded_dataset.embedded_dataset_id
-        );
-        match semantic_explorer_core::storage::delete_files_by_prefix(
-            &s3_client,
-            &s3_config.bucket_name,
-            &prefix,
-        )
-        .await
-        {
-            Ok(count) => {
-                if count > 0 {
-                    info!(
-                        embedded_dataset_id = embedded_dataset.embedded_dataset_id,
-                        deleted_files = count,
-                        "Cleaned up S3 batch files for deleted embedded dataset"
-                    );
-                }
-            }
-            Err(e) => {
-                error!(
-                    "Failed to cleanup S3 batch files for embedded dataset {}: {}",
-                    embedded_dataset.embedded_dataset_id, e
-                );
-                // Continue with deletion even if S3 cleanup fails
-            }
-        }
-    }
-
+    // Delete the database record first (fast, cascading deletes handle
+    // embedded_datasets rows). This lets us respond immediately while
+    // cleaning up Qdrant collections and S3 batch files in the background.
     match dataset_transforms::delete_dataset_transform(
         &pool,
         &user.as_owner(),
@@ -404,6 +362,59 @@ pub async fn delete_dataset_transform(
                 ResourceType::Transform,
                 &dataset_transform_id.to_string(),
             );
+
+            // Kick off background cleanup for Qdrant collections and S3 batch files.
+            // These are best-effort — orphaned resources are harmless and can be
+            // cleaned up by reconciliation if the background task fails.
+            let qdrant = qdrant_client.into_inner();
+            let s3 = s3_client.into_inner();
+            let bucket = s3_config.bucket_name.clone();
+            tokio::spawn(async move {
+                for embedded_dataset in &embedded_datasets_list {
+                    if let Err(e) = qdrant
+                        .delete_collection(&embedded_dataset.collection_name)
+                        .await
+                    {
+                        error!(
+                            "Background cleanup: failed to delete Qdrant collection {} for embedded dataset {}: {}",
+                            embedded_dataset.collection_name,
+                            embedded_dataset.embedded_dataset_id,
+                            e
+                        );
+                    }
+
+                    let prefix = format!(
+                        "embedded-datasets/embedded-dataset-{}/",
+                        embedded_dataset.embedded_dataset_id
+                    );
+                    match semantic_explorer_core::storage::delete_files_by_prefix(
+                        &s3, &bucket, &prefix,
+                    )
+                    .await
+                    {
+                        Ok(count) => {
+                            if count > 0 {
+                                info!(
+                                    embedded_dataset_id = embedded_dataset.embedded_dataset_id,
+                                    deleted_files = count,
+                                    "Background cleanup: cleaned up S3 batch files for deleted embedded dataset"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            error!(
+                                "Background cleanup: failed to cleanup S3 batch files for embedded dataset {}: {}",
+                                embedded_dataset.embedded_dataset_id, e
+                            );
+                        }
+                    }
+                }
+                info!(
+                    dataset_transform_id,
+                    "Background cleanup completed for deleted dataset transform"
+                );
+            });
+
             HttpResponse::NoContent().finish()
         }
         Err(e) => {
@@ -603,6 +614,125 @@ pub async fn retry_failed_batches(
 }
 
 #[utoipa::path(
+    post,
+    path = "/api/dataset-transforms/{transform_id}/batches/{batch_id}/retry",
+    tag = "Dataset Transforms",
+    params(
+        ("transform_id" = i32, Path, description = "Dataset Transform ID"),
+        ("batch_id" = i32, Path, description = "Batch ID")
+    ),
+    responses(
+        (status = 200, description = "Failed batch retried successfully"),
+        (status = 404, description = "Dataset transform or batch not found"),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[post("/api/dataset-transforms/{transform_id}/batches/{batch_id}/retry")]
+#[tracing::instrument(
+    name = "retry_single_failed_batch",
+    skip(user, pool, nats_client),
+    fields(dataset_transform_id, batch_id)
+)]
+pub async fn retry_single_failed_batch(
+    user: AuthenticatedUser,
+    pool: Data<Pool<Postgres>>,
+    nats_client: Data<NatsClient>,
+    path: Path<(i32, i32)>,
+) -> impl Responder {
+    let (dataset_transform_id, batch_id) = path.into_inner();
+
+    // Verify the transform exists and user has access
+    let _transform = match dataset_transforms::get_dataset_transform(
+        &pool,
+        &user.as_owner(),
+        dataset_transform_id,
+    )
+    .await
+    {
+        Ok(t) => t,
+        Err(e) => {
+            error!("Dataset transform not found: {}", e);
+            return not_found(format!("Dataset transform not found: {}", e));
+        }
+    };
+
+    // Reset the single failed batch to pending
+    let batch = match dataset_transform_batches::reset_single_failed_batch(
+        &pool,
+        batch_id,
+        dataset_transform_id,
+    )
+    .await
+    {
+        Ok(Some(b)) => b,
+        Ok(None) => {
+            return not_found("Batch not found or is not in failed status".to_string());
+        }
+        Err(e) => {
+            error!("Failed to reset batch: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to reset batch: {}", e)
+            }));
+        }
+    };
+
+    // Delete the corresponding transform_processed_files records
+    let batch_keys = vec![batch.batch_key.clone()];
+    match embedded_datasets::delete_processed_batches_for_retry(
+        &pool,
+        dataset_transform_id,
+        &batch_keys,
+    )
+    .await
+    {
+        Ok(deleted) => {
+            info!(
+                dataset_transform_id,
+                batch_id, deleted, "Deleted processed-file records for single batch retry"
+            );
+        }
+        Err(e) => {
+            error!("Failed to delete processed batch records: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to clean up processed records: {}", e)
+            }));
+        }
+    }
+
+    // Reconcile stats from actual batch data
+    if let Err(e) = reconcile_from_batches(&pool, dataset_transform_id).await {
+        error!("Failed to reconcile stats after single batch retry: {}", e);
+    }
+
+    // Trigger the scanner to rediscover the batch
+    if let Err(e) = crate::transforms::dataset::scanner::trigger_dataset_transform_scan(
+        &nats_client,
+        dataset_transform_id,
+        &user.as_owner(),
+    )
+    .await
+    {
+        error!("Failed to trigger scan after single batch retry: {}", e);
+        return HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": format!("Batch reset but failed to trigger scan: {}", e)
+        }));
+    }
+
+    info!(
+        dataset_transform_id,
+        batch_id, "Retry: reset single batch and triggered scanner"
+    );
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "message": "Failed batch reset and scan triggered",
+        "dataset_transform_id": dataset_transform_id,
+        "batch_id": batch_id,
+        "batch_key": batch.batch_key,
+        "retried_count": 1,
+    }))
+}
+
+#[utoipa::path(
     get,
     path = "/api/dataset-transforms/{id}/stats",
     tag = "Dataset Transforms",
@@ -771,6 +901,21 @@ pub async fn get_dataset_transform_detailed_stats(
         }
     };
 
+    // Get the source dataset's total_chunks for accurate per-embedder progress.
+    // This is the ground-truth expected count per embedded dataset.
+    let source_total_chunks: i64 =
+        match datasets::get_dataset_total_chunks(&pool, transform.source_dataset_id).await {
+            Ok(tc) => tc,
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to get source dataset total_chunks for dataset {}: {}",
+                    transform.source_dataset_id,
+                    e
+                );
+                0
+            }
+        };
+
     // Get stats for each embedded dataset individually
     let mut stats_map = std::collections::HashMap::new();
     for ed in &embedded_datasets_list {
@@ -799,6 +944,13 @@ pub async fn get_dataset_transform_detailed_stats(
         .iter()
         .map(|ed| {
             if let Some(stats) = stats_map.get(&ed.embedded_dataset_id) {
+                // Per-embedder expected total is the source dataset's total_chunks
+                // (each embedder must embed every chunk independently)
+                let total_expected = source_total_chunks;
+                let chunks_done = stats.total_chunks_embedded + stats.total_chunks_failed;
+                let is_completed = total_expected > 0
+                    && chunks_done >= total_expected
+                    && stats.processing_batches == 0;
                 serde_json::json!({
                     "embedded_dataset_id": ed.embedded_dataset_id,
                     "embedder_id": ed.embedder_id,
@@ -811,10 +963,12 @@ pub async fn get_dataset_transform_detailed_stats(
                     "total_chunks_embedded": stats.total_chunks_embedded,
                     "total_chunks_failed": stats.total_chunks_failed,
                     "total_chunks_processing": stats.total_chunks_processing,
+                    "total_chunks_expected": total_expected,
                     "last_run_at": stats.last_run_at,
                     "first_processing_at": stats.first_processing_at,
                     "avg_processing_duration_ms": stats.avg_processing_duration_ms,
                     "is_processing": stats.processing_batches > 0,
+                    "is_completed": is_completed,
                 })
             } else {
                 serde_json::json!({
@@ -822,6 +976,7 @@ pub async fn get_dataset_transform_detailed_stats(
                     "embedder_id": ed.embedder_id,
                     "collection_name": ed.collection_name,
                     "title": ed.title,
+                    "total_chunks_expected": source_total_chunks,
                     "error": "Stats not available",
                 })
             }

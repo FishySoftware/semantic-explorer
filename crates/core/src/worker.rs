@@ -15,7 +15,7 @@ use serde::de::DeserializeOwned;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
-use tracing::{Instrument, error, info, info_span, warn};
+use tracing::{Instrument, debug, error, info, info_span, warn};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_subscriber::{
     EnvFilter, Layer, Registry as TracingRegistry, layer::SubscriberExt, util::SubscriberInitExt,
@@ -391,11 +391,21 @@ where
             }
         };
 
-        // If downstream is under pressure, pause briefly before acquiring
-        // to avoid spinning on jobs that will likely fail anyway.
+        // If downstream is under pressure (503s), pause before accepting next job.
+        // Also apply adaptive pacing based on server-reported queue state to prevent
+        // building up a deep queue in the first place.
         if concurrency.is_downstream_pressured() {
             info!("Downstream pressure active, pausing 2s before accepting next job");
             tokio::time::sleep(Duration::from_secs(2)).await;
+        } else {
+            let pacing = crate::embedder::adaptive_pacing_delay();
+            if !pacing.is_zero() {
+                debug!(
+                    pacing_ms = pacing.as_millis(),
+                    "Pacing job acceptance based on embedding server queue state"
+                );
+                tokio::time::sleep(pacing).await;
+            }
         }
 
         // Acquire semaphore permit for backpressure.

@@ -344,7 +344,9 @@ async def handle_job(
         result.point_count = processed_result.get("point_count")
         result.cluster_count = processed_result.get("cluster_count")
         result.processing_duration_ms = processing_duration_ms
-        result.stats_json = processed_result.get("stats", {})
+        stats = processed_result.get("stats", {})
+        stats["processing_duration_ms"] = processing_duration_ms
+        result.stats_json = stats
 
         # Record metrics
         metrics.visualization_jobs_total.labels("success").inc()
@@ -656,7 +658,9 @@ async def main():
                             psub = await _create_pull_subscription(js)
                             consecutive_errors = 0
                             subscription_healthy = True
-                            logger.info("Successfully re-created subscription after consumer loss")
+                            logger.info(
+                                "Successfully re-created subscription after consumer loss"
+                            )
                             continue
                         except Exception as resub_err:
                             logger.error(

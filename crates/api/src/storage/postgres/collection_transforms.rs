@@ -231,6 +231,13 @@ const DELETE_PROCESSED_FILE_QUERY: &str = r#"
       )
 "#;
 
+const DELETE_FAILED_FILES_FOR_RETRY_QUERY: &str = r#"
+    DELETE FROM transform_processed_files
+    WHERE transform_type = 'collection'
+      AND transform_id = $1
+      AND process_status = 'failed'
+"#;
+
 // Static sort query variants for plan caching
 // Each sort field/direction combination is a separate const
 const CT_PAGINATED_TITLE_ASC: &str = r#"
@@ -675,6 +682,19 @@ pub async fn is_file_already_processed(
     Ok(result
         .map(|(status,)| status == "completed")
         .unwrap_or(false))
+}
+
+/// Delete all failed processed-file records for a collection transform so the scanner
+/// rediscovers them on the next run.
+pub async fn delete_failed_files_for_retry(
+    pool: &Pool<Postgres>,
+    collection_transform_id: i32,
+) -> Result<u64> {
+    let result = sqlx::query(DELETE_FAILED_FILES_FOR_RETRY_QUERY)
+        .bind(collection_transform_id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
 }
 
 /// Delete processed file records for a file key across all transforms of a collection.

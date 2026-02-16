@@ -126,6 +126,27 @@ export function showTooltip(event: MouseEvent, text: string): void {
 }
 
 /**
+ * Format a duration in milliseconds to a human-readable string
+ * @param ms Duration in milliseconds
+ * @returns Formatted string (e.g., "1.2s", "2m 30s", "1h 5m")
+ */
+export function formatDuration(ms: number | null | undefined): string {
+	if (ms === null || ms === undefined) return '-';
+	if (ms < 1000) return `${Math.round(ms)}ms`;
+
+	const totalSeconds = Math.floor(ms / 1000);
+	if (totalSeconds < 60) return `${(ms / 1000).toFixed(1)}s`;
+
+	const minutes = Math.floor(totalSeconds / 60);
+	const seconds = totalSeconds % 60;
+	if (minutes < 60) return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+
+	const hours = Math.floor(minutes / 60);
+	const remainingMinutes = minutes % 60;
+	return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+}
+
+/**
  * Copy text to clipboard
  * @param text Text to copy
  * @returns Promise that resolves when copied

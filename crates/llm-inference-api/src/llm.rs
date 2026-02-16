@@ -128,15 +128,13 @@ fn spawn_gpu_pressure_monitor(threshold: f64) {
             // Collect metrics (updates Prometheus gauges)
             gpu_monitor::collect_metrics();
 
-            // Update cached pressure state (VRAM OR compute)
-            let is_high = gpu_monitor::is_gpu_under_pressure(threshold);
+            // Update cached pressure state (VRAM only — compute at 100% is
+            // expected during active inference and should not trigger rejection)
+            let is_high = gpu_monitor::is_memory_pressure_high(threshold);
             GPU_MEMORY_PRESSURE_HIGH.store(is_high, Ordering::Relaxed);
 
             if is_high {
-                warn!(
-                    "LLM: GPU pressure is HIGH (>{}% VRAM or compute)",
-                    threshold
-                );
+                warn!("LLM: GPU VRAM pressure is HIGH (>{}%)", threshold);
             }
         }
     });

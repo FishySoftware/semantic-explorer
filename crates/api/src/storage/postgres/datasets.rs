@@ -538,6 +538,20 @@ pub(crate) async fn get_dataset_version(
     Ok(version)
 }
 
+/// Get the source dataset's total_chunks count.
+/// Used by the detailed-stats endpoint to provide the expected total per embedded dataset.
+pub(crate) async fn get_dataset_total_chunks(
+    pool: &Pool<Postgres>,
+    dataset_id: i32,
+) -> Result<i64> {
+    let total_chunks =
+        sqlx::query_scalar::<_, i64>("SELECT total_chunks FROM datasets WHERE dataset_id = $1")
+            .bind(dataset_id)
+            .fetch_one(pool)
+            .await?;
+    Ok(total_chunks)
+}
+
 #[tracing::instrument(name = "database.update_dataset", skip(pool), fields(database.system = "postgresql", database.operation = "UPDATE", dataset_id = %dataset_id, owner_id = %owner_id))]
 pub(crate) async fn update_dataset(
     pool: &Pool<Postgres>,

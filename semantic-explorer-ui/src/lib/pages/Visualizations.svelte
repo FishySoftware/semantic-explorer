@@ -24,7 +24,7 @@
 		VisualizationTransform,
 	} from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
-	import { formatDate } from '../utils/ui-helpers';
+	import { formatDate, formatDuration } from '../utils/ui-helpers';
 
 	interface Props {
 		onViewVisualization?: (_id: number) => void;
@@ -684,9 +684,9 @@
 												{completedViz.cluster_count} clusters
 											</div>
 										{/if}
-										{#if completedViz.stats_json?.processing_duration_ms && typeof completedViz.stats_json.processing_duration_ms === 'number'}
+										{#if completedViz.stats_json?.processing_duration_ms != null}
 											<div class="text-gray-500 dark:text-gray-500 text-xs">
-												{(completedViz.stats_json.processing_duration_ms / 1000).toFixed(1)}s
+												{formatDuration(completedViz.stats_json.processing_duration_ms as number)}
 											</div>
 										{/if}
 									</div>
@@ -810,9 +810,9 @@
 											>
 												{run.error_message}
 											</span>
-										{:else if run.stats_json?.processing_duration_ms && typeof run.stats_json.processing_duration_ms === 'number'}
+										{:else if run.stats_json?.processing_duration_ms != null}
 											<span class="text-xs text-gray-500 dark:text-gray-500">
-												{(run.stats_json.processing_duration_ms / 1000).toFixed(1)}s
+												{formatDuration(run.stats_json.processing_duration_ms as number)}
 											</span>
 										{/if}
 									</TableBodyCell>

@@ -185,6 +185,16 @@ const RESET_FAILED_BATCHES_QUERY: &str = r#"
     RETURNING *
 "#;
 
+const RESET_SINGLE_FAILED_BATCH_QUERY: &str = r#"
+    UPDATE dataset_transform_batches
+    SET status = 'pending',
+        error_message = NULL,
+        processing_duration_ms = NULL,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = $1 AND dataset_transform_id = $2 AND status = 'failed'
+    RETURNING *
+"#;
+
 const GET_BATCH_STATS_QUERY: &str = r#"
     SELECT
         COUNT(*) as total_batches,
@@ -377,6 +387,21 @@ pub async fn reset_failed_batches(
         .fetch_all(pool)
         .await?;
     Ok(batches)
+}
+
+/// Reset a single failed batch to "pending" for retry.
+/// Returns the reset batch if found and was in "failed" status.
+pub async fn reset_single_failed_batch(
+    pool: &Pool<Postgres>,
+    batch_id: i32,
+    dataset_transform_id: i32,
+) -> Result<Option<DatasetTransformBatch>, sqlx::Error> {
+    let batch = sqlx::query_as::<_, DatasetTransformBatch>(RESET_SINGLE_FAILED_BATCH_QUERY)
+        .bind(batch_id)
+        .bind(dataset_transform_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(batch)
 }
 
 /// List batches that appear stuck in a given status for longer than threshold_hours (#18)

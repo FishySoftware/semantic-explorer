@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 
-	type Variant = 'primary' | 'danger';
+	type Variant = 'primary' | 'danger' | 'success' | 'warning';
 
 	let {
 		open = false,

@@ -15,7 +15,7 @@ use actix_web::{HttpRequest, HttpResponse, Responder, delete, get, patch, post};
 use async_nats::Client as NatsClient;
 use serde::Deserialize;
 use sqlx::{Pool, Postgres};
-use tracing::error;
+use tracing::{error, info};
 
 use actix_web::http::header;
 use futures_util::stream::StreamExt;
@@ -369,6 +369,89 @@ pub async fn trigger_collection_transform(
             not_found(format!("Collection transform not found: {}", e))
         }
     }
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/collection-transforms/{id}/retry-failed",
+    tag = "Collection Transforms",
+    params(
+        ("id" = i32, Path, description = "Collection Transform ID")
+    ),
+    responses(
+        (status = 200, description = "Failed files retried successfully"),
+        (status = 404, description = "Collection transform not found"),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[post("/api/collection-transforms/{id}/retry-failed")]
+#[tracing::instrument(name = "retry_failed_collection_files", skip(user, pool, nats_client), fields(collection_transform_id = %path.as_ref()))]
+pub async fn retry_failed_collection_files(
+    user: AuthenticatedUser,
+    pool: Data<Pool<Postgres>>,
+    nats_client: Data<NatsClient>,
+    path: Path<i32>,
+) -> impl Responder {
+    let collection_transform_id = path.into_inner();
+
+    // Verify the transform exists and user has access
+    let _transform = match collection_transforms::get_collection_transform(
+        &pool,
+        &user.as_owner(),
+        collection_transform_id,
+    )
+    .await
+    {
+        Ok(t) => t,
+        Err(e) => {
+            error!("Collection transform not found: {}", e);
+            return not_found(format!("Collection transform not found: {}", e));
+        }
+    };
+
+    // Delete failed processed-file records so the scanner rediscovers those files
+    let retried_count =
+        match collection_transforms::delete_failed_files_for_retry(&pool, collection_transform_id)
+            .await
+        {
+            Ok(count) => count,
+            Err(e) => {
+                error!("Failed to reset failed files for retry: {}", e);
+                return HttpResponse::InternalServerError().json(serde_json::json!({
+                    "error": format!("Failed to reset failed files: {}", e)
+                }));
+            }
+        };
+
+    if retried_count == 0 {
+        return HttpResponse::Ok().json(serde_json::json!({
+            "message": "No failed files to retry.",
+            "collection_transform_id": collection_transform_id,
+            "retried_count": 0
+        }));
+    }
+
+    // Trigger the scanner so it rediscovers the now-unprocessed files
+    if let Err(e) =
+        trigger_collection_transform_scan(&nats_client, collection_transform_id, &user.as_owner())
+            .await
+    {
+        error!("Failed to trigger scan after retry: {}", e);
+        return HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": format!("Files reset but failed to trigger scan: {}", e)
+        }));
+    }
+
+    info!(
+        collection_transform_id,
+        retried_count, "Retry: deleted failed records and triggered scanner"
+    );
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "message": "Failed files reset and scan triggered",
+        "collection_transform_id": collection_transform_id,
+        "retried_count": retried_count,
+    }))
 }
 
 #[utoipa::path(

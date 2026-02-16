@@ -78,8 +78,56 @@ export interface DatasetTransformStats {
 	total_batches_processed: number;
 	successful_batches: number;
 	failed_batches: number;
+	processing_batches: number;
+	total_chunks_embedded: number;
+	total_chunks_processing: number;
+	total_chunks_failed: number;
+	total_chunks_to_process: number;
+	status: string;
+	is_processing: boolean;
+	last_run_at: string | null;
+	first_processing_at: string | null;
+}
+
+export interface EmbedderStats {
+	embedded_dataset_id: number;
+	embedder_id: number;
+	collection_name: string;
+	title: string;
+	total_batches_processed: number;
+	successful_batches: number;
+	failed_batches: number;
+	processing_batches: number;
 	total_chunks_embedded: number;
 	total_chunks_failed: number;
+	total_chunks_processing: number;
+	total_chunks_expected: number;
+	last_run_at: string | null;
+	first_processing_at: string | null;
+	avg_processing_duration_ms: number | null;
+	is_processing: boolean;
+	is_completed: boolean;
+	error?: string;
+}
+
+export interface DetailedStatsResponse {
+	dataset_transform_id: number;
+	title: string;
+	aggregate: DatasetTransformStats;
+	per_embedder: EmbedderStats[];
+}
+
+export interface DatasetTransformBatch {
+	id: number;
+	dataset_transform_id: number;
+	batch_key: string;
+	processed_at: string;
+	status: string;
+	chunk_count: number;
+	error_message: string | null;
+	processing_duration_ms: number | null;
+	created_at: string;
+	updated_at: string;
 }
 
 // --- Embedded Datasets ---

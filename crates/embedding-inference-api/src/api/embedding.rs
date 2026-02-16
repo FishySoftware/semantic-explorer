@@ -10,6 +10,21 @@ use crate::config::ModelConfig;
 use crate::embedding;
 use crate::errors::InferenceError;
 
+/// Add backpressure headers to successful responses so callers can
+/// adaptively throttle without waiting for 503 failures.
+///
+/// Headers:
+/// - `X-Queue-Depth`: current number of pending requests for this model
+/// - `X-Queue-Capacity`: maximum queue capacity
+/// - `X-Estimated-Wait-Ms`: estimated wait time for a new request based on EMA latency
+fn add_backpressure_headers(response: &mut actix_web::HttpResponseBuilder, model_id: &str) {
+    if let Some(status) = embedding::get_queue_status(model_id) {
+        response.insert_header(("X-Queue-Depth", status.queue_depth.to_string()));
+        response.insert_header(("X-Queue-Capacity", status.queue_capacity.to_string()));
+        response.insert_header(("X-Estimated-Wait-Ms", status.estimated_wait_ms.to_string()));
+    }
+}
+
 /// Request body for single text embedding
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct EmbedRequest {
@@ -100,7 +115,9 @@ pub async fn embed(
                 model_id, duration
             );
             let dimensions = embeddings.first().map(|e| e.len()).unwrap_or(0);
-            HttpResponse::Ok().json(EmbedResponse {
+            let mut response = HttpResponse::Ok();
+            add_backpressure_headers(&mut response, &model_id);
+            response.json(EmbedResponse {
                 embeddings,
                 model: model_id,
                 count: 1,
@@ -176,7 +193,9 @@ pub async fn embed_batch(
             );
             let count = embeddings.len();
             let dimensions = embeddings.first().map(|e| e.len()).unwrap_or(0);
-            HttpResponse::Ok().json(EmbedResponse {
+            let mut response = HttpResponse::Ok();
+            add_backpressure_headers(&mut response, &model_id);
+            response.json(EmbedResponse {
                 embeddings,
                 model: model_id,
                 count,

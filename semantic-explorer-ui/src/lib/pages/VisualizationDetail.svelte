@@ -22,7 +22,6 @@
 		Embedder,
 	} from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
-	import { createSSEConnection, type SSEConnection } from '../utils/sse';
 	import { formatDate, formatNumber } from '../utils/ui-helpers';
 
 	interface Props {
@@ -58,18 +57,33 @@
 		{ id: 'visualizations', label: 'Visualizations', icon: '🎨' },
 	]);
 
-	// SSE connection for real-time status updates
-	let sseConnection: SSEConnection | null = null;
+	// Polling for status updates
+	let pollTimer: ReturnType<typeof setInterval> | null = null;
+	let isPolling = false;
+	const POLL_INTERVAL_MS = 5000;
 
 	onMount(async () => {
 		await loadTransform();
 		await loadRelatedData();
 		await loadVisualizations();
-		connectSSE();
+
+		// Poll for updates every 5 seconds
+		pollTimer = setInterval(async () => {
+			if (isPolling) return;
+			isPolling = true;
+			try {
+				await Promise.all([loadTransform(), loadVisualizations()]);
+			} finally {
+				isPolling = false;
+			}
+		}, POLL_INTERVAL_MS);
 	});
 
 	onDestroy(() => {
-		sseConnection?.disconnect();
+		if (pollTimer) {
+			clearInterval(pollTimer);
+			pollTimer = null;
+		}
 	});
 
 	function startEdit() {
@@ -203,26 +217,6 @@
 		if (embedder) {
 			window.location.hash = `#/embedders/${embedder.embedder_id}/details`;
 		}
-	}
-
-	function connectSSE() {
-		// Connect to visualization transforms SSE for real-time updates
-		sseConnection = createSSEConnection({
-			url: `/api/visualization-transforms/stream?visualization_transform_id=${visualizationTransformId}`,
-			onStatus: (data: unknown) => {
-				const status = data as {
-					visualization_transform_id?: number;
-					visualization_id?: number;
-				};
-				// Reload visualizations when we get a status update for this transform
-				if (status.visualization_transform_id === visualizationTransformId) {
-					loadVisualizations();
-				}
-			},
-			onMaxRetriesReached: () => {
-				console.warn('SSE connection lost for visualization transform');
-			},
-		});
 	}
 
 	async function loadTransform() {

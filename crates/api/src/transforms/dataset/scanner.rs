@@ -562,7 +562,14 @@ async fn process_dataset_transform_scan(
             let payload = serde_json::to_vec(&job)?;
 
             // Publish with retry (3 attempts with exponential backoff)
-            let msg_id = format!("dt-{}-{}", transform.dataset_transform_id, batch_file_key);
+            // Use a unique msg_id with UUID to avoid NATS deduplication rejecting
+            // re-dispatched batches (e.g. after retry-failed resets them to pending).
+            let msg_id = format!(
+                "dt-redispatch-{}-{}-{}",
+                transform.dataset_transform_id,
+                batch_file_key,
+                Uuid::new_v4()
+            );
             match semantic_explorer_core::nats::publish_with_retry(
                 nats,
                 "workers.dataset-transform",

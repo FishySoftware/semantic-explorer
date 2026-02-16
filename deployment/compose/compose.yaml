@@ -136,7 +136,7 @@ services:
       - HEALTH_CHECK_PORT=8080
       - WORKER_QDRANT_UPLOAD_CHUNK_SIZE=200
       - EMBEDDING_INFERENCE_API_URL=http://embedding-inference-api:8090
-      - EMBEDDING_MAX_CONCURRENT_REQUESTS=5
+      - EMBEDDING_MAX_CONCURRENT_REQUESTS=2
     networks:
       - semantic-explorer-net
 
@@ -183,7 +183,7 @@ services:
       - WORKER_DATASET_BATCH_SIZE=1000
       - WORKER_QDRANT_UPLOAD_CHUNK_SIZE=200
       - HEALTH_CHECK_PORT=8080
-      - EMBEDDING_MAX_CONCURRENT_REQUESTS=5
+      - EMBEDDING_MAX_CONCURRENT_REQUESTS=2
       - QDRANT_PARALLEL_UPLOADS=4
     networks:
       - semantic-explorer-net

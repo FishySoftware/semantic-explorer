@@ -394,51 +394,10 @@ pub(crate) async fn delete_dataset(
         }
     };
 
-    // Delete Qdrant collections and clean up S3 batch files for all embedded datasets
-    for embedded_dataset in &embedded_datasets {
-        if let Err(e) = qdrant_client
-            .delete_collection(&embedded_dataset.collection_name)
-            .await
-        {
-            error!(
-                "Failed to delete Qdrant collection {} for embedded dataset {}: {}",
-                embedded_dataset.collection_name, embedded_dataset.embedded_dataset_id, e
-            );
-            // Continue with other collections even if one fails
-        }
-
-        // Clean up S3 batch files so in-flight workers fail fast on download
-        // instead of wasting embedding tokens on orphaned jobs
-        let prefix = format!(
-            "embedded-datasets/embedded-dataset-{}/",
-            embedded_dataset.embedded_dataset_id
-        );
-        match semantic_explorer_core::storage::delete_files_by_prefix(
-            &s3_client,
-            &s3_config.bucket_name,
-            &prefix,
-        )
-        .await
-        {
-            Ok(count) => {
-                if count > 0 {
-                    info!(
-                        embedded_dataset_id = embedded_dataset.embedded_dataset_id,
-                        deleted_files = count,
-                        "Cleaned up S3 batch files for deleted embedded dataset"
-                    );
-                }
-            }
-            Err(e) => {
-                error!(
-                    "Failed to cleanup S3 batch files for embedded dataset {}: {}",
-                    embedded_dataset.embedded_dataset_id, e
-                );
-                // Continue with deletion even if S3 cleanup fails
-            }
-        }
-    }
-
+    // Delete the database record first (fast, cascading deletes handle
+    // dataset_items and embedded_datasets rows). This lets us respond to the
+    // user immediately while cleaning up Qdrant collections and S3 batch
+    // files in the background.
     match datasets::delete_dataset(&pool, dataset_id, &user.as_owner()).await {
         Ok(_) => {
             events::resource_deleted_with_request(
@@ -449,6 +408,59 @@ pub(crate) async fn delete_dataset(
                 &dataset_id.to_string(),
             );
             valkey::invalidate_resource_cache(valkey.as_ref(), "datasets", &user.as_owner());
+
+            // Kick off background cleanup for Qdrant collections and S3 batch files.
+            // These are best-effort — orphaned resources are harmless and can be
+            // cleaned up by reconciliation if the background task fails.
+            let qdrant = qdrant_client.into_inner();
+            let s3 = s3_client.into_inner();
+            let bucket = s3_config.bucket_name.clone();
+            tokio::spawn(async move {
+                for embedded_dataset in &embedded_datasets {
+                    if let Err(e) = qdrant
+                        .delete_collection(&embedded_dataset.collection_name)
+                        .await
+                    {
+                        error!(
+                            "Background cleanup: failed to delete Qdrant collection {} for embedded dataset {}: {}",
+                            embedded_dataset.collection_name,
+                            embedded_dataset.embedded_dataset_id,
+                            e
+                        );
+                    }
+
+                    let prefix = format!(
+                        "embedded-datasets/embedded-dataset-{}/",
+                        embedded_dataset.embedded_dataset_id
+                    );
+                    match semantic_explorer_core::storage::delete_files_by_prefix(
+                        &s3, &bucket, &prefix,
+                    )
+                    .await
+                    {
+                        Ok(count) => {
+                            if count > 0 {
+                                info!(
+                                    embedded_dataset_id = embedded_dataset.embedded_dataset_id,
+                                    deleted_files = count,
+                                    "Background cleanup: cleaned up S3 batch files for deleted embedded dataset"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            error!(
+                                "Background cleanup: failed to cleanup S3 batch files for embedded dataset {}: {}",
+                                embedded_dataset.embedded_dataset_id, e
+                            );
+                        }
+                    }
+                }
+                info!(
+                    dataset_id,
+                    "Background cleanup completed for deleted dataset"
+                );
+            });
+
             HttpResponse::Ok().finish()
         }
         Err(e) => {

@@ -13,7 +13,6 @@
 		VisualizationTransform,
 	} from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
-	import { createSSEConnection, type SSEConnection } from '../utils/sse';
 	import { formatDate } from '../utils/ui-helpers';
 
 	interface PaginatedEmbedderList {
@@ -59,8 +58,10 @@
 	let transformsLoading = $state(false);
 	let visualizationTransformStatsMap = $state<Map<number, any>>(new Map());
 
-	// SSE connection for real-time visualization transform status updates
-	let sseConnection: SSEConnection | null = null;
+	// Polling for real-time visualization transform status updates
+	let pollTimer: ReturnType<typeof setInterval> | null = null;
+	let isPolling = false;
+	const POLL_INTERVAL_MS = 5000;
 
 	let points = $state<QdrantPoint[]>([]);
 	let pointsLoading = $state(false);
@@ -410,26 +411,26 @@
 		return `${rate.toFixed(1)}%`;
 	}
 
-	function connectSSE() {
-		sseConnection = createSSEConnection({
-			url: `/api/visualization-transforms/stream?embedded_dataset_id=${embeddedDatasetId}`,
-			onStatus: () => {
-				// Refresh visualization transforms and their stats
-				fetchVisualizationTransforms();
-			},
-			onMaxRetriesReached: () => {
-				console.warn('SSE connection lost for visualization transforms');
-			},
-		});
-	}
-
 	onMount(() => {
 		fetchEmbeddedDataset();
-		connectSSE();
+
+		// Poll for visualization transform status updates every 5 seconds
+		pollTimer = setInterval(async () => {
+			if (isPolling) return;
+			isPolling = true;
+			try {
+				await fetchVisualizationTransforms();
+			} finally {
+				isPolling = false;
+			}
+		}, POLL_INTERVAL_MS);
 	});
 
 	onDestroy(() => {
-		sseConnection?.disconnect();
+		if (pollTimer) {
+			clearInterval(pollTimer);
+			pollTimer = null;
+		}
 	});
 </script>
 

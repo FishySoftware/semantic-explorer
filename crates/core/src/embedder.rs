@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -19,6 +19,16 @@ static EMBEDDING_SEMAPHORE: OnceLock<Arc<Semaphore>> = OnceLock::new();
 
 /// Cached embedding inference API URL (set once at startup)
 static EMBEDDING_INFERENCE_API_URL: OnceLock<String> = OnceLock::new();
+
+/// Server-reported estimated wait time in milliseconds (from X-Estimated-Wait-Ms header).
+/// Workers can read this to proactively pace requests instead of waiting for 503s.
+static SERVER_ESTIMATED_WAIT_MS: AtomicU64 = AtomicU64::new(0);
+
+/// Server-reported queue depth (from X-Queue-Depth header).
+static SERVER_QUEUE_DEPTH: AtomicU64 = AtomicU64::new(0);
+
+/// Server-reported queue capacity (from X-Queue-Capacity header).
+static SERVER_QUEUE_CAPACITY: AtomicU64 = AtomicU64::new(0);
 
 /// Initialize the embedding client configuration.
 ///
@@ -41,9 +51,105 @@ pub fn init_embedder(api_url: &str, max_concurrent_requests: usize) {
 /// Workers can poll this to throttle NATS consumption.
 static DOWNSTREAM_PRESSURE: AtomicBool = AtomicBool::new(false);
 
+/// Timestamp (epoch secs) when DOWNSTREAM_PRESSURE was last set to true.
+/// Used for auto-clearing after a timeout so the system can recover when
+/// the embedding service has shed load but no successful response has
+/// flowed through yet to clear the flag.
+static DOWNSTREAM_PRESSURE_SET_AT: AtomicU64 = AtomicU64::new(0);
+
+/// Auto-clear timeout for DOWNSTREAM_PRESSURE (seconds).
+/// If no successful response clears the flag within this window, we
+/// optimistically reset it so adaptive concurrency can ramp back up.
+const DOWNSTREAM_PRESSURE_TIMEOUT_SECS: u64 = 60;
+
 /// Check if the downstream embedding service is signalling overload.
+/// Auto-clears after `DOWNSTREAM_PRESSURE_TIMEOUT_SECS` if no success has
+/// reset the flag, preventing permanent pressure lock when all requests fail.
 pub fn is_downstream_under_pressure() -> bool {
-    DOWNSTREAM_PRESSURE.load(Ordering::Relaxed)
+    if !DOWNSTREAM_PRESSURE.load(Ordering::Relaxed) {
+        return false;
+    }
+
+    let set_at = DOWNSTREAM_PRESSURE_SET_AT.load(Ordering::Relaxed);
+    if set_at > 0 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if now.saturating_sub(set_at) >= DOWNSTREAM_PRESSURE_TIMEOUT_SECS {
+            // Auto-clear: pressure has been set for too long without a success
+            tracing::info!(
+                timeout_secs = DOWNSTREAM_PRESSURE_TIMEOUT_SECS,
+                "Auto-clearing downstream pressure flag after timeout"
+            );
+            DOWNSTREAM_PRESSURE.store(false, Ordering::Relaxed);
+            DOWNSTREAM_PRESSURE_SET_AT.store(0, Ordering::Relaxed);
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Get the server-reported estimated wait time in milliseconds.
+/// Returns 0 when no data is available yet.
+pub fn server_estimated_wait_ms() -> u64 {
+    SERVER_ESTIMATED_WAIT_MS.load(Ordering::Relaxed)
+}
+
+/// Check if the embedding server queue is becoming congested.
+/// Returns true when the queue is more than 50% full.
+pub fn is_server_queue_congested() -> bool {
+    let depth = SERVER_QUEUE_DEPTH.load(Ordering::Relaxed);
+    let capacity = SERVER_QUEUE_CAPACITY.load(Ordering::Relaxed);
+    capacity > 0 && depth * 2 > capacity
+}
+
+/// Adaptive inter-request pacing delay based on server-side queue state.
+/// Returns a Duration that callers should wait between batch submissions
+/// to maintain smooth throughput without overwhelming the embedder.
+///
+/// When the server queue is empty, returns Duration::ZERO (no pacing needed).
+/// When the queue is filling up, returns a delay proportional to the
+/// server-reported EMA latency × queue depth to prevent further buildup.
+pub fn adaptive_pacing_delay() -> Duration {
+    let wait_ms = SERVER_ESTIMATED_WAIT_MS.load(Ordering::Relaxed);
+    let depth = SERVER_QUEUE_DEPTH.load(Ordering::Relaxed);
+    let capacity = SERVER_QUEUE_CAPACITY.load(Ordering::Relaxed);
+
+    if capacity == 0 || depth == 0 {
+        return Duration::ZERO;
+    }
+
+    // Scale delay: when queue is nearly empty, no delay.
+    // When >50% full, add proportional delay.
+    let fill_ratio = depth as f64 / capacity as f64;
+    if fill_ratio < 0.25 {
+        Duration::ZERO
+    } else {
+        // Add a fraction of the estimated wait as pacing delay
+        let delay_ms = (wait_ms as f64 * fill_ratio).min(5000.0) as u64;
+        Duration::from_millis(delay_ms)
+    }
+}
+
+/// Update cached server-side backpressure metrics from response headers.
+fn update_server_backpressure(resp: &reqwest::Response) {
+    if let Some(val) = resp.headers().get("X-Estimated-Wait-Ms")
+        && let Ok(ms) = val.to_str().unwrap_or("0").parse::<u64>()
+    {
+        SERVER_ESTIMATED_WAIT_MS.store(ms, Ordering::Relaxed);
+    }
+    if let Some(val) = resp.headers().get("X-Queue-Depth")
+        && let Ok(d) = val.to_str().unwrap_or("0").parse::<u64>()
+    {
+        SERVER_QUEUE_DEPTH.store(d, Ordering::Relaxed);
+    }
+    if let Some(val) = resp.headers().get("X-Queue-Capacity")
+        && let Ok(c) = val.to_str().unwrap_or("0").parse::<u64>()
+    {
+        SERVER_QUEUE_CAPACITY.store(c, Ordering::Relaxed);
+    }
 }
 
 fn get_embedding_inference_api_url() -> &'static str {
@@ -73,12 +179,41 @@ pub async fn generate_batch_embeddings(
         }
     };
 
+    // Acquire a job-level semaphore permit BEFORE sending any batches.
+    // This ensures one embedding job completes all its batches before another
+    // job can start, preventing multiple concurrent jobs from flooding the
+    // embedding service queue and causing VRAM exhaustion (ORT BFCArena
+    // expansion starving Qwen3/candle of GPU memory).
+    let _job_permit = EMBEDDING_SEMAPHORE
+        .get()
+        .expect("Embedding semaphore not initialized — call init_embedder() from main")
+        .acquire()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to acquire embedding semaphore permit: {}", e))?;
+
+    tracing::debug!(
+        texts = texts.len(),
+        batch_size = effective_batch_size,
+        "Acquired embedding job permit, starting batch processing"
+    );
+
     if texts.len() <= effective_batch_size {
         return process_single_batch(config, texts).await;
     }
 
     let mut all_embeddings = Vec::new();
     for chunk in texts.chunks(effective_batch_size) {
+        // Apply adaptive pacing between batches to avoid overwhelming the embedder.
+        // The delay is derived from server-reported queue state (zero when idle).
+        let pacing = adaptive_pacing_delay();
+        if !pacing.is_zero() {
+            tracing::debug!(
+                pacing_ms = pacing.as_millis(),
+                "Pacing between embedding batches"
+            );
+            sleep(pacing).await;
+        }
+
         let embeddings = process_single_batch(config, chunk.to_vec()).await?;
         all_embeddings.extend(embeddings);
     }
@@ -176,8 +311,13 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
         }
     }
 
-    // Max retries for embedding operations (hardcoded — no env var needed)
+    // Max retries for embedding operations.
+    // For 503 (VRAM pressure) we fail fast after 2 attempts — the VRAM
+    // situation won't resolve in seconds, and NATS redelivery (with NAK
+    // delay) is a better retry granularity for resource exhaustion.
     let max_retries: u32 = 5;
+    let max_503_retries: u32 = 2;
+    let mut consecutive_503s: u32 = 0;
     let mut last_error = None;
     let mut used_server_retry_delay = false; // Track if we already waited per server's Retry-After
 
@@ -194,16 +334,6 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
         }
         used_server_retry_delay = false; // Reset for this attempt
 
-        // Acquire permit from global semaphore to limit concurrent embedding requests
-        let _permit = EMBEDDING_SEMAPHORE
-            .get()
-            .expect("Embedding semaphore not initialized — call init_embedder() from main")
-            .acquire()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to acquire embedding semaphore permit: {}", e))?;
-
-        tracing::debug!(texts = texts.len(), "Acquired embedding request permit");
-
         let request = req
             .try_clone()
             .ok_or_else(|| anyhow::anyhow!("Failed to clone request for retry"))?;
@@ -211,11 +341,15 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
         match request.send().await {
             Ok(resp) => {
                 if resp.status().is_success() {
+                    // Read server-side backpressure headers before consuming body
+                    update_server_backpressure(&resp);
+
                     let response_body: serde_json::Value = resp.json().await?;
                     let result = parse_embeddings_response(config, response_body);
 
                     // Clear downstream pressure on success
                     DOWNSTREAM_PRESSURE.store(false, Ordering::Relaxed);
+                    DOWNSTREAM_PRESSURE_SET_AT.store(0, Ordering::Relaxed);
 
                     // Aggregate metrics: record once per batch with total duration
                     let batch_duration = batch_start.elapsed().as_secs_f64();
@@ -246,6 +380,11 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
                 if status == reqwest::StatusCode::SERVICE_UNAVAILABLE {
                     // Signal downstream pressure to upstream workers
                     DOWNSTREAM_PRESSURE.store(true, Ordering::Relaxed);
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    DOWNSTREAM_PRESSURE_SET_AT.store(now, Ordering::Relaxed);
 
                     let retry_after = resp
                         .headers()
@@ -255,11 +394,37 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
                         .unwrap_or(5);
 
                     let text = resp.text().await.unwrap_or_default();
+
+                    consecutive_503s += 1;
                     tracing::warn!(
                         attempt = attempt,
                         retry_after_secs = retry_after,
+                        consecutive_503s = consecutive_503s,
+                        max_503_retries = max_503_retries,
                         "Embedding service at capacity (503), backing off"
                     );
+
+                    // Fail fast on persistent VRAM pressure — retrying won't
+                    // help, let the job NAK so NATS can redeliver later.
+                    if consecutive_503s >= max_503_retries {
+                        tracing::warn!(
+                            consecutive_503s = consecutive_503s,
+                            "Aborting batch: persistent 503 from embedding service"
+                        );
+                        // Record failure metrics
+                        let batch_duration = batch_start.elapsed().as_secs_f64();
+                        crate::observability::record_embedding_batch(
+                            model_name,
+                            batch_duration,
+                            chunk_count,
+                            false,
+                        );
+                        return Err(anyhow::anyhow!(
+                            "Embedding service persistently at capacity after {} consecutive 503 responses: {}",
+                            consecutive_503s,
+                            text
+                        ));
+                    }
 
                     // Use the server-suggested retry delay (skip exponential backoff on next iteration)
                     if attempt < max_retries {

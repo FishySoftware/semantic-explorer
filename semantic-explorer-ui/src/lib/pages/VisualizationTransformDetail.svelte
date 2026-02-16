@@ -5,7 +5,7 @@
 	import PageHeader from '../components/PageHeader.svelte';
 	import VisualizationProgressBanner from '../components/VisualizationProgressBanner.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
-	import { formatDate } from '../utils/ui-helpers';
+	import { formatDate, formatDuration } from '../utils/ui-helpers';
 
 	interface Props {
 		visualizationTransformId: number;
@@ -111,6 +111,14 @@
 	let showProgressBanner = $derived(
 		!progressDismissed && (isTransformProcessing || processingRuns.length > 0)
 	);
+
+	/** Convert a snake_case key to a human-readable Title Case label. */
+	function formatStatLabel(key: string): string {
+		return key
+			.split('_')
+			.map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+			.join(' ');
+	}
 
 	// Polling interval for auto-refresh
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -475,30 +483,17 @@
 		</div>
 
 		<!-- Configuration Card -->
-		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
-			<Heading tag="h3" class="text-lg font-bold mb-4">Visualization Configuration</Heading>
-			<div class="space-y-2">
-				{#if transform.visualization_config}
-					{#each Object.entries(transform.visualization_config) as [key, value] (key)}
-						<div>
-							<h4 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">{key}</h4>
-							{#if typeof value === 'object'}
-								<pre
-									class="text-sm font-mono bg-gray-50 dark:bg-gray-900 rounded-lg p-3 overflow-x-auto text-gray-900 dark:text-gray-100">{JSON.stringify(
-										value,
-										null,
-										2
-									)}</pre>
-							{:else}
-								<p class="text-sm font-medium text-gray-900 dark:text-white">{value}</p>
-							{/if}
-						</div>
-					{/each}
-				{:else}
-					<p class="text-sm text-gray-500 dark:text-gray-400">No visualization configuration set</p>
-				{/if}
+		{#if transform.visualization_config && Object.keys(transform.visualization_config).length > 0}
+			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
+				<Heading tag="h3" class="text-lg font-bold mb-4">Visualization Configuration</Heading>
+				<pre
+					class="text-sm font-mono bg-gray-50 dark:bg-gray-900 rounded-lg p-4 overflow-auto max-h-[60vh] whitespace-pre-wrap text-gray-900 dark:text-gray-100">{JSON.stringify(
+						transform.visualization_config,
+						null,
+						2
+					)}</pre>
 			</div>
-		</div>
+		{/if}
 
 		<!-- Additional Fields -->
 		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
@@ -545,7 +540,7 @@
 					<div class="grid grid-cols-2 md:grid-cols-4 gap-3">
 						{#each Object.entries(transform.last_run_stats) as [key, value] (key)}
 							<div>
-								<p class="text-xs text-gray-500 dark:text-gray-400">{key}</p>
+								<p class="text-xs text-gray-500 dark:text-gray-400">{formatStatLabel(key)}</p>
 								<p class="text-sm font-semibold text-gray-900 dark:text-white">
 									{typeof value === 'object' ? JSON.stringify(value) : value}
 								</p>
@@ -656,11 +651,13 @@
 									<td class="px-4 py-3">{visualization.embedding_count}</td>
 									<td class="px-4 py-3">{visualization.cluster_count}</td>
 									<td class="px-4 py-3">
-										{#if visualization.started_at && visualization.completed_at}
-											{Math.round(
+										{#if visualization.stats_json?.processing_duration_ms != null}
+											{formatDuration(visualization.stats_json.processing_duration_ms as number)}
+										{:else if visualization.started_at && visualization.completed_at}
+											{formatDuration(
 												new Date(visualization.completed_at).getTime() -
 													new Date(visualization.started_at).getTime()
-											)}ms
+											)}
 										{:else}
 											-
 										{/if}

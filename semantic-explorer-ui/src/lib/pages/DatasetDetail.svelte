@@ -18,7 +18,6 @@
 		PaginatedItems,
 	} from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
-	import { createSSEConnection, type SSEConnection } from '../utils/sse';
 	import { formatDate } from '../utils/ui-helpers';
 
 	interface Props {
@@ -72,9 +71,10 @@
 		{ id: 'embeddings', label: 'Embeddings', icon: '🧬' },
 	];
 
-	// SSE connection for real-time transform status updates
-	let datasetSSE: SSEConnection | null = null;
-	let sseRefreshTimeout: ReturnType<typeof setTimeout> | null = null;
+	// Polling for real-time transform status updates
+	let pollTimer: ReturnType<typeof setInterval> | null = null;
+	let isPolling = false;
+	const POLL_INTERVAL_MS = 5000;
 
 	// Initialize search query from hash URL parameter early
 	function getInitialSearchQuery(): string {
@@ -516,37 +516,21 @@
 		}
 	}
 
-	function connectSSE() {
-		// Connect to dataset transforms stream (for transforms that process this dataset)
-		// Dataset transforms use source_dataset_id in their subject for filtering
-		datasetSSE = createSSEConnection({
-			url: `/api/dataset-transforms/stream?dataset_id=${datasetId}`,
-			onStatus: (data: unknown) => {
-				const status = data as { dataset_transform_id?: number };
-				if (status.dataset_transform_id) {
-					fetchDatasetTransformStats(status.dataset_transform_id);
-
-					// Debounced refresh of transforms list to ensure new transforms are shown
-					// This helps catch newly created transforms that might not appear immediately
-					if (sseRefreshTimeout) {
-						clearTimeout(sseRefreshTimeout);
-					}
-					sseRefreshTimeout = setTimeout(() => {
-						fetchDatasetTransforms();
-					}, 500); // Debounce for 500ms
-				}
-			},
-			onMaxRetriesReached: () => {
-				console.warn('SSE connection lost for dataset transforms');
-			},
-		});
-	}
-
 	onMount(() => {
 		fetchDataset();
 		fetchDatasetTransforms();
-		connectSSE();
 		fetchItems();
+
+		// Poll for transform status updates every 5 seconds
+		pollTimer = setInterval(async () => {
+			if (isPolling) return;
+			isPolling = true;
+			try {
+				await fetchDatasetTransforms();
+			} finally {
+				isPolling = false;
+			}
+		}, POLL_INTERVAL_MS);
 
 		return () => {
 			if (searchFetchTimeout) {
@@ -556,14 +540,13 @@
 	});
 
 	onDestroy(() => {
-		datasetSSE?.disconnect();
+		if (pollTimer) {
+			clearInterval(pollTimer);
+			pollTimer = null;
+		}
 		// Clean up any pending search fetch
 		if (searchFetchTimeout) {
 			clearTimeout(searchFetchTimeout);
-		}
-		// Clean up SSE refresh timeout
-		if (sseRefreshTimeout) {
-			clearTimeout(sseRefreshTimeout);
 		}
 	});
 </script>
