@@ -89,12 +89,17 @@ const COUNT_DATASET_ITEMS_WITH_SEARCH_QUERY: &str = r#"
     SELECT COUNT(*) as count FROM dataset_items WHERE dataset_id = $1 AND title ILIKE $2
 "#;
 
-const GET_DATASET_ITEMS_MODIFIED_SINCE_QUERY: &str = r#"
+/// Scanner query: fetches dataset items with item_id > last_processed_item_id.
+/// Uses item_id (PostgreSQL SERIAL, monotonically increasing) as the watermark
+/// instead of timestamps. This eliminates the MVCC race condition where concurrent
+/// transactions insert items with created_at timestamps BEFORE the scanner's
+/// query_start_time, causing them to be permanently skipped.
+const GET_DATASET_ITEMS_FOR_SCANNER_QUERY: &str = r#"
     SELECT item_id, dataset_id, title, chunks, metadata, created_at, COALESCE(updated_at, created_at) as updated_at
     FROM dataset_items
-    WHERE dataset_id = $1 AND COALESCE(updated_at, created_at) >= $2
-    ORDER BY COALESCE(updated_at, created_at) ASC, item_id ASC
-    LIMIT $3 OFFSET $4
+    WHERE dataset_id = $1 AND item_id > $2
+    ORDER BY item_id ASC
+    LIMIT $3
 "#;
 
 /// Get the dataset's version (updated_at timestamp) for efficient stats refresh (#4)
@@ -497,32 +502,24 @@ pub(crate) async fn count_dataset_items_with_search(
     Ok(count.0)
 }
 
-#[tracing::instrument(name = "database.get_dataset_items_modified_since", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", dataset_id = %dataset_id))]
-pub(crate) async fn get_dataset_items_modified_since(
+/// Fetch dataset items for the scanner using item_id-based watermark.
+/// Uses `item_id > last_processed_item_id` to find new items, which is safe under
+/// concurrent inserts because PostgreSQL SERIAL IDs are monotonically increasing.
+/// Pass `last_processed_item_id = 0` for the initial scan (fetches all items).
+#[tracing::instrument(name = "database.get_dataset_items_for_scanner", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", dataset_id = %dataset_id))]
+pub(crate) async fn get_dataset_items_for_scanner(
     pool: &Pool<Postgres>,
     dataset_id: i32,
-    since_timestamp: Option<DateTime<Utc>>,
+    last_processed_item_id: i32,
     limit: i64,
-    offset: i64,
 ) -> Result<Vec<DatasetItem>> {
-    let query = if let Some(timestamp) = since_timestamp {
-        sqlx::query_as::<_, DatasetItem>(GET_DATASET_ITEMS_MODIFIED_SINCE_QUERY)
-            .bind(dataset_id)
-            .bind(timestamp)
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(pool)
-            .await?
-    } else {
-        // If no timestamp provided, return all items (still respecting caller's pagination)
-        sqlx::query_as::<_, DatasetItem>(GET_DATASET_ITEMS_QUERY)
-            .bind(dataset_id)
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(pool)
-            .await?
-    };
-    Ok(query)
+    let items = sqlx::query_as::<_, DatasetItem>(GET_DATASET_ITEMS_FOR_SCANNER_QUERY)
+        .bind(dataset_id)
+        .bind(last_processed_item_id)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+    Ok(items)
 }
 
 /// Get the dataset's version (updated_at timestamp) for efficient stats refresh (#4)

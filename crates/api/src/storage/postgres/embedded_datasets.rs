@@ -29,6 +29,7 @@ struct EmbeddedDatasetWithCount {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub last_processed_at: Option<DateTime<Utc>>,
+    pub last_processed_item_id: Option<i32>,
     pub source_dataset_version: Option<DateTime<Utc>>,
     pub total_count: i64,
 }
@@ -51,6 +52,7 @@ impl EmbeddedDatasetWithCount {
                 created_at: r.created_at,
                 updated_at: r.updated_at,
                 last_processed_at: r.last_processed_at,
+                last_processed_item_id: r.last_processed_item_id,
                 source_dataset_version: r.source_dataset_version,
             })
             .collect();
@@ -65,7 +67,7 @@ const COUNT_EMBEDDED_DATASETS_BY_EMBEDDER_QUERY: &str = r#"
 
 const GET_EMBEDDED_DATASET_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
+           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, last_processed_item_id, source_dataset_version
     FROM embedded_datasets
     WHERE embedded_dataset_id = $1 AND owner_id = $2
 "#;
@@ -73,14 +75,14 @@ const GET_EMBEDDED_DATASET_QUERY: &str = r#"
 /// Get embedded dataset by ID without owner check (privileged, for internal use only)
 const GET_EMBEDDED_DATASET_BY_ID_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
+           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, last_processed_item_id, source_dataset_version
     FROM embedded_datasets
     WHERE embedded_dataset_id = $1
 "#;
 
 const GET_EMBEDDED_DATASETS_PAGINATED_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version,
+           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, last_processed_item_id, source_dataset_version,
            COUNT(*) OVER() AS total_count
     FROM embedded_datasets
     WHERE owner_id = $1
@@ -90,7 +92,7 @@ const GET_EMBEDDED_DATASETS_PAGINATED_QUERY: &str = r#"
 
 const GET_EMBEDDED_DATASETS_WITH_SEARCH_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version,
+           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, last_processed_item_id, source_dataset_version,
            COUNT(*) OVER() AS total_count
     FROM embedded_datasets
     WHERE owner_id = $1 AND title ILIKE $2
@@ -100,7 +102,7 @@ const GET_EMBEDDED_DATASETS_WITH_SEARCH_QUERY: &str = r#"
 
 const GET_EMBEDDED_DATASETS_FOR_DATASET_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
+           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, last_processed_item_id, source_dataset_version
     FROM embedded_datasets
     WHERE source_dataset_id = $1 AND owner_id = $2
     ORDER BY created_at DESC
@@ -109,7 +111,7 @@ const GET_EMBEDDED_DATASETS_FOR_DATASET_QUERY: &str = r#"
 
 const GET_EMBEDDED_DATASETS_FOR_TRANSFORM_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
+           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, last_processed_item_id, source_dataset_version
     FROM embedded_datasets
     WHERE dataset_transform_id = $1
     ORDER BY created_at DESC
@@ -146,7 +148,7 @@ const CREATE_EMBEDDED_DATASET_QUERY: &str = r#"
     INSERT INTO embedded_datasets (title, dataset_transform_id, source_dataset_id, embedder_id, owner_id, owner_display_name, collection_name, dimensions)
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
     RETURNING embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
+              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, last_processed_item_id, source_dataset_version
 "#;
 
 const UPDATE_EMBEDDED_DATASET_COLLECTION_NAME_QUERY: &str = r#"
@@ -155,7 +157,7 @@ const UPDATE_EMBEDDED_DATASET_COLLECTION_NAME_QUERY: &str = r#"
         updated_at = NOW()
     WHERE embedded_dataset_id = $1
     RETURNING embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
+              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, last_processed_item_id, source_dataset_version
 "#;
 
 const UPDATE_EMBEDDED_DATASET_TITLE_QUERY: &str = r#"
@@ -164,7 +166,7 @@ const UPDATE_EMBEDDED_DATASET_TITLE_QUERY: &str = r#"
         updated_at = NOW()
     WHERE embedded_dataset_id = $1 AND owner_id = $3
     RETURNING embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
+              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, last_processed_item_id, source_dataset_version
 "#;
 
 const DELETE_EMBEDDED_DATASET_QUERY: &str = r#"
@@ -251,7 +253,8 @@ const GET_EMBEDDED_DATASET_INFO_QUERY: &str = r#"
 
 const UPDATE_EMBEDDED_DATASET_LAST_PROCESSED_AT_QUERY: &str = r#"
     UPDATE embedded_datasets
-    SET last_processed_at = $2
+    SET last_processed_at = $2,
+        last_processed_item_id = $3
     WHERE embedded_dataset_id = $1
 "#;
 
@@ -311,7 +314,7 @@ const CREATE_STANDALONE_EMBEDDED_DATASET_QUERY: &str = r#"
     INSERT INTO embedded_datasets (title, dataset_transform_id, source_dataset_id, embedder_id, owner_id, owner_display_name, collection_name, dimensions)
     VALUES ($1, 0, 0, 0, $2, $3, $4, $5)
     RETURNING embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
+              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, last_processed_item_id, source_dataset_version
 "#;
 
 /// Count how many embedded datasets reference a given embedder.
@@ -593,16 +596,19 @@ pub async fn delete_processed_batches_for_retry(
     Ok(result.rows_affected())
 }
 
-/// Update the last_processed_at timestamp to a specific value
-/// This prevents race conditions where items created between query and update are missed
+/// Update the last_processed_at timestamp and last_processed_item_id to specific values.
+/// Uses composite (timestamp, item_id) watermark for correct keyset pagination
+/// when items share the same timestamp (common with batch inserts).
 pub async fn update_embedded_dataset_last_processed_at_to(
     pool: &Pool<Postgres>,
     embedded_dataset_id: i32,
     timestamp: DateTime<Utc>,
+    last_processed_item_id: Option<i32>,
 ) -> Result<()> {
     sqlx::query(UPDATE_EMBEDDED_DATASET_LAST_PROCESSED_AT_QUERY)
         .bind(embedded_dataset_id)
         .bind(timestamp)
+        .bind(last_processed_item_id)
         .execute(pool)
         .await?;
     Ok(())
