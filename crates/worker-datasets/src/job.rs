@@ -141,6 +141,49 @@ pub(crate) async fn process_dataset_transform_job(
     }
 
     let texts: Vec<&str> = items.iter().map(|i| i.text.as_str()).collect();
+
+    // Pre-embedding abort check: verify batch file still exists in S3.
+    // If the transform was deleted, the API cleans up S3 batch files so workers
+    // can detect deletion and abort BEFORE wasting embedding tokens.
+    match semantic_explorer_core::storage::file_exists(
+        &ctx.s3_client,
+        &job.bucket,
+        &job.batch_file_key,
+    )
+    .await
+    {
+        Ok(false) => {
+            let duration = start_time.elapsed().as_secs_f64();
+            record_worker_job("dataset-transform", duration, "aborted_deleted");
+            warn!(
+                batch_file = %job.batch_file_key,
+                dataset_transform_id = job.dataset_transform_id,
+                "Batch file deleted from S3 — transform likely cancelled. Aborting before embedding."
+            );
+            send_result(
+                &ctx.nats_client,
+                &job,
+                Err((
+                    0,
+                    "Batch file no longer exists (transform deleted)".to_string(),
+                )),
+                Some((duration * 1000.0) as i64),
+            )
+            .await?;
+            return Ok(());
+        }
+        Ok(true) => { /* File still exists, proceed normally */ }
+        Err(e) => {
+            // HEAD request failed for a reason other than NotFound — log and proceed
+            // to avoid false-positive aborts on transient S3 issues
+            warn!(
+                error = %e,
+                batch_file = %job.batch_file_key,
+                "Failed to verify batch file existence, proceeding with embedding"
+            );
+        }
+    }
+
     info!(
         chunk_count,
         batch_size = job.batch_size,

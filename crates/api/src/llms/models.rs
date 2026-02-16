@@ -18,7 +18,7 @@ fn default_limit() -> i64 {
     20
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub(crate) struct PaginatedLLMList {
     pub(crate) items: Vec<LargeLanguageModel>,
     pub(crate) total_count: i64,
@@ -40,7 +40,7 @@ pub(crate) struct CreateLLM {
 }
 
 #[allow(non_camel_case_types)]
-#[derive(Serialize, ToSchema, FromRow, Clone)]
+#[derive(Serialize, Deserialize, ToSchema, FromRow, Clone)]
 pub(crate) struct LargeLanguageModel {
     pub(crate) llm_id: i32,
     pub(crate) name: String,

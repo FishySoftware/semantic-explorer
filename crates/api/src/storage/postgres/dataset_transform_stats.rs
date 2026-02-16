@@ -1,9 +1,7 @@
 use crate::transforms::dataset::models::DatasetTransformStats;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use semantic_explorer_core::observability::record_database_query;
 use sqlx::{Pool, Postgres, Transaction};
-use std::time::Instant;
 
 const INIT_STATS_QUERY: &str = r#"
     INSERT INTO dataset_transform_stats (
@@ -91,30 +89,6 @@ const REFRESH_TOTAL_CHUNKS_QUERY: &str = r#"
     RETURNING dts.total_chunks_to_process
 "#;
 
-const GET_BATCH_STATS_QUERY: &str = r#"
-    SELECT 
-        dt.dataset_transform_id,
-        COALESCE(array_length(dt.embedder_ids, 1), 0)::INTEGER as embedder_count,
-        COALESCE(dts.successful_batches, 0)::BIGINT as successful_batches,
-        COALESCE(dts.failed_batches, 0)::BIGINT as failed_batches,
-        COALESCE(dts.processing_batches, 0)::BIGINT as processing_batches,
-        (COALESCE(dts.successful_batches, 0) + COALESCE(dts.failed_batches, 0) + COALESCE(dts.processing_batches, 0))::BIGINT as total_batches_processed,
-        COALESCE(dts.total_chunks_embedded, 0)::BIGINT as total_chunks_embedded,
-        COALESCE(dts.total_chunks_processing, 0)::BIGINT as total_chunks_processing,
-        COALESCE(dts.total_chunks_failed, 0)::BIGINT as total_chunks_failed,
-        COALESCE(dts.total_chunks_to_process, 0)::BIGINT as total_chunks_to_process,
-        COALESCE(dts.total_batches_dispatched, 0)::BIGINT as total_batches_dispatched,
-        COALESCE(dts.total_chunks_dispatched, 0)::BIGINT as total_chunks_dispatched,
-        dts.current_run_id,
-        dts.current_run_started_at,
-        dts.last_processed_at as last_run_at,
-        dts.first_processing_at
-    FROM dataset_transforms dt
-    LEFT JOIN dataset_transform_stats dts ON dts.dataset_transform_id = dt.dataset_transform_id
-    WHERE dt.dataset_transform_id = ANY($1) AND dt.owner_id = $2
-    ORDER BY dt.dataset_transform_id
-"#;
-
 pub async fn initialize_stats(
     tx: &mut Transaction<'_, Postgres>,
     dataset_transform_id: i32,
@@ -197,21 +171,11 @@ pub async fn get_stats(
     owner_id: &str,
     dataset_transform_id: i32,
 ) -> Result<Option<DatasetTransformStats>> {
-    let start = Instant::now();
-
     let result = sqlx::query_as::<_, DatasetTransformStats>(GET_STATS_QUERY)
         .bind(dataset_transform_id)
         .bind(owner_id)
         .fetch_optional(pool)
         .await;
-
-    let duration = start.elapsed().as_secs_f64();
-    record_database_query(
-        "SELECT",
-        "dataset_transform_stats",
-        duration,
-        result.is_ok(),
-    );
 
     let stats = result.with_context(|| {
         format!(
@@ -219,21 +183,6 @@ pub async fn get_stats(
             dataset_transform_id, owner_id
         )
     })?;
-
-    Ok(stats)
-}
-
-pub async fn get_batch_stats(
-    pool: &Pool<Postgres>,
-    owner_id: &str,
-    dataset_transform_ids: &[i32],
-) -> Result<Vec<DatasetTransformStats>> {
-    let stats = sqlx::query_as::<_, DatasetTransformStats>(GET_BATCH_STATS_QUERY)
-        .bind(dataset_transform_ids)
-        .bind(owner_id)
-        .fetch_all(pool)
-        .await
-        .context("Failed to get batch dataset transform stats")?;
 
     Ok(stats)
 }

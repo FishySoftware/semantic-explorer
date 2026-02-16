@@ -6,10 +6,47 @@ use crate::storage::postgres::embedded_datasets::{
 use crate::transforms::dataset::models::{DatasetTransform, DatasetTransformStats};
 use anyhow::{Context, Result};
 use semantic_explorer_core::models::PaginatedResponse;
-use semantic_explorer_core::observability::record_database_query;
 use semantic_explorer_core::owner_info::OwnerInfo;
-use sqlx::{Pool, Postgres, Transaction};
-use std::time::Instant;
+use sqlx::types::chrono::{DateTime, Utc};
+use sqlx::{FromRow, Pool, Postgres, Transaction};
+
+/// Helper struct for paginated queries that include total_count via COUNT(*) OVER()
+#[derive(Debug, Clone, FromRow)]
+struct DatasetTransformWithCount {
+    pub dataset_transform_id: i32,
+    pub title: String,
+    pub source_dataset_id: i32,
+    pub embedder_ids: Vec<i32>,
+    pub owner_id: String,
+    pub owner_display_name: String,
+    pub is_enabled: bool,
+    pub job_config: serde_json::Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub total_count: i64,
+}
+
+impl DatasetTransformWithCount {
+    fn into_parts(rows: Vec<Self>) -> (i64, Vec<DatasetTransform>) {
+        let total_count = rows.first().map_or(0, |r| r.total_count);
+        let items = rows
+            .into_iter()
+            .map(|r| DatasetTransform {
+                dataset_transform_id: r.dataset_transform_id,
+                title: r.title,
+                source_dataset_id: r.source_dataset_id,
+                embedder_ids: r.embedder_ids,
+                owner_id: r.owner_id,
+                owner_display_name: r.owner_display_name,
+                is_enabled: r.is_enabled,
+                job_config: r.job_config,
+                created_at: r.created_at,
+                updated_at: r.updated_at,
+            })
+            .collect();
+        (total_count, items)
+    }
+}
 
 fn validate_sort_field(sort_by: &str) -> Result<&'static str> {
     match sort_by {
@@ -87,65 +124,60 @@ const DELETE_DATASET_TRANSFORM_QUERY: &str = r#"
     WHERE dataset_transform_id = $1 AND owner_id = $2
 "#;
 
-const COUNT_DATASET_TRANSFORMS_QUERY: &str =
-    "SELECT COUNT(*) as count FROM dataset_transforms WHERE owner_id = $1";
-const COUNT_DATASET_TRANSFORMS_WITH_SEARCH_QUERY: &str =
-    "SELECT COUNT(*) as count FROM dataset_transforms WHERE title ILIKE $1 AND owner_id = $2";
-
 // Static sort query variants for plan caching
 // Each sort field/direction combination is a separate const
 const DT_PAGINATED_TITLE_ASC: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
-           job_config, created_at, updated_at
+           job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM dataset_transforms
     WHERE owner_id = $1
     ORDER BY title ASC LIMIT $2 OFFSET $3
 "#;
 const DT_PAGINATED_TITLE_DESC: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
-           job_config, created_at, updated_at
+           job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM dataset_transforms
     WHERE owner_id = $1
     ORDER BY title DESC LIMIT $2 OFFSET $3
 "#;
 const DT_PAGINATED_IS_ENABLED_ASC: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
-           job_config, created_at, updated_at
+           job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM dataset_transforms
     WHERE owner_id = $1
     ORDER BY is_enabled ASC LIMIT $2 OFFSET $3
 "#;
 const DT_PAGINATED_IS_ENABLED_DESC: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
-           job_config, created_at, updated_at
+           job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM dataset_transforms
     WHERE owner_id = $1
     ORDER BY is_enabled DESC LIMIT $2 OFFSET $3
 "#;
 const DT_PAGINATED_CREATED_AT_ASC: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
-           job_config, created_at, updated_at
+           job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM dataset_transforms
     WHERE owner_id = $1
     ORDER BY created_at ASC LIMIT $2 OFFSET $3
 "#;
 const DT_PAGINATED_CREATED_AT_DESC: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
-           job_config, created_at, updated_at
+           job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM dataset_transforms
     WHERE owner_id = $1
     ORDER BY created_at DESC LIMIT $2 OFFSET $3
 "#;
 const DT_PAGINATED_UPDATED_AT_ASC: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
-           job_config, created_at, updated_at
+           job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM dataset_transforms
     WHERE owner_id = $1
     ORDER BY updated_at ASC LIMIT $2 OFFSET $3
 "#;
 const DT_PAGINATED_UPDATED_AT_DESC: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
-           job_config, created_at, updated_at
+           job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM dataset_transforms
     WHERE owner_id = $1
     ORDER BY updated_at DESC LIMIT $2 OFFSET $3
@@ -153,56 +185,56 @@ const DT_PAGINATED_UPDATED_AT_DESC: &str = r#"
 
 const DT_SEARCH_TITLE_ASC: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
-           job_config, created_at, updated_at
+           job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM dataset_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY title ASC LIMIT $3 OFFSET $4
 "#;
 const DT_SEARCH_TITLE_DESC: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
-           job_config, created_at, updated_at
+           job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM dataset_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY title DESC LIMIT $3 OFFSET $4
 "#;
 const DT_SEARCH_IS_ENABLED_ASC: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
-           job_config, created_at, updated_at
+           job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM dataset_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY is_enabled ASC LIMIT $3 OFFSET $4
 "#;
 const DT_SEARCH_IS_ENABLED_DESC: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
-           job_config, created_at, updated_at
+           job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM dataset_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY is_enabled DESC LIMIT $3 OFFSET $4
 "#;
 const DT_SEARCH_CREATED_AT_ASC: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
-           job_config, created_at, updated_at
+           job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM dataset_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY created_at ASC LIMIT $3 OFFSET $4
 "#;
 const DT_SEARCH_CREATED_AT_DESC: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
-           job_config, created_at, updated_at
+           job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM dataset_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY created_at DESC LIMIT $3 OFFSET $4
 "#;
 const DT_SEARCH_UPDATED_AT_ASC: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
-           job_config, created_at, updated_at
+           job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM dataset_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY updated_at ASC LIMIT $3 OFFSET $4
 "#;
 const DT_SEARCH_UPDATED_AT_DESC: &str = r#"
     SELECT dataset_transform_id, title, source_dataset_id, embedder_ids, owner_id, owner_display_name, is_enabled,
-           job_config, created_at, updated_at
+           job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM dataset_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY updated_at DESC LIMIT $3 OFFSET $4
@@ -234,8 +266,6 @@ fn get_dt_search_query(sort_field: &str, sort_dir: &str) -> &'static str {
     }
 }
 
-const VERIFY_DATASET_TRANSFORM_OWNERSHIP_QUERY: &str = "SELECT dataset_transform_id FROM dataset_transforms WHERE dataset_transform_id = ANY($1) AND owner_id = $2";
-
 // Old expensive query removed - now using dataset_transform_stats table
 // See dataset_transform_stats::get_stats() for the replacement
 
@@ -244,16 +274,11 @@ pub async fn get_dataset_transform(
     owner: &str,
     dataset_transform_id: i32,
 ) -> Result<DatasetTransform> {
-    let start = Instant::now();
-
     let result = sqlx::query_as::<_, DatasetTransform>(GET_DATASET_TRANSFORM_QUERY)
         .bind(dataset_transform_id)
         .bind(owner)
         .fetch_one(pool)
         .await;
-
-    let duration = start.elapsed().as_secs_f64();
-    record_database_query("SELECT", "dataset_transforms", duration, result.is_ok());
 
     let transform = result?;
     Ok(transform)
@@ -284,22 +309,13 @@ pub async fn get_dataset_transforms_paginated(
     let sort_field = validate_sort_field(sort_by)?;
     let sort_dir = validate_sort_direction(sort_direction)?;
 
-    let start = Instant::now();
-
     let (total_count, transforms) = if let Some(search_term) = search {
         let search_pattern = format!("%{}%", search_term);
 
-        let count_result: (i64,) = sqlx::query_as(COUNT_DATASET_TRANSFORMS_WITH_SEARCH_QUERY)
-            .bind(&search_pattern)
-            .bind(owner)
-            .fetch_one(pool)
-            .await?;
-        let total = count_result.0;
-
-        // Use static query variant for plan caching
+        // Use static query variant for plan caching (includes COUNT(*) OVER())
         let query_str = get_dt_search_query(sort_field, sort_dir);
 
-        let items = sqlx::query_as::<_, DatasetTransform>(query_str)
+        let rows = sqlx::query_as::<_, DatasetTransformWithCount>(query_str)
             .bind(&search_pattern)
             .bind(owner)
             .bind(limit)
@@ -307,29 +323,20 @@ pub async fn get_dataset_transforms_paginated(
             .fetch_all(pool)
             .await?;
 
-        (total, items)
+        DatasetTransformWithCount::into_parts(rows)
     } else {
-        let count_result: (i64,) = sqlx::query_as(COUNT_DATASET_TRANSFORMS_QUERY)
-            .bind(owner)
-            .fetch_one(pool)
-            .await?;
-        let total = count_result.0;
-
-        // Use static query variant for plan caching
+        // Use static query variant for plan caching (includes COUNT(*) OVER())
         let query_str = get_dt_paginated_query(sort_field, sort_dir);
 
-        let items = sqlx::query_as::<_, DatasetTransform>(query_str)
+        let rows = sqlx::query_as::<_, DatasetTransformWithCount>(query_str)
             .bind(owner)
             .bind(limit)
             .bind(offset)
             .fetch_all(pool)
             .await?;
 
-        (total, items)
+        DatasetTransformWithCount::into_parts(rows)
     };
-
-    let duration = start.elapsed().as_secs_f64();
-    record_database_query("SELECT", "dataset_transforms", duration, true);
 
     Ok(PaginatedResponse {
         items: transforms,
@@ -486,28 +493,6 @@ pub async fn delete_dataset_transform(
     Ok(())
 }
 
-// Batch ownership verification
-
-/// Verifies ownership of multiple dataset transforms in a single query.
-/// Returns the IDs that exist and are owned by the user.
-pub async fn verify_dataset_transform_ownership(
-    pool: &Pool<Postgres>,
-    owner: &str,
-    dataset_transform_ids: &[i32],
-) -> Result<Vec<i32>> {
-    if dataset_transform_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let owned_ids: Vec<(i32,)> = sqlx::query_as(VERIFY_DATASET_TRANSFORM_OWNERSHIP_QUERY)
-        .bind(dataset_transform_ids)
-        .bind(owner)
-        .fetch_all(pool)
-        .await?;
-
-    Ok(owned_ids.into_iter().map(|(id,)| id).collect())
-}
-
 // Statistics
 
 pub async fn get_dataset_transform_stats(
@@ -526,30 +511,6 @@ pub async fn get_dataset_transform_stats(
             )
         })?;
     Ok(stats)
-}
-
-pub async fn get_batch_dataset_transform_stats(
-    pool: &Pool<Postgres>,
-    owner: &str,
-    dataset_transform_ids: &[i32],
-) -> Result<std::collections::HashMap<i32, DatasetTransformStats>> {
-    use std::collections::HashMap;
-
-    if dataset_transform_ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-
-    // Use the new efficient stats table - single simple query with indexes
-    let stats_list =
-        super::dataset_transform_stats::get_batch_stats(pool, owner, dataset_transform_ids).await?;
-
-    // Convert Vec to HashMap
-    let stats_map = stats_list
-        .into_iter()
-        .map(|stats| (stats.dataset_transform_id, stats))
-        .collect();
-
-    Ok(stats_map)
 }
 
 // Helper functions

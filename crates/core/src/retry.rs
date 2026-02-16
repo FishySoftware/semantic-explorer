@@ -227,9 +227,10 @@ where
     retry_with_policy(&RetryPolicy::default(), operation_name, operation).await
 }
 
-/// Retry policy specifically configured for Qdrant operations
+/// Retry policy specifically configured for Qdrant operations.
+/// Uses longer delays to accommodate cluster consensus formation.
 pub fn qdrant_retry_policy() -> RetryPolicy {
-    RetryPolicy::default()
+    RetryPolicy::from_env_with_prefix("QDRANT_RETRY")
 }
 
 /// Retry policy specifically configured for S3 operations

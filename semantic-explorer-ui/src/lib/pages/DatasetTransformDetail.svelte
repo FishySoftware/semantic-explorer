@@ -2,7 +2,15 @@
 	import { Heading } from 'flowbite-svelte';
 	import { onDestroy, onMount } from 'svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
+	import DatasetTransformProgressPanel from '../components/DatasetTransformProgressPanel.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
+	import type {
+		DatasetTransform,
+		DatasetTransformBatch,
+		DatasetTransformStats,
+		DetailedStatsResponse,
+		EmbedderStats,
+	} from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { formatDate } from '../utils/ui-helpers';
 
@@ -14,18 +22,6 @@
 
 	let { datasetTransformId, onBack, onNavigate }: Props = $props();
 
-	interface DatasetTransform {
-		dataset_transform_id: number;
-		title: string;
-		source_dataset_id: number;
-		embedder_ids: number[];
-		owner: string;
-		is_enabled: boolean;
-		job_config: any;
-		created_at: string;
-		updated_at: string;
-	}
-
 	interface Dataset {
 		dataset_id: number;
 		title: string;
@@ -36,64 +32,8 @@
 		name: string;
 	}
 
-	interface Stats {
-		dataset_transform_id: number;
-		embedder_count: number;
-		total_batches_processed: number;
-		successful_batches: number;
-		failed_batches: number;
-		processing_batches: number;
-		total_chunks_embedded: number;
-		total_chunks_processing: number;
-		total_chunks_failed: number;
-		total_chunks_to_process: number;
-		status: string;
-		is_processing: boolean;
-		last_run_at: string | null;
-		first_processing_at: string | null;
-	}
-
-	interface EmbedderStats {
-		embedded_dataset_id: number;
-		embedder_id: number;
-		collection_name: string;
-		title: string;
-		total_batches_processed: number;
-		successful_batches: number;
-		failed_batches: number;
-		processing_batches: number;
-		total_chunks_embedded: number;
-		total_chunks_failed: number;
-		total_chunks_processing: number;
-		last_run_at: string | null;
-		first_processing_at: string | null;
-		avg_processing_duration_ms: number | null;
-		is_processing: boolean;
-		error?: string;
-	}
-
-	interface DetailedStatsResponse {
-		dataset_transform_id: number;
-		title: string;
-		aggregate: Stats;
-		per_embedder: EmbedderStats[];
-	}
-
-	interface Batch {
-		id: number;
-		dataset_transform_id: number;
-		batch_key: string;
-		processed_at: string;
-		status: string;
-		chunk_count: number;
-		error_message: string | null;
-		processing_duration_ms: number | null;
-		created_at: string;
-		updated_at: string;
-	}
-
 	interface PaginatedBatchesResponse {
-		items: Batch[];
+		items: DatasetTransformBatch[];
 		total_count: number;
 		limit: number;
 		offset: number;
@@ -102,14 +42,18 @@
 	let transform = $state<DatasetTransform | null>(null);
 	let sourceDataset = $state<Dataset | null>(null);
 	let embedders = $state<Embedder[]>([]);
-	let stats = $state<Stats | null>(null);
+	let stats = $state<DatasetTransformStats | null>(null);
 	let embedderStats = $state<EmbedderStats[]>([]);
-	let batches = $state<Batch[]>([]);
+	let batches = $state<DatasetTransformBatch[]>([]);
 	let totalBatchesCount = $state(0);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let retrying = $state(false);
 	let showRetryConfirm = $state(false);
+	let retryingBatchId = $state<number | null>(null);
+	let showSingleRetryConfirm = $state(false);
+	let singleRetryBatch = $state<DatasetTransformBatch | null>(null);
+	let progressDismissed = $state(false);
 
 	// Edit mode state
 	let editMode = $state(false);
@@ -127,18 +71,55 @@
 
 	// Sort state for batches
 	let batchSortBy = $state('processed_at');
-	let batchSortDirection = $state('desc');
-
-	// SSE connection state
-	let eventSource: EventSource | null = null;
-	let reconnectAttempts = 0;
-	let maxReconnectAttempts = 10;
-	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-	let isMounted = false; // Track if component is still mounted
+	let batchSortDirection = $state<'asc' | 'desc'>('desc');
 
 	// Polling interval for auto-refresh
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
+	let isPolling = false;
 	const POLL_INTERVAL_MS = 5000;
+
+	// Derived: progress panel data
+	let progressOverallStatus = $derived.by<
+		'processing' | 'completed' | 'completed_with_errors' | 'failed'
+	>(() => {
+		if (!stats) return 'processing';
+		if (stats.is_processing) return 'processing';
+		if (stats.status === 'completed') return 'completed';
+		if (stats.status === 'completed_with_errors') return 'completed_with_errors';
+		if (stats.status === 'failed') return 'failed';
+		return 'processing';
+	});
+
+	let embedderProgresses = $derived.by(() => {
+		if (!embedderStats.length) return [];
+		return embedderStats.map((es) => {
+			let status: 'pending' | 'processing' | 'completed' | 'failed' = 'pending';
+			if (es.error) status = 'failed';
+			else if (es.is_processing) status = 'processing';
+			else if (es.is_completed) status = 'completed';
+			else if (es.total_chunks_embedded > 0) status = 'processing';
+
+			// Use the expected total from the source dataset (ground truth),
+			// falling back to the sum of tracked chunks if not available
+			const totalItems =
+				es.total_chunks_expected > 0
+					? es.total_chunks_expected
+					: es.total_chunks_embedded + es.total_chunks_processing + es.total_chunks_failed;
+			return {
+				embedder_id: es.embedder_id,
+				embedder_name: es.title,
+				status,
+				items_processed: es.total_chunks_embedded,
+				total_items: totalItems,
+				embeddings_count: es.total_chunks_embedded,
+				error: es.error,
+			};
+		});
+	});
+
+	let showProgressPanel = $derived(
+		!progressDismissed && stats !== null && stats.total_chunks_to_process > 0
+	);
 
 	async function fetchTransform() {
 		try {
@@ -152,7 +133,6 @@
 
 			transform = await response.json();
 
-			// Fetch related resources
 			if (transform?.source_dataset_id) {
 				await fetchSourceDataset(transform.source_dataset_id);
 			}
@@ -167,10 +147,7 @@
 
 	async function fetchSourceDataset(id: number) {
 		try {
-			const response = await fetch(`/api/datasets/${id}`, {
-				credentials: 'include',
-			});
-
+			const response = await fetch(`/api/datasets/${id}`, { credentials: 'include' });
 			if (response.ok) {
 				sourceDataset = await response.json();
 			}
@@ -181,10 +158,7 @@
 
 	async function fetchEmbedders(ids: number[]) {
 		try {
-			const response = await fetch('/api/embedders', {
-				credentials: 'include',
-			});
-
+			const response = await fetch('/api/embedders', { credentials: 'include' });
 			if (response.ok) {
 				const data = await response.json();
 				const allEmbedders: Embedder[] = data.items || [];
@@ -192,40 +166,6 @@
 			}
 		} catch (e) {
 			console.error('Error fetching embedders:', e);
-		}
-	}
-
-	async function retryFailedBatches() {
-		retrying = true;
-		showRetryConfirm = false;
-		try {
-			const response = await fetch(`/api/dataset-transforms/${datasetTransformId}/retry-failed`, {
-				method: 'POST',
-				credentials: 'include',
-			});
-			if (!response.ok) {
-				const errorText = await response.text();
-				throw new Error(`Failed to retry: ${errorText}`);
-			}
-			const result = await response.json();
-			if (result.retried_count > 0) {
-				toastStore.success(
-					`${result.retried_count} batch job(s) re-submitted for processing.`,
-					'Retry Started'
-				);
-			} else if (result.stats_reconciled) {
-				toastStore.info('No failed batches found. Stats have been reconciled.', 'Stats Corrected');
-			} else {
-				toastStore.info('No failed batches to retry.', 'Nothing to Retry');
-			}
-			// Refresh stats and batches immediately
-			await Promise.all([fetchDetailedStats(), fetchBatches()]);
-		} catch (e) {
-			const msg = e instanceof Error ? e.message : 'Unknown error';
-			toastStore.error(msg, 'Retry Failed');
-			console.error('Error retrying failed batches:', e);
-		} finally {
-			retrying = false;
 		}
 	}
 
@@ -258,9 +198,7 @@
 			});
 			const response = await fetch(
 				`/api/dataset-transforms/${datasetTransformId}/batches?${params}`,
-				{
-					credentials: 'include',
-				}
+				{ credentials: 'include' }
 			);
 
 			if (!response.ok) {
@@ -273,6 +211,68 @@
 			totalBatchesCount = data.total_count ?? 0;
 		} catch (e) {
 			console.error('Error fetching batches:', e);
+		}
+	}
+
+	async function retryFailedBatches() {
+		retrying = true;
+		showRetryConfirm = false;
+		try {
+			const response = await fetch(`/api/dataset-transforms/${datasetTransformId}/retry-failed`, {
+				method: 'POST',
+				credentials: 'include',
+			});
+			if (!response.ok) {
+				const errorText = await response.text();
+				throw new Error(`Failed to retry: ${errorText}`);
+			}
+			const result = await response.json();
+			if (result.retried_count > 0) {
+				toastStore.success(
+					`${result.retried_count} batch job(s) re-submitted for processing.`,
+					'Retry Started'
+				);
+			} else if (result.stats_reconciled) {
+				toastStore.info('No failed batches found. Stats have been reconciled.', 'Stats Corrected');
+			} else {
+				toastStore.info('No failed batches to retry.', 'Nothing to Retry');
+			}
+			await Promise.all([fetchDetailedStats(), fetchBatches()]);
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : 'Unknown error';
+			toastStore.error(msg, 'Retry Failed');
+			console.error('Error retrying failed batches:', e);
+		} finally {
+			retrying = false;
+		}
+	}
+
+	async function retrySingleBatch() {
+		if (!singleRetryBatch) return;
+		const batch = singleRetryBatch;
+		retryingBatchId = batch.id;
+		showSingleRetryConfirm = false;
+		singleRetryBatch = null;
+		try {
+			const response = await fetch(
+				`/api/dataset-transforms/${datasetTransformId}/batches/${batch.id}/retry`,
+				{
+					method: 'POST',
+					credentials: 'include',
+				}
+			);
+			if (!response.ok) {
+				const errorText = await response.text();
+				throw new Error(`Failed to retry batch: ${errorText}`);
+			}
+			toastStore.success(`Batch re-submitted for processing.`, 'Retry Started');
+			await Promise.all([fetchDetailedStats(), fetchBatches()]);
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : 'Unknown error';
+			toastStore.error(msg, 'Retry Failed');
+			console.error('Error retrying single batch:', e);
+		} finally {
+			retryingBatchId = null;
 		}
 	}
 
@@ -297,6 +297,29 @@
 		batchesCurrentPage = 1;
 		fetchBatches();
 	}
+
+	onMount(async () => {
+		loading = true;
+		await Promise.all([fetchTransform(), fetchDetailedStats(), fetchBatches()]);
+		loading = false;
+
+		pollTimer = setInterval(async () => {
+			if (isPolling) return;
+			isPolling = true;
+			try {
+				await Promise.all([fetchDetailedStats(), fetchBatches()]);
+			} finally {
+				isPolling = false;
+			}
+		}, POLL_INTERVAL_MS);
+	});
+
+	onDestroy(() => {
+		if (pollTimer) {
+			clearInterval(pollTimer);
+			pollTimer = null;
+		}
+	});
 
 	function startEdit() {
 		if (!transform) return;
@@ -392,102 +415,6 @@
 			deleting = false;
 		}
 	}
-
-	function connectSSE() {
-		// Close existing connection first
-		disconnectSSE();
-
-		try {
-			eventSource = new EventSource('/api/dataset-transforms/stream');
-
-			eventSource.addEventListener('heartbeat', () => {
-				// Keep connection alive
-			});
-
-			eventSource.addEventListener('status', (event) => {
-				try {
-					const statusUpdate = JSON.parse(event.data);
-					// If this is an update for our transform, refresh stats and batches
-					// API sends transform_id (generic) not dataset_transform_id
-					if (statusUpdate.transform_id === datasetTransformId) {
-						fetchDetailedStats();
-						fetchBatches();
-					}
-				} catch (e) {
-					console.error('Failed to parse SSE status event:', e);
-				}
-			});
-
-			eventSource.onerror = () => {
-				eventSource?.close();
-				eventSource = null;
-				reconnectSSE();
-			};
-
-			reconnectAttempts = 0;
-		} catch (e) {
-			console.error('Failed to connect to SSE stream:', e);
-			reconnectSSE();
-		}
-	}
-
-	function reconnectSSE() {
-		if (!isMounted) {
-			// Component has been unmounted, don't attempt reconnection
-			return;
-		}
-
-		if (reconnectAttempts >= maxReconnectAttempts) {
-			console.error('Max SSE reconnection attempts reached');
-			return;
-		}
-
-		const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 60000);
-		reconnectAttempts++;
-
-		reconnectTimer = setTimeout(() => {
-			if (isMounted) {
-				connectSSE();
-			}
-		}, delay);
-	}
-
-	function disconnectSSE() {
-		if (reconnectTimer) {
-			clearTimeout(reconnectTimer);
-			reconnectTimer = null;
-		}
-		if (eventSource) {
-			eventSource.close();
-			eventSource = null;
-		}
-		reconnectAttempts = 0;
-	}
-
-	onMount(async () => {
-		isMounted = true;
-		loading = true;
-		await Promise.all([fetchTransform(), fetchDetailedStats(), fetchBatches()]);
-		loading = false;
-		connectSSE();
-
-		// Auto-refresh stats and batches every 5 seconds
-		pollTimer = setInterval(() => {
-			if (isMounted) {
-				fetchDetailedStats();
-				fetchBatches();
-			}
-		}, POLL_INTERVAL_MS);
-	});
-
-	onDestroy(() => {
-		isMounted = false;
-		disconnectSSE();
-		if (pollTimer) {
-			clearInterval(pollTimer);
-			pollTimer = null;
-		}
-	});
 </script>
 
 <div class="mx-auto">
@@ -516,6 +443,20 @@
 			<p class="text-red-600 dark:text-red-400">{error}</p>
 		</div>
 	{:else if transform}
+		<!-- Processing Progress Panel -->
+		{#if showProgressPanel && stats}
+			<DatasetTransformProgressPanel
+				{datasetTransformId}
+				title={transform.title}
+				sourceDatasetTitle={sourceDataset?.title ?? `Dataset #${transform.source_dataset_id}`}
+				{embedderProgresses}
+				overallStatus={progressOverallStatus}
+				totalItemsProcessed={stats.total_chunks_embedded}
+				totalItems={stats.total_chunks_to_process}
+				startedAt={stats.first_processing_at ?? undefined}
+			/>
+		{/if}
+
 		<!-- Transform Info Card -->
 		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
 			<div class="flex justify-between items-start mb-4">
@@ -671,7 +612,7 @@
 				<div class="flex items-center justify-between mb-4">
 					<Heading tag="h3" class="text-xl font-bold">Aggregate Embedding Statistics</Heading>
 					<div class="flex items-center gap-2">
-						{#if stats.failed_batches > 0 && !stats.is_processing}
+						{#if stats.failed_batches > 0}
 							<button
 								onclick={() => (showRetryConfirm = true)}
 								disabled={retrying}
@@ -932,6 +873,9 @@
 										{/if}
 									</button>
 								</th>
+								<th class="px-4 py-3">
+									<span class="font-semibold text-gray-900 dark:text-white">Actions</span>
+								</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -962,12 +906,58 @@
 										{batch.processing_duration_ms ? `${batch.processing_duration_ms}ms` : '-'}
 									</td>
 									<td class="px-4 py-3">{formatDate(batch.processed_at)}</td>
+									<td class="px-4 py-3">
+										{#if batch.status === 'failed'}
+											<button
+												onclick={() => {
+													singleRetryBatch = batch;
+													showSingleRetryConfirm = true;
+												}}
+												disabled={retryingBatchId === batch.id}
+												class="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full bg-orange-100 text-orange-700 hover:bg-orange-200 dark:bg-orange-900/20 dark:text-orange-400 dark:hover:bg-orange-900/40 disabled:opacity-50 transition-colors"
+											>
+												{#if retryingBatchId === batch.id}
+													<svg class="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+														<circle
+															class="opacity-25"
+															cx="12"
+															cy="12"
+															r="10"
+															stroke="currentColor"
+															stroke-width="4"
+														></circle>
+														<path
+															class="opacity-75"
+															fill="currentColor"
+															d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+														></path>
+													</svg>
+													Retrying
+												{:else}
+													<svg
+														class="h-3 w-3"
+														fill="none"
+														stroke="currentColor"
+														viewBox="0 0 24 24"
+													>
+														<path
+															stroke-linecap="round"
+															stroke-linejoin="round"
+															stroke-width="2"
+															d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+														/>
+													</svg>
+													Retry
+												{/if}
+											</button>
+										{/if}
+									</td>
 								</tr>
 								{#if batch.error_message}
 									<tr
 										class="bg-red-50 dark:bg-red-900/10 border-b border-gray-200 dark:border-gray-700"
 									>
-										<td colspan="5" class="px-4 py-2 text-xs text-red-600 dark:text-red-400">
+										<td colspan="6" class="px-4 py-2 text-xs text-red-600 dark:text-red-400">
 											Error: {batch.error_message}
 										</td>
 									</tr>
@@ -1061,6 +1051,36 @@
 					class="px-4 py-2 text-sm font-medium rounded-lg bg-orange-600 text-white hover:bg-orange-700"
 				>
 					Retry Failed Batches
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+<!-- Single Batch Retry Confirmation Dialog -->
+{#if showSingleRetryConfirm && singleRetryBatch}
+	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 max-w-md mx-4">
+			<h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">Retry Failed Batch</h3>
+			<p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+				This will retry the failed batch with {singleRetryBatch.chunk_count} chunk(s). The batch file
+				will be re-submitted for embedding.
+			</p>
+			<div class="flex justify-end gap-3">
+				<button
+					onclick={() => {
+						showSingleRetryConfirm = false;
+						singleRetryBatch = null;
+					}}
+					class="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+				>
+					Cancel
+				</button>
+				<button
+					onclick={retrySingleBatch}
+					class="px-4 py-2 text-sm font-medium rounded-lg bg-orange-600 text-white hover:bg-orange-700"
+				>
+					Retry Batch
 				</button>
 			</div>
 		</div>

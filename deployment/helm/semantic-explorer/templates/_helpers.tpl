@@ -390,6 +390,66 @@ Qdrant URL
 {{- end }}
 
 {{/*
+Valkey URL (master for writes)
+*/}}
+{{- define "semantic-explorer.valkey.url" -}}
+{{- if .Values.valkey.external.enabled }}
+{{- .Values.valkey.external.url }}
+{{- else if .Values.valkey.enabled }}
+{{- printf "redis://%s-valkey-master:%d" .Release.Name 6379 }}
+{{- else }}
+{{- "" }}
+{{- end }}
+{{- end }}
+
+{{/*
+Valkey Read URL (replica for reads, falls back to master)
+*/}}
+{{- define "semantic-explorer.valkey.readUrl" -}}
+{{- if and .Values.valkey.external.enabled .Values.valkey.external.readUrl }}
+{{- .Values.valkey.external.readUrl }}
+{{- else if .Values.valkey.external.enabled }}
+{{- .Values.valkey.external.url }}
+{{- else if .Values.valkey.enabled }}
+{{- if eq .Values.valkey.architecture "replication" }}
+{{- printf "redis://%s-valkey-replicas:%d" .Release.Name 6379 }}
+{{- else }}
+{{- printf "redis://%s-valkey-master:%d" .Release.Name 6379 }}
+{{- end }}
+{{- else }}
+{{- "" }}
+{{- end }}
+{{- end }}
+
+{{/*
+Valkey password secret name
+*/}}
+{{- define "semantic-explorer.valkey.secretName" -}}
+{{- if .Values.valkey.external.enabled }}
+{{- if .Values.valkey.external.existingSecret }}
+{{- .Values.valkey.external.existingSecret }}
+{{- else }}
+{{- printf "%s-valkey-external" (include "semantic-explorer.fullname" .) }}
+{{- end }}
+{{- else if .Values.valkey.auth.existingSecret }}
+{{- .Values.valkey.auth.existingSecret }}
+{{- else }}
+{{- printf "%s-valkey" .Release.Name }}
+{{- end }}
+{{- end }}
+
+{{/*
+Valkey password secret key
+*/}}
+{{- define "semantic-explorer.valkey.passwordKey" -}}
+{{- if .Values.valkey.external.enabled }}
+{{- .Values.valkey.external.passwordKey | default "password" }}
+{{- else }}
+{{- .Values.valkey.auth.existingSecretPasswordKey | default "password" }}
+{{- end }}
+{{- end }}
+
+{{/*
 Quickwit URL
 */}}
 {{- define "semantic-explorer.quickwit.url" -}}

@@ -32,7 +32,7 @@ Semantic Explorer is a microservices-based platform that enables organizations t
 6. **Chat with documents** via RAG (Retrieval-Augmented Generation) with streaming responses
 7. **Share resources** through a public marketplace for collaboration
 
-The platform uses a message-driven architecture with NATS JetStream for job orchestration, PostgreSQL for metadata, Qdrant for vector storage, and S3 for file storage.
+The platform uses a message-driven architecture with NATS JetStream for job orchestration, PostgreSQL for metadata, Qdrant for vector storage, Valkey for caching, and S3 for file storage.
 
 ---
 
@@ -75,6 +75,7 @@ graph TB
         PG[(PostgreSQL)]
         QD[(Qdrant)]
         S3[(S3 / MinIO)]
+        VK[(Valkey Cache)]
     end
 
     subgraph "Observability"
@@ -89,6 +90,7 @@ graph TB
     UI -->|Served by| API
     API -->|Publish Jobs| NATS
     API -->|SQL| PG
+    API -->|Cache| VK
     API -->|Vector Search| QD
     API -->|Files| S3
 
@@ -150,22 +152,22 @@ sequenceDiagram
     User->>UI: Upload files
     UI->>API: POST /api/collections/{id}/files
     API->>S3: Store files
-    API->>PG: Create Collection
-
-    User->>UI: Create CollectionTransform
-    UI->>API: POST /api/collection-transforms
-    API->>NATS: Publish to COLLECTION_TRANSFORMS
-    API-->>UI: Transform created
+    API->>NATS: Dispatch CollectionTransformJobs immediately
+    Note over API,NATS: Jobs dispatched inline for each enabled transform
 
     NATS->>WC: Consume job
     WC->>S3: Download files
     WC->>WC: Extract text & chunk
-    WC->>PG: Store chunks in Dataset
     WC->>NATS: Publish TRANSFORM_STATUS
 
-    User->>UI: Create DatasetTransform
-    UI->>API: POST /api/dataset-transforms
-    API->>NATS: Publish to DATASET_TRANSFORMS
+    NATS->>API: Result listener receives status
+    API->>PG: Create dataset items
+    API->>NATS: Trigger dataset transform scans
+    Note over API,NATS: Reactive trigger for each enabled dataset transform
+
+    NATS->>API: Trigger listener processes scan
+    API->>PG: Query unprocessed items, create batches
+    API->>NATS: Publish DatasetTransformJobs
 
     NATS->>WD: Consume job
     WD->>PG: Fetch chunks
@@ -486,6 +488,7 @@ semantic-explorer/
 | **PostgreSQL 16.3** | Metadata storage |
 | **Qdrant (GPU)** | Vector storage and search |
 | **MinIO** | Distributed S3-compatible storage (4-node cluster) |
+| **Valkey 8** | Shared cache for bearer tokens and resources (optional, Redis-compatible) |
 | **NATS 2.10** | Message queue (3-node JetStream cluster) |
 | **Dex** | OIDC authentication provider |
 | **Prometheus** | Metrics collection |
@@ -644,7 +647,8 @@ See [`deployment/helm/`](deployment/helm/) for detailed Helm chart configuration
 
 | Variable | Default | Required | Description |
 |-----------|----------|----------|-------------|
-| `RECONCILIATION_INTERVAL_SECS` | `300` | No | Interval for reconciliation job (recovers failed batch publishes) |
+| `RECONCILIATION_INTERVAL_SECS` | `300` | No | Interval for NATS-coordinated reconciliation (batch recovery + backfill scans for missed files). Only one replica runs reconciliation at a time. |
+| `STUCK_BATCH_THRESHOLD_HOURS` | `2` | No | Hours after which a processing batch is considered stuck |
 
 ### Scalability & Performance
 
@@ -848,6 +852,30 @@ OIDC_CLIENT_SECRET=your-secret
 ```
 
 Development includes Dex OIDC provider for testing.
+
+#### API Authentication (Bearer Token)
+
+All `/api/*` endpoints require authentication. Use the `Authorization: Bearer` header for programmatic access:
+
+```bash
+curl 'https://your-instance.example.com/api/users/@me' \
+  -H 'Authorization: Bearer <ACCESS_TOKEN>'
+```
+
+```python
+import requests
+
+headers = {'Authorization': 'Bearer <ACCESS_TOKEN>'}
+response = requests.get('https://your-instance.example.com/api/users/@me', headers=headers)
+print(response.json())
+```
+
+**Obtaining a token:**
+
+1. **From the UI**: Log in via the browser, then use `GET /api/auth/token` to retrieve your session's access token.
+2. **Programmatic flow**: Use `GET /api/auth/authorize` to get an OIDC authorization URL, authenticate, then exchange the code via `POST /api/token`.
+
+See the [API README](crates/api/README.md) for the full authentication flow.
 
 ### Encryption
 

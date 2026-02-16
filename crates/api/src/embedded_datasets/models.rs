@@ -46,6 +46,10 @@ pub struct EmbeddedDataset {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<String>, format = DateTime)]
     pub last_processed_at: Option<DateTime<Utc>>,
+    /// Last processed item_id for composite (timestamp, item_id) watermark.
+    /// Together with last_processed_at, enables progress through same-timestamp items.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_processed_item_id: Option<i32>,
     /// Tracks source dataset version for efficient stats refresh
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<String>, format = DateTime)]

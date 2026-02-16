@@ -11,8 +11,9 @@ use qdrant_client::Qdrant;
 use qdrant_client::qdrant::{CreateCollectionBuilder, Distance, VectorParams};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Global cache of Qdrant clients keyed by URL
 static QDRANT_CLIENTS: Lazy<RwLock<HashMap<String, Arc<Qdrant>>>> =
@@ -52,6 +53,21 @@ pub async fn get_or_create_client(
         builder = builder.api_key(key);
     }
 
+    // Apply timeouts matching the API's configuration to prevent hanging
+    // during cluster instability or consensus formation
+    let timeout_secs: u64 = std::env::var("QDRANT_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(30);
+    let connect_timeout_secs: u64 = std::env::var("QDRANT_CONNECT_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10);
+
+    builder = builder
+        .timeout(Duration::from_secs(timeout_secs))
+        .connect_timeout(Duration::from_secs(connect_timeout_secs));
+
     let client = builder
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to build Qdrant client: {e}"))?;
@@ -73,6 +89,8 @@ pub async fn get_or_create_client(
 
 /// Ensure a collection exists, creating it if necessary.
 /// Uses a local cache to avoid redundant collection_info() API calls.
+/// Retries transient failures with exponential backoff to handle Qdrant
+/// cluster consensus delays (common with 3+ replica clusters).
 ///
 /// Returns Ok if collection exists (or was created), Err on failure.
 pub async fn ensure_collection_exists(
@@ -95,19 +113,34 @@ pub async fn ensure_collection_exists(
         }
     }
 
-    // Not in cache, check with Qdrant
-    if client.collection_info(collection_name).await.is_ok() {
-        // Collection exists, add to cache
-        let mut known = KNOWN_COLLECTIONS.write().await;
-        known.insert(cache_key);
-        debug!(
-            collection = collection_name,
-            "Collection exists, added to cache"
-        );
-        return Ok(());
+    // Not in cache, check with Qdrant (with retry for transient failures)
+    match client.collection_info(collection_name).await {
+        Ok(_) => {
+            // Collection exists, add to cache
+            let mut known = KNOWN_COLLECTIONS.write().await;
+            known.insert(cache_key);
+            debug!(
+                collection = collection_name,
+                "Collection exists, added to cache"
+            );
+            return Ok(());
+        }
+        Err(e) => {
+            // Only proceed to creation if the error indicates the collection doesn't exist.
+            // If it's a transient/network error, we'll let the create retry loop handle it.
+            let err_str = e.to_string().to_lowercase();
+            let is_not_found = err_str.contains("not found") || err_str.contains("doesn't exist");
+            if !is_not_found {
+                warn!(
+                    collection = collection_name,
+                    error = %e,
+                    "collection_info failed with non-404 error, will attempt creation anyway"
+                );
+            }
+        }
     }
 
-    // Collection doesn't exist, create it
+    // Collection doesn't exist (or we couldn't check), create it with retry
     info!(
         collection = collection_name,
         vector_size = vector_size,
@@ -115,42 +148,90 @@ pub async fn ensure_collection_exists(
         "Creating collection"
     );
 
-    let create_collection = CreateCollectionBuilder::new(collection_name)
-        .vectors_config(VectorParams {
-            size: vector_size,
-            distance: Distance::Cosine.into(),
-            on_disk: Some(true), // Store vectors on disk for large collections
-            ..Default::default()
-        })
-        .on_disk_payload(true) // Store payloads on disk to reduce memory usage
-        .build();
+    let max_attempts: u32 = std::env::var("QDRANT_COLLECTION_CREATE_MAX_ATTEMPTS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5);
 
-    match client.create_collection(create_collection).await {
-        Ok(_) => {
-            info!(
-                collection = collection_name,
-                "Collection created successfully"
-            );
-            // Add to cache
-            let mut known = KNOWN_COLLECTIONS.write().await;
-            known.insert(cache_key);
-            Ok(())
-        }
-        Err(e) => {
-            // Handle race condition: collection may have been created by another worker
-            let error_str = e.to_string();
-            if error_str.contains("already exists") {
+    let mut last_error = None;
+
+    for attempt in 1..=max_attempts {
+        let create_collection = CreateCollectionBuilder::new(collection_name)
+            .vectors_config(VectorParams {
+                size: vector_size,
+                distance: Distance::Cosine.into(),
+                on_disk: Some(true), // Store vectors on disk for large collections
+                ..Default::default()
+            })
+            .on_disk_payload(true) // Store payloads on disk to reduce memory usage
+            .build();
+
+        match client.create_collection(create_collection).await {
+            Ok(_) => {
                 info!(
                     collection = collection_name,
-                    "Collection already exists (created by another worker), continuing"
+                    attempt = attempt,
+                    "Collection created successfully"
                 );
-                // Add to cache since it exists
                 let mut known = KNOWN_COLLECTIONS.write().await;
                 known.insert(cache_key);
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!("Failed to create collection: {}", e))
+                return Ok(());
+            }
+            Err(e) => {
+                let error_str = e.to_string();
+
+                // Handle race condition: collection may have been created by another worker
+                if error_str.contains("already exists") {
+                    info!(
+                        collection = collection_name,
+                        "Collection already exists (created by another worker), continuing"
+                    );
+                    let mut known = KNOWN_COLLECTIONS.write().await;
+                    known.insert(cache_key);
+                    return Ok(());
+                }
+
+                // Check if this is a retryable error (GRPC errors, timeouts, consensus issues)
+                let error_lower = error_str.to_lowercase();
+                let is_retryable = error_lower.contains("timeout")
+                    || error_lower.contains("unavailable")
+                    || error_lower.contains("connection")
+                    || error_lower.contains("broken pipe")
+                    || error_lower.contains("consensus")
+                    || error_lower.contains("transport")
+                    || error_lower.contains("internal");
+
+                if is_retryable && attempt < max_attempts {
+                    // Exponential backoff: 1s, 2s, 4s, 8s
+                    let delay = Duration::from_secs(1u64 << (attempt - 1).min(4));
+                    warn!(
+                        collection = collection_name,
+                        attempt = attempt,
+                        max_attempts = max_attempts,
+                        delay_secs = delay.as_secs(),
+                        error = %e,
+                        "Retryable error creating collection, will retry"
+                    );
+                    tokio::time::sleep(delay).await;
+                    last_error = Some(error_str);
+                    continue;
+                }
+
+                // Non-retryable or exhausted retries
+                return Err(anyhow::anyhow!(
+                    "Failed to create collection '{}' after {} attempt(s): {}",
+                    collection_name,
+                    attempt,
+                    error_str
+                ));
             }
         }
     }
+
+    Err(anyhow::anyhow!(
+        "Failed to create collection '{}' after {} attempts: {}",
+        collection_name,
+        max_attempts,
+        last_error.unwrap_or_else(|| "unknown error".to_string())
+    ))
 }

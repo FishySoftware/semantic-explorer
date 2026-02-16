@@ -351,9 +351,9 @@ data:
           "id": 15,
           "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "center", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
           "targets": [
-            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "100 * sum(database_connection_pool_active{namespace=\"{{ .Release.Namespace }}\"}) / clamp_min(sum(database_connection_pool_size{namespace=\"{{ .Release.Namespace }}\"}), 1)", "legendFormat": "Pool Usage", "refId": "A" }
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "100 * sum(database_connection_pool_size{namespace=\"{{ .Release.Namespace }}\"}) / clamp_min(sum(database_connection_pool_max{namespace=\"{{ .Release.Namespace }}\"}), 1)", "legendFormat": "Pool Allocation", "refId": "A" }
           ],
-          "title": "Connection Pool Usage",
+          "title": "Pool Allocation",
           "type": "stat"
         },
         {
@@ -397,9 +397,10 @@ data:
           "id": 17,
           "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
           "targets": [
-            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(database_connection_pool_size{namespace=\"{{ .Release.Namespace }}\"})", "legendFormat": "Pool Size", "refId": "A" },
-            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(database_connection_pool_active{namespace=\"{{ .Release.Namespace }}\"})", "legendFormat": "Active", "refId": "B" },
-            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(database_connection_pool_idle{namespace=\"{{ .Release.Namespace }}\"})", "legendFormat": "Idle", "refId": "C" }
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(database_connection_pool_max{namespace=\"{{ .Release.Namespace }}\"})", "legendFormat": "Max Configured", "refId": "A" },
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(database_connection_pool_size{namespace=\"{{ .Release.Namespace }}\"})", "legendFormat": "Allocated", "refId": "B" },
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(database_queries_in_flight{namespace=\"{{ .Release.Namespace }}\"})", "legendFormat": "Queries In Flight", "refId": "C" },
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(database_connection_pool_idle{namespace=\"{{ .Release.Namespace }}\"})", "legendFormat": "Idle", "refId": "D" }
           ],
           "title": "Connection Pool",
           "type": "timeseries"

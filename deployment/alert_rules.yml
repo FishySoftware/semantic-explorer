@@ -58,7 +58,7 @@ groups:
 
       - alert: DatabaseConnectionPoolExhausted
         expr: |
-          (database_connection_pool_active / database_connection_pool_size) > 0.8
+          (database_connection_pool_size / database_connection_pool_max) > 0.8
         for: 5m
         labels:
           severity: warning
@@ -66,8 +66,8 @@ groups:
         annotations:
           summary: "Database connection pool nearly exhausted"
           description: |
-            Currently using {{ $value | humanizePercentage }} of pool size.
-            This could indicate a connection leak or high load.
+            Pool allocation is at {{ $value | humanizePercentage }} of max configured connections.
+            This could indicate a connection leak or high sustained load.
 
       # NOTE: Replication lag monitoring requires postgres_exporter with replication stats enabled
       # This alert is a placeholder - enable if using CloudNativePG with monitoring enabled

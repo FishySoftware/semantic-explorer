@@ -66,12 +66,14 @@ pub async fn health_ready() -> impl Responder {
 pub async fn health_status(_config: web::Data<ModelConfig>) -> impl Responder {
     let embedding_ready = embedding::is_ready();
     let reranker_ready = reranker::is_ready();
-    let available_permits = embedding::available_permits();
+    let total_queue_depth = embedding::total_queue_depth();
+    let gpu_pressure = embedding::is_gpu_pressure_high();
 
     HttpResponse::Ok().json(serde_json::json!({
         "status": if embedding_ready { "ok" } else { "not_ready" },
         "embedding_ready": embedding_ready,
         "reranker_ready": reranker_ready,
-        "available_permits": available_permits
+        "total_queue_depth": total_queue_depth,
+        "gpu_vram_pressure": gpu_pressure
     }))
 }

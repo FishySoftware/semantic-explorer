@@ -29,6 +29,11 @@ echo "Downloading fonts for offline use..."
 cd "$SCRIPT_DIR"
 ./download_fonts.sh
 
+# Cache JS files for datamapplot offline mode
+echo ""
+echo "Caching JS dependencies for datamapplot offline mode..."
+python3 -c "from datamapplot.offline_mode_caching import cache_js_files; cache_js_files(); print('  ✓ JS dependencies cached')"
+
 echo ""
 echo "✓ Development environment ready!"
 echo ""

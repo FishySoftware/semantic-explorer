@@ -45,6 +45,7 @@ The library initializes these streams on startup:
 | `COLLECTION_TRANSFORMS` | `workers.collection-transform` | WorkQueue | File extraction jobs |
 | `DATASET_TRANSFORMS` | `workers.dataset-transform` | WorkQueue | Embedding generation jobs |
 | `VISUALIZATION_TRANSFORMS` | `workers.visualization-transform` | WorkQueue | UMAP/HDBSCAN jobs |
+| `SCANNER_TRIGGERS` | `scan.trigger.>` | WorkQueue | Event-driven transform triggers and NATS-coordinated reconciliation |
 | `DLQ_TRANSFORMS` | `dlq.*-transforms` | Limits (30 days) | Dead letter queue |
 | `TRANSFORM_STATUS` | `transforms.*.status.>` | Limits (1 hour) | SSE real-time updates |
 

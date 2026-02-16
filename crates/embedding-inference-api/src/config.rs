@@ -79,12 +79,20 @@ pub struct ModelConfig {
     /// If both are false/empty, no rerankers are loaded
     pub all_rerank_models: bool,
     pub allowed_rerank_models: Vec<String>,
-    /// Maximum batch size for embedding requests
+    /// Maximum batch size for embedding requests (API input validation)
     pub max_batch_size: usize,
-    /// Maximum concurrent embedding requests (for backpressure)
-    pub max_concurrent_requests: usize,
-    /// Queue timeout in milliseconds - how long to wait for a permit before 503
-    /// Setting this higher allows requests to queue briefly instead of immediate rejection
+    /// ONNX inference sub-batch size — how many texts are processed per
+    /// ONNX session.run() call.  Smaller values reduce peak GPU VRAM usage
+    /// because intermediate tensors (MatMul, attention) scale with batch size.
+    /// The model worker automatically chunks the full request into sub-batches
+    /// of this size.  Defaults to 32.
+    pub gpu_batch_size: usize,
+    /// Maximum queue depth per model — how many requests can be buffered
+    /// before the service returns 503. Each model has a dedicated worker thread
+    /// that processes requests sequentially from a bounded channel.
+    pub max_queue_depth: usize,
+    /// Queue timeout in milliseconds — how long to wait to enqueue before 503
+    /// Setting this higher allows requests to wait briefly for a queue slot
     pub queue_timeout_ms: u64,
     /// GPU pressure threshold percentage — reject requests above this % VRAM or compute utilization
     pub gpu_pressure_threshold: f64,
@@ -246,18 +254,30 @@ impl ModelConfig {
                 .unwrap_or_else(|_| "128".to_string())
                 .parse()
                 .context("INFERENCE_MAX_BATCH_SIZE must be a number")?,
-            max_concurrent_requests: env::var("INFERENCE_MAX_CONCURRENT_REQUESTS")
-                .unwrap_or_else(|_| "10".to_string())
+            gpu_batch_size: env::var("INFERENCE_GPU_BATCH_SIZE")
+                .unwrap_or_else(|_| "32".to_string())
                 .parse()
-                .context("INFERENCE_MAX_CONCURRENT_REQUESTS must be a number")?,
+                .context("INFERENCE_GPU_BATCH_SIZE must be a number")?,
+            max_queue_depth: env::var("INFERENCE_MAX_QUEUE_DEPTH")
+                .unwrap_or_else(|_| "8".to_string())
+                .parse()
+                .context("INFERENCE_MAX_QUEUE_DEPTH must be a number")?,
+            // Default 8: each model has a dedicated worker thread that processes
+            // requests sequentially. The queue depth controls how many requests
+            // can be buffered before returning 503.
             queue_timeout_ms: env::var("INFERENCE_QUEUE_TIMEOUT_MS")
-                .unwrap_or_else(|_| "5000".to_string())
+                .unwrap_or_else(|_| "30000".to_string())
                 .parse()
                 .context("INFERENCE_QUEUE_TIMEOUT_MS must be a number")?,
+            // Default 30s: callers should wait rather than get 503 and retry.
+            // This prevents retry storms in distributed deployments.
             gpu_pressure_threshold: env::var("GPU_PRESSURE_THRESHOLD")
-                .unwrap_or_else(|_| "95.0".to_string())
+                .unwrap_or_else(|_| "98.0".to_string())
                 .parse()
                 .context("GPU_PRESSURE_THRESHOLD must be a number")?,
+            // Default raised to 98%: the trickle-through mechanism in
+            // generate_embeddings() prevents deadlocks, and the wider arena
+            // margin (threshold - 10%) provides the real safety net.
             cuda_arena_size: match env::var("CUDA_ARENA_SIZE") {
                 Ok(val) if !val.trim().is_empty() && val.trim() != "0" => {
                     Some(parse_byte_size(&val).context(
@@ -316,9 +336,11 @@ impl ModelConfig {
         // so the arena cap is safe regardless of which device ORT targets.
         if let Some(min_vram) = gpu_monitor::get_min_device_vram() {
             let fraction = self.gpu_pressure_threshold / 100.0;
-            // Leave a 5% additional margin below the threshold for CUDA runtime overhead
-            // (cuDNN workspaces, kernel launches, etc. that live outside the ORT arena)
-            let effective_fraction = (fraction - 0.05).max(0.5);
+            // Leave a 10% additional margin below the threshold for CUDA runtime overhead
+            // (cuDNN workspaces, kernel launches, etc. that live outside the ORT arena).
+            // The wider margin also accounts for shared-GPU setups where another service
+            // (e.g. LLM inference) consumes VRAM on the same device.
+            let effective_fraction = (fraction - 0.10).max(0.5);
             let arena_limit = (min_vram as f64 * effective_fraction) as usize;
 
             // Log per-device VRAM for visibility in multi-GPU / MIG setups
@@ -383,11 +405,12 @@ mod tests {
             all_rerank_models: false,
             allowed_rerank_models: vec![],
             max_batch_size: 128,
-            max_concurrent_requests: 2,
-            queue_timeout_ms: 5000,
+            max_queue_depth: 8,
+            queue_timeout_ms: 30000,
             gpu_pressure_threshold: 95.0,
             cuda_arena_size: None,
             cuda_arena_extend_strategy: CudaArenaExtendStrategy::NextPowerOfTwo,
+            gpu_batch_size: 32,
         };
 
         assert_eq!(model.allowed_embedding_models.len(), 2);
@@ -411,11 +434,12 @@ mod tests {
             all_rerank_models: true,
             allowed_rerank_models: vec![],
             max_batch_size: 128,
-            max_concurrent_requests: 2,
-            queue_timeout_ms: 5000,
+            max_queue_depth: 8,
+            queue_timeout_ms: 30000,
             gpu_pressure_threshold: 95.0,
             cuda_arena_size: None,
             cuda_arena_extend_strategy: CudaArenaExtendStrategy::NextPowerOfTwo,
+            gpu_batch_size: 32,
         };
         assert!(config_all_allowed.is_embedding_model_allowed("any-model"));
         assert!(config_all_allowed.is_rerank_model_allowed("any-model"));
@@ -433,11 +457,12 @@ mod tests {
             all_rerank_models: false,
             allowed_rerank_models: vec!["BAAI/bge-reranker-base".to_string()],
             max_batch_size: 128,
-            max_concurrent_requests: 2,
-            queue_timeout_ms: 5000,
+            max_queue_depth: 8,
+            queue_timeout_ms: 30000,
             gpu_pressure_threshold: 95.0,
             cuda_arena_size: None,
             cuda_arena_extend_strategy: CudaArenaExtendStrategy::NextPowerOfTwo,
+            gpu_batch_size: 32,
         };
         // Embedding checks
         assert!(config_restricted.is_embedding_model_allowed("BAAI/bge-small-en-v1.5"));
@@ -460,11 +485,12 @@ mod tests {
             all_rerank_models: false,
             allowed_rerank_models: vec![],
             max_batch_size: 128,
-            max_concurrent_requests: 2,
-            queue_timeout_ms: 5000,
+            max_queue_depth: 8,
+            queue_timeout_ms: 30000,
             gpu_pressure_threshold: 95.0,
             cuda_arena_size: None,
             cuda_arena_extend_strategy: CudaArenaExtendStrategy::NextPowerOfTwo,
+            gpu_batch_size: 32,
         };
         assert!(!config_no_rerankers.is_rerank_model_allowed("any-model"));
     }

@@ -1,8 +1,4 @@
-use std::collections::HashMap;
-use std::time::Instant;
-
 use anyhow::Result;
-use semantic_explorer_core::observability::record_database_query;
 use semantic_explorer_core::owner_info::OwnerInfo;
 use sqlx::types::chrono::{DateTime, Utc};
 use sqlx::{FromRow, Pool, Postgres, Transaction};
@@ -18,9 +14,60 @@ pub struct EmbeddedDatasetInfo {
     pub embedder_id: i32,
 }
 
+/// Helper struct for paginated queries that include total_count via COUNT(*) OVER()
+#[derive(FromRow)]
+struct EmbeddedDatasetWithCount {
+    pub embedded_dataset_id: i32,
+    pub title: String,
+    pub dataset_transform_id: i32,
+    pub source_dataset_id: i32,
+    pub embedder_id: i32,
+    pub owner_id: String,
+    pub owner_display_name: String,
+    pub collection_name: String,
+    pub dimensions: Option<i32>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub last_processed_at: Option<DateTime<Utc>>,
+    pub last_processed_item_id: Option<i32>,
+    pub source_dataset_version: Option<DateTime<Utc>>,
+    pub total_count: i64,
+}
+
+impl EmbeddedDatasetWithCount {
+    fn into_parts(rows: Vec<Self>) -> (Vec<EmbeddedDataset>, i64) {
+        let total_count = rows.first().map_or(0, |r| r.total_count);
+        let datasets = rows
+            .into_iter()
+            .map(|r| EmbeddedDataset {
+                embedded_dataset_id: r.embedded_dataset_id,
+                title: r.title,
+                dataset_transform_id: r.dataset_transform_id,
+                source_dataset_id: r.source_dataset_id,
+                embedder_id: r.embedder_id,
+                owner_id: r.owner_id,
+                owner_display_name: r.owner_display_name,
+                collection_name: r.collection_name,
+                dimensions: r.dimensions,
+                created_at: r.created_at,
+                updated_at: r.updated_at,
+                last_processed_at: r.last_processed_at,
+                last_processed_item_id: r.last_processed_item_id,
+                source_dataset_version: r.source_dataset_version,
+            })
+            .collect();
+        (datasets, total_count)
+    }
+}
+
+const COUNT_EMBEDDED_DATASETS_BY_EMBEDDER_QUERY: &str = r#"
+    SELECT COUNT(*) FROM embedded_datasets
+    WHERE embedder_id = $1 AND owner_id = $2
+"#;
+
 const GET_EMBEDDED_DATASET_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
+           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, last_processed_item_id, source_dataset_version
     FROM embedded_datasets
     WHERE embedded_dataset_id = $1 AND owner_id = $2
 "#;
@@ -28,26 +75,15 @@ const GET_EMBEDDED_DATASET_QUERY: &str = r#"
 /// Get embedded dataset by ID without owner check (privileged, for internal use only)
 const GET_EMBEDDED_DATASET_BY_ID_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
+           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, last_processed_item_id, source_dataset_version
     FROM embedded_datasets
     WHERE embedded_dataset_id = $1
 "#;
 
-const COUNT_EMBEDDED_DATASETS_QUERY: &str = r#"
-    SELECT COUNT(*)
-    FROM embedded_datasets
-    WHERE owner_id = $1
-"#;
-
-const COUNT_EMBEDDED_DATASETS_SEARCH_QUERY: &str = r#"
-    SELECT COUNT(*)
-    FROM embedded_datasets
-    WHERE owner_id = $1 AND title ILIKE $2
-"#;
-
 const GET_EMBEDDED_DATASETS_PAGINATED_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
+           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, last_processed_item_id, source_dataset_version,
+           COUNT(*) OVER() AS total_count
     FROM embedded_datasets
     WHERE owner_id = $1
     ORDER BY created_at DESC
@@ -56,7 +92,8 @@ const GET_EMBEDDED_DATASETS_PAGINATED_QUERY: &str = r#"
 
 const GET_EMBEDDED_DATASETS_WITH_SEARCH_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
+           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, last_processed_item_id, source_dataset_version,
+           COUNT(*) OVER() AS total_count
     FROM embedded_datasets
     WHERE owner_id = $1 AND title ILIKE $2
     ORDER BY created_at DESC
@@ -65,7 +102,7 @@ const GET_EMBEDDED_DATASETS_WITH_SEARCH_QUERY: &str = r#"
 
 const GET_EMBEDDED_DATASETS_FOR_DATASET_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
+           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, last_processed_item_id, source_dataset_version
     FROM embedded_datasets
     WHERE source_dataset_id = $1 AND owner_id = $2
     ORDER BY created_at DESC
@@ -74,7 +111,7 @@ const GET_EMBEDDED_DATASETS_FOR_DATASET_QUERY: &str = r#"
 
 const GET_EMBEDDED_DATASETS_FOR_TRANSFORM_QUERY: &str = r#"
     SELECT embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
+           owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, last_processed_item_id, source_dataset_version
     FROM embedded_datasets
     WHERE dataset_transform_id = $1
     ORDER BY created_at DESC
@@ -111,7 +148,7 @@ const CREATE_EMBEDDED_DATASET_QUERY: &str = r#"
     INSERT INTO embedded_datasets (title, dataset_transform_id, source_dataset_id, embedder_id, owner_id, owner_display_name, collection_name, dimensions)
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
     RETURNING embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
+              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, last_processed_item_id, source_dataset_version
 "#;
 
 const UPDATE_EMBEDDED_DATASET_COLLECTION_NAME_QUERY: &str = r#"
@@ -120,7 +157,7 @@ const UPDATE_EMBEDDED_DATASET_COLLECTION_NAME_QUERY: &str = r#"
         updated_at = NOW()
     WHERE embedded_dataset_id = $1
     RETURNING embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
+              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, last_processed_item_id, source_dataset_version
 "#;
 
 const UPDATE_EMBEDDED_DATASET_TITLE_QUERY: &str = r#"
@@ -129,7 +166,7 @@ const UPDATE_EMBEDDED_DATASET_TITLE_QUERY: &str = r#"
         updated_at = NOW()
     WHERE embedded_dataset_id = $1 AND owner_id = $3
     RETURNING embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
+              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, last_processed_item_id, source_dataset_version
 "#;
 
 const DELETE_EMBEDDED_DATASET_QUERY: &str = r#"
@@ -159,34 +196,6 @@ const GET_EMBEDDED_DATASET_STATS_QUERY: &str = r#"
     FROM embedded_datasets ed
     LEFT JOIN transform_processed_files tpf ON tpf.transform_type = 'dataset' AND tpf.transform_id = ed.embedded_dataset_id
     WHERE ed.embedded_dataset_id = $1 AND ed.owner_id = $2
-"#;
-
-/// Batch query to fetch stats for multiple embedded datasets in a single round-trip
-/// Eliminates N+1 pattern by using ANY($1) instead of individual queries
-const GET_BATCH_EMBEDDED_DATASET_STATS_QUERY: &str = r#"
-    SELECT
-        ed.embedded_dataset_id,
-        COALESCE(COUNT(tpf.id), 0)::BIGINT as total_batches_processed,
-        COALESCE(COUNT(tpf.id) FILTER (WHERE tpf.process_status = 'completed'), 0)::BIGINT as successful_batches,
-        COALESCE(COUNT(tpf.id) FILTER (WHERE tpf.process_status = 'failed'), 0)::BIGINT as failed_batches,
-        COALESCE(COUNT(tpf.id) FILTER (WHERE tpf.process_status = 'processing'), 0)::BIGINT as processing_batches,
-        COALESCE(SUM(tpf.item_count) FILTER (WHERE tpf.process_status = 'completed'), 0)::BIGINT as total_chunks_embedded,
-        COALESCE(SUM(tpf.item_count) FILTER (WHERE tpf.process_status = 'failed'), 0)::BIGINT as total_chunks_failed,
-        COALESCE(SUM(tpf.item_count) FILTER (WHERE tpf.process_status = 'processing'), 0)::BIGINT as total_chunks_processing,
-        MAX(tpf.processed_at) as last_run_at,
-        MIN(tpf.processed_at) FILTER (WHERE tpf.process_status = 'processing') as first_processing_at,
-        AVG(tpf.processing_duration_ms) FILTER (WHERE tpf.process_status = 'completed')::BIGINT as avg_processing_duration_ms
-    FROM embedded_datasets ed
-    LEFT JOIN transform_processed_files tpf ON tpf.transform_type = 'dataset' AND tpf.transform_id = ed.embedded_dataset_id
-    WHERE ed.embedded_dataset_id = ANY($1) AND ed.owner_id = $2
-    GROUP BY ed.embedded_dataset_id
-"#;
-
-/// Batch query to verify ownership of multiple embedded datasets in a single query
-const VERIFY_EMBEDDED_DATASETS_OWNERSHIP_BATCH_QUERY: &str = r#"
-    SELECT embedded_dataset_id
-    FROM embedded_datasets
-    WHERE embedded_dataset_id = ANY($1) AND owner_id = $2
 "#;
 
 const GET_PROCESSED_BATCHES_QUERY: &str = r#"
@@ -244,7 +253,8 @@ const GET_EMBEDDED_DATASET_INFO_QUERY: &str = r#"
 
 const UPDATE_EMBEDDED_DATASET_LAST_PROCESSED_AT_QUERY: &str = r#"
     UPDATE embedded_datasets
-    SET last_processed_at = $2
+    SET last_processed_at = $2,
+        last_processed_item_id = $3
     WHERE embedded_dataset_id = $1
 "#;
 
@@ -304,24 +314,35 @@ const CREATE_STANDALONE_EMBEDDED_DATASET_QUERY: &str = r#"
     INSERT INTO embedded_datasets (title, dataset_transform_id, source_dataset_id, embedder_id, owner_id, owner_display_name, collection_name, dimensions)
     VALUES ($1, 0, 0, 0, $2, $3, $4, $5)
     RETURNING embedded_dataset_id, title, dataset_transform_id, source_dataset_id, embedder_id,
-              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, source_dataset_version
+              owner_id, owner_display_name, collection_name, dimensions, created_at, updated_at, last_processed_at, last_processed_item_id, source_dataset_version
 "#;
+
+/// Count how many embedded datasets reference a given embedder.
+#[tracing::instrument(name = "database.count_embedded_datasets_by_embedder", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT"))]
+pub async fn count_by_embedder(
+    pool: &Pool<Postgres>,
+    user: &crate::auth::AuthenticatedUser,
+    embedder_id: i32,
+) -> Result<i64> {
+    let result = sqlx::query_as::<_, (i64,)>(COUNT_EMBEDDED_DATASETS_BY_EMBEDDER_QUERY)
+        .bind(embedder_id)
+        .bind(user.as_owner())
+        .fetch_one(pool)
+        .await;
+
+    Ok(result?.0)
+}
 
 pub async fn get_embedded_dataset(
     pool: &Pool<Postgres>,
     owner: &str,
     embedded_dataset_id: i32,
 ) -> Result<EmbeddedDataset> {
-    let start = Instant::now();
-
     let result = sqlx::query_as::<_, EmbeddedDataset>(GET_EMBEDDED_DATASET_QUERY)
         .bind(embedded_dataset_id)
         .bind(owner)
         .fetch_one(pool)
         .await;
-
-    let duration = start.elapsed().as_secs_f64();
-    record_database_query("SELECT", "embedded_datasets", duration, result.is_ok());
 
     let embedded_dataset = result?;
 
@@ -348,23 +369,14 @@ pub async fn get_embedded_datasets_paginated(
     limit: i64,
     offset: i64,
 ) -> Result<(Vec<EmbeddedDataset>, i64)> {
-    // Get total count
-    let count_result = sqlx::query_as::<_, (i64,)>(COUNT_EMBEDDED_DATASETS_QUERY)
+    let rows = sqlx::query_as::<_, EmbeddedDatasetWithCount>(GET_EMBEDDED_DATASETS_PAGINATED_QUERY)
         .bind(owner)
-        .fetch_one(pool)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
         .await?;
-    let total_count = count_result.0;
 
-    // Get paginated results
-    let embedded_datasets =
-        sqlx::query_as::<_, EmbeddedDataset>(GET_EMBEDDED_DATASETS_PAGINATED_QUERY)
-            .bind(owner)
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(pool)
-            .await?;
-
-    Ok((embedded_datasets, total_count))
+    Ok(EmbeddedDatasetWithCount::into_parts(rows))
 }
 
 pub async fn get_embedded_datasets_with_search(
@@ -376,17 +388,8 @@ pub async fn get_embedded_datasets_with_search(
 ) -> Result<(Vec<EmbeddedDataset>, i64)> {
     let search_pattern = format!("%{}%", search_query);
 
-    // Get total count with search filter
-    let count_result = sqlx::query_as::<_, (i64,)>(COUNT_EMBEDDED_DATASETS_SEARCH_QUERY)
-        .bind(owner)
-        .bind(&search_pattern)
-        .fetch_one(pool)
-        .await?;
-    let total_count = count_result.0;
-
-    // Get paginated results with search filter
-    let embedded_datasets =
-        sqlx::query_as::<_, EmbeddedDataset>(GET_EMBEDDED_DATASETS_WITH_SEARCH_QUERY)
+    let rows =
+        sqlx::query_as::<_, EmbeddedDatasetWithCount>(GET_EMBEDDED_DATASETS_WITH_SEARCH_QUERY)
             .bind(owner)
             .bind(&search_pattern)
             .bind(limit)
@@ -394,7 +397,7 @@ pub async fn get_embedded_datasets_with_search(
             .fetch_all(pool)
             .await?;
 
-    Ok((embedded_datasets, total_count))
+    Ok(EmbeddedDatasetWithCount::into_parts(rows))
 }
 
 pub async fn get_embedded_datasets_for_dataset(
@@ -515,66 +518,13 @@ pub async fn get_embedded_dataset_stats(
     owner_id: &str,
     embedded_dataset_id: i32,
 ) -> Result<EmbeddedDatasetStats> {
-    let start = Instant::now();
     let result = sqlx::query_as::<_, EmbeddedDatasetStats>(GET_EMBEDDED_DATASET_STATS_QUERY)
         .bind(embedded_dataset_id)
         .bind(owner_id)
         .fetch_one(pool)
         .await;
-    let duration = start.elapsed().as_secs_f64();
-    record_database_query(
-        "SELECT",
-        "embedded_datasets_stats",
-        duration,
-        result.is_ok(),
-    );
     let stats = result?;
     Ok(stats)
-}
-
-/// Batch fetch stats for multiple embedded datasets in a single query (eliminates N+1)
-pub async fn get_batch_embedded_dataset_stats(
-    pool: &Pool<Postgres>,
-    owner_id: &str,
-    embedded_dataset_ids: &[i32],
-) -> Result<HashMap<i32, EmbeddedDatasetStats>> {
-    if embedded_dataset_ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-
-    let stats_list =
-        sqlx::query_as::<_, EmbeddedDatasetStats>(GET_BATCH_EMBEDDED_DATASET_STATS_QUERY)
-            .bind(embedded_dataset_ids)
-            .bind(owner_id)
-            .fetch_all(pool)
-            .await?;
-
-    let stats_map: HashMap<i32, EmbeddedDatasetStats> = stats_list
-        .into_iter()
-        .map(|s| (s.embedded_dataset_id, s))
-        .collect();
-
-    Ok(stats_map)
-}
-
-/// Verify ownership of multiple embedded datasets in a single query (eliminates N+1)
-/// Returns the list of IDs that the user owns
-pub async fn verify_embedded_datasets_ownership_batch(
-    pool: &Pool<Postgres>,
-    owner_id: &str,
-    embedded_dataset_ids: &[i32],
-) -> Result<Vec<i32>> {
-    if embedded_dataset_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let owned_ids: Vec<(i32,)> = sqlx::query_as(VERIFY_EMBEDDED_DATASETS_OWNERSHIP_BATCH_QUERY)
-        .bind(embedded_dataset_ids)
-        .bind(owner_id)
-        .fetch_all(pool)
-        .await?;
-
-    Ok(owned_ids.into_iter().map(|(id,)| id).collect())
 }
 
 pub async fn get_processed_batches(
@@ -646,16 +596,19 @@ pub async fn delete_processed_batches_for_retry(
     Ok(result.rows_affected())
 }
 
-/// Update the last_processed_at timestamp to a specific value
-/// This prevents race conditions where items created between query and update are missed
+/// Update the last_processed_at timestamp and last_processed_item_id to specific values.
+/// Uses composite (timestamp, item_id) watermark for correct keyset pagination
+/// when items share the same timestamp (common with batch inserts).
 pub async fn update_embedded_dataset_last_processed_at_to(
     pool: &Pool<Postgres>,
     embedded_dataset_id: i32,
     timestamp: DateTime<Utc>,
+    last_processed_item_id: Option<i32>,
 ) -> Result<()> {
     sqlx::query(UPDATE_EMBEDDED_DATASET_LAST_PROCESSED_AT_QUERY)
         .bind(embedded_dataset_id)
         .bind(timestamp)
+        .bind(last_processed_item_id)
         .execute(pool)
         .await?;
     Ok(())

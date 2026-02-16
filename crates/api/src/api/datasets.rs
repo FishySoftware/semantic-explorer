@@ -12,7 +12,12 @@ use crate::{
         PaginatedDatasetList, PaginationParams,
     },
     errors::ApiError,
-    storage::postgres::{INTERNAL_BATCH_SIZE, datasets, embedded_datasets, fetch_all_batched},
+    storage::{
+        postgres::{
+            INTERNAL_BATCH_SIZE, dataset_transforms, datasets, embedded_datasets, fetch_all_batched,
+        },
+        valkey::{self, ValkeyClients},
+    },
 };
 use qdrant_client::{
     Qdrant,
@@ -21,9 +26,10 @@ use qdrant_client::{
         condition::ConditionOneOf, r#match::MatchValue, points_selector::PointsSelectorOneOf,
     },
 };
+use semantic_explorer_core::config::{S3Config, ValkeyConfig};
 use semantic_explorer_core::validation;
 use sqlx::{Pool, Postgres};
-use tracing::error;
+use tracing::{error, info};
 
 #[utoipa::path(
     params(
@@ -39,11 +45,13 @@ use tracing::error;
     tag = "Datasets",
 )]
 #[get("/api/datasets")]
-#[tracing::instrument(name = "get_datasets", skip(user, pool, query))]
+#[tracing::instrument(name = "get_datasets", skip(user, pool, query, valkey, valkey_config))]
 pub(crate) async fn get_datasets(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
     query: web::Query<DatasetListParams>,
+    valkey: Option<Data<ValkeyClients>>,
+    valkey_config: Option<Data<ValkeyConfig>>,
 ) -> impl Responder {
     let pool = pool.into_inner();
 
@@ -60,7 +68,21 @@ pub(crate) async fn get_datasets(
         }
     });
 
-    // Get paginated datasets with stats
+    // Only use cache for non-search listing queries
+    let cache_key = if search_query.is_none() {
+        Some(format!("datasets:{}:{}:{}", user.as_owner(), limit, offset))
+    } else {
+        None
+    };
+
+    // L1: Check Valkey cache
+    if let (Some(key), Some(v)) = (&cache_key, &valkey)
+        && let Some(cached) = valkey::cache_get::<PaginatedDatasetList>(&v.read, key).await
+    {
+        return HttpResponse::Ok().json(cached);
+    }
+
+    // Cache miss — query database
     let paginated_result = match search_query {
         Some(query) => {
             match datasets::get_datasets_paginated_search(
@@ -106,7 +128,6 @@ pub(crate) async fn get_datasets(
             updated_at: d.updated_at,
             item_count: d.item_count as i64,
             total_chunks: d.total_chunks,
-            transform_count: d.transform_count,
         })
         .collect();
 
@@ -116,6 +137,39 @@ pub(crate) async fn get_datasets(
         limit: paginated_result.limit,
         offset: paginated_result.offset,
     };
+
+    // Write to cache (fire-and-forget)
+    if let (Some(key), Some(v)) = (cache_key, valkey) {
+        let conn = v.write.clone();
+        let ttl = valkey_config
+            .map(|c| c.resource_cache_ttl_secs)
+            .unwrap_or(300);
+        let resp_clone = PaginatedDatasetList {
+            items: response
+                .items
+                .iter()
+                .map(|d| DatasetWithStats {
+                    dataset_id: d.dataset_id,
+                    title: d.title.clone(),
+                    details: d.details.clone(),
+                    owner_id: d.owner_id.clone(),
+                    owner_display_name: d.owner_display_name.clone(),
+                    tags: d.tags.clone(),
+                    is_public: d.is_public,
+                    created_at: d.created_at,
+                    updated_at: d.updated_at,
+                    item_count: d.item_count,
+                    total_chunks: d.total_chunks,
+                })
+                .collect(),
+            total_count: response.total_count,
+            limit: response.limit,
+            offset: response.offset,
+        };
+        actix_web::rt::spawn(async move {
+            valkey::cache_set(&conn, &key, &resp_clone, ttl).await;
+        });
+    }
 
     HttpResponse::Ok().json(response)
 }
@@ -169,12 +223,13 @@ pub(crate) async fn get_dataset(
     tag = "Datasets",
 )]
 #[post("/api/datasets")]
-#[tracing::instrument(name = "create_dataset", skip(user, pool, create_dataset, req), fields(dataset_title = %create_dataset.title))]
+#[tracing::instrument(name = "create_dataset", skip(user, pool, create_dataset, req, valkey), fields(dataset_title = %create_dataset.title))]
 pub(crate) async fn create_dataset(
     user: AuthenticatedUser,
     req: HttpRequest,
     pool: Data<Pool<Postgres>>,
     Json(create_dataset): Json<CreateDataset>,
+    valkey: Option<Data<ValkeyClients>>,
 ) -> impl Responder {
     if let Err(e) = validation::validate_title(&create_dataset.title) {
         return ApiError::Validation(e).error_response();
@@ -213,6 +268,7 @@ pub(crate) async fn create_dataset(
         ResourceType::Dataset,
         &dataset.dataset_id.to_string(),
     );
+    valkey::invalidate_resource_cache(valkey.as_ref(), "datasets", &user.as_owner());
     HttpResponse::Created().json(dataset)
 }
 
@@ -227,12 +283,13 @@ pub(crate) async fn create_dataset(
     tag = "Datasets",
 )]
 #[patch("/api/datasets/{dataset_id}")]
-#[tracing::instrument(name = "update_dataset", skip(user, pool, update_dataset), fields(dataset_id = %dataset_id.as_ref(), dataset_title = %update_dataset.title))]
+#[tracing::instrument(name = "update_dataset", skip(user, pool, update_dataset, valkey), fields(dataset_id = %dataset_id.as_ref(), dataset_title = %update_dataset.title))]
 pub(crate) async fn update_dataset(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
     dataset_id: Path<i32>,
     Json(update_dataset): Json<CreateDataset>,
+    valkey: Option<Data<ValkeyClients>>,
 ) -> impl Responder {
     if let Err(e) = validation::validate_title(&update_dataset.title) {
         return ApiError::Validation(e).error_response();
@@ -280,6 +337,7 @@ pub(crate) async fn update_dataset(
         ResourceType::Dataset,
         &dataset_id.to_string(),
     );
+    valkey::invalidate_resource_cache(valkey.as_ref(), "datasets", &user.as_owner());
     HttpResponse::Ok().json(dataset)
 }
 
@@ -293,13 +351,17 @@ pub(crate) async fn update_dataset(
     tag = "Datasets",
 )]
 #[delete("/api/datasets/{datasets_id}")]
-#[tracing::instrument(name = "delete_dataset", skip(user, pool, qdrant_client, req), fields(dataset_id = %dataset_id.as_ref()))]
+#[tracing::instrument(name = "delete_dataset", skip(user, pool, qdrant_client, s3_client, s3_config, req, valkey), fields(dataset_id = %dataset_id.as_ref()))]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn delete_dataset(
     user: AuthenticatedUser,
     req: HttpRequest,
     pool: Data<Pool<Postgres>>,
     qdrant_client: Data<Qdrant>,
+    s3_client: Data<aws_sdk_s3::Client>,
+    s3_config: Data<S3Config>,
     dataset_id: Path<i32>,
+    valkey: Option<Data<ValkeyClients>>,
 ) -> impl Responder {
     let pool = pool.into_inner();
     let dataset_id = dataset_id.into_inner();
@@ -332,20 +394,10 @@ pub(crate) async fn delete_dataset(
         }
     };
 
-    // Delete Qdrant collections for all embedded datasets
-    for embedded_dataset in embedded_datasets {
-        if let Err(e) = qdrant_client
-            .delete_collection(&embedded_dataset.collection_name)
-            .await
-        {
-            error!(
-                "Failed to delete Qdrant collection {} for embedded dataset {}: {}",
-                embedded_dataset.collection_name, embedded_dataset.embedded_dataset_id, e
-            );
-            // Continue with other collections even if one fails
-        }
-    }
-
+    // Delete the database record first (fast, cascading deletes handle
+    // dataset_items and embedded_datasets rows). This lets us respond to the
+    // user immediately while cleaning up Qdrant collections and S3 batch
+    // files in the background.
     match datasets::delete_dataset(&pool, dataset_id, &user.as_owner()).await {
         Ok(_) => {
             events::resource_deleted_with_request(
@@ -355,6 +407,60 @@ pub(crate) async fn delete_dataset(
                 ResourceType::Dataset,
                 &dataset_id.to_string(),
             );
+            valkey::invalidate_resource_cache(valkey.as_ref(), "datasets", &user.as_owner());
+
+            // Kick off background cleanup for Qdrant collections and S3 batch files.
+            // These are best-effort — orphaned resources are harmless and can be
+            // cleaned up by reconciliation if the background task fails.
+            let qdrant = qdrant_client.into_inner();
+            let s3 = s3_client.into_inner();
+            let bucket = s3_config.bucket_name.clone();
+            tokio::spawn(async move {
+                for embedded_dataset in &embedded_datasets {
+                    if let Err(e) = qdrant
+                        .delete_collection(&embedded_dataset.collection_name)
+                        .await
+                    {
+                        error!(
+                            "Background cleanup: failed to delete Qdrant collection {} for embedded dataset {}: {}",
+                            embedded_dataset.collection_name,
+                            embedded_dataset.embedded_dataset_id,
+                            e
+                        );
+                    }
+
+                    let prefix = format!(
+                        "embedded-datasets/embedded-dataset-{}/",
+                        embedded_dataset.embedded_dataset_id
+                    );
+                    match semantic_explorer_core::storage::delete_files_by_prefix(
+                        &s3, &bucket, &prefix,
+                    )
+                    .await
+                    {
+                        Ok(count) => {
+                            if count > 0 {
+                                info!(
+                                    embedded_dataset_id = embedded_dataset.embedded_dataset_id,
+                                    deleted_files = count,
+                                    "Background cleanup: cleaned up S3 batch files for deleted embedded dataset"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            error!(
+                                "Background cleanup: failed to cleanup S3 batch files for embedded dataset {}: {}",
+                                embedded_dataset.embedded_dataset_id, e
+                            );
+                        }
+                    }
+                }
+                info!(
+                    dataset_id,
+                    "Background cleanup completed for deleted dataset"
+                );
+            });
+
             HttpResponse::Ok().finish()
         }
         Err(e) => {
@@ -377,10 +483,11 @@ pub(crate) async fn delete_dataset(
     tag = "Datasets",
 )]
 #[post("/api/datasets/{dataset_id}/items")]
-#[tracing::instrument(name = "upload_to_dataset", skip(user, pool, payload), fields(dataset_id = %dataset_id.as_ref(), item_count = payload.items.len()))]
+#[tracing::instrument(name = "upload_to_dataset", skip(user, pool, nats_client, payload), fields(dataset_id = %dataset_id.as_ref(), item_count = payload.items.len()))]
 pub(crate) async fn upload_to_dataset(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
+    nats_client: Data<async_nats::Client>,
     dataset_id: Path<i32>,
     Json(payload): Json<CreateDatasetItems>,
 ) -> impl Responder {
@@ -413,7 +520,7 @@ pub(crate) async fn upload_to_dataset(
                     true,
                 );
                 (
-                    items.into_iter().map(|item| item.title).collect(),
+                    items.into_iter().map(|item| item.title).collect::<Vec<_>>(),
                     failed_titles,
                 )
             }
@@ -429,6 +536,34 @@ pub(crate) async fn upload_to_dataset(
                     .error_response();
             }
         };
+
+    // Trigger dataset transforms for items that were just created
+    if !completed.is_empty() {
+        let owner = user.as_owner();
+        if let Ok(transforms) =
+            dataset_transforms::get_dataset_transforms_for_dataset(&pool, &owner, dataset_id).await
+        {
+            for transform in transforms {
+                if !transform.is_enabled {
+                    continue;
+                }
+                if let Err(e) = crate::transforms::trigger::publish_targeted_trigger(
+                    nats_client.as_ref(),
+                    "dataset",
+                    transform.dataset_transform_id,
+                    &owner,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        "Failed to trigger dataset transform {} after item upload: {}",
+                        transform.dataset_transform_id,
+                        e
+                    );
+                }
+            }
+        }
+    }
 
     HttpResponse::Ok().json(CreateDatasetItemsResponse { completed, failed })
 }

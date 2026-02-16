@@ -63,25 +63,26 @@ async fn main() -> Result<()> {
         config.models.resolve_effective_arena_size();
     }
 
+    // Initialize queue configuration before loading models
+    embedding::init_queue_config(
+        config.models.max_queue_depth,
+        config.models.queue_timeout_ms,
+    );
+
     tokio::join!(
         embedding::init_cache(&config.models),
         reranker::init_cache(&config.models)
     );
 
-    embedding::init_semaphore(
-        config.models.max_concurrent_requests,
-        config.models.queue_timeout_ms,
-    );
-
-    // Start GPU pressure monitoring (NVML-based, configurable threshold)
+    // Start GPU VRAM pressure monitoring (NVML-based, configurable threshold)
     embedding::spawn_gpu_pressure_monitor(config.models.gpu_pressure_threshold);
 
     info!(
-        max_concurrent_requests = config.models.max_concurrent_requests,
+        max_queue_depth = config.models.max_queue_depth,
         queue_timeout_ms = config.models.queue_timeout_ms,
         cuda_arena_size = ?config.models.cuda_arena_size.map(|s| format!("{}MB", s / (1024 * 1024))).unwrap_or_else(|| "unlimited".to_string()),
         cuda_arena_extend_strategy = ?config.models.cuda_arena_extend_strategy,
-        "Model caches, backpressure semaphore, and GPU monitor initialized."
+        "Model workers, queue, and GPU monitor initialized."
     );
 
     let model_config = web::Data::new(config.models.clone());

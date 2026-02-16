@@ -70,14 +70,14 @@ data:
             "allValue": ".*",
             "current": { "selected": true, "text": "All", "value": "$__all" },
             "datasource": { "type": "prometheus", "uid": "prometheus" },
-            "definition": "label_values({namespace=\"{{ .Release.Namespace }}\",__name__=~\"embedding_session_request_count|inference_llm_requests_total_total\"}, model)",
+            "definition": "label_values({namespace=\"{{ .Release.Namespace }}\",__name__=~\"embedding_session_request_count|inference_llm_requests_total\"}, model)",
             "hide": 0,
             "includeAll": true,
             "label": "Model",
             "multi": true,
             "name": "model",
             "options": [],
-            "query": { "query": "label_values({namespace=\"{{ .Release.Namespace }}\",__name__=~\"embedding_session_request_count|inference_llm_requests_total_total\"}, model)", "refId": "StandardVariableQuery" },
+            "query": { "query": "label_values({namespace=\"{{ .Release.Namespace }}\",__name__=~\"embedding_session_request_count|inference_llm_requests_total\"}, model)", "refId": "StandardVariableQuery" },
             "refresh": 2,
             "regex": "",
             "skipUrlSync": false,
@@ -260,7 +260,7 @@ data:
           "id": 10,
           "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "text": { "titleSize": 14, "valueSize": 28 }, "textMode": "value_and_name", "wideLayout": true },
           "targets": [
-            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(embedding_session_resets_total_total{namespace=\"{{ .Release.Namespace }}\", model=~\"$model\"}) by (model, reason)", "legendFormat": "{{ `{{model}}` }} ({{ `{{reason}}` }})", "refId": "A" }
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(embedding_session_resets_total{namespace=\"{{ .Release.Namespace }}\", model=~\"$model\"}) by (model, reason)", "legendFormat": "{{ `{{model}}` }} ({{ `{{reason}}` }})", "refId": "A" }
           ],
           "title": "Session Resets Total",
           "type": "stat"
@@ -331,7 +331,7 @@ data:
           "id": 14,
           "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
           "targets": [
-            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "rate(inference_embed_requests_total_total{namespace=\"{{ .Release.Namespace }}\", model=~\"$model\"}[1m])", "legendFormat": "{{ `{{model}}` }}", "refId": "A" }
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "rate(inference_embed_requests_total{namespace=\"{{ .Release.Namespace }}\", model=~\"$model\"}[1m])", "legendFormat": "{{ `{{model}}` }}", "refId": "A" }
           ],
           "title": "Embedding Request Rate",
           "type": "timeseries"
@@ -387,8 +387,8 @@ data:
           "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
           "targets": [
             { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "gpu_memory_used_bytes{namespace=\"{{ .Release.Namespace }}\", device=\"0\"}", "legendFormat": "GPU Memory Used (GB)", "refId": "A" },
-            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(inference_embed_requests_total_total{namespace=\"{{ .Release.Namespace }}\"}[1m]))", "legendFormat": "Embed Request Rate", "refId": "B" },
-            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(increase(embedding_session_resets_total_total{namespace=\"{{ .Release.Namespace }}\"}[1m]))", "legendFormat": "Session Resets", "refId": "C" }
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(inference_embed_requests_total{namespace=\"{{ .Release.Namespace }}\"}[1m]))", "legendFormat": "Embed Request Rate", "refId": "B" },
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(increase(embedding_session_resets_total{namespace=\"{{ .Release.Namespace }}\"}[1m]))", "legendFormat": "Session Resets", "refId": "C" }
           ],
           "title": "GPU Memory vs Embedding Load & Session Resets",
           "type": "timeseries"
@@ -417,7 +417,7 @@ data:
           "id": 19,
           "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
           "targets": [
-            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "rate(inference_llm_requests_total_total{namespace=\"{{ .Release.Namespace }}\", model=~\"$model\"}[1m])", "legendFormat": "{{ `{{model}}` }} ({{ `{{status}}` }})", "refId": "A" }
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "rate(inference_llm_requests_total{namespace=\"{{ .Release.Namespace }}\", model=~\"$model\"}[1m])", "legendFormat": "{{ `{{model}}` }} ({{ `{{status}}` }})", "refId": "A" }
           ],
           "title": "LLM Request Rate",
           "type": "timeseries"
@@ -483,7 +483,7 @@ data:
           "id": 22,
           "options": { "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
           "targets": [
-            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "rate(inference_llm_tokens_generated_total_total{namespace=\"{{ .Release.Namespace }}\", model=~\"$model\"}[1m])", "legendFormat": "{{ `{{model}}` }} tokens/sec", "refId": "A" }
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "rate(inference_llm_tokens_generated_total{namespace=\"{{ .Release.Namespace }}\", model=~\"$model\"}[1m])", "legendFormat": "{{ `{{model}}` }} tokens/sec", "refId": "A" }
           ],
           "title": "LLM Token Generation Rate",
           "type": "timeseries"
@@ -516,8 +516,8 @@ data:
           "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
           "targets": [
             { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "gpu_memory_used_bytes{namespace=\"{{ .Release.Namespace }}\", device=\"0\"}", "legendFormat": "GPU Memory Used", "refId": "A" },
-            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(inference_llm_requests_total_total{namespace=\"{{ .Release.Namespace }}\"}[1m]))", "legendFormat": "LLM Request Rate", "refId": "B" },
-            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(inference_llm_tokens_generated_total_total{namespace=\"{{ .Release.Namespace }}\"}[1m]))", "legendFormat": "Tokens/sec", "refId": "C" }
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(inference_llm_requests_total{namespace=\"{{ .Release.Namespace }}\"}[1m]))", "legendFormat": "LLM Request Rate", "refId": "B" },
+            { "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(inference_llm_tokens_generated_total{namespace=\"{{ .Release.Namespace }}\"}[1m]))", "legendFormat": "Tokens/sec", "refId": "C" }
           ],
           "title": "GPU Memory vs LLM Load & Token Generation",
           "type": "timeseries"

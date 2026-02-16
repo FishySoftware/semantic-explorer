@@ -1,8 +1,6 @@
 use sqlx::{Pool, Postgres};
-use std::time::Instant;
 
 use crate::audit::AuditEvent;
-use semantic_explorer_core::observability::record_database_query;
 
 const INSERT_AUDIT_EVENT_QUERY: &str = r#"
     INSERT INTO audit_events (
@@ -27,7 +25,6 @@ pub async fn store_audit_event_simple(
     pool: &Pool<Postgres>,
     event: &AuditEvent,
 ) -> Result<(), sqlx::Error> {
-    let start = Instant::now();
     let result = sqlx::query(INSERT_AUDIT_EVENT_QUERY)
         .bind(&event.timestamp)
         .bind(format!("{:?}", event.event_type))
@@ -45,9 +42,6 @@ pub async fn store_audit_event_simple(
         .bind(event.details.as_deref())
         .execute(pool)
         .await;
-
-    let duration = start.elapsed().as_secs_f64();
-    record_database_query("INSERT", "audit_events", duration, result.is_ok());
 
     result?;
     Ok(())

@@ -5,7 +5,10 @@ use crate::{
         CreateEmbedder, Embedder, EmbedderListQuery, PaginatedEmbedderList, UpdateEmbedder,
     },
     errors::ApiError,
-    storage::postgres::embedders,
+    storage::{
+        postgres::embedders,
+        valkey::{self, ValkeyClients},
+    },
 };
 use actix_web::{
     HttpRequest, HttpResponse, Responder, ResponseError, delete, get, patch, post,
@@ -13,7 +16,9 @@ use actix_web::{
 };
 use semantic_explorer_core::validation;
 use semantic_explorer_core::{
-    config::EmbeddingInferenceConfig, encryption::EncryptionService, http_client::HTTP_CLIENT,
+    config::{EmbeddingInferenceConfig, ValkeyConfig},
+    encryption::EncryptionService,
+    http_client::HTTP_CLIENT,
 };
 use sqlx::{Pool, Postgres};
 
@@ -35,12 +40,17 @@ pub(crate) struct TestEmbedderResponse {
     tag = "Embedders",
 )]
 #[get("/api/embedders")]
-#[tracing::instrument(name = "get_embedders", skip(user, pool, query, encryption))]
+#[tracing::instrument(
+    name = "get_embedders",
+    skip(user, pool, query, encryption, valkey, valkey_config)
+)]
 pub(crate) async fn get_embedders(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
     encryption: Data<EncryptionService>,
     query: web::Query<EmbedderListQuery>,
+    valkey: Option<Data<ValkeyClients>>,
+    valkey_config: Option<Data<ValkeyConfig>>,
 ) -> impl Responder {
     let search_query = query.search.as_ref().and_then(|s| {
         let trimmed = s.trim();
@@ -51,9 +61,28 @@ pub(crate) async fn get_embedders(
         }
     });
 
-    match search_query {
+    // Only cache non-search listing queries
+    let cache_key = if search_query.is_none() {
+        Some(format!(
+            "embedders:{}:{}:{}",
+            user.as_owner(),
+            query.limit,
+            query.offset
+        ))
+    } else {
+        None
+    };
+
+    // Check Valkey cache first
+    if let (Some(key), Some(v)) = (&cache_key, &valkey)
+        && let Some(cached) = valkey::cache_get::<PaginatedEmbedderList>(&v.read, key).await
+    {
+        return HttpResponse::Ok().json(cached);
+    }
+
+    let result = match search_query {
         Some(q) => {
-            match embedders::get_embedders_with_search(
+            embedders::get_embedders_with_search(
                 &pool.into_inner(),
                 &user,
                 q,
@@ -62,46 +91,51 @@ pub(crate) async fn get_embedders(
                 &encryption,
             )
             .await
-            {
-                Ok(result) => {
-                    let response = PaginatedEmbedderList {
-                        items: result.items,
-                        total_count: result.total_count,
-                        limit: result.limit,
-                        offset: result.offset,
-                    };
-                    HttpResponse::Ok().json(response)
-                }
-                Err(e) => {
-                    tracing::error!(error = %e, "failed to fetch embedders");
-                    ApiError::Internal(format!("error fetching embedders: {:?}", e))
-                        .error_response()
-                }
-            }
         }
-        None => match embedders::get_embedders(
-            &pool.into_inner(),
-            &user,
-            query.limit,
-            query.offset,
-            &encryption,
-        )
-        .await
-        {
-            Ok(result) => {
-                let response = PaginatedEmbedderList {
-                    items: result.items,
-                    total_count: result.total_count,
-                    limit: result.limit,
-                    offset: result.offset,
+        None => {
+            embedders::get_embedders(
+                &pool.into_inner(),
+                &user,
+                query.limit,
+                query.offset,
+                &encryption,
+            )
+            .await
+        }
+    };
+
+    match result {
+        Ok(result) => {
+            let response = PaginatedEmbedderList {
+                items: result.items,
+                total_count: result.total_count,
+                limit: result.limit,
+                offset: result.offset,
+            };
+
+            // Write to cache (fire-and-forget)
+            if let (Some(key), Some(v)) = (cache_key, valkey) {
+                let conn = v.write.clone();
+                let ttl = valkey_config
+                    .map(|c| c.resource_cache_ttl_secs)
+                    .unwrap_or(300);
+                let resp_clone = PaginatedEmbedderList {
+                    items: response.items.clone(),
+                    total_count: response.total_count,
+                    limit: response.limit,
+                    offset: response.offset,
                 };
-                HttpResponse::Ok().json(response)
+                actix_web::rt::spawn(async move {
+                    valkey::cache_set(&conn, &key, &resp_clone, ttl).await;
+                });
             }
-            Err(e) => {
-                tracing::error!(error = %e, "failed to fetch embedders");
-                ApiError::Internal(format!("error fetching embedders: {:?}", e)).error_response()
-            }
-        },
+
+            HttpResponse::Ok().json(response)
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "failed to fetch embedders");
+            ApiError::Internal(format!("error fetching embedders: {:?}", e)).error_response()
+        }
     }
 }
 
@@ -153,7 +187,7 @@ pub(crate) async fn get_embedder(
 #[post("/api/embedders")]
 #[tracing::instrument(
     name = "create_embedder",
-    skip(user, pool, create_embedder, req, encryption)
+    skip(user, pool, create_embedder, req, encryption, valkey)
 )]
 pub(crate) async fn create_embedder(
     user: AuthenticatedUser,
@@ -161,6 +195,7 @@ pub(crate) async fn create_embedder(
     pool: Data<Pool<Postgres>>,
     encryption: Data<EncryptionService>,
     create_embedder: Json<CreateEmbedder>,
+    valkey: Option<Data<ValkeyClients>>,
 ) -> impl Responder {
     let mut payload = create_embedder.into_inner();
 
@@ -188,6 +223,7 @@ pub(crate) async fn create_embedder(
                 ResourceType::Embedder,
                 &embedder.embedder_id.to_string(),
             );
+            valkey::invalidate_resource_cache(valkey.as_ref(), "embedders", &user.as_owner());
             HttpResponse::Created().json(embedder)
         }
         Err(e) => {
@@ -212,7 +248,7 @@ pub(crate) async fn create_embedder(
 #[patch("/api/embedders/{embedder_id}")]
 #[tracing::instrument(
     name = "update_embedder",
-    skip(user, pool, update_embedder, encryption)
+    skip(user, pool, update_embedder, encryption, valkey)
 )]
 pub(crate) async fn update_embedder(
     user: AuthenticatedUser,
@@ -220,6 +256,7 @@ pub(crate) async fn update_embedder(
     encryption: Data<EncryptionService>,
     embedder_id: Path<i32>,
     update_embedder: Json<UpdateEmbedder>,
+    valkey: Option<Data<ValkeyClients>>,
 ) -> impl Responder {
     if let Some(ref name) = update_embedder.name
         && let Err(e) = validation::validate_title(name)
@@ -266,6 +303,7 @@ pub(crate) async fn update_embedder(
                 );
             }
 
+            valkey::invalidate_resource_cache(valkey.as_ref(), "embedders", &user.as_owner());
             HttpResponse::Ok().json(embedder)
         }
         Err(e) => {
@@ -279,6 +317,7 @@ pub(crate) async fn update_embedder(
     responses(
         (status = 204, description = "No Content"),
         (status = 404, description = "Not Found"),
+        (status = 409, description = "Conflict - embedder has associated embedded datasets"),
         (status = 500, description = "Internal Server Error"),
     ),
     params(
@@ -287,14 +326,36 @@ pub(crate) async fn update_embedder(
     tag = "Embedders",
 )]
 #[delete("/api/embedders/{embedder_id}")]
-#[tracing::instrument(name = "delete_embedder", skip(user, pool, req))]
+#[tracing::instrument(name = "delete_embedder", skip(user, pool, req, valkey))]
 pub(crate) async fn delete_embedder(
     user: AuthenticatedUser,
     req: HttpRequest,
     pool: Data<Pool<Postgres>>,
     embedder_id: Path<i32>,
+    valkey: Option<Data<ValkeyClients>>,
 ) -> impl Responder {
-    match embedders::delete_embedder(&pool.into_inner(), &user, *embedder_id).await {
+    let pool = pool.into_inner();
+
+    // Check for associated embedded datasets before deleting
+    match crate::storage::postgres::embedded_datasets::count_by_embedder(&pool, &user, *embedder_id)
+        .await
+    {
+        Ok(count) if count > 0 => {
+            return ApiError::Conflict(format!(
+                "Cannot delete embedder: {} embedded dataset(s) still reference it. Delete them first.",
+                count
+            ))
+            .error_response();
+        }
+        Err(e) => {
+            tracing::error!(error = %e, embedder_id = %embedder_id, "failed to check embedded datasets for embedder");
+            return ApiError::Internal(format!("error checking embedder dependencies: {:?}", e))
+                .error_response();
+        }
+        _ => {}
+    }
+
+    match embedders::delete_embedder(&pool, &user, *embedder_id).await {
         Ok(()) => {
             events::resource_deleted_with_request(
                 &req,
@@ -303,6 +364,7 @@ pub(crate) async fn delete_embedder(
                 ResourceType::Embedder,
                 &embedder_id.to_string(),
             );
+            valkey::invalidate_resource_cache(valkey.as_ref(), "embedders", &user.as_owner());
             HttpResponse::NoContent().finish()
         }
         Err(e) => {

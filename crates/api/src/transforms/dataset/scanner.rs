@@ -427,15 +427,18 @@ async fn process_dataset_transform_scan(
         .collect();
 
     for embedded_dataset in embedded_datasets_list {
-        // Get embedder from pre-fetched map
-        let embedder = embedders_map
-            .get(&embedded_dataset.embedder_id)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Embedder {} not found in batch fetch",
-                    embedded_dataset.embedder_id
-                )
-            })?;
+        // Get embedder from pre-fetched map (skip if embedder was deleted)
+        let embedder = match embedders_map.get(&embedded_dataset.embedder_id) {
+            Some(e) => e,
+            None => {
+                warn!(
+                    embedded_dataset_id = embedded_dataset.embedded_dataset_id,
+                    embedder_id = embedded_dataset.embedder_id,
+                    "Skipping embedded dataset: embedder no longer exists"
+                );
+                continue;
+            }
+        };
 
         let model = embedder
             .config
@@ -559,7 +562,14 @@ async fn process_dataset_transform_scan(
             let payload = serde_json::to_vec(&job)?;
 
             // Publish with retry (3 attempts with exponential backoff)
-            let msg_id = format!("dt-{}-{}", transform.dataset_transform_id, batch_file_key);
+            // Use a unique msg_id with UUID to avoid NATS deduplication rejecting
+            // re-dispatched batches (e.g. after retry-failed resets them to pending).
+            let msg_id = format!(
+                "dt-redispatch-{}-{}-{}",
+                transform.dataset_transform_id,
+                batch_file_key,
+                Uuid::new_v4()
+            );
             match semantic_explorer_core::nats::publish_with_retry(
                 nats,
                 "workers.dataset-transform",
@@ -607,60 +617,56 @@ async fn process_dataset_transform_scan(
             }
         }
 
-        // If all existing batches are processed (or none exist), check if we need to create new batches
-        if unprocessed_existing.is_empty() {
-            // Acquire scan lock to prevent concurrent scanners from racing on the same watermark.
-            // The lock auto-expires after scan_timeout_secs to prevent stale locks.
-            let lock_acquired = embedded_datasets::try_acquire_scan_lock(
-                pool,
-                embedded_dataset.embedded_dataset_id,
-                scanner_config.scan_timeout_secs,
-            )
-            .await
-            .unwrap_or(false);
+        // Acquire scan lock to prevent concurrent scanners from racing on the same watermark.
+        // The lock auto-expires after scan_timeout_secs to prevent stale locks.
+        let lock_acquired = embedded_datasets::try_acquire_scan_lock(
+            pool,
+            embedded_dataset.embedded_dataset_id,
+            scanner_config.scan_timeout_secs,
+        )
+        .await
+        .unwrap_or(false);
 
-            if !lock_acquired {
-                info!(
-                    embedded_dataset_id = embedded_dataset.embedded_dataset_id,
-                    "Skipping embedded dataset: another scanner holds the scan lock"
-                );
-                continue;
-            }
-
-            // Get dataset items that haven't been batched yet
-            let batch_config = DatasetBatchConfig {
-                embedder_config: embedder_config.clone(),
-                qdrant_config: qdrant_config.clone(),
-                s3_bucket: s3_bucket.clone(),
-                embedded_dataset_prefix: embedded_dataset_prefix.clone(),
-                embedding_batch_size,
-            };
-            let items_created = create_batches_from_dataset_items(
-                pool,
-                s3,
-                nats,
-                transform,
-                &embedded_dataset,
-                &batch_config,
-                &rate_limiter,
-                &circuit_breaker,
-                scanner_config,
-            )
-            .await;
-
-            // Always release the scan lock, even on error
-            if let Err(e) =
-                embedded_datasets::release_scan_lock(pool, embedded_dataset.embedded_dataset_id)
-                    .await
-            {
-                warn!(
-                    embedded_dataset_id = embedded_dataset.embedded_dataset_id,
-                    "Failed to release scan lock: {}", e
-                );
-            }
-
-            total_jobs += items_created?;
+        if !lock_acquired {
+            info!(
+                embedded_dataset_id = embedded_dataset.embedded_dataset_id,
+                "Skipping embedded dataset: another scanner holds the scan lock"
+            );
+            continue;
         }
+
+        // Get dataset items that haven't been batched yet
+        let batch_config = DatasetBatchConfig {
+            embedder_config: embedder_config.clone(),
+            qdrant_config: qdrant_config.clone(),
+            s3_bucket: s3_bucket.clone(),
+            embedded_dataset_prefix: embedded_dataset_prefix.clone(),
+            embedding_batch_size,
+        };
+        let items_created = create_batches_from_dataset_items(
+            pool,
+            s3,
+            nats,
+            transform,
+            &embedded_dataset,
+            &batch_config,
+            &rate_limiter,
+            &circuit_breaker,
+            scanner_config,
+        )
+        .await;
+
+        // Always release the scan lock, even on error
+        if let Err(e) =
+            embedded_datasets::release_scan_lock(pool, embedded_dataset.embedded_dataset_id).await
+        {
+            warn!(
+                embedded_dataset_id = embedded_dataset.embedded_dataset_id,
+                "Failed to release scan lock: {}", e
+            );
+        }
+
+        total_jobs += items_created?;
     }
 
     info!(
@@ -688,18 +694,17 @@ async fn create_batches_from_dataset_items(
     circuit_breaker: &Arc<CircuitBreaker>,
     scanner_config: &ScannerConfig,
 ) -> Result<usize> {
-    // Use timestamp-based tracking to identify new items that need processing
-    let last_processed_at = embedded_dataset.last_processed_at;
-
-    // Snapshot the current time BEFORE querying to prevent watermark race conditions.
-    // Any items added after this point will have timestamps >= query_start_time
-    // and will be picked up on the next scan. Items with timestamps between
-    // last_processed_at and query_start_time are guaranteed to be included.
-    let query_start_time = chrono::Utc::now();
+    // Use item_id-based watermark to track progress through dataset items.
+    // item_id (PostgreSQL SERIAL) is monotonically increasing, so scanning by
+    // item_id > last_processed_item_id is safe under concurrent inserts — new
+    // items always have higher IDs regardless of their `created_at` timestamp.
+    // This eliminates the MVCC race condition where concurrent transactions
+    // insert items with `created_at` before the scanner's query_start_time.
+    let last_processed_item_id = embedded_dataset.last_processed_item_id.unwrap_or(0);
 
     info!(
-        "Embedded dataset {} last processed at: {:?}, query snapshot at: {:?}",
-        embedded_dataset.embedded_dataset_id, last_processed_at, query_start_time
+        "Embedded dataset {} last_processed_item_id: {}, scanning for new items",
+        embedded_dataset.embedded_dataset_id, last_processed_item_id
     );
 
     // Apply resource limits
@@ -707,12 +712,11 @@ async fn create_batches_from_dataset_items(
     // Fetch at most max_items_per_scan + 1 so we can detect truncation
     // without pulling unbounded rows from the database.
     let fetch_limit = (limits.max_items_per_scan as i64).saturating_add(1);
-    let mut items = datasets::get_dataset_items_modified_since(
+    let mut items = datasets::get_dataset_items_for_scanner(
         pool,
         transform.source_dataset_id,
-        last_processed_at,
+        last_processed_item_id,
         fetch_limit,
-        0,
     )
     .await?;
 
@@ -743,17 +747,13 @@ async fn create_batches_from_dataset_items(
 
     // Convert dataset items to batch items (one per chunk)
     let mut all_batch_items: Vec<serde_json::Value> = Vec::new();
-    // Track cumulative chunk count per item for watermark calculation
-    // (items are ordered ASC by updated_at, so last entry = newest processed item)
-    let mut item_chunk_boundaries: Vec<(usize, chrono::DateTime<chrono::Utc>)> = Vec::new();
+    // Track cumulative chunk count per item for watermark calculation.
+    // Stores (cumulative_chunks, item_id) — items are ordered ASC by item_id.
+    let mut item_chunk_boundaries: Vec<(usize, i32)> = Vec::new();
     // Use a namespace UUID for generating deterministic chunk IDs
     // This ensures the same item+chunk always gets the same UUID, enabling idempotent upserts
     let namespace = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap(); // URL namespace UUID
     for item in &items {
-        let item_ts = item
-            .updated_at
-            .or(item.created_at)
-            .unwrap_or(query_start_time);
         for (chunk_idx, chunk) in item.chunks.iter().enumerate() {
             // Generate a deterministic UUID based on embedded_dataset_id, item_id, and chunk_index
             // This allows re-processing to update existing vectors rather than create duplicates
@@ -776,7 +776,7 @@ async fn create_batches_from_dataset_items(
             all_batch_items.push(batch_item);
         }
         let cumulative_chunks = all_batch_items.len();
-        item_chunk_boundaries.push((cumulative_chunks, item_ts));
+        item_chunk_boundaries.push((cumulative_chunks, item.item_id));
     }
 
     if all_batch_items.is_empty() {
@@ -796,7 +796,7 @@ async fn create_batches_from_dataset_items(
     // Split into batches and upload to S3, then dispatch jobs
     let mut jobs_created = 0;
     let mut actual_chunks_dispatched: usize = 0;
-    let chunks_per_batch = config.embedding_batch_size * 10; // Create larger batches for efficiency
+    let chunks_per_batch = config.embedding_batch_size;
     let total_batches = all_batch_items.len().div_ceil(chunks_per_batch);
 
     // Apply max batch limit
@@ -959,55 +959,83 @@ async fn create_batches_from_dataset_items(
         record_scanner_batches_created("dataset", jobs_created as u64);
     }
 
-    // Advance the watermark based on what was actually processed.
-    // Items are ordered ASC by updated_at, so we advance incrementally.
+    // Advance the item_id watermark based on what was actually processed.
+    // Items are ordered ASC by item_id, so we advance incrementally.
     //
-    // - No truncation, no batch cap: safe to advance to query_start_time
-    //   (all items between last_processed_at and query_start_time were batched)
-    // - Items truncated (but all batches dispatched): advance to the max updated_at
-    //   of fetched items. Truncated (newer) items will be picked up next scan.
-    // - Batches capped: advance only to the updated_at of the last item whose chunks
+    // The watermark is a simple item_id value. Since PostgreSQL SERIAL IDs are
+    // monotonically increasing, scanning by `item_id > last_processed_item_id`
+    // correctly finds all newly inserted items regardless of their created_at
+    // timestamp. This eliminates the MVCC race condition that occurred with
+    // timestamp-based watermarks.
+    //
+    // - No truncation, no batch cap: advance to the last item's item_id
+    // - Items truncated (but all batches dispatched): advance to the last fetched item's item_id
+    // - Batches capped: advance only to the item_id of the last item whose chunks
     //   were fully included in dispatched batches. Remaining items will be picked up next scan.
     // - Re-processing is always safe due to deterministic chunk UUIDs (Uuid::new_v5)
     if jobs_created > 0 {
-        let new_watermark = if !was_truncated && !was_batches_capped {
-            // All items fetched and all batches dispatched
-            query_start_time
-        } else if was_batches_capped {
+        let new_item_id = if was_batches_capped {
             // Only advance to cover items fully within dispatched batches.
-            // Use actual_chunks_dispatched (tracked during the loop) instead of
-            // effective_total * chunks_per_batch — this is resilient to partial
-            // batches, circuit breaker breaks, and future refactors.
             item_chunk_boundaries
                 .iter()
                 .rfind(|(cumul, _)| *cumul <= actual_chunks_dispatched)
-                .map(|(_, ts)| *ts)
-                .unwrap_or(query_start_time)
+                .map(|(_, id)| *id)
+                .unwrap_or(last_processed_item_id)
         } else {
-            // Items truncated, all batches dispatched:
-            // advance to max updated_at of processed items (last in ASC order)
+            // All batches dispatched (whether truncated or not):
+            // advance to item_id of last processed item (last in ASC order)
             item_chunk_boundaries
-                .iter()
                 .last()
-                .map(|(_, ts)| *ts)
-                .unwrap_or(query_start_time)
+                .map(|(_, id)| *id)
+                .unwrap_or(last_processed_item_id)
         };
 
+        let now = chrono::Utc::now();
         info!(
             embedded_dataset_id = embedded_dataset.embedded_dataset_id,
             was_truncated = was_truncated,
             was_batches_capped = was_batches_capped,
-            ?new_watermark,
-            ?query_start_time,
-            "Advancing watermark"
+            new_item_id,
+            prev_item_id = last_processed_item_id,
+            "Advancing item_id watermark"
         );
 
         embedded_datasets::update_embedded_dataset_last_processed_at_to(
             pool,
             embedded_dataset.embedded_dataset_id,
-            new_watermark,
+            now,
+            Some(new_item_id),
         )
         .await?;
+    }
+
+    // Self-trigger: always schedule a follow-up scan when items were found.
+    // This is essential for handling concurrent inserts (e.g. collection worker
+    // still populating the dataset). Without this, the scanner would stop after
+    // processing the first batch of items and wait up to 5 minutes for
+    // reconciliation to pick up the rest.
+    //
+    // Natural termination: when a follow-up scan finds 0 items, jobs_created=0,
+    // no self-trigger fires, and the scan loop stops.
+    if jobs_created > 0 {
+        info!(
+            embedded_dataset_id = embedded_dataset.embedded_dataset_id,
+            was_batches_capped,
+            was_truncated,
+            "Scheduling follow-up scan for remaining/concurrent items"
+        );
+        if let Err(e) = trigger_dataset_transform_scan(
+            nats,
+            transform.dataset_transform_id,
+            &transform.owner_id,
+        )
+        .await
+        {
+            warn!(
+                "Failed to schedule follow-up scan, will rely on reconciliation: {}",
+                e
+            );
+        }
     }
 
     Ok(jobs_created)

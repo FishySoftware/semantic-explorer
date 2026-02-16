@@ -15,7 +15,7 @@ use actix_web::{HttpRequest, HttpResponse, Responder, delete, get, patch, post};
 use async_nats::Client as NatsClient;
 use serde::Deserialize;
 use sqlx::{Pool, Postgres};
-use tracing::error;
+use tracing::{error, info};
 
 use actix_web::http::header;
 use futures_util::stream::StreamExt;
@@ -45,11 +45,6 @@ fn default_sort_by() -> String {
 
 fn default_sort_direction() -> String {
     "desc".to_string()
-}
-
-#[derive(Deserialize, utoipa::ToSchema, Debug)]
-pub struct BatchCollectionTransformStatsRequest {
-    pub collection_transform_ids: Vec<i32>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -220,10 +215,11 @@ pub async fn create_collection_transform(
     ),
 )]
 #[patch("/api/collection-transforms/{id}")]
-#[tracing::instrument(name = "update_collection_transform", skip(user, pool, body), fields(collection_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "update_collection_transform", skip(user, pool, nats_client, body), fields(collection_transform_id = %path.as_ref()))]
 pub async fn update_collection_transform(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
+    nats_client: Data<NatsClient>,
     path: Path<i32>,
     body: Json<UpdateCollectionTransform>,
 ) -> impl Responder {
@@ -234,6 +230,17 @@ pub async fn update_collection_transform(
     }
 
     let id = path.into_inner();
+
+    // Check if transform is being re-enabled
+    let was_disabled = if body.is_enabled == Some(true) {
+        collection_transforms::get_collection_transform(&pool, &user.as_owner(), id)
+            .await
+            .map(|t| !t.is_enabled)
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
     match collection_transforms::update_collection_transform(
         &pool,
         &user.as_owner(),
@@ -252,6 +259,17 @@ pub async fn update_collection_transform(
                 ResourceType::Transform,
                 &id.to_string(),
             );
+
+            if was_disabled
+                && let Err(e) =
+                    trigger_collection_transform_scan(&nats_client, id, &user.as_owner()).await
+            {
+                error!(
+                    "Failed to trigger scan for re-enabled collection transform {}: {}",
+                    id, e
+                );
+            }
+
             HttpResponse::Ok().json(transform)
         }
         Err(e) => {
@@ -315,10 +333,11 @@ pub async fn delete_collection_transform(
     ),
 )]
 #[post("/api/collection-transforms/{id}/trigger")]
-#[tracing::instrument(name = "trigger_collection_transform", skip(user, pool), fields(collection_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "trigger_collection_transform", skip(user, pool, nats_client), fields(collection_transform_id = %path.as_ref()))]
 pub async fn trigger_collection_transform(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
+    nats_client: Data<NatsClient>,
     path: Path<i32>,
 ) -> impl Responder {
     let collection_transform_id = path.into_inner();
@@ -330,15 +349,109 @@ pub async fn trigger_collection_transform(
     )
     .await
     {
-        Ok(_) => HttpResponse::Ok().json(serde_json::json!({
-            "message": "Collection transform triggered",
-            "collection_transform_id": collection_transform_id
-        })),
+        Ok(_) => {
+            if let Err(e) = trigger_collection_transform_scan(
+                &nats_client,
+                collection_transform_id,
+                &user.as_owner(),
+            )
+            .await
+            {
+                error!("Failed to trigger collection transform scan: {}", e);
+            }
+            HttpResponse::Ok().json(serde_json::json!({
+                "message": "Collection transform triggered",
+                "collection_transform_id": collection_transform_id
+            }))
+        }
         Err(e) => {
             error!("Collection transform not found: {}", e);
             not_found(format!("Collection transform not found: {}", e))
         }
     }
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/collection-transforms/{id}/retry-failed",
+    tag = "Collection Transforms",
+    params(
+        ("id" = i32, Path, description = "Collection Transform ID")
+    ),
+    responses(
+        (status = 200, description = "Failed files retried successfully"),
+        (status = 404, description = "Collection transform not found"),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[post("/api/collection-transforms/{id}/retry-failed")]
+#[tracing::instrument(name = "retry_failed_collection_files", skip(user, pool, nats_client), fields(collection_transform_id = %path.as_ref()))]
+pub async fn retry_failed_collection_files(
+    user: AuthenticatedUser,
+    pool: Data<Pool<Postgres>>,
+    nats_client: Data<NatsClient>,
+    path: Path<i32>,
+) -> impl Responder {
+    let collection_transform_id = path.into_inner();
+
+    // Verify the transform exists and user has access
+    let _transform = match collection_transforms::get_collection_transform(
+        &pool,
+        &user.as_owner(),
+        collection_transform_id,
+    )
+    .await
+    {
+        Ok(t) => t,
+        Err(e) => {
+            error!("Collection transform not found: {}", e);
+            return not_found(format!("Collection transform not found: {}", e));
+        }
+    };
+
+    // Delete failed processed-file records so the scanner rediscovers those files
+    let retried_count =
+        match collection_transforms::delete_failed_files_for_retry(&pool, collection_transform_id)
+            .await
+        {
+            Ok(count) => count,
+            Err(e) => {
+                error!("Failed to reset failed files for retry: {}", e);
+                return HttpResponse::InternalServerError().json(serde_json::json!({
+                    "error": format!("Failed to reset failed files: {}", e)
+                }));
+            }
+        };
+
+    if retried_count == 0 {
+        return HttpResponse::Ok().json(serde_json::json!({
+            "message": "No failed files to retry.",
+            "collection_transform_id": collection_transform_id,
+            "retried_count": 0
+        }));
+    }
+
+    // Trigger the scanner so it rediscovers the now-unprocessed files
+    if let Err(e) =
+        trigger_collection_transform_scan(&nats_client, collection_transform_id, &user.as_owner())
+            .await
+    {
+        error!("Failed to trigger scan after retry: {}", e);
+        return HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": format!("Files reset but failed to trigger scan: {}", e)
+        }));
+    }
+
+    info!(
+        collection_transform_id,
+        retried_count, "Retry: deleted failed records and triggered scanner"
+    );
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "message": "Failed files reset and scan triggered",
+        "collection_transform_id": collection_transform_id,
+        "retried_count": retried_count,
+    }))
 }
 
 #[utoipa::path(
@@ -389,63 +502,6 @@ pub async fn get_collection_transform_stats(
         Err(e) => {
             error!("Collection transform not found: {}", e);
             not_found(format!("Collection transform not found: {}", e))
-        }
-    }
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/collection-transforms/batch-stats",
-    tag = "Collection Transforms",
-    request_body = BatchCollectionTransformStatsRequest,
-    responses(
-        (status = 200, description = "Batch transform statistics"),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Collection transform not found"),
-    ),
-)]
-#[post("/api/collection-transforms/batch-stats")]
-#[tracing::instrument(name = "get_batch_collection_transform_stats", skip(user, pool))]
-pub async fn get_batch_collection_transform_stats(
-    user: AuthenticatedUser,
-    pool: Data<Pool<Postgres>>,
-    body: Json<BatchCollectionTransformStatsRequest>,
-) -> impl Responder {
-    let transform_ids = &body.collection_transform_ids;
-
-    // Verify ownership of all transforms in a single query (eliminates N+1)
-    let owned_ids = match collection_transforms::verify_collection_transforms_ownership_batch(
-        &pool,
-        &user.as_owner(),
-        transform_ids,
-    )
-    .await
-    {
-        Ok(ids) => ids,
-        Err(e) => {
-            error!("Failed to verify ownership: {}", e);
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": "Failed to verify ownership"
-            }));
-        }
-    };
-
-    // Check if any requested IDs are not owned by the user
-    for id in transform_ids {
-        if !owned_ids.contains(id) {
-            return HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("Collection transform {} not found", id)
-            }));
-        }
-    }
-
-    match collection_transforms::get_batch_collection_transform_stats(&pool, transform_ids).await {
-        Ok(stats_map) => HttpResponse::Ok().json(stats_map),
-        Err(e) => {
-            error!("Failed to get batch stats: {}", e);
-            HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": "Failed to fetch batch statistics"
-            }))
         }
     }
 }

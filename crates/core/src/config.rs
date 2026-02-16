@@ -22,6 +22,7 @@ pub struct AppConfig {
     pub inference: EmbeddingInferenceConfig,
     pub llm_inference: LlmInferenceConfig,
     pub worker: WorkerConfig,
+    pub valkey: ValkeyConfig,
 }
 
 /// Database configuration
@@ -175,6 +176,32 @@ pub struct WorkerConfig {
     pub qdrant_upload_chunk_size: usize,
 }
 
+/// Valkey (Redis-compatible) cache configuration
+#[derive(Debug, Clone)]
+pub struct ValkeyConfig {
+    /// Valkey connection URL (e.g., redis://localhost:6379)
+    pub url: String,
+    /// Optional separate read replica URL for read operations
+    /// Defaults to the primary URL if not set
+    pub read_url: String,
+    /// Optional authentication password
+    pub password: Option<String>,
+    /// Enable TLS for Valkey connections
+    pub tls_enabled: bool,
+    /// Connection pool size (default: 10)
+    pub pool_size: u32,
+    /// TTL for bearer token cache entries in seconds (default: 3600).
+    /// Dex issues tokens valid for 24h; caching for 1h is safe and avoids
+    /// expensive OIDC userinfo round-trips on every request.
+    pub bearer_cache_ttl_secs: u64,
+    /// TTL for resource metadata cache entries in seconds (default: 300)
+    pub resource_cache_ttl_secs: u64,
+    /// Connection timeout in seconds (default: 5)
+    pub connect_timeout_secs: u64,
+    /// Response timeout in seconds (default: 2)
+    pub response_timeout_secs: u64,
+}
+
 impl AppConfig {
     /// Load configuration from environment variables.
     ///
@@ -194,6 +221,7 @@ impl AppConfig {
             inference: EmbeddingInferenceConfig::from_env()?,
             llm_inference: LlmInferenceConfig::from_env()?,
             worker: WorkerConfig::from_env()?,
+            valkey: ValkeyConfig::from_env()?,
         })
     }
 }
@@ -530,6 +558,43 @@ impl WorkerConfig {
                 .unwrap_or_else(|_| "200".to_string())
                 .parse()
                 .context("WORKER_QDRANT_UPLOAD_CHUNK_SIZE must be a number")?,
+        })
+    }
+}
+
+impl ValkeyConfig {
+    pub fn from_env() -> Result<Self> {
+        let url = env::var("VALKEY_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
+        let read_url = env::var("VALKEY_READ_URL").unwrap_or_else(|_| url.clone());
+
+        Ok(Self {
+            url,
+            read_url,
+            password: env::var("VALKEY_PASSWORD").ok().filter(|s| !s.is_empty()),
+            tls_enabled: env::var("VALKEY_TLS_ENABLED")
+                .unwrap_or_else(|_| "false".to_string())
+                .to_lowercase()
+                == "true",
+            pool_size: env::var("VALKEY_POOL_SIZE")
+                .unwrap_or_else(|_| "10".to_string())
+                .parse()
+                .context("VALKEY_POOL_SIZE must be a number")?,
+            bearer_cache_ttl_secs: env::var("VALKEY_BEARER_CACHE_TTL_SECS")
+                .unwrap_or_else(|_| "3600".to_string())
+                .parse()
+                .context("VALKEY_BEARER_CACHE_TTL_SECS must be a number")?,
+            resource_cache_ttl_secs: env::var("VALKEY_RESOURCE_CACHE_TTL_SECS")
+                .unwrap_or_else(|_| "300".to_string())
+                .parse()
+                .context("VALKEY_RESOURCE_CACHE_TTL_SECS must be a number")?,
+            connect_timeout_secs: env::var("VALKEY_CONNECT_TIMEOUT_SECS")
+                .unwrap_or_else(|_| "5".to_string())
+                .parse()
+                .context("VALKEY_CONNECT_TIMEOUT_SECS must be a number")?,
+            response_timeout_secs: env::var("VALKEY_RESPONSE_TIMEOUT_SECS")
+                .unwrap_or_else(|_| "2".to_string())
+                .parse()
+                .context("VALKEY_RESPONSE_TIMEOUT_SECS must be a number")?,
         })
     }
 }

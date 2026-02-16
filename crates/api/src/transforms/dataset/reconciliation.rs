@@ -13,8 +13,7 @@ use anyhow::Result;
 use async_nats::Client as NatsClient;
 use aws_sdk_s3::Client as S3Client;
 use sqlx::{Pool, Postgres};
-use std::time::Duration;
-use tracing::{Instrument, error, info, info_span, warn};
+use tracing::{error, info, warn};
 
 use crate::auth::AuthenticatedUser;
 use crate::storage::postgres::dataset_transform_pending_batches::{
@@ -37,8 +36,6 @@ use semantic_explorer_core::observability::{
 /// Configuration for the reconciliation job
 #[derive(Clone)]
 pub struct ReconciliationConfig {
-    /// How often to run reconciliation (default: 5 minutes)
-    pub interval: Duration,
     /// Maximum pending batches to retry per run
     pub max_pending_retries: i64,
     /// Hours after which a "processing" batch is considered stuck (default: 2)
@@ -50,12 +47,6 @@ impl ReconciliationConfig {
     /// Call once at startup.
     pub fn from_env() -> Self {
         Self {
-            interval: Duration::from_secs(
-                std::env::var("RECONCILIATION_INTERVAL_SECS")
-                    .unwrap_or_else(|_| "300".to_string())
-                    .parse()
-                    .unwrap_or(300),
-            ),
             max_pending_retries: 100,
             stuck_batch_threshold_hours: std::env::var("STUCK_BATCH_THRESHOLD_HOURS")
                 .ok()
@@ -77,39 +68,8 @@ pub struct ReconciliationContext {
     pub qdrant_config: QdrantConnectionConfig,
 }
 
-/// Start the background reconciliation job
-pub fn start_reconciliation_job(ctx: ReconciliationContext) {
-    actix_web::rt::spawn(async move {
-        info!(
-            interval_secs = ctx.config.interval.as_secs(),
-            "Starting dataset transform reconciliation job"
-        );
-
-        let mut interval = tokio::time::interval(ctx.config.interval);
-
-        loop {
-            tokio::select! {
-                _ = interval.tick() => {
-                    let span = info_span!("reconciliation_run");
-                    async {
-                        if let Err(e) = run_reconciliation(&ctx).await {
-                            error!(error = %e, "Reconciliation run failed");
-                        }
-                    }
-                    .instrument(span)
-                    .await;
-                }
-                _ = tokio::signal::ctrl_c() => {
-                    info!("Reconciliation job received shutdown signal, exiting gracefully");
-                    break;
-                }
-            }
-        }
-    });
-}
-
 /// Run a single reconciliation cycle
-async fn run_reconciliation(ctx: &ReconciliationContext) -> Result<()> {
+pub async fn run_reconciliation(ctx: &ReconciliationContext) -> Result<()> {
     info!("Starting reconciliation run");
 
     // Step 1: Retry pending batches (dataset + collection)

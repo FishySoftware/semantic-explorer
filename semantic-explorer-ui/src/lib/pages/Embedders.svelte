@@ -226,13 +226,12 @@
 		}
 	}
 
-	let hasMount = false;
+	let initialFetchDone = false;
 
 	onMount(() => {
 		fetchEmbedders();
 		fetchInferenceModels();
 		extractSearchParamFromHash();
-		hasMount = true;
 	});
 
 	$effect(() => {
@@ -266,6 +265,7 @@
 			error = e.message || 'Failed to load embedders';
 		} finally {
 			loading = false;
+			initialFetchDone = true;
 		}
 	}
 
@@ -494,9 +494,9 @@
 		try {
 			const response = await fetch(`/api/embedders/${id}`, { method: 'DELETE' });
 			if (!response.ok) {
-				const errorText = await response.text();
-				console.error('Failed to delete embedder:', errorText);
-				throw new Error(`Failed to delete embedder: ${response.status}`);
+				const body = await response.json().catch(() => null);
+				console.error('Failed to delete embedder:', body);
+				throw new Error(body?.message || `Failed to delete embedder: ${response.status}`);
 			}
 			toastStore.success('Embedder deleted');
 			await fetchEmbedders();
@@ -546,6 +546,7 @@
 		const toDelete = embeddersPendingBulkDelete;
 		embeddersPendingBulkDelete = [];
 
+		let deleted = 0;
 		for (const embedder of toDelete) {
 			try {
 				const response = await fetch(`/api/embedders/${embedder.embedder_id}`, {
@@ -553,10 +554,12 @@
 				});
 
 				if (!response.ok) {
-					throw new Error(`Failed to delete: ${response.statusText}`);
+					const body = await response.json().catch(() => null);
+					throw new Error(body?.message || `Failed to delete: ${response.statusText}`);
 				}
 
 				embedders = embedders.filter((e) => e.embedder_id !== embedder.embedder_id);
+				deleted++;
 			} catch (e) {
 				toastStore.error(formatError(e, `Failed to delete "${embedder.name}"`));
 			}
@@ -564,18 +567,17 @@
 
 		selected.clear();
 		selectAll = false;
-		toastStore.success(`Deleted ${toDelete.length} embedder${toDelete.length !== 1 ? 's' : ''}`);
+		if (deleted > 0) {
+			toastStore.success(`Deleted ${deleted} embedder${deleted !== 1 ? 's' : ''}`);
+		}
 	}
 
 	// Refetch when search query changes
 	// Debounce search to avoid spamming API on every keystroke
 	let searchDebounceTimeout: ReturnType<typeof setTimeout> | null = null;
-	let previousSearchQuery = '';
 
 	$effect(() => {
-		// Only trigger fetch if we've mounted and search query actually changed
-		if (hasMount && searchQuery !== previousSearchQuery) {
-			previousSearchQuery = searchQuery;
+		if (searchQuery !== undefined && initialFetchDone) {
 			currentOffset = 0; // Reset to first page when searching
 			if (searchDebounceTimeout) {
 				clearTimeout(searchDebounceTimeout);

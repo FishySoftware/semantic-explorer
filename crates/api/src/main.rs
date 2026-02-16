@@ -81,6 +81,34 @@ async fn main() -> Result<()> {
     let s3_client = storage::s3::initialize_client().await?;
     let qdrant_client = storage::qdrant::initialize_client(&config.qdrant).await?;
     let pool = storage::postgres::initialize_pool(&config.database).await?;
+
+    // Initialize Valkey (Redis-compatible) shared cache.
+    // Optional — the system degrades gracefully if Valkey is unavailable.
+    let valkey_clients = match storage::valkey::initialize_client(&config.valkey).await {
+        Ok(write_conn) => {
+            info!("Valkey primary connected");
+            // Try to connect to read replica; fall back to primary if unavailable
+            let read_conn = match storage::valkey::initialize_read_client(&config.valkey).await {
+                Ok(conn) => {
+                    info!("Valkey read replica connected");
+                    conn
+                }
+                Err(_) => {
+                    info!("No Valkey read replica configured — using primary for reads");
+                    write_conn.clone()
+                }
+            };
+            Some(storage::valkey::ValkeyClients {
+                write: write_conn,
+                read: read_conn,
+            })
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Valkey not available – running without shared cache");
+            None
+        }
+    };
+
     let openid_client =
         auth::oidc::initialize_client(format!("{public_url}/auth_callback"), &config.oidc).await?;
     let nats_client = async_nats::connect(&config.nats.url).await?;
@@ -143,24 +171,40 @@ async fn main() -> Result<()> {
     // Start trigger listener (all instances listen, NATS coordinates)
     let _scanner_listener = transforms::trigger::start_trigger_listener(scanner_ctx);
 
-    // Start trigger publisher (publishes periodic scan triggers)
+    // Start trigger publisher (publishes periodic reconciliation triggers)
     // In a multi-instance deployment, redundant triggers are deduplicated by NATS
     let _scanner_publisher = transforms::trigger::start_trigger_publisher(nats_client.clone());
 
     // Initialize audit event infrastructure (database and NATS)
     audit::events::init(pool.clone(), nats_client.clone());
 
-    // Start dataset transform reconciliation job (background reliability worker)
-    let reconciliation_ctx = transforms::dataset::reconciliation::ReconciliationContext {
-        pool: pool.clone(),
-        nats_client: nats_client.clone(),
-        s3_client: s3_client.clone(),
-        s3_bucket_name: config.s3.bucket_name.clone(),
-        config: transforms::dataset::reconciliation::ReconciliationConfig::from_env(),
-        encryption: encryption_service.clone(),
-        qdrant_config: qdrant_connection_config.clone(),
+    // Start background Valkey metrics polling (every 30s)
+    let _valkey_stats_handle = if let Some(ref clients) = valkey_clients {
+        let stats_conn = clients.read.clone();
+        Some(tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            loop {
+                interval.tick().await;
+                let healthy = storage::valkey::health_check(&stats_conn).await;
+                semantic_explorer_core::observability::record_valkey_connected(healthy);
+                if let Some(info) = storage::valkey::get_info(&stats_conn).await {
+                    let memory =
+                        storage::valkey::parse_info_field(&info, "used_memory").unwrap_or(0.0);
+                    let clients = storage::valkey::parse_info_field(&info, "connected_clients")
+                        .unwrap_or(0.0);
+                    let hits =
+                        storage::valkey::parse_info_field(&info, "keyspace_hits").unwrap_or(0.0);
+                    let misses =
+                        storage::valkey::parse_info_field(&info, "keyspace_misses").unwrap_or(0.0);
+                    semantic_explorer_core::observability::record_valkey_server_stats(
+                        memory, clients, hits, misses,
+                    );
+                }
+            }
+        }))
+    } else {
+        None
     };
-    transforms::dataset::reconciliation::start_reconciliation_job(reconciliation_ctx);
 
     let server = HttpServer::new(move || {
         // Build CORS configuration based on allowed origins
@@ -205,12 +249,19 @@ async fn main() -> Result<()> {
             ));
 
         App::new()
-            .wrap(prometheus.clone())
-            .wrap(cors)
-            .wrap(security_headers)
-            .wrap(Compress::default())
             .wrap(openid_client.get_middleware())
+            .wrap(Compress::default())
+            .wrap(security_headers)
+            .wrap(cors)
+            .wrap(prometheus.clone())
             .configure(openid_client.configure_open_id())
+            .configure(|cfg| {
+                // Register Valkey clients (read + write) if available
+                if let Some(ref clients) = valkey_clients {
+                    cfg.app_data(web::Data::new(clients.clone()));
+                }
+            })
+            .app_data(web::Data::new(config.valkey.clone()))
             .app_data(web::Data::new(s3_client.clone()))
             .app_data(web::Data::new(config.s3.clone()))
             .app_data(web::Data::new(qdrant_client.clone()))
@@ -252,7 +303,6 @@ async fn main() -> Result<()> {
             .service(api::datasets::upload_to_dataset)
             .service(api::embedded_datasets::get_embedded_dataset)
             .service(api::embedded_datasets::get_embedded_datasets)
-            .service(api::embedded_datasets::get_batch_embedded_dataset_stats)
             .service(api::embedded_datasets::update_embedded_dataset)
             .service(api::embedded_datasets::delete_embedded_dataset)
             .service(api::embedded_datasets::get_embedded_dataset_stats)
@@ -295,21 +345,21 @@ async fn main() -> Result<()> {
             .service(api::collection_transforms::update_collection_transform)
             .service(api::collection_transforms::delete_collection_transform)
             .service(api::collection_transforms::trigger_collection_transform)
+            .service(api::collection_transforms::retry_failed_collection_files)
             .service(api::collection_transforms::get_collection_transform_stats)
-            .service(api::collection_transforms::get_batch_collection_transform_stats)
             .service(api::collection_transforms::get_processed_files)
             .service(api::collection_transforms::get_failed_files_for_collection)
             .service(api::collection_transforms::get_collection_transforms_for_collection)
             .service(api::collection_transforms::get_collection_transforms_for_dataset)
             .service(api::dataset_transforms::get_dataset_transforms)
             .service(api::dataset_transforms::stream_dataset_transform_status)
-            .service(api::dataset_transforms::get_batch_dataset_transform_stats)
             .service(api::dataset_transforms::get_dataset_transform)
             .service(api::dataset_transforms::create_dataset_transform)
             .service(api::dataset_transforms::update_dataset_transform)
             .service(api::dataset_transforms::delete_dataset_transform)
             .service(api::dataset_transforms::trigger_dataset_transform)
             .service(api::dataset_transforms::retry_failed_batches)
+            .service(api::dataset_transforms::retry_single_failed_batch)
             .service(api::dataset_transforms::get_dataset_transform_stats)
             .service(api::dataset_transforms::get_dataset_transform_detailed_stats)
             .service(api::dataset_transforms::get_dataset_transform_batches)

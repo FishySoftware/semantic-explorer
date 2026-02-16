@@ -32,4 +32,4 @@ base64 = { workspace = true }
 hex = { workspace = true }
 rustls = { workspace = true }
 pem = { workspace = true }
-nvml-wrapper = "0.11.0"
+nvml-wrapper = "0.12.0"

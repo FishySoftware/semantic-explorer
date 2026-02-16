@@ -15,8 +15,10 @@ actix-web = { workspace = true }
 actix-cors = { workspace = true }
 actix-multipart = { workspace = true }
 actix-files = { workspace = true }
-actix_web_openidconnect = { workspace = true }
 actix-web-prom = { workspace = true }
+openidconnect = "4.0.1"
+oauth2 = "5.0.0"
+url = "2.5.8"
 thiserror = { workspace = true }
 async-nats = { workspace = true }
 async-stream = { workspace = true }
@@ -43,6 +45,7 @@ infer = { workspace = true }
 sha2 = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 once_cell = { workspace = true }
+redis = { workspace = true }
 
 [target.'cfg(target_env = "musl")'.dependencies]
 mimalloc = { version = "0.1.48", features = ["v3"], default-features = false }

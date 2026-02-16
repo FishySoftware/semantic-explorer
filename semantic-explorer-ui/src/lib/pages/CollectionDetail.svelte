@@ -10,7 +10,6 @@
 	import TransformsList from '../components/TransformsList.svelte';
 	import UploadProgressPanel from '../components/UploadProgressPanel.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
-	import { createSSEConnection, type SSEConnection } from '../utils/sse';
 	import { formatDate, formatFileSize } from '../utils/ui-helpers';
 
 	interface FileStatus {
@@ -119,8 +118,6 @@
 	let collectionTransforms = $state<CollectionTransform[]>([]);
 	let datasetTransforms = $state<DatasetTransform[]>([]);
 	let transformsLoading = $state(false);
-	let collectionTransformStatsMap = $state<Map<number, any>>(new Map());
-	let datasetTransformStatsMap = $state<Map<number, any>>(new Map());
 
 	let transformModalOpen = $state(false);
 	let activeTab = $state('files');
@@ -193,9 +190,21 @@
 	let editTags = $state('');
 	let saving = $state(false);
 	let editError = $state<string | null>(null);
+	let refreshing = $state(false);
 
-	// SSE connection for real-time transform status updates
-	let sseConnection: SSEConnection | null = null;
+	async function refreshAll() {
+		refreshing = true;
+		try {
+			await Promise.all([
+				fetchCollection(),
+				fetchFiles(),
+				fetchCollectionTransforms(),
+				fetchFailedFiles(),
+			]);
+		} finally {
+			refreshing = false;
+		}
+	}
 
 	onMount(() => {
 		// Load initial data
@@ -206,7 +215,6 @@
 			fetchFailedFiles(),
 			fetchAllowedFileTypes(),
 		]);
-		connectSSE();
 
 		// Warn user if they try to leave while uploading
 		const handleBeforeUnload = (event: Event) => {
@@ -223,33 +231,11 @@
 	});
 
 	onDestroy(() => {
-		sseConnection?.disconnect();
 		if (searchTimeout) {
 			clearTimeout(searchTimeout);
 		}
 	});
 
-	function connectSSE() {
-		sseConnection = createSSEConnection({
-			url: `/api/collection-transforms/stream?collection_id=${collectionId}`,
-			onStatus: (data: unknown) => {
-				const status = data as { collection_transform_id?: number };
-				if (status.collection_transform_id) {
-					// Refresh stats for this transform
-					fetchCollectionTransformStats(status.collection_transform_id);
-					// Refresh failed files in case the status changed
-					fetchFailedFiles();
-					// Also refresh dataset transforms (may have new stats from embedding)
-					fetchDatasetTransformsForCollectionTargets();
-				}
-			},
-			onMaxRetriesReached: () => {
-				console.warn('SSE connection lost for collection transforms');
-			},
-		});
-	}
-
-	// Cleanup polling on unmount is handled by controller.stop()
 	async function fetchCollectionTransforms() {
 		try {
 			transformsLoading = true;
@@ -260,10 +246,8 @@
 					(a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
 				);
 
-				// Fetch stats for each collection transform
-				for (const transform of collectionTransforms) {
-					fetchCollectionTransformStats(transform.collection_transform_id);
-				}
+				// Fetch stats for each collection transform and merge into the objects
+				await fetchCollectionTransformStats();
 
 				// Fetch dataset transforms for each target dataset
 				await fetchDatasetTransformsForCollectionTargets();
@@ -275,30 +259,29 @@
 		}
 	}
 
-	async function fetchCollectionTransformStats(transformId: number) {
-		try {
-			const response = await fetch(`/api/collection-transforms/${transformId}/stats`);
-			if (response.ok) {
-				const stats = await response.json();
-				collectionTransformStatsMap.set(transformId, stats);
-				collectionTransformStatsMap = collectionTransformStatsMap; // Trigger reactivity
-			}
-		} catch (e) {
-			console.error(e);
-		}
-	}
-
-	async function fetchDatasetTransformStats(transformId: number) {
-		try {
-			const response = await fetch(`/api/dataset-transforms/${transformId}/stats`);
-			if (response.ok) {
-				const stats = await response.json();
-				datasetTransformStatsMap.set(transformId, stats);
-				datasetTransformStatsMap = datasetTransformStatsMap; // Trigger reactivity
-			}
-		} catch (e) {
-			console.error(e);
-		}
+	async function fetchCollectionTransformStats() {
+		await Promise.all(
+			collectionTransforms.map(async (transform) => {
+				try {
+					const response = await fetch(
+						`/api/collection-transforms/${transform.collection_transform_id}/stats`
+					);
+					if (response.ok) {
+						const stats = await response.json();
+						transform.last_run_stats = stats;
+						transform.last_run_at = stats.last_run_at;
+						transform.last_run_status = stats.total_files_processed > 0 ? 'completed' : undefined;
+					}
+				} catch (e) {
+					console.error(
+						`Failed to fetch stats for collection transform ${transform.collection_transform_id}:`,
+						e
+					);
+				}
+			})
+		);
+		// Trigger reactivity by reassigning
+		collectionTransforms = [...collectionTransforms];
 	}
 
 	async function fetchDatasetTransformsForCollectionTargets() {
@@ -323,11 +306,6 @@
 		datasetTransforms = allTransforms.sort(
 			(a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
 		);
-
-		// Fetch stats for each dataset transform
-		for (const transform of datasetTransforms) {
-			fetchDatasetTransformStats(transform.dataset_transform_id);
-		}
 	}
 
 	async function fetchFailedFiles() {
@@ -653,97 +631,124 @@
 			return;
 		}
 
-		const batchSize = 25; // Upload 25 files at a time
+		const maxFilesPerBatch = 25;
+		const maxBytesPerBatch = 1024 * 1024 * 1024; // 1 GB
 		uploading = true;
+
+		const fileArray = Array.from(files);
+
+		// Build batches: up to 25 files or 1 GB per batch, whichever is hit first
+		const batches: File[][] = [];
+		let currentBatchFiles: File[] = [];
+		let currentBatchSize = 0;
+
+		for (const file of fileArray) {
+			if (
+				currentBatchFiles.length > 0 &&
+				(currentBatchFiles.length >= maxFilesPerBatch ||
+					currentBatchSize + file.size > maxBytesPerBatch)
+			) {
+				batches.push(currentBatchFiles);
+				currentBatchFiles = [];
+				currentBatchSize = 0;
+			}
+			currentBatchFiles.push(file);
+			currentBatchSize += file.size;
+		}
+		if (currentBatchFiles.length > 0) {
+			batches.push(currentBatchFiles);
+		}
+
 		uploadProgress = {
 			completed: 0,
 			total: files.length,
 			currentBatch: 1,
-			totalBatches: Math.ceil(files.length / batchSize),
+			totalBatches: batches.length,
 		};
 
 		// Initialize file statuses
-		fileStatuses = Array.from(files).map((file) => ({
+		fileStatuses = fileArray.map((file) => ({
 			name: file.name,
 			status: 'pending',
 			progress: 0,
 		}));
 
-		const fileArray = Array.from(files);
 		const completedFiles: string[] = [];
 		const uploadFailedFiles: { name: string; error: string }[] = [];
 
 		try {
-			// Upload files in batches of 25 to balance performance and real-time feedback
-			for (let i = 0; i < fileArray.length; i += batchSize) {
-				const currentBatch = Math.floor(i / batchSize) + 1;
-				const batch = fileArray.slice(i, Math.min(i + batchSize, fileArray.length));
+			for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
+				const batch = batches[batchIdx];
 
-				// Upload all files in this batch in parallel
-				const uploadPromises = batch.map(async (file) => {
-					const fileIndex = fileStatuses.findIndex((f) => f.name === file.name);
-
-					if (fileIndex >= 0) {
-						fileStatuses[fileIndex].status = 'uploading';
-						fileStatuses[fileIndex].progress = 0;
-						fileStatuses = fileStatuses; // Trigger reactivity
+				// Mark all files in this batch as uploading
+				for (const file of batch) {
+					const idx = fileStatuses.findIndex((f) => f.name === file.name);
+					if (idx >= 0) {
+						fileStatuses[idx].status = 'uploading';
+						fileStatuses[idx].progress = 0;
 					}
+				}
+				fileStatuses = fileStatuses;
 
-					const formData = new FormData();
+				// Build a single FormData with all files in this batch
+				const formData = new FormData();
+				for (const file of batch) {
 					formData.append('files', file);
+				}
 
-					try {
-						const response = await fetch(`/api/collections/${collectionId}/files`, {
-							method: 'POST',
-							body: formData,
-						});
+				try {
+					const response = await fetch(`/api/collections/${collectionId}/files`, {
+						method: 'POST',
+						body: formData,
+					});
 
-						if (!response.ok) {
-							throw new Error(`HTTP ${response.status}`);
-						}
-
-						const result = await response.json();
-
-						if (result.completed && result.completed.length > 0) {
-							completedFiles.push(...result.completed);
-							if (fileIndex >= 0) {
-								fileStatuses[fileIndex].status = 'completed';
-								fileStatuses[fileIndex].progress = 100;
-							}
-						}
-						if (result.failed && result.failed.length > 0) {
-							for (const f of result.failed) {
-								uploadFailedFiles.push({ name: f.name, error: f.error });
-							}
-							if (fileIndex >= 0) {
-								fileStatuses[fileIndex].status = 'failed';
-								fileStatuses[fileIndex].error = result.failed[0]?.error || 'Upload failed';
-							}
-						}
-					} catch (e) {
-						uploadFailedFiles.push({ name: file.name, error: formatError(e, 'Upload error') });
-						if (fileIndex >= 0) {
-							fileStatuses[fileIndex].status = 'failed';
-							fileStatuses[fileIndex].error = formatError(e, 'Upload error');
-						}
+					if (!response.ok) {
+						throw new Error(`HTTP ${response.status}`);
 					}
 
-					// Update file statuses after each individual file upload
-					fileStatuses = fileStatuses; // Trigger reactivity
-				});
+					const result = await response.json();
 
-				// Wait for all files in this batch to complete
-				await Promise.all(uploadPromises);
+					if (result.completed && result.completed.length > 0) {
+						completedFiles.push(...result.completed);
+						for (const name of result.completed) {
+							const idx = fileStatuses.findIndex((f) => f.name === name);
+							if (idx >= 0) {
+								fileStatuses[idx].status = 'completed';
+								fileStatuses[idx].progress = 100;
+							}
+						}
+					}
+					if (result.failed && result.failed.length > 0) {
+						for (const f of result.failed) {
+							uploadFailedFiles.push({ name: f.name, error: f.error });
+							const idx = fileStatuses.findIndex((fs) => fs.name === f.name);
+							if (idx >= 0) {
+								fileStatuses[idx].status = 'failed';
+								fileStatuses[idx].error = f.error;
+							}
+						}
+					}
+				} catch (e) {
+					// Entire batch request failed — mark all files in this batch as failed
+					for (const file of batch) {
+						uploadFailedFiles.push({ name: file.name, error: formatError(e, 'Upload error') });
+						const idx = fileStatuses.findIndex((f) => f.name === file.name);
+						if (idx >= 0) {
+							fileStatuses[idx].status = 'failed';
+							fileStatuses[idx].error = formatError(e, 'Upload error');
+						}
+					}
+				}
 
-				// Update progress after batch completes
+				// Update progress after each batch
 				uploadProgress = {
 					completed: completedFiles.length + uploadFailedFiles.length,
 					total: fileArray.length,
-					currentBatch: currentBatch,
-					totalBatches: Math.ceil(fileArray.length / batchSize),
+					currentBatch: batchIdx + 1,
+					totalBatches: batches.length,
 				};
 
-				fileStatuses = fileStatuses; // Trigger reactivity
+				fileStatuses = fileStatuses;
 			}
 
 			// Update counts and first page only after all uploads complete
@@ -981,6 +986,28 @@
 								</label>
 							</div>
 						</div>
+						<button
+							type="button"
+							onclick={refreshAll}
+							disabled={refreshing}
+							class="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-50"
+							title="Refresh data"
+						>
+							<svg
+								class="w-4 h-4{refreshing ? ' animate-spin' : ''}"
+								fill="none"
+								stroke="currentColor"
+								viewBox="0 0 24 24"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+								/>
+							</svg>
+							{refreshing ? 'Refreshing...' : 'Refresh'}
+						</button>
 						<button
 							type="button"
 							onclick={() => (apiIntegrationModalOpen = true)}
@@ -1392,10 +1419,7 @@
 										Transforms that process files from this collection
 									</p>
 									<TransformsList
-										transforms={collectionTransforms.map((t) => ({
-											...t,
-											last_run_stats: collectionTransformStatsMap.get(t.collection_transform_id),
-										}))}
+										transforms={collectionTransforms}
 										type="collection"
 										loading={transformsLoading}
 									/>
@@ -1418,10 +1442,7 @@
 											Embedding transforms that process items from the target datasets
 										</p>
 										<TransformsList
-											transforms={datasetTransforms.map((t) => ({
-												...t,
-												last_run_stats: datasetTransformStatsMap.get(t.dataset_transform_id),
-											}))}
+											transforms={datasetTransforms}
 											type="dataset"
 											loading={transformsLoading}
 										/>
@@ -1678,10 +1699,10 @@
 	bind:open={transformModalOpen}
 	{collectionId}
 	collectionTitle={collection?.title}
-	onSuccess={() => {
+	onSuccess={(transformId) => {
 		transformModalOpen = false;
-		activeTab = 'transforms';
-		fetchCollectionTransforms();
+		// Navigate to the created transform's detail page
+		window.location.hash = `/collection-transforms/${transformId}/details`;
 	}}
 />
 

@@ -1,5 +1,4 @@
 use actix_web::{FromRequest, HttpRequest, HttpResponse, dev::Payload};
-use actix_web_openidconnect::openid_middleware::Authenticated;
 use futures_util::future::{Ready, err, ok};
 use semantic_explorer_core::owner_info::OwnerInfo;
 use serde::{Deserialize, Serialize};
@@ -11,6 +10,10 @@ use crate::audit::events;
 use crate::errors::{ApiError, unauthorized};
 
 pub(crate) mod oidc;
+mod openid;
+pub(crate) mod openid_middleware;
+
+use openid_middleware::Authenticated;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub(crate) struct User {
@@ -136,8 +139,5 @@ pub(crate) fn extract_email(auth: &Authenticated) -> Result<String, HttpResponse
 }
 
 pub(crate) fn extract_avatar(auth: &Authenticated) -> Option<String> {
-    auth.access
-        .picture()
-        .and_then(|p| p.get(None))
-        .map(|url| url.as_str().to_string())
+    auth.access.picture_url().map(|url| url.to_string())
 }

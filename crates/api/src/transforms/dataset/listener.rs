@@ -16,7 +16,7 @@ use aws_sdk_s3::Client as S3Client;
 use futures_util::StreamExt;
 use sqlx::{Pool, Postgres};
 use std::time::Duration;
-use tracing::{Instrument, error, info, info_span, warn};
+use tracing::{Instrument, debug, error, info, info_span, warn};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::storage::postgres::dataset_transform_batches::{
@@ -225,7 +225,7 @@ async fn handle_result_atomic(
     if let Some(ref prev) = previous_status
         && (prev == "completed" || prev == "success")
     {
-        info!(
+        debug!(
             batch_key = %result.batch_file_key,
             previous_status = %prev,
             "Batch already completed, skipping (idempotency guard)"

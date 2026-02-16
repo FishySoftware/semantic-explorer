@@ -144,7 +144,7 @@ api:
     QDRANT_TIMEOUT_SECS: "30"
     QDRANT_CONNECT_TIMEOUT_SECS: "10"
     NATS_REPLICAS: "3"
-    # Reconciliation job for transform reliability (retries failed batch publishes)
+    # Reconciliation (NATS-coordinated: batch recovery + backfill scans for missed files)
     RECONCILIATION_INTERVAL_SECS: "300"
     # Worker batch sizes
     WORKER_SEARCH_BATCH_SIZE: "200"
@@ -152,7 +152,7 @@ api:
     WORKER_DATASET_BATCH_SIZE: "1000"
     WORKER_S3_DELETE_BATCH_SIZE: "1000"
     WORKER_QDRANT_UPLOAD_CHUNK_SIZE: "200"
-    # Scanner configuration
+    # Dataset transform batch configuration
     DATASET_SCANNER_MAX_PENDING: "500"
     DATASET_SCANNER_BATCH_DELAY_MS: "0"
     DATASET_SCANNER_TIMEOUT_SECS: "300"
@@ -218,8 +218,24 @@ workerCollections:
     maxReplicas: 10
     targetCPUUtilizationPercentage: 70
     targetMemoryUtilizationPercentage: 80
-  livenessProbe: {}
-  readinessProbe: {}
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: 8080
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+  readinessProbe:
+    httpGet:
+      path: /readyz
+      port: 8080
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 2
+    successThreshold: 1
   env:
     RUST_LOG: "warn,actix_web_prom=error,worker_collections=info"
     LOG_FORMAT: "json"
@@ -288,8 +304,24 @@ workerDatasets:
     maxReplicas: 8
     targetCPUUtilizationPercentage: 70
     targetMemoryUtilizationPercentage: 80
-  livenessProbe: {}
-  readinessProbe: {}
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: 8080
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+  readinessProbe:
+    httpGet:
+      path: /readyz
+      port: 8080
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 2
+    successThreshold: 1
   env:
     RUST_LOG: "warn,actix_web_prom=error,worker_datasets=info"
     LOG_FORMAT: "json"
@@ -301,6 +333,11 @@ workerDatasets:
     HEALTH_CHECK_PORT: "8080"
     EMBEDDING_MAX_CONCURRENT_REQUESTS: "5"
     QDRANT_PARALLEL_UPLOADS: "4"
+    # Qdrant client timeouts (must match API values for consistency)
+    QDRANT_TIMEOUT_SECS: "30"
+    QDRANT_CONNECT_TIMEOUT_SECS: "10"
+    # Retry attempts for collection creation during cluster consensus
+    QDRANT_COLLECTION_CREATE_MAX_ATTEMPTS: "5"
   envFrom: []
   nodeSelector: {}
   tolerations: []
@@ -1248,6 +1285,63 @@ minio:
   # Enable this if you need custom bucket policies or the subchart provisioning fails
   initJob:
     enabled: true  # Create required buckets on startup
+
+# Valkey (Redis-Compatible) Cache Configuration (Optional Infrastructure)
+# Provides shared caching across API replicas for bearer tokens and resources.
+# Optional - the system degrades gracefully if Valkey is unavailable.
+# When enabled: true, deploys Valkey subchart (official valkey-io/valkey-helm)
+valkey:
+  enabled: false
+  # Use external Valkey/Redis instance
+  external:
+    enabled: false
+    url: ""  # e.g., "redis://valkey.example.com:6379"
+    readUrl: ""  # Optional: Read replica URL for read-heavy workloads
+    password: ""
+    existingSecret: ""
+    passwordKey: "password"
+    tlsEnabled: false
+  # Internal Valkey deployment (subchart configuration)
+  # Official chart: https://github.com/valkey-io/valkey-helm
+  # Supports Standalone and Replication modes (Sentinel NOT supported)
+  architecture: replication  # standalone or replication
+  image:
+    registry: ""  # Defaults to global.imageRegistry
+    repository: valkey/valkey
+    tag: "8-alpine"
+    pullPolicy: IfNotPresent
+  auth:
+    enabled: true
+    password: ""  # Generate random if empty
+    existingSecret: ""
+    existingSecretPasswordKey: "password"
+  # Replication configuration (only when architecture: replication)
+  replica:
+    replicaCount: 2  # Number of read replicas
+  # Master configuration
+  master:
+    persistence:
+      enabled: false  # Disabled - Valkey is used as a cache, not persistent store
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    # Valkey server configuration
+    configuration: |
+      maxmemory 256mb
+      maxmemory-policy allkeys-lru
+      appendonly no
+      save ""
+  # Connection settings for API
+  connection:
+    poolSize: 10
+    bearerCacheTtlSecs: 120    # TTL for cached bearer token -> user info lookups
+    resourceCacheTtlSecs: 300  # TTL for cached resources (collections, datasets, etc.)
+    connectTimeoutSecs: 5
+    responseTimeoutSecs: 2
 
 # Storage Configuration (S3-compatible)
 # Configure external S3-compatible storage or use MinIO

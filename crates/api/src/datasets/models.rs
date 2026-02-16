@@ -68,7 +68,7 @@ pub(crate) struct Dataset {
     pub(crate) updated_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub(crate) struct DatasetWithStats {
     pub(crate) dataset_id: i32,
     pub(crate) title: String,
@@ -85,10 +85,9 @@ pub(crate) struct DatasetWithStats {
     pub(crate) updated_at: Option<DateTime<Utc>>,
     pub(crate) item_count: i64,
     pub(crate) total_chunks: i64,
-    pub(crate) transform_count: i64,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub(crate) struct PaginatedDatasetList {
     pub(crate) items: Vec<DatasetWithStats>,
     pub(crate) total_count: i64,

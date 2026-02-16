@@ -3,8 +3,9 @@
 	import { onDestroy, onMount } from 'svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
+	import VisualizationProgressBanner from '../components/VisualizationProgressBanner.svelte';
 	import { formatError, toastStore } from '../utils/notifications';
-	import { formatDate } from '../utils/ui-helpers';
+	import { formatDate, formatDuration } from '../utils/ui-helpers';
 
 	interface Props {
 		visualizationTransformId: number;
@@ -82,6 +83,7 @@
 	let totalVisualizationsCount = $state(0);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+	let progressDismissed = $state(false);
 
 	// Edit mode state
 	let editMode = $state(false);
@@ -97,12 +99,31 @@
 	let visualizationsCurrentPage = $state(1);
 	let visualizationsPageSize = $state(20);
 
-	// SSE connection state
-	let eventSource: EventSource | null = null;
-	let reconnectAttempts = 0;
-	let maxReconnectAttempts = 10;
-	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-	let isMounted = false; // Track if component is still mounted
+	// Derived: in-progress visualization runs
+	let processingRuns = $derived(
+		visualizations.filter((v) => v.status === 'pending' || v.status === 'processing')
+	);
+
+	let isTransformProcessing = $derived(
+		transform?.last_run_status === 'pending' || transform?.last_run_status === 'processing'
+	);
+
+	let showProgressBanner = $derived(
+		!progressDismissed && (isTransformProcessing || processingRuns.length > 0)
+	);
+
+	/** Convert a snake_case key to a human-readable Title Case label. */
+	function formatStatLabel(key: string): string {
+		return key
+			.split('_')
+			.map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+			.join(' ');
+	}
+
+	// Polling interval for auto-refresh
+	let pollTimer: ReturnType<typeof setInterval> | null = null;
+	let isPolling = false;
+	const POLL_INTERVAL_MS = 5000;
 
 	async function fetchTransform() {
 		try {
@@ -295,88 +316,28 @@
 		}
 	}
 
-	function connectSSE() {
-		// Close existing connection first
-		disconnectSSE();
-
-		try {
-			eventSource = new EventSource('/api/visualization-transforms/stream');
-
-			eventSource.addEventListener('heartbeat', () => {
-				// Keep connection alive
-			});
-
-			eventSource.addEventListener('status', (event) => {
-				try {
-					const statusUpdate = JSON.parse(event.data);
-					// If this is an update for our transform, refresh stats and visualizations
-					// API sends transform_id (generic) not visualization_transform_id
-					if (statusUpdate.transform_id === visualizationTransformId) {
-						fetchStats();
-						fetchVisualizations();
-					}
-				} catch (e) {
-					console.error('Failed to parse SSE status event:', e);
-				}
-			});
-
-			eventSource.onerror = () => {
-				eventSource?.close();
-				eventSource = null;
-				reconnectSSE();
-			};
-
-			reconnectAttempts = 0;
-		} catch (e) {
-			console.error('Failed to connect to SSE stream:', e);
-			reconnectSSE();
-		}
-	}
-
-	function reconnectSSE() {
-		if (!isMounted) {
-			// Component has been unmounted, don't attempt reconnection
-			return;
-		}
-
-		if (reconnectAttempts >= maxReconnectAttempts) {
-			console.error('Max SSE reconnection attempts reached');
-			return;
-		}
-
-		const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 60000);
-		reconnectAttempts++;
-
-		reconnectTimer = setTimeout(() => {
-			if (isMounted) {
-				connectSSE();
-			}
-		}, delay);
-	}
-
-	function disconnectSSE() {
-		if (reconnectTimer) {
-			clearTimeout(reconnectTimer);
-			reconnectTimer = null;
-		}
-		if (eventSource) {
-			eventSource.close();
-			eventSource = null;
-		}
-		reconnectAttempts = 0;
-	}
-
 	onMount(async () => {
-		isMounted = true;
 		loading = true;
 		await Promise.all([fetchTransform(), fetchStats(), fetchVisualizations()]);
 		loading = false;
-		connectSSE();
+
+		// Auto-refresh stats and visualizations every 5 seconds, skipping if already in-flight
+		pollTimer = setInterval(async () => {
+			if (isPolling) return;
+			isPolling = true;
+			try {
+				await Promise.all([fetchTransform(), fetchStats(), fetchVisualizations()]);
+			} finally {
+				isPolling = false;
+			}
+		}, POLL_INTERVAL_MS);
 	});
 
 	onDestroy(() => {
-		isMounted = false;
-		disconnectSSE();
+		if (pollTimer) {
+			clearInterval(pollTimer);
+			pollTimer = null;
+		}
 	});
 </script>
 
@@ -406,6 +367,17 @@
 			<p class="text-red-600 dark:text-red-400">{error}</p>
 		</div>
 	{:else if transform}
+		<!-- Processing Progress Banner -->
+		{#if showProgressBanner}
+			<VisualizationProgressBanner
+				lastRunStatus={transform.last_run_status}
+				lastRunAt={transform.last_run_at}
+				lastError={transform.last_error}
+				{processingRuns}
+				onDismiss={() => (progressDismissed = true)}
+			/>
+		{/if}
+
 		<!-- Transform Info Card -->
 		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
 			<div class="flex justify-between items-start mb-4">
@@ -511,30 +483,17 @@
 		</div>
 
 		<!-- Configuration Card -->
-		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
-			<Heading tag="h3" class="text-lg font-bold mb-4">Visualization Configuration</Heading>
-			<div class="space-y-2">
-				{#if transform.visualization_config}
-					{#each Object.entries(transform.visualization_config) as [key, value] (key)}
-						<div>
-							<h4 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">{key}</h4>
-							{#if typeof value === 'object'}
-								<pre
-									class="text-sm font-mono bg-gray-50 dark:bg-gray-900 rounded-lg p-3 overflow-x-auto text-gray-900 dark:text-gray-100">{JSON.stringify(
-										value,
-										null,
-										2
-									)}</pre>
-							{:else}
-								<p class="text-sm font-medium text-gray-900 dark:text-white">{value}</p>
-							{/if}
-						</div>
-					{/each}
-				{:else}
-					<p class="text-sm text-gray-500 dark:text-gray-400">No visualization configuration set</p>
-				{/if}
+		{#if transform.visualization_config && Object.keys(transform.visualization_config).length > 0}
+			<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
+				<Heading tag="h3" class="text-lg font-bold mb-4">Visualization Configuration</Heading>
+				<pre
+					class="text-sm font-mono bg-gray-50 dark:bg-gray-900 rounded-lg p-4 overflow-auto max-h-[60vh] whitespace-pre-wrap text-gray-900 dark:text-gray-100">{JSON.stringify(
+						transform.visualization_config,
+						null,
+						2
+					)}</pre>
 			</div>
-		</div>
+		{/if}
 
 		<!-- Additional Fields -->
 		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
@@ -581,7 +540,7 @@
 					<div class="grid grid-cols-2 md:grid-cols-4 gap-3">
 						{#each Object.entries(transform.last_run_stats) as [key, value] (key)}
 							<div>
-								<p class="text-xs text-gray-500 dark:text-gray-400">{key}</p>
+								<p class="text-xs text-gray-500 dark:text-gray-400">{formatStatLabel(key)}</p>
 								<p class="text-sm font-semibold text-gray-900 dark:text-white">
 									{typeof value === 'object' ? JSON.stringify(value) : value}
 								</p>
@@ -692,11 +651,13 @@
 									<td class="px-4 py-3">{visualization.embedding_count}</td>
 									<td class="px-4 py-3">{visualization.cluster_count}</td>
 									<td class="px-4 py-3">
-										{#if visualization.started_at && visualization.completed_at}
-											{Math.round(
+										{#if visualization.stats_json?.processing_duration_ms != null}
+											{formatDuration(visualization.stats_json.processing_duration_ms as number)}
+										{:else if visualization.started_at && visualization.completed_at}
+											{formatDuration(
 												new Date(visualization.completed_at).getTime() -
 													new Date(visualization.started_at).getTime()
-											)}ms
+											)}
 										{:else}
 											-
 										{/if}

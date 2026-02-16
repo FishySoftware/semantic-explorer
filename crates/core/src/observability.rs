@@ -10,21 +10,19 @@ use opentelemetry_otlp::{LogExporter, SpanExporter, WithExportConfig};
 use opentelemetry_sdk::{
     Resource,
     logs::SdkLoggerProvider,
-    metrics::SdkMeterProvider,
+    metrics::{Aggregation, Instrument, SdkMeterProvider, Stream},
     propagation::TraceContextPropagator,
     trace::{RandomIdGenerator, Sampler, SdkTracerProvider},
 };
-use std::{sync::OnceLock, time::Duration};
+use std::{env, sync::OnceLock, time::Duration};
 use tracing_subscriber::{
     EnvFilter, Layer, Registry, layer::SubscriberExt, util::SubscriberInitExt,
 };
 
 pub struct Metrics {
-    pub database_query_total: Counter<u64>,
-    pub database_query_duration: Histogram<f64>,
     pub database_connection_pool_size: Gauge<f64>,
-    pub database_connection_pool_active: Gauge<f64>,
     pub database_connection_pool_idle: Gauge<f64>,
+    pub database_connection_pool_max: Gauge<f64>,
     pub storage_operations_total: Counter<u64>,
     pub storage_operation_duration: Histogram<f64>,
     pub storage_file_size_bytes: Histogram<f64>,
@@ -33,19 +31,6 @@ pub struct Metrics {
     pub worker_job_duration: Histogram<f64>,
     pub worker_job_chunks: Histogram<f64>,
     pub worker_job_file_size: Histogram<f64>,
-    // Transform-specific metrics
-    pub collection_transform_jobs_total: Counter<u64>,
-    pub collection_transform_files_processed: Counter<u64>,
-    pub collection_transform_items_created: Counter<u64>,
-    pub collection_transform_duration: Histogram<f64>,
-    pub dataset_transform_jobs_total: Counter<u64>,
-    pub dataset_transform_batches_processed: Counter<u64>,
-    pub dataset_transform_chunks_embedded: Counter<u64>,
-    pub dataset_transform_duration: Histogram<f64>,
-    pub visualization_transform_jobs_total: Counter<u64>,
-    pub visualization_transform_points_created: Counter<u64>,
-    pub visualization_transform_clusters_created: Counter<u64>,
-    pub visualization_transform_duration: Histogram<f64>,
     pub embedded_datasets_active: Gauge<f64>,
     // NATS queue depth metrics
     pub nats_stream_messages: Gauge<f64>,
@@ -61,10 +46,6 @@ pub struct Metrics {
     pub search_embedder_call_duration: Histogram<f64>,
     pub search_qdrant_query_duration: Histogram<f64>,
     pub search_results_returned: Histogram<f64>,
-    // HTTP request metrics
-    pub http_requests_total: Counter<u64>,
-    pub http_request_duration: Histogram<f64>,
-    pub http_requests_in_flight: Gauge<f64>,
     // Server-Sent Events metrics
     pub sse_connections_active: Gauge<f64>,
     pub sse_messages_sent: Counter<u64>,
@@ -124,28 +105,23 @@ pub struct Metrics {
     pub scanner_circuit_breaker_trips_total: Counter<u64>,
     pub scanner_batches_created_total: Counter<u64>,
     pub scanner_stats_refresh_skips_total: Counter<u64>,
+    // Valkey cache metrics
+    pub valkey_cache_hits_total: Counter<u64>,
+    pub valkey_cache_misses_total: Counter<u64>,
+    pub valkey_cache_errors_total: Counter<u64>,
+    pub valkey_operation_duration: Histogram<f64>,
+    pub valkey_connected: Gauge<f64>,
+    pub valkey_used_memory_bytes: Gauge<f64>,
+    pub valkey_connected_clients: Gauge<f64>,
+    pub valkey_keyspace_hits: Gauge<f64>,
+    pub valkey_keyspace_misses: Gauge<f64>,
 }
 
 impl Metrics {
     fn new(meter: Meter) -> Self {
-        let database_query_total = meter
-            .u64_counter("database_query_total")
-            .with_description("Total number of database queries")
-            .build();
-
-        let database_query_duration = meter
-            .f64_histogram("database_query_duration_seconds")
-            .with_description("Duration of database queries in seconds")
-            .build();
-
         let database_connection_pool_size = meter
             .f64_gauge("database_connection_pool_size")
-            .with_description("Total size of the database connection pool")
-            .build();
-
-        let database_connection_pool_active = meter
-            .f64_gauge("database_connection_pool_active")
-            .with_description("Number of active database connections")
+            .with_description("Number of connections allocated in the pool")
             .build();
 
         let database_connection_pool_idle = meter
@@ -153,8 +129,13 @@ impl Metrics {
             .with_description("Number of idle database connections")
             .build();
 
+        let database_connection_pool_max = meter
+            .f64_gauge("database_connection_pool_max")
+            .with_description("Maximum configured database connections (DB_MAX_CONNECTIONS)")
+            .build();
+
         let storage_operations_total = meter
-            .u64_counter("storage_operations_total")
+            .u64_counter("storage_operations")
             .with_description("Total number of storage operations")
             .build();
 
@@ -174,7 +155,7 @@ impl Metrics {
             .build();
 
         let worker_jobs_total = meter
-            .u64_counter("worker_jobs_total")
+            .u64_counter("worker_jobs")
             .with_description("Total number of worker jobs processed")
             .build();
 
@@ -191,69 +172,6 @@ impl Metrics {
         let worker_job_file_size = meter
             .f64_histogram("worker_job_file_size_bytes")
             .with_description("Size of files processed in worker jobs")
-            .build();
-
-        // Collection Transform metrics
-        let collection_transform_jobs_total = meter
-            .u64_counter("collection_transform_jobs_total")
-            .with_description("Total number of collection transform jobs processed")
-            .build();
-
-        let collection_transform_files_processed = meter
-            .u64_counter("collection_transform_files_processed")
-            .with_description("Total number of files processed by collection transforms")
-            .build();
-
-        let collection_transform_items_created = meter
-            .u64_counter("collection_transform_items_created")
-            .with_description("Total number of dataset items created by collection transforms")
-            .build();
-
-        let collection_transform_duration = meter
-            .f64_histogram("collection_transform_duration_seconds")
-            .with_description("Duration of collection transform jobs in seconds")
-            .build();
-
-        // Dataset Transform metrics
-        let dataset_transform_jobs_total = meter
-            .u64_counter("dataset_transform_jobs_total")
-            .with_description("Total number of dataset transform jobs processed")
-            .build();
-
-        let dataset_transform_batches_processed = meter
-            .u64_counter("dataset_transform_batches_processed")
-            .with_description("Total number of batches processed by dataset transforms")
-            .build();
-
-        let dataset_transform_chunks_embedded = meter
-            .u64_counter("dataset_transform_chunks_embedded")
-            .with_description("Total number of chunks embedded by dataset transforms")
-            .build();
-
-        let dataset_transform_duration = meter
-            .f64_histogram("dataset_transform_duration_seconds")
-            .with_description("Duration of dataset transform jobs in seconds")
-            .build();
-
-        // Visualization Transform metrics
-        let visualization_transform_jobs_total = meter
-            .u64_counter("visualization_transform_jobs_total")
-            .with_description("Total number of visualization transform jobs processed")
-            .build();
-
-        let visualization_transform_points_created = meter
-            .u64_counter("visualization_transform_points_created")
-            .with_description("Total number of visualization points created")
-            .build();
-
-        let visualization_transform_clusters_created = meter
-            .u64_counter("visualization_transform_clusters_created")
-            .with_description("Total number of clusters created by visualization transforms")
-            .build();
-
-        let visualization_transform_duration = meter
-            .f64_histogram("visualization_transform_duration_seconds")
-            .with_description("Duration of visualization transform jobs in seconds")
             .build();
 
         // Embedded Datasets gauge
@@ -296,7 +214,7 @@ impl Metrics {
 
         // Search performance metrics
         let search_request_total = meter
-            .u64_counter("search_request_total")
+            .u64_counter("search_request")
             .with_description("Total number of search requests")
             .build();
 
@@ -320,22 +238,6 @@ impl Metrics {
             .with_description("Number of results returned per search")
             .build();
 
-        // HTTP request metrics
-        let http_requests_total = meter
-            .u64_counter("http_requests_total")
-            .with_description("Total number of HTTP requests")
-            .build();
-
-        let http_request_duration = meter
-            .f64_histogram("http_request_duration_seconds")
-            .with_description("Duration of HTTP requests in seconds")
-            .build();
-
-        let http_requests_in_flight = meter
-            .f64_gauge("http_requests_in_flight")
-            .with_description("Number of HTTP requests currently being processed")
-            .build();
-
         // Server-Sent Events metrics
         let sse_connections_active = meter
             .f64_gauge("sse_connections_active")
@@ -354,18 +256,18 @@ impl Metrics {
 
         // Worker job failure tracking
         let worker_job_failures_total = meter
-            .u64_counter("worker_job_failures_total")
+            .u64_counter("worker_job_failures")
             .with_description("Total number of worker job failures")
             .build();
 
         let worker_job_retries_total = meter
-            .u64_counter("worker_job_retries_total")
+            .u64_counter("worker_job_retries")
             .with_description("Total number of worker job retries")
             .build();
 
         // Inference API metrics
         let inference_embed_requests_total = meter
-            .u64_counter("inference_embed_requests_total")
+            .u64_counter("inference_embed_requests")
             .with_description("Total number of embedding requests")
             .build();
 
@@ -375,7 +277,7 @@ impl Metrics {
             .build();
 
         let inference_embed_items_total = meter
-            .u64_counter("inference_embed_items_total")
+            .u64_counter("inference_embed_items")
             .with_description("Total number of items embedded")
             .build();
 
@@ -385,7 +287,7 @@ impl Metrics {
             .build();
 
         let inference_rerank_requests_total = meter
-            .u64_counter("inference_rerank_requests_total")
+            .u64_counter("inference_rerank_requests")
             .with_description("Total number of reranking requests")
             .build();
 
@@ -395,12 +297,12 @@ impl Metrics {
             .build();
 
         let inference_rerank_documents_total = meter
-            .u64_counter("inference_rerank_documents_total")
+            .u64_counter("inference_rerank_documents")
             .with_description("Total number of documents reranked")
             .build();
 
         let inference_llm_requests_total = meter
-            .u64_counter("inference_llm_requests_total")
+            .u64_counter("inference_llm_requests")
             .with_description("Total number of LLM generation requests")
             .build();
 
@@ -410,7 +312,7 @@ impl Metrics {
             .build();
 
         let inference_llm_tokens_generated = meter
-            .u64_counter("inference_llm_tokens_generated_total")
+            .u64_counter("inference_llm_tokens_generated")
             .with_description("Total number of tokens generated by LLMs")
             .build();
 
@@ -513,7 +415,7 @@ impl Metrics {
 
         // Embedding session lifecycle metrics
         let embedding_session_resets_total = meter
-            .u64_counter("embedding_session_resets_total")
+            .u64_counter("embedding_session_resets")
             .with_description("Total number of embedding session resets due to memory thresholds")
             .build();
 
@@ -528,22 +430,22 @@ impl Metrics {
             .build();
 
         let dlq_messages_total = meter
-            .u64_counter("dlq_messages_total")
+            .u64_counter("dlq_messages")
             .with_description("Total number of messages sent to Dead Letter Queue")
             .build();
 
         let scanner_triggers_published_total = meter
-            .u64_counter("scanner_triggers_published_total")
+            .u64_counter("scanner_triggers_published")
             .with_description("Total number of scanner triggers published")
             .build();
 
         let scanner_triggers_processed_total = meter
-            .u64_counter("scanner_triggers_processed_total")
+            .u64_counter("scanner_triggers_processed")
             .with_description("Total number of scanner triggers processed")
             .build();
 
         let scanner_items_discovered_total = meter
-            .u64_counter("scanner_items_discovered_total")
+            .u64_counter("scanner_items_discovered")
             .with_description("Total number of items discovered by scanners")
             .build();
 
@@ -554,46 +456,90 @@ impl Metrics {
 
         // Scanner resilience metrics (#10)
         let scanner_backpressure_skips_total = meter
-            .u64_counter("scanner_backpressure_skips_total")
+            .u64_counter("scanner_backpressure_skips")
             .with_description("Total number of scans skipped due to backpressure")
             .build();
 
         let scanner_failed_batch_recoveries_total = meter
-            .u64_counter("scanner_failed_batch_recoveries_total")
+            .u64_counter("scanner_failed_batch_recoveries")
             .with_description("Total number of failed batches recovered by reconciliation")
             .build();
 
         let scanner_orphaned_batch_cleanups_total = meter
-            .u64_counter("scanner_orphaned_batch_cleanups_total")
+            .u64_counter("scanner_orphaned_batch_cleanups")
             .with_description("Total number of orphaned batches cleaned up")
             .build();
 
         let scanner_pending_batch_recoveries_total = meter
-            .u64_counter("scanner_pending_batch_recoveries_total")
+            .u64_counter("scanner_pending_batch_recoveries")
             .with_description("Total number of pending batches recovered")
             .build();
 
         let scanner_circuit_breaker_trips_total = meter
-            .u64_counter("scanner_circuit_breaker_trips_total")
+            .u64_counter("scanner_circuit_breaker_trips")
             .with_description("Total number of circuit breaker trips in scanner")
             .build();
 
         let scanner_batches_created_total = meter
-            .u64_counter("scanner_batches_created_total")
+            .u64_counter("scanner_batches_created")
             .with_description("Total number of batches created by scanners")
             .build();
 
         let scanner_stats_refresh_skips_total = meter
-            .u64_counter("scanner_stats_refresh_skips_total")
+            .u64_counter("scanner_stats_refresh_skips")
             .with_description("Total number of stats refreshes skipped due to unchanged dataset")
             .build();
 
+        // Valkey cache metrics
+        let valkey_cache_hits_total = meter
+            .u64_counter("valkey_cache_hits")
+            .with_description("Total number of Valkey cache hits")
+            .build();
+
+        let valkey_cache_misses_total = meter
+            .u64_counter("valkey_cache_misses")
+            .with_description("Total number of Valkey cache misses")
+            .build();
+
+        let valkey_cache_errors_total = meter
+            .u64_counter("valkey_cache_errors")
+            .with_description("Total number of Valkey cache errors (connection failures, timeouts)")
+            .build();
+
+        let valkey_operation_duration = meter
+            .f64_histogram("valkey_operation_duration_seconds")
+            .with_description("Duration of Valkey cache operations in seconds")
+            .build();
+
+        let valkey_connected = meter
+            .f64_gauge("valkey_connected")
+            .with_description("Valkey connection status (1 = connected, 0 = disconnected)")
+            .build();
+
+        let valkey_used_memory_bytes = meter
+            .f64_gauge("valkey_used_memory_bytes")
+            .with_description("Valkey server used memory in bytes")
+            .build();
+
+        let valkey_connected_clients = meter
+            .f64_gauge("valkey_connected_clients")
+            .with_description("Number of clients connected to Valkey")
+            .build();
+
+        let valkey_keyspace_hits = meter
+            .f64_gauge("valkey_keyspace_hits")
+            .with_description("Valkey server-side keyspace hits (cumulative)")
+            .build();
+
+        let valkey_keyspace_misses = meter
+            .f64_gauge("valkey_keyspace_misses")
+            .with_description("Valkey server-side keyspace misses (cumulative)")
+            .build();
+
         Self {
-            database_query_total,
-            database_query_duration,
             database_connection_pool_size,
-            database_connection_pool_active,
             database_connection_pool_idle,
+            database_connection_pool_max,
             storage_operations_total,
             storage_operation_duration,
             storage_file_size_bytes,
@@ -602,18 +548,6 @@ impl Metrics {
             worker_job_duration,
             worker_job_chunks,
             worker_job_file_size,
-            collection_transform_jobs_total,
-            collection_transform_files_processed,
-            collection_transform_items_created,
-            collection_transform_duration,
-            dataset_transform_jobs_total,
-            dataset_transform_batches_processed,
-            dataset_transform_chunks_embedded,
-            dataset_transform_duration,
-            visualization_transform_jobs_total,
-            visualization_transform_points_created,
-            visualization_transform_clusters_created,
-            visualization_transform_duration,
             embedded_datasets_active,
             nats_stream_messages,
             nats_consumer_pending,
@@ -626,9 +560,6 @@ impl Metrics {
             search_embedder_call_duration,
             search_qdrant_query_duration,
             search_results_returned,
-            http_requests_total,
-            http_request_duration,
-            http_requests_in_flight,
             sse_connections_active,
             sse_messages_sent,
             sse_connection_duration,
@@ -678,6 +609,15 @@ impl Metrics {
             scanner_circuit_breaker_trips_total,
             scanner_batches_created_total,
             scanner_stats_refresh_skips_total,
+            valkey_cache_hits_total,
+            valkey_cache_misses_total,
+            valkey_cache_errors_total,
+            valkey_operation_duration,
+            valkey_connected,
+            valkey_used_memory_bytes,
+            valkey_connected_clients,
+            valkey_keyspace_hits,
+            valkey_keyspace_misses,
         }
     }
 }
@@ -695,29 +635,6 @@ pub fn init_metrics_otel() -> Result<()> {
 
 pub fn get_metrics() -> &'static Metrics {
     METRICS.get().expect("Metrics not initialized")
-}
-
-pub fn record_database_query(operation: &str, table: &str, duration_secs: f64, success: bool) {
-    let metrics = get_metrics();
-    let status = if success { "success" } else { "error" };
-
-    metrics.database_query_total.add(
-        1,
-        &[
-            KeyValue::new("operation", operation.to_string()),
-            KeyValue::new("table", table.to_string()),
-            KeyValue::new("status", status.to_string()),
-        ],
-    );
-
-    metrics.database_query_duration.record(
-        duration_secs,
-        &[
-            KeyValue::new("operation", operation.to_string()),
-            KeyValue::new("table", table.to_string()),
-            KeyValue::new("status", status.to_string()),
-        ],
-    );
 }
 
 pub fn record_storage_operation(
@@ -828,7 +745,7 @@ pub fn set_worker_ready(worker: &str, ready: bool) {
         .record(value, &[KeyValue::new("worker", worker.to_string())]);
 }
 
-pub fn update_database_pool_stats(size: u64, active: u64, idle: u64) {
+pub fn update_database_pool_stats(size: u64, idle: u64, max: u64) {
     let metrics = get_metrics();
 
     metrics
@@ -836,136 +753,10 @@ pub fn update_database_pool_stats(size: u64, active: u64, idle: u64) {
         .record(size as f64, &[]);
 
     metrics
-        .database_connection_pool_active
-        .record(active as f64, &[]);
-
-    metrics
         .database_connection_pool_idle
         .record(idle as f64, &[]);
-}
 
-// Collection Transform metrics recording
-pub fn record_collection_transform_job(
-    transform_id: i32,
-    duration_secs: f64,
-    files_processed: u64,
-    items_created: u64,
-    status: &str,
-) {
-    let metrics = get_metrics();
-    let transform_id_str = transform_id.to_string();
-
-    metrics.collection_transform_jobs_total.add(
-        1,
-        &[
-            KeyValue::new("transform_id", transform_id_str.clone()),
-            KeyValue::new("status", status.to_string()),
-        ],
-    );
-
-    metrics.collection_transform_files_processed.add(
-        files_processed,
-        &[KeyValue::new("transform_id", transform_id_str.clone())],
-    );
-
-    metrics.collection_transform_items_created.add(
-        items_created,
-        &[KeyValue::new("transform_id", transform_id_str.clone())],
-    );
-
-    metrics.collection_transform_duration.record(
-        duration_secs,
-        &[
-            KeyValue::new("transform_id", transform_id_str),
-            KeyValue::new("status", status.to_string()),
-        ],
-    );
-}
-
-// Dataset Transform metrics recording
-pub fn record_dataset_transform_job(
-    transform_id: i32,
-    embedded_dataset_id: i32,
-    duration_secs: f64,
-    batches_processed: u64,
-    chunks_embedded: u64,
-    status: &str,
-) {
-    let metrics = get_metrics();
-    let transform_id_str = transform_id.to_string();
-    let embedded_dataset_id_str = embedded_dataset_id.to_string();
-
-    metrics.dataset_transform_jobs_total.add(
-        1,
-        &[
-            KeyValue::new("transform_id", transform_id_str.clone()),
-            KeyValue::new("embedded_dataset_id", embedded_dataset_id_str.clone()),
-            KeyValue::new("status", status.to_string()),
-        ],
-    );
-
-    metrics.dataset_transform_batches_processed.add(
-        batches_processed,
-        &[
-            KeyValue::new("transform_id", transform_id_str.clone()),
-            KeyValue::new("embedded_dataset_id", embedded_dataset_id_str.clone()),
-        ],
-    );
-
-    metrics.dataset_transform_chunks_embedded.add(
-        chunks_embedded,
-        &[
-            KeyValue::new("transform_id", transform_id_str.clone()),
-            KeyValue::new("embedded_dataset_id", embedded_dataset_id_str.clone()),
-        ],
-    );
-
-    metrics.dataset_transform_duration.record(
-        duration_secs,
-        &[
-            KeyValue::new("transform_id", transform_id_str),
-            KeyValue::new("embedded_dataset_id", embedded_dataset_id_str),
-            KeyValue::new("status", status.to_string()),
-        ],
-    );
-}
-
-// Visualization Transform metrics recording
-pub fn record_visualization_transform_job(
-    transform_id: i32,
-    duration_secs: f64,
-    points_created: u64,
-    clusters_created: u64,
-    status: &str,
-) {
-    let metrics = get_metrics();
-    let transform_id_str = transform_id.to_string();
-
-    metrics.visualization_transform_jobs_total.add(
-        1,
-        &[
-            KeyValue::new("transform_id", transform_id_str.clone()),
-            KeyValue::new("status", status.to_string()),
-        ],
-    );
-
-    metrics.visualization_transform_points_created.add(
-        points_created,
-        &[KeyValue::new("transform_id", transform_id_str.clone())],
-    );
-
-    metrics.visualization_transform_clusters_created.add(
-        clusters_created,
-        &[KeyValue::new("transform_id", transform_id_str.clone())],
-    );
-
-    metrics.visualization_transform_duration.record(
-        duration_secs,
-        &[
-            KeyValue::new("transform_id", transform_id_str),
-            KeyValue::new("status", status.to_string()),
-        ],
-    );
+    metrics.database_connection_pool_max.record(max as f64, &[]);
 }
 
 // Embedded Datasets gauge update
@@ -1054,43 +845,6 @@ pub fn record_search_request(
             KeyValue::new("embedded_datasets", embedded_datasets_count.to_string()),
         ],
     );
-}
-
-// HTTP request metrics
-pub fn record_http_request(method: &str, path: &str, status_code: u16, duration_secs: f64) {
-    let metrics = get_metrics();
-
-    metrics.http_requests_total.add(
-        1,
-        &[
-            KeyValue::new("method", method.to_string()),
-            KeyValue::new("path", path.to_string()),
-            KeyValue::new("status", status_code.to_string()),
-        ],
-    );
-
-    metrics.http_request_duration.record(
-        duration_secs,
-        &[
-            KeyValue::new("method", method.to_string()),
-            KeyValue::new("path", path.to_string()),
-            KeyValue::new("status", status_code.to_string()),
-        ],
-    );
-}
-
-pub fn increment_http_requests_in_flight(path: &str) {
-    let metrics = get_metrics();
-    metrics
-        .http_requests_in_flight
-        .record(1.0, &[KeyValue::new("path", path.to_string())]);
-}
-
-pub fn decrement_http_requests_in_flight(path: &str) {
-    let metrics = get_metrics();
-    metrics
-        .http_requests_in_flight
-        .record(-1.0, &[KeyValue::new("path", path.to_string())]);
 }
 
 // Worker failure tracking
@@ -1229,35 +983,67 @@ pub fn record_scanner_stats_refresh_skip(scanner_type: &str) {
     );
 }
 
-/// Generic counter increment function for custom metrics
-/// Use this for ad-hoc metric tracking when specific functions don't exist
-pub fn increment_counter(_name: &str, labels: &[(&str, &str)]) {
-    let metrics = get_metrics();
-    let attributes: Vec<KeyValue> = labels
-        .iter()
-        .map(|(k, v)| KeyValue::new(k.to_string(), v.to_string()))
-        .collect();
+// ─────────────────────────────────────────────────────────────────────────────
+// Valkey cache metrics
+// ─────────────────────────────────────────────────────────────────────────────
 
-    // Try to find existing counter or create a new one
-    // Note: This is a simplified implementation - for production use,
-    // consider pre-registering counters in the Metrics struct
-    metrics.http_requests_total.add(1, &attributes);
+/// Record a Valkey cache hit
+pub fn record_valkey_cache_hit(cache_type: &str) {
+    let metrics = get_metrics();
+    metrics
+        .valkey_cache_hits_total
+        .add(1, &[KeyValue::new("cache_type", cache_type.to_string())]);
 }
 
-/// Generic histogram recording function for custom metrics
-/// Use this for ad-hoc metric tracking when specific functions don't exist
-pub fn record_histogram(_name: &str, value: f64, labels: &[(&str, &str)]) {
+/// Record a Valkey cache miss
+pub fn record_valkey_cache_miss(cache_type: &str) {
     let metrics = get_metrics();
-    let attributes: Vec<KeyValue> = labels
-        .iter()
-        .map(|(k, v)| KeyValue::new(k.to_string(), v.to_string()))
-        .collect();
-
-    // Try to find existing histogram or use a default one
-    // Note: This is a simplified implementation - for production use,
-    // consider pre-registering histograms in the Metrics struct
-    metrics.http_request_duration.record(value, &attributes);
+    metrics
+        .valkey_cache_misses_total
+        .add(1, &[KeyValue::new("cache_type", cache_type.to_string())]);
 }
+
+/// Record a Valkey cache error (connection failure, timeout, serialization error)
+pub fn record_valkey_cache_error(operation: &str) {
+    let metrics = get_metrics();
+    metrics
+        .valkey_cache_errors_total
+        .add(1, &[KeyValue::new("operation", operation.to_string())]);
+}
+
+/// Record a Valkey operation duration
+pub fn record_valkey_operation(operation: &str, duration_secs: f64) {
+    let metrics = get_metrics();
+    metrics.valkey_operation_duration.record(
+        duration_secs,
+        &[KeyValue::new("operation", operation.to_string())],
+    );
+}
+
+/// Update Valkey connection status gauge
+pub fn record_valkey_connected(connected: bool) {
+    let metrics = get_metrics();
+    metrics
+        .valkey_connected
+        .record(if connected { 1.0 } else { 0.0 }, &[]);
+}
+
+/// Update Valkey server stats gauges (from INFO command)
+pub fn record_valkey_server_stats(
+    used_memory: f64,
+    connected_clients: f64,
+    keyspace_hits: f64,
+    keyspace_misses: f64,
+) {
+    let metrics = get_metrics();
+    metrics.valkey_used_memory_bytes.record(used_memory, &[]);
+    metrics
+        .valkey_connected_clients
+        .record(connected_clients, &[]);
+    metrics.valkey_keyspace_hits.record(keyspace_hits, &[]);
+    metrics.valkey_keyspace_misses.record(keyspace_misses, &[]);
+}
+
 /// Record embedding request metrics
 pub fn record_embed_request(model: &str, item_count: u64, duration_secs: f64, success: bool) {
     let metrics = get_metrics();
@@ -1573,6 +1359,11 @@ pub fn record_storage_list(bucket: &str, duration_secs: f64, success: bool) {
 
 /// Initialize observability for API services (actix-web based services)
 /// Returns PrometheusMetrics that can be attached to actix-web App
+///
+/// Environment variables:
+/// - `OTEL_ENABLED` (default: "true"): Set to "false" to disable OTLP trace/log export
+/// - `OTEL_LOGS_ENABLED` (default: "true"): Set to "false" to disable the OTLP log bridge
+/// - `OTEL_SAMPLE_RATIO` (default: "1.0"): Trace sampling ratio (0.0-1.0). Use <1.0 in dev
 pub fn init_observability_api(
     service_prefix: &str,
     endpoints_to_exclude: &[(&str, Option<&str>)],
@@ -1581,6 +1372,23 @@ pub fn init_observability_api(
     log_format: &str,
 ) -> Result<PrometheusMetrics> {
     let use_json = log_format.to_lowercase() == "json";
+
+    let otel_enabled = env::var("OTEL_ENABLED")
+        .unwrap_or_else(|_| "true".to_string())
+        .to_lowercase()
+        != "false";
+
+    let otel_logs_enabled = otel_enabled
+        && env::var("OTEL_LOGS_ENABLED")
+            .unwrap_or_else(|_| "true".to_string())
+            .to_lowercase()
+            != "false";
+
+    let sample_ratio: f64 = env::var("OTEL_SAMPLE_RATIO")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(1.0)
+        .clamp(0.0, 1.0);
 
     let resource = Resource::builder()
         .with_service_name(service_name.to_string())
@@ -1592,33 +1400,80 @@ pub fn init_observability_api(
         otlp_endpoint.to_string()
     };
 
-    // Build span exporter with proper timeout configuration
-    let trace_exporter = SpanExporter::builder()
-        .with_tonic()
-        .with_endpoint(grpc_endpoint.clone())
-        .with_timeout(Duration::from_secs(10))
-        .build()?;
-
-    // Configure batch exporter to not exceed max message size
-    let tracer_provider = SdkTracerProvider::builder()
-        .with_batch_exporter(trace_exporter)
-        .with_resource(resource.clone())
-        .with_id_generator(RandomIdGenerator::default())
-        .with_sampler(Sampler::AlwaysOn)
+    // Configure trace batch config with bounded queue and shorter export timeout
+    let trace_batch_config = opentelemetry_sdk::trace::BatchConfigBuilder::default()
+        .with_max_queue_size(2048)
+        .with_max_export_batch_size(512)
+        .with_scheduled_delay(Duration::from_secs(5))
         .build();
-    global::set_tracer_provider(tracer_provider);
-    tracing::info!("OpenTelemetry tracer initialized successfully");
 
-    let log_exporter = LogExporter::builder()
-        .with_tonic()
-        .with_endpoint(grpc_endpoint)
-        .with_timeout(Duration::from_secs(10))
-        .build()?;
+    if otel_enabled {
+        let trace_exporter = SpanExporter::builder()
+            .with_tonic()
+            .with_endpoint(grpc_endpoint.clone())
+            .with_timeout(Duration::from_secs(5))
+            .build()?;
 
-    let logger_provider = SdkLoggerProvider::builder()
-        .with_batch_exporter(log_exporter)
-        .with_resource(resource.clone())
-        .build();
+        let trace_processor = opentelemetry_sdk::trace::BatchSpanProcessor::builder(trace_exporter)
+            .with_batch_config(trace_batch_config)
+            .build();
+
+        let sampler = if (sample_ratio - 1.0).abs() < f64::EPSILON {
+            Sampler::AlwaysOn
+        } else if sample_ratio <= 0.0 {
+            Sampler::AlwaysOff
+        } else {
+            Sampler::TraceIdRatioBased(sample_ratio)
+        };
+
+        let tracer_provider = SdkTracerProvider::builder()
+            .with_span_processor(trace_processor)
+            .with_resource(resource.clone())
+            .with_id_generator(RandomIdGenerator::default())
+            .with_sampler(sampler)
+            .build();
+        global::set_tracer_provider(tracer_provider);
+        tracing::info!(
+            "OpenTelemetry tracer initialized (sample_ratio={}, logs={})",
+            sample_ratio,
+            otel_logs_enabled
+        );
+    } else {
+        // Set a no-op tracer provider so tracing macros still work
+        let tracer_provider = SdkTracerProvider::builder()
+            .with_resource(resource.clone())
+            .with_sampler(Sampler::AlwaysOff)
+            .build();
+        global::set_tracer_provider(tracer_provider);
+        tracing::info!("OpenTelemetry OTLP export disabled (OTEL_ENABLED=false)");
+    }
+
+    // Build OTLP log exporter with bounded batch config (only if enabled)
+    let logger_provider = if otel_logs_enabled {
+        let log_batch_config = opentelemetry_sdk::logs::BatchConfigBuilder::default()
+            .with_max_queue_size(2048)
+            .with_scheduled_delay(Duration::from_secs(5))
+            .build();
+
+        let log_exporter = LogExporter::builder()
+            .with_tonic()
+            .with_endpoint(grpc_endpoint)
+            .with_timeout(Duration::from_secs(5))
+            .build()?;
+
+        let log_processor = opentelemetry_sdk::logs::BatchLogProcessor::builder(log_exporter)
+            .with_batch_config(log_batch_config)
+            .build();
+
+        Some(
+            SdkLoggerProvider::builder()
+                .with_log_processor(log_processor)
+                .with_resource(resource.clone())
+                .build(),
+        )
+    } else {
+        None
+    };
 
     let mut prometheus_builder = PrometheusMetricsBuilder::new(service_prefix).endpoint("/metrics");
 
@@ -1644,9 +1499,32 @@ pub fn init_observability_api(
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to build prometheus exporter: {}", e))?;
 
+    let duration_boundaries: Vec<f64> = vec![
+        0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0,
+        60.0, 120.0, 300.0,
+    ];
+
+    let duration_view = {
+        let boundaries = duration_boundaries.clone();
+        move |inst: &Instrument| -> Option<Stream> {
+            if inst.name().ends_with("_seconds") {
+                Stream::builder()
+                    .with_aggregation(Aggregation::ExplicitBucketHistogram {
+                        boundaries: boundaries.clone(),
+                        record_min_max: true,
+                    })
+                    .build()
+                    .ok()
+            } else {
+                None
+            }
+        }
+    };
+
     let meter_provider = SdkMeterProvider::builder()
         .with_reader(prometheus_exporter)
         .with_resource(resource.clone())
+        .with_view(duration_view)
         .build();
 
     global::set_meter_provider(meter_provider);
@@ -1677,16 +1555,31 @@ pub fn init_observability_api(
             .boxed()
     };
 
-    let tracer = global::tracer_provider().tracer(service_name.to_string());
-    let otel_trace_layer = tracing_opentelemetry::layer().with_tracer(tracer);
-    let otel_log_layer = OpenTelemetryTracingBridge::new(&logger_provider);
+    if otel_enabled {
+        let tracer = global::tracer_provider().tracer(service_name.to_string());
+        let otel_trace_layer = tracing_opentelemetry::layer().with_tracer(tracer);
 
-    Registry::default()
-        .with(env_filter)
-        .with(format_layer)
-        .with(otel_trace_layer)
-        .with(otel_log_layer)
-        .try_init()?;
+        if let Some(ref lp) = logger_provider {
+            let otel_log_layer = OpenTelemetryTracingBridge::new(lp);
+            Registry::default()
+                .with(env_filter)
+                .with(format_layer)
+                .with(otel_trace_layer)
+                .with(otel_log_layer)
+                .try_init()?;
+        } else {
+            Registry::default()
+                .with(env_filter)
+                .with(format_layer)
+                .with(otel_trace_layer)
+                .try_init()?;
+        }
+    } else {
+        Registry::default()
+            .with(env_filter)
+            .with(format_layer)
+            .try_init()?;
+    }
 
     Ok(prometheus)
 }

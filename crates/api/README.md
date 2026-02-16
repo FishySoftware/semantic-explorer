@@ -19,14 +19,14 @@ Provides endpoints for collection management, dataset processing, embedding gene
 The API server orchestrates all system operations:
 
 - **Collection & Dataset Management**: CRUD operations for data organization
-- **Transform Orchestration**: Publish jobs to NATS for workers to process
+- **Transform Orchestration**: Event-driven job dispatch to NATS workers
 - **Embedding Visualizations**: 2D visualizations of vector embeddings using UMAP dimensionality reduction and HDBSCAN clustering
 - **Search**: Vector search across embedded datasets
 - **Chat**: Context-aware conversations with LLM integration
 - **Real-time Updates**: Server-Sent Events (SSE) for transform progress
 - **Authentication**: OIDC integration
 - **Observability**: Prometheus metrics, OpenTelemetry tracing, structured logging
-- **Reliability**: Reconciliation job for recovering failed batch publishes
+- **Reliability**: NATS-coordinated reconciliation for recovering missed work and failed batches
 - **Circuit Breakers**: Automatic failure isolation for external services
 - **Adaptive Workers**: Workers self-pace based on downstream 503 backpressure
 
@@ -54,10 +54,10 @@ graph TD
 
     subgraph "Background Tasks"
         direction LR
-        SCANNER[Transform Scanners]
+        TRIGGER[Event-Driven Triggers]
         LISTENER[Result Listeners]
         AUDIT[Audit Consumer]
-        RECON[Reconciliation Job]
+        RECON[Reconciliation<br/>NATS-coordinated]
     end
 
     subgraph "Infrastructure"
@@ -103,9 +103,10 @@ graph TD
     CHAT --> OAI_EMB
     CHAT --> COH_EMB
 
-    SCANNER --> NATS & PG
+    TRIGGER --> NATS & PG
     LISTENER --> NATS & PG
     AUDIT --> NATS & PG
+    RECON --> NATS & PG & S3
 ```
 
 ---
@@ -376,7 +377,7 @@ This service uses shared configuration from `semantic-explorer-core`. See the [r
 | `LLM_INFERENCE_API_URL` | `http://localhost:8091` | Local LLM API |
 | `CORS_ALLOWED_ORIGINS` | - | Comma-separated allowed origins |
 | `LOG_FORMAT` | `json` | `json` or `pretty` |
-| `RECONCILIATION_INTERVAL_SECS` | `300` | Reconciliation job interval (seconds) |
+| `RECONCILIATION_INTERVAL_SECS` | `300` | NATS-coordinated reconciliation interval (batch recovery + backfill scans) |
 
 ### Worker Configuration Variables
 
@@ -466,6 +467,59 @@ Prometheus metrics available at `/metrics`.
 ### Authentication
 
 OIDC authentication required for all `/api/*` endpoints. Health endpoints are unauthenticated.
+
+The API supports two authentication methods:
+
+**1. Bearer Token (recommended for programmatic access)**
+
+Pass the access token in the `Authorization` header:
+
+```bash
+curl 'https://your-instance.example.com/api/users/@me' \
+  -H 'Authorization: Bearer <ACCESS_TOKEN>'
+```
+
+```python
+import requests
+
+headers = {'Authorization': 'Bearer <ACCESS_TOKEN>'}
+response = requests.get('https://your-instance.example.com/api/users/@me', headers=headers)
+print(response.json())
+```
+
+**2. Cookie-based (browser sessions)**
+
+Handled automatically by the OIDC login flow. The browser stores an `HttpOnly` session cookie.
+
+**Obtaining a Bearer Token**
+
+*From an active browser session:*
+
+```bash
+# If you're already logged in via the browser, retrieve your token:
+curl 'https://your-instance.example.com/api/auth/token' \
+  -b 'access_token=<SESSION_COOKIE>'
+```
+
+*Programmatic OIDC flow (for API clients / CLI tools):*
+
+```bash
+# Step 1: Get the authorization URL
+curl 'https://your-instance.example.com/api/auth/authorize'
+# Returns: { "authorization_url": "...", "nonce": "...", "pkce_verifier": "..." }
+
+# Step 2: Open the authorization_url in a browser, authenticate, and capture the ?code= parameter
+
+# Step 3: Exchange the code for tokens
+curl -X POST 'https://your-instance.example.com/api/token' \
+  -H 'Content-Type: application/json' \
+  -d '{"code": "<AUTH_CODE>", "nonce": "<NONCE>"}'
+# Returns: { "access_token": "...", "token_type": "Bearer", ... }
+
+# Step 4: Use the access_token as a Bearer token
+curl 'https://your-instance.example.com/api/users/@me' \
+  -H 'Authorization: Bearer <ACCESS_TOKEN>'
+```
 
 ### Encryption
 

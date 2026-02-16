@@ -53,7 +53,7 @@ pub(crate) async fn initialize_pool(config: &DatabaseConfig) -> Result<Pool<Post
         .acquire_timeout(config.acquire_timeout)
         .idle_timeout(config.idle_timeout)
         .max_lifetime(config.max_lifetime)
-        .test_before_acquire(false) // Skip pre-acquire health check for lower latency
+        .test_before_acquire(false)
         .after_connect(|conn, _meta| {
             Box::pin(async move {
                 // Set session-level timeouts to prevent runaway queries and idle transactions
@@ -68,19 +68,20 @@ pub(crate) async fn initialize_pool(config: &DatabaseConfig) -> Result<Pool<Post
         })
         .connect(&config.url)
         .await?;
+
     sqlx::migrate!("src/storage/postgres/migrations")
         .run(&pool)
         .await?;
 
     let pool_clone = pool.clone();
+    let max_connections = config.max_connections as u64;
     spawn(async move {
         let mut interval = interval(Duration::from_secs(10));
         loop {
             interval.tick().await;
             let size = pool_clone.size() as u64;
             let num_idle = pool_clone.num_idle() as u64;
-            let active = size.saturating_sub(num_idle);
-            update_database_pool_stats(size, active, num_idle);
+            update_database_pool_stats(size, num_idle, max_connections);
         }
     });
 

@@ -1,14 +1,15 @@
-//! Scanner Trigger System
+//! Event-Driven Transform Trigger System
 //!
-//! This module provides NATS-based coordination for transform scanners.
-//! Instead of each API instance running its own timer, triggers are published
-//! to NATS and consumed with `max_ack_pending: 1` to ensure only one instance
-//! processes each scan at a time (HA active/standby pattern).
+//! This module provides NATS-based coordination for transform processing.
 //!
 //! Architecture:
-//! - One API instance runs a lightweight timer that publishes triggers
-//! - All API instances listen for triggers and process them
-//! - NATS JetStream ensures exactly-once processing with failover
+//! - **Targeted triggers** are published when data changes occur:
+//!   - File upload → collection transform jobs dispatched inline
+//!   - Collection result → dataset scan trigger published
+//!   - Transform created/re-enabled → backfill scan trigger published
+//! - **Reconciliation triggers** are published periodically as a safety net
+//!   to catch work missed due to crashes or NATS failures
+//! - All API instances listen for triggers; NATS ensures exactly-once processing
 
 use actix_web::rt::{spawn, task::JoinHandle, time::interval};
 use anyhow::Result;
@@ -20,7 +21,7 @@ use aws_sdk_s3::Client as S3Client;
 use futures_util::StreamExt;
 use sqlx::{Pool, Postgres};
 use std::time::Duration;
-use tracing::{error, info, warn};
+use tracing::{Instrument, error, info, warn};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use semantic_explorer_core::encryption::EncryptionService;
@@ -32,6 +33,7 @@ use semantic_explorer_core::observability::{
 };
 
 use super::collection::scanner as collection_scanner;
+use super::dataset::reconciliation::{ReconciliationContext, run_reconciliation};
 use super::dataset::scanner as dataset_scanner;
 use super::dataset::scanner::ScannerConfig;
 
@@ -47,39 +49,27 @@ pub struct ScannerContext {
     pub scanner_config: ScannerConfig,
 }
 
-/// Start the trigger publisher - a lightweight timer that publishes scan triggers.
-/// Only one instance should run this (can use leader election or just accept redundancy).
+/// Start the reconciliation trigger publisher.
+///
+/// Publishes periodic reconciliation triggers to catch work missed by event-driven
+/// processing (crash recovery, NATS failures, direct S3 uploads).
+/// Multiple instances can run this; NATS deduplicates redundant triggers.
 pub fn start_trigger_publisher(nats: NatsClient) -> JoinHandle<()> {
+    let reconciliation_interval = Duration::from_secs(
+        std::env::var("RECONCILIATION_INTERVAL_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(300),
+    );
+
     spawn(async move {
-        // Stagger different scan types to avoid thundering herd
-        let collection_interval = Duration::from_secs(5);
-        let dataset_interval = Duration::from_secs(10);
-
-        // Use separate tasks for each scan type
-        let nats_clone = nats.clone();
-        let collection_publisher = spawn(async move {
-            let mut interval = interval(collection_interval);
-            loop {
-                interval.tick().await;
-                if let Err(e) = publish_trigger(&nats_clone, "collection").await {
-                    warn!("Failed to publish collection scan trigger: {}", e);
-                }
+        let mut interval = interval(reconciliation_interval);
+        loop {
+            interval.tick().await;
+            if let Err(e) = publish_trigger(&nats, "reconciliation").await {
+                warn!("Failed to publish reconciliation trigger: {}", e);
             }
-        });
-
-        let nats_clone = nats.clone();
-        let dataset_publisher = spawn(async move {
-            let mut interval = interval(dataset_interval);
-            loop {
-                interval.tick().await;
-                if let Err(e) = publish_trigger(&nats_clone, "dataset").await {
-                    warn!("Failed to publish dataset scan trigger: {}", e);
-                }
-            }
-        });
-
-        // Wait for both (they run forever)
-        let _ = tokio::join!(collection_publisher, dataset_publisher);
+        }
     })
 }
 
@@ -213,8 +203,14 @@ async fn process_trigger(ctx: &ScannerContext, msg: &Message) -> Result<()> {
         otel.kind = "consumer"
     );
     let _ = span.set_parent(parent_context);
-    let _guard = span.enter();
 
+    // Use .instrument(span) instead of span.enter() to correctly track
+    // the span across .await points in async code
+    process_trigger_inner(ctx, msg).instrument(span).await
+}
+
+/// Inner function that does the actual trigger processing, instrumented by the caller
+async fn process_trigger_inner(ctx: &ScannerContext, msg: &Message) -> Result<()> {
     // Parse trigger
     let trigger: ScanTrigger = serde_json::from_slice(&msg.payload)?;
 
@@ -277,6 +273,40 @@ async fn process_trigger(ctx: &ScannerContext, msg: &Message) -> Result<()> {
                 "Processing full dataset scan trigger: {}",
                 trigger.trigger_id
             );
+            dataset_scanner::scan_active_dataset_transforms(
+                &ctx.pool,
+                &ctx.nats,
+                &ctx.s3,
+                &ctx.s3_bucket_name,
+                &ctx.encryption,
+                &ctx.qdrant_config,
+                &ctx.scanner_config,
+            )
+            .await
+        }
+        // Reconciliation: batch recovery + backfill scans for missed files
+        ("reconciliation", _) => {
+            info!("Processing reconciliation trigger: {}", trigger.trigger_id);
+            let reconciliation_ctx = ReconciliationContext {
+                pool: ctx.pool.clone(),
+                nats_client: ctx.nats.clone(),
+                s3_client: ctx.s3.clone(),
+                s3_bucket_name: ctx.s3_bucket_name.clone(),
+                config: super::dataset::reconciliation::ReconciliationConfig::from_env(),
+                encryption: ctx.encryption.clone(),
+                qdrant_config: ctx.qdrant_config.clone(),
+            };
+            run_reconciliation(&reconciliation_ctx).await?;
+
+            // Backfill scans: catch files/items missed by event-driven triggers
+            collection_scanner::scan_active_collection_transforms(
+                &ctx.pool,
+                &ctx.nats,
+                &ctx.s3,
+                &ctx.s3_bucket_name,
+                &ctx.encryption,
+            )
+            .await?;
             dataset_scanner::scan_active_dataset_transforms(
                 &ctx.pool,
                 &ctx.nats,

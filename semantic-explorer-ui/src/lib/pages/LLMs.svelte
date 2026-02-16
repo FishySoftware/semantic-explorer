@@ -192,7 +192,10 @@
 		}
 	}
 
+	let initialFetchDone = false;
+
 	onMount(() => {
+		fetchLLMs();
 		fetchInferenceModels();
 		extractSearchParamFromHash();
 	});
@@ -228,6 +231,7 @@
 			error = e.message || 'Failed to load LLMs';
 		} finally {
 			loading = false;
+			initialFetchDone = true;
 		}
 	}
 
@@ -467,7 +471,7 @@
 	// Debounce search to avoid spamming API on every keystroke
 	let searchDebounceTimeout: ReturnType<typeof setTimeout> | null = null;
 	$effect(() => {
-		if (searchQuery !== undefined) {
+		if (searchQuery !== undefined && initialFetchDone) {
 			currentOffset = 0; // Reset to first page when searching
 			if (searchDebounceTimeout) {
 				clearTimeout(searchDebounceTimeout);

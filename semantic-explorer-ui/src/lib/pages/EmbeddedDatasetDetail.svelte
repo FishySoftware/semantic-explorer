@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Button, Spinner } from 'flowbite-svelte';
 	import { PlusOutline } from 'flowbite-svelte-icons';
-	import { onDestroy, onMount } from 'svelte';
+	import { onMount } from 'svelte';
 	import ApiExamples from '../ApiExamples.svelte';
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import TabPanel from '../components/TabPanel.svelte';
@@ -13,7 +13,6 @@
 		VisualizationTransform,
 	} from '../types/models';
 	import { formatError, toastStore } from '../utils/notifications';
-	import { createSSEConnection, type SSEConnection } from '../utils/sse';
 	import { formatDate } from '../utils/ui-helpers';
 
 	interface PaginatedEmbedderList {
@@ -59,8 +58,7 @@
 	let transformsLoading = $state(false);
 	let visualizationTransformStatsMap = $state<Map<number, any>>(new Map());
 
-	// SSE connection for real-time visualization transform status updates
-	let sseConnection: SSEConnection | null = null;
+	let refreshing = $state(false);
 
 	let points = $state<QdrantPoint[]>([]);
 	let pointsLoading = $state(false);
@@ -410,26 +408,21 @@
 		return `${rate.toFixed(1)}%`;
 	}
 
-	function connectSSE() {
-		sseConnection = createSSEConnection({
-			url: `/api/visualization-transforms/stream?embedded_dataset_id=${embeddedDatasetId}`,
-			onStatus: () => {
-				// Refresh visualization transforms and their stats
-				fetchVisualizationTransforms();
-			},
-			onMaxRetriesReached: () => {
-				console.warn('SSE connection lost for visualization transforms');
-			},
-		});
+	async function refreshAll() {
+		refreshing = true;
+		try {
+			await Promise.all([
+				fetchEmbeddedDataset(),
+				fetchVisualizationTransforms(),
+				fetchPoints(currentPointsPage),
+			]);
+		} finally {
+			refreshing = false;
+		}
 	}
 
 	onMount(() => {
 		fetchEmbeddedDataset();
-		connectSSE();
-	});
-
-	onDestroy(() => {
-		sseConnection?.disconnect();
 	});
 </script>
 
@@ -529,6 +522,28 @@
 						</p>
 					</div>
 					<div class="flex gap-2">
+						<button
+							type="button"
+							onclick={refreshAll}
+							disabled={refreshing}
+							class="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-50"
+							title="Refresh data"
+						>
+							<svg
+								class="w-4 h-4{refreshing ? ' animate-spin' : ''}"
+								fill="none"
+								stroke="currentColor"
+								viewBox="0 0 24 24"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+								/>
+							</svg>
+							{refreshing ? 'Refreshing...' : 'Refresh'}
+						</button>
 						<button
 							type="button"
 							onclick={startEdit}
@@ -772,7 +787,9 @@
 								</li>
 								<li>Maximum 1000 points per request</li>
 								<li>Points with existing IDs will be updated (upsert behavior)</li>
-								<li>Authentication is required via the access_token cookie</li>
+								<li>
+									Authentication is required via the <code>Authorization: Bearer</code> header
+								</li>
 								<li>
 									Standalone datasets cannot be used for Search or Chat (no embedder for query
 									embedding)

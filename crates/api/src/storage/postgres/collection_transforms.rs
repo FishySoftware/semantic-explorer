@@ -1,13 +1,90 @@
 use anyhow::Result;
-use sqlx::{Pool, Postgres};
-use std::time::Instant;
+use sqlx::types::chrono::{DateTime, Utc};
+use sqlx::{FromRow, Pool, Postgres};
 
 use crate::transforms::collection::models::{
     CollectionTransform, CollectionTransformStats, FailedFileWithTransform, ProcessedFile,
 };
 use semantic_explorer_core::models::PaginatedResponse;
-use semantic_explorer_core::observability::record_database_query;
 use semantic_explorer_core::owner_info::OwnerInfo;
+
+/// Helper struct for paginated queries that include total_count via COUNT(*) OVER()
+#[derive(Debug, Clone, FromRow)]
+struct CollectionTransformWithCount {
+    pub collection_transform_id: i32,
+    pub title: String,
+    pub collection_id: i32,
+    pub dataset_id: i32,
+    pub owner_id: String,
+    pub owner_display_name: String,
+    pub is_enabled: bool,
+    pub chunk_size: i32,
+    pub job_config: serde_json::Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub total_count: i64,
+}
+
+impl CollectionTransformWithCount {
+    fn into_parts(rows: Vec<Self>) -> (i64, Vec<CollectionTransform>) {
+        let total_count = rows.first().map_or(0, |r| r.total_count);
+        let items = rows
+            .into_iter()
+            .map(|r| CollectionTransform {
+                collection_transform_id: r.collection_transform_id,
+                title: r.title,
+                collection_id: r.collection_id,
+                dataset_id: r.dataset_id,
+                owner_id: r.owner_id,
+                owner_display_name: r.owner_display_name,
+                is_enabled: r.is_enabled,
+                chunk_size: r.chunk_size,
+                job_config: r.job_config,
+                created_at: r.created_at,
+                updated_at: r.updated_at,
+            })
+            .collect();
+        (total_count, items)
+    }
+}
+
+/// Helper struct for failed files paginated queries
+#[derive(Debug, Clone, FromRow)]
+struct FailedFileWithCount {
+    pub id: i32,
+    pub transform_type: String,
+    pub transform_id: i32,
+    pub file_key: String,
+    pub processed_at: DateTime<Utc>,
+    pub item_count: i32,
+    pub process_status: String,
+    pub process_error: Option<String>,
+    pub processing_duration_ms: Option<i64>,
+    pub transform_title: String,
+    pub total_count: i64,
+}
+
+impl FailedFileWithCount {
+    fn into_parts(rows: Vec<Self>) -> (Vec<FailedFileWithTransform>, i64) {
+        let total_count = rows.first().map_or(0, |r| r.total_count);
+        let items = rows
+            .into_iter()
+            .map(|r| FailedFileWithTransform {
+                id: r.id,
+                transform_type: r.transform_type,
+                transform_id: r.transform_id,
+                file_key: r.file_key,
+                processed_at: r.processed_at,
+                item_count: r.item_count,
+                process_status: r.process_status,
+                process_error: r.process_error,
+                processing_duration_ms: r.processing_duration_ms,
+                transform_title: r.transform_title,
+            })
+            .collect();
+        (items, total_count)
+    }
+}
 
 fn validate_sort_field(sort_by: &str) -> Result<&'static str> {
     match sort_by {
@@ -102,32 +179,11 @@ const GET_COLLECTION_TRANSFORM_STATS_QUERY: &str = r#"
     WHERE transform_type = 'collection' AND transform_id = $1
 "#;
 
-/// Batch query to fetch stats for multiple collection transforms in a single round-trip
-/// Eliminates N+1 pattern by using ANY($1) instead of individual queries
-const GET_BATCH_COLLECTION_TRANSFORM_STATS_QUERY: &str = r#"
-    SELECT
-        transform_id as collection_transform_id,
-        COUNT(*) as total_files_processed,
-        COUNT(*) FILTER (WHERE process_status = 'completed') as successful_files,
-        COUNT(*) FILTER (WHERE process_status = 'failed') as failed_files,
-        COALESCE(SUM(item_count) FILTER (WHERE process_status = 'completed'), 0) as total_items_created,
-        MAX(processed_at) as last_run_at
-    FROM transform_processed_files
-    WHERE transform_type = 'collection' AND transform_id = ANY($1)
-    GROUP BY transform_id
-"#;
-
-/// Batch query to verify ownership of multiple collection transforms in a single query
-const VERIFY_COLLECTION_TRANSFORMS_OWNERSHIP_BATCH_QUERY: &str = r#"
-    SELECT collection_transform_id
-    FROM collection_transforms
-    WHERE collection_transform_id = ANY($1) AND owner_id = $2
-"#;
-
 const GET_FAILED_FILES_FOR_COLLECTION_QUERY: &str = r#"
     SELECT tpf.id, tpf.transform_type, tpf.transform_id, tpf.file_key, tpf.processed_at,
            tpf.item_count, tpf.process_status, tpf.process_error, tpf.processing_duration_ms,
-           ct.title as transform_title
+           ct.title as transform_title,
+           COUNT(*) OVER() AS total_count
     FROM transform_processed_files tpf
     INNER JOIN collection_transforms ct ON ct.collection_transform_id = tpf.transform_id
     WHERE tpf.transform_type = 'collection'
@@ -136,16 +192,6 @@ const GET_FAILED_FILES_FOR_COLLECTION_QUERY: &str = r#"
       AND tpf.process_status = 'failed'
     ORDER BY tpf.processed_at DESC
     LIMIT $3 OFFSET $4
-"#;
-
-const COUNT_FAILED_FILES_FOR_COLLECTION_QUERY: &str = r#"
-    SELECT COUNT(*)::BIGINT as count
-    FROM transform_processed_files tpf
-    INNER JOIN collection_transforms ct ON ct.collection_transform_id = tpf.transform_id
-    WHERE tpf.transform_type = 'collection'
-      AND ct.collection_id = $1
-      AND ct.owner_id = $2
-      AND tpf.process_status = 'failed'
 "#;
 
 const GET_PROCESSED_FILES_QUERY: &str = r#"
@@ -176,79 +222,90 @@ const CHECK_FILE_PROCESSED_QUERY: &str = r#"
     LIMIT 1
 "#;
 
-const COUNT_COLLECTION_TRANSFORMS_QUERY: &str =
-    "SELECT COUNT(*) as count FROM collection_transforms WHERE owner_id = $1";
-const COUNT_COLLECTION_TRANSFORMS_WITH_SEARCH_QUERY: &str =
-    "SELECT COUNT(*) as count FROM collection_transforms WHERE title ILIKE $1 AND owner_id = $2";
+const DELETE_PROCESSED_FILE_QUERY: &str = r#"
+    DELETE FROM transform_processed_files
+    WHERE transform_type = 'collection'
+      AND file_key = $1
+      AND transform_id IN (
+          SELECT collection_transform_id FROM collection_transforms WHERE collection_id = $2
+      )
+"#;
+
+const DELETE_FAILED_FILES_FOR_RETRY_QUERY: &str = r#"
+    DELETE FROM transform_processed_files
+    WHERE transform_type = 'collection'
+      AND transform_id = $1
+      AND process_status = 'failed'
+"#;
 
 // Static sort query variants for plan caching
 // Each sort field/direction combination is a separate const
 const CT_PAGINATED_TITLE_ASC: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
-           chunk_size, job_config, created_at, updated_at
+           chunk_size, job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM collection_transforms
     WHERE owner_id = $1
     ORDER BY title ASC LIMIT $2 OFFSET $3
 "#;
 const CT_PAGINATED_TITLE_DESC: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
-           chunk_size, job_config, created_at, updated_at
+           chunk_size, job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM collection_transforms
     WHERE owner_id = $1
     ORDER BY title DESC LIMIT $2 OFFSET $3
 "#;
 const CT_PAGINATED_IS_ENABLED_ASC: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
-           chunk_size, job_config, created_at, updated_at
+           chunk_size, job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM collection_transforms
     WHERE owner_id = $1
     ORDER BY is_enabled ASC LIMIT $2 OFFSET $3
 "#;
 const CT_PAGINATED_IS_ENABLED_DESC: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
-           chunk_size, job_config, created_at, updated_at
+           chunk_size, job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM collection_transforms
     WHERE owner_id = $1
     ORDER BY is_enabled DESC LIMIT $2 OFFSET $3
 "#;
 const CT_PAGINATED_CREATED_AT_ASC: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
-           chunk_size, job_config, created_at, updated_at
+           chunk_size, job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM collection_transforms
     WHERE owner_id = $1
     ORDER BY created_at ASC LIMIT $2 OFFSET $3
 "#;
 const CT_PAGINATED_CREATED_AT_DESC: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
-           chunk_size, job_config, created_at, updated_at
+           chunk_size, job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM collection_transforms
     WHERE owner_id = $1
     ORDER BY created_at DESC LIMIT $2 OFFSET $3
 "#;
 const CT_PAGINATED_UPDATED_AT_ASC: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
-           chunk_size, job_config, created_at, updated_at
+           chunk_size, job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM collection_transforms
     WHERE owner_id = $1
     ORDER BY updated_at ASC LIMIT $2 OFFSET $3
 "#;
 const CT_PAGINATED_UPDATED_AT_DESC: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
-           chunk_size, job_config, created_at, updated_at
+           chunk_size, job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM collection_transforms
     WHERE owner_id = $1
     ORDER BY updated_at DESC LIMIT $2 OFFSET $3
 "#;
 const CT_PAGINATED_CHUNK_SIZE_ASC: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
-           chunk_size, job_config, created_at, updated_at
+           chunk_size, job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM collection_transforms
     WHERE owner_id = $1
     ORDER BY chunk_size ASC LIMIT $2 OFFSET $3
 "#;
 const CT_PAGINATED_CHUNK_SIZE_DESC: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
-           chunk_size, job_config, created_at, updated_at
+           chunk_size, job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM collection_transforms
     WHERE owner_id = $1
     ORDER BY chunk_size DESC LIMIT $2 OFFSET $3
@@ -256,70 +313,70 @@ const CT_PAGINATED_CHUNK_SIZE_DESC: &str = r#"
 
 const CT_SEARCH_TITLE_ASC: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
-           chunk_size, job_config, created_at, updated_at
+           chunk_size, job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM collection_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY title ASC LIMIT $3 OFFSET $4
 "#;
 const CT_SEARCH_TITLE_DESC: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
-           chunk_size, job_config, created_at, updated_at
+           chunk_size, job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM collection_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY title DESC LIMIT $3 OFFSET $4
 "#;
 const CT_SEARCH_IS_ENABLED_ASC: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
-           chunk_size, job_config, created_at, updated_at
+           chunk_size, job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM collection_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY is_enabled ASC LIMIT $3 OFFSET $4
 "#;
 const CT_SEARCH_IS_ENABLED_DESC: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
-           chunk_size, job_config, created_at, updated_at
+           chunk_size, job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM collection_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY is_enabled DESC LIMIT $3 OFFSET $4
 "#;
 const CT_SEARCH_CREATED_AT_ASC: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
-           chunk_size, job_config, created_at, updated_at
+           chunk_size, job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM collection_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY created_at ASC LIMIT $3 OFFSET $4
 "#;
 const CT_SEARCH_CREATED_AT_DESC: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
-           chunk_size, job_config, created_at, updated_at
+           chunk_size, job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM collection_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY created_at DESC LIMIT $3 OFFSET $4
 "#;
 const CT_SEARCH_UPDATED_AT_ASC: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
-           chunk_size, job_config, created_at, updated_at
+           chunk_size, job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM collection_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY updated_at ASC LIMIT $3 OFFSET $4
 "#;
 const CT_SEARCH_UPDATED_AT_DESC: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
-           chunk_size, job_config, created_at, updated_at
+           chunk_size, job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM collection_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY updated_at DESC LIMIT $3 OFFSET $4
 "#;
 const CT_SEARCH_CHUNK_SIZE_ASC: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
-           chunk_size, job_config, created_at, updated_at
+           chunk_size, job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM collection_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY chunk_size ASC LIMIT $3 OFFSET $4
 "#;
 const CT_SEARCH_CHUNK_SIZE_DESC: &str = r#"
     SELECT collection_transform_id, title, collection_id, dataset_id, owner_id, owner_display_name, is_enabled,
-           chunk_size, job_config, created_at, updated_at
+           chunk_size, job_config, created_at, updated_at, COUNT(*) OVER() AS total_count
     FROM collection_transforms
     WHERE title ILIKE $1 AND owner_id = $2
     ORDER BY chunk_size DESC LIMIT $3 OFFSET $4
@@ -361,16 +418,11 @@ pub async fn get_collection_transform(
     owner: &str,
     collection_transform_id: i32,
 ) -> Result<CollectionTransform> {
-    let start = Instant::now();
-
     let result = sqlx::query_as::<_, CollectionTransform>(GET_COLLECTION_TRANSFORM_QUERY)
         .bind(collection_transform_id)
         .bind(owner)
         .fetch_one(pool)
         .await;
-
-    let duration = start.elapsed().as_secs_f64();
-    record_database_query("SELECT", "collection_transforms", duration, result.is_ok());
 
     let transform = result?;
     Ok(transform)
@@ -402,22 +454,13 @@ pub async fn get_collection_transforms_paginated(
     let sort_field = validate_sort_field(sort_by)?;
     let sort_dir = validate_sort_direction(sort_direction)?;
 
-    let start = Instant::now();
-
     let (total_count, transforms) = if let Some(search_term) = search {
         let search_pattern = format!("%{}%", search_term);
 
-        let count_result: (i64,) = sqlx::query_as(COUNT_COLLECTION_TRANSFORMS_WITH_SEARCH_QUERY)
-            .bind(&search_pattern)
-            .bind(owner)
-            .fetch_one(pool)
-            .await?;
-        let total = count_result.0;
-
-        // Use static query variant for plan caching
+        // Use static query variant for plan caching (includes COUNT(*) OVER())
         let query_str = get_ct_search_query(sort_field, sort_dir);
 
-        let items = sqlx::query_as::<_, CollectionTransform>(query_str)
+        let rows = sqlx::query_as::<_, CollectionTransformWithCount>(query_str)
             .bind(&search_pattern)
             .bind(owner)
             .bind(limit)
@@ -425,29 +468,20 @@ pub async fn get_collection_transforms_paginated(
             .fetch_all(pool)
             .await?;
 
-        (total, items)
+        CollectionTransformWithCount::into_parts(rows)
     } else {
-        let count_result: (i64,) = sqlx::query_as(COUNT_COLLECTION_TRANSFORMS_QUERY)
-            .bind(owner)
-            .fetch_one(pool)
-            .await?;
-        let total = count_result.0;
-
-        // Use static query variant for plan caching
+        // Use static query variant for plan caching (includes COUNT(*) OVER())
         let query_str = get_ct_paginated_query(sort_field, sort_dir);
 
-        let items = sqlx::query_as::<_, CollectionTransform>(query_str)
+        let rows = sqlx::query_as::<_, CollectionTransformWithCount>(query_str)
             .bind(owner)
             .bind(limit)
             .bind(offset)
             .fetch_all(pool)
             .await?;
 
-        (total, items)
+        CollectionTransformWithCount::into_parts(rows)
     };
-
-    let duration = start.elapsed().as_secs_f64();
-    record_database_query("SELECT", "collection_transforms", duration, true);
 
     Ok(PaginatedResponse {
         items: transforms,
@@ -575,51 +609,6 @@ pub async fn get_collection_transform_stats(
     Ok(stats)
 }
 
-/// Batch fetch stats for multiple collection transforms in a single query (eliminates N+1)
-pub async fn get_batch_collection_transform_stats(
-    pool: &Pool<Postgres>,
-    collection_transform_ids: &[i32],
-) -> Result<std::collections::HashMap<i32, CollectionTransformStats>> {
-    use std::collections::HashMap;
-
-    if collection_transform_ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-
-    let stats_list =
-        sqlx::query_as::<_, CollectionTransformStats>(GET_BATCH_COLLECTION_TRANSFORM_STATS_QUERY)
-            .bind(collection_transform_ids)
-            .fetch_all(pool)
-            .await?;
-
-    let stats_map: HashMap<i32, CollectionTransformStats> = stats_list
-        .into_iter()
-        .map(|s| (s.collection_transform_id, s))
-        .collect();
-
-    Ok(stats_map)
-}
-
-/// Verify ownership of multiple collection transforms in a single query (eliminates N+1)
-/// Returns the list of IDs that the user owns
-pub async fn verify_collection_transforms_ownership_batch(
-    pool: &Pool<Postgres>,
-    owner_id: &str,
-    collection_transform_ids: &[i32],
-) -> Result<Vec<i32>> {
-    if collection_transform_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let owned_ids: Vec<(i32,)> = sqlx::query_as(VERIFY_COLLECTION_TRANSFORMS_OWNERSHIP_BATCH_QUERY)
-        .bind(collection_transform_ids)
-        .bind(owner_id)
-        .fetch_all(pool)
-        .await?;
-
-    Ok(owned_ids.into_iter().map(|(id,)| id).collect())
-}
-
 pub async fn get_processed_files(
     pool: &Pool<Postgres>,
     collection_transform_id: i32,
@@ -638,14 +627,7 @@ pub async fn get_failed_files_for_collection(
     limit: i64,
     offset: i64,
 ) -> Result<PaginatedResponse<FailedFileWithTransform>> {
-    let count_result: (i64,) = sqlx::query_as(COUNT_FAILED_FILES_FOR_COLLECTION_QUERY)
-        .bind(collection_id)
-        .bind(owner)
-        .fetch_one(pool)
-        .await?;
-    let total_count = count_result.0;
-
-    let files = sqlx::query_as::<_, FailedFileWithTransform>(GET_FAILED_FILES_FOR_COLLECTION_QUERY)
+    let rows = sqlx::query_as::<_, FailedFileWithCount>(GET_FAILED_FILES_FOR_COLLECTION_QUERY)
         .bind(collection_id)
         .bind(owner)
         .bind(limit)
@@ -653,8 +635,10 @@ pub async fn get_failed_files_for_collection(
         .fetch_all(pool)
         .await?;
 
+    let (items, total_count) = FailedFileWithCount::into_parts(rows);
+
     Ok(PaginatedResponse {
-        items: files,
+        items,
         total_count,
         limit,
         offset,
@@ -698,4 +682,32 @@ pub async fn is_file_already_processed(
     Ok(result
         .map(|(status,)| status == "completed")
         .unwrap_or(false))
+}
+
+/// Delete all failed processed-file records for a collection transform so the scanner
+/// rediscovers them on the next run.
+pub async fn delete_failed_files_for_retry(
+    pool: &Pool<Postgres>,
+    collection_transform_id: i32,
+) -> Result<u64> {
+    let result = sqlx::query(DELETE_FAILED_FILES_FOR_RETRY_QUERY)
+        .bind(collection_transform_id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
+}
+
+/// Delete processed file records for a file key across all transforms of a collection.
+/// Called when a file is deleted from a collection.
+pub async fn delete_processed_file_records(
+    pool: &Pool<Postgres>,
+    file_key: &str,
+    collection_id: i32,
+) -> Result<u64> {
+    let result = sqlx::query(DELETE_PROCESSED_FILE_QUERY)
+        .bind(file_key)
+        .bind(collection_id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
 }

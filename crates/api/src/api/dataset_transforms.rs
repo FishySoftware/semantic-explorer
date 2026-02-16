@@ -3,12 +3,13 @@ use crate::auth::AuthenticatedUser;
 use crate::errors::{bad_request, not_found};
 use crate::storage::postgres::dataset_transform_stats::reconcile_from_batches;
 use crate::storage::postgres::{
-    INTERNAL_BATCH_SIZE, dataset_transform_batches, dataset_transforms, embedded_datasets,
-    fetch_all_batched,
+    INTERNAL_BATCH_SIZE, dataset_transform_batches, dataset_transforms, datasets,
+    embedded_datasets, fetch_all_batched,
 };
 use crate::transforms::dataset::models::{
     CreateDatasetTransform, DatasetTransform, DatasetTransformStats, UpdateDatasetTransform,
 };
+use semantic_explorer_core::config::S3Config;
 use semantic_explorer_core::models::PaginatedResponse;
 use semantic_explorer_core::validation;
 
@@ -154,9 +155,7 @@ pub async fn create_dataset_transform(
         return bad_request("At least one embedder must be specified");
     }
 
-    let job_config = serde_json::json!({
-        "embedding_batch_size": body.embedding_batch_size.unwrap_or(100),
-    });
+    let job_config = serde_json::json!({});
 
     let owner = user.to_owner_info();
     match dataset_transforms::create_dataset_transform(
@@ -223,10 +222,11 @@ pub async fn create_dataset_transform(
     ),
 )]
 #[patch("/api/dataset-transforms/{id}")]
-#[tracing::instrument(name = "update_dataset_transform", skip(user, pool, body), fields(dataset_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "update_dataset_transform", skip(user, pool, nats_client, body), fields(dataset_transform_id = %path.as_ref()))]
 pub async fn update_dataset_transform(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
+    nats_client: Data<NatsClient>,
     path: Path<i32>,
     body: Json<UpdateDatasetTransform>,
 ) -> impl Responder {
@@ -242,6 +242,17 @@ pub async fn update_dataset_transform(
     }
 
     let id = path.into_inner();
+
+    // Check if transform is being re-enabled
+    let was_disabled = if body.is_enabled == Some(true) {
+        dataset_transforms::get_dataset_transform(&pool, &user.as_owner(), id)
+            .await
+            .map(|t| !t.is_enabled)
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
     match dataset_transforms::update_dataset_transform(
         &pool,
         &user.as_owner(),
@@ -260,6 +271,22 @@ pub async fn update_dataset_transform(
                 ResourceType::Transform,
                 &id.to_string(),
             );
+
+            if was_disabled
+                && let Err(e) = crate::transforms::trigger::publish_targeted_trigger(
+                    nats_client.as_ref(),
+                    "dataset",
+                    id,
+                    &user.as_owner(),
+                )
+                .await
+            {
+                error!(
+                    "Failed to trigger scan for re-enabled dataset transform {}: {}",
+                    id, e
+                );
+            }
+
             HttpResponse::Ok().json(serde_json::json!({
                 "transform": transform,
                 "embedded_datasets": embedded_datasets,
@@ -287,12 +314,14 @@ pub async fn update_dataset_transform(
     ),
 )]
 #[delete("/api/dataset-transforms/{id}")]
-#[tracing::instrument(name = "delete_dataset_transform", skip(user, pool, qdrant_client, req), fields(dataset_transform_id = %path.as_ref()))]
+#[tracing::instrument(name = "delete_dataset_transform", skip(user, pool, qdrant_client, s3_client, s3_config, req), fields(dataset_transform_id = %path.as_ref()))]
 pub async fn delete_dataset_transform(
     user: AuthenticatedUser,
     req: HttpRequest,
     pool: Data<Pool<Postgres>>,
     qdrant_client: Data<Qdrant>,
+    s3_client: Data<aws_sdk_s3::Client>,
+    s3_config: Data<S3Config>,
     path: Path<i32>,
 ) -> impl Responder {
     let dataset_transform_id = path.into_inner();
@@ -315,20 +344,9 @@ pub async fn delete_dataset_transform(
         }
     };
 
-    // Delete Qdrant collections for all embedded datasets
-    for embedded_dataset in embedded_datasets_list {
-        if let Err(e) = qdrant_client
-            .delete_collection(&embedded_dataset.collection_name)
-            .await
-        {
-            error!(
-                "Failed to delete Qdrant collection {} for embedded dataset {}: {}",
-                embedded_dataset.collection_name, embedded_dataset.embedded_dataset_id, e
-            );
-            // Continue with other collections even if one fails
-        }
-    }
-
+    // Delete the database record first (fast, cascading deletes handle
+    // embedded_datasets rows). This lets us respond immediately while
+    // cleaning up Qdrant collections and S3 batch files in the background.
     match dataset_transforms::delete_dataset_transform(
         &pool,
         &user.as_owner(),
@@ -344,6 +362,59 @@ pub async fn delete_dataset_transform(
                 ResourceType::Transform,
                 &dataset_transform_id.to_string(),
             );
+
+            // Kick off background cleanup for Qdrant collections and S3 batch files.
+            // These are best-effort — orphaned resources are harmless and can be
+            // cleaned up by reconciliation if the background task fails.
+            let qdrant = qdrant_client.into_inner();
+            let s3 = s3_client.into_inner();
+            let bucket = s3_config.bucket_name.clone();
+            tokio::spawn(async move {
+                for embedded_dataset in &embedded_datasets_list {
+                    if let Err(e) = qdrant
+                        .delete_collection(&embedded_dataset.collection_name)
+                        .await
+                    {
+                        error!(
+                            "Background cleanup: failed to delete Qdrant collection {} for embedded dataset {}: {}",
+                            embedded_dataset.collection_name,
+                            embedded_dataset.embedded_dataset_id,
+                            e
+                        );
+                    }
+
+                    let prefix = format!(
+                        "embedded-datasets/embedded-dataset-{}/",
+                        embedded_dataset.embedded_dataset_id
+                    );
+                    match semantic_explorer_core::storage::delete_files_by_prefix(
+                        &s3, &bucket, &prefix,
+                    )
+                    .await
+                    {
+                        Ok(count) => {
+                            if count > 0 {
+                                info!(
+                                    embedded_dataset_id = embedded_dataset.embedded_dataset_id,
+                                    deleted_files = count,
+                                    "Background cleanup: cleaned up S3 batch files for deleted embedded dataset"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            error!(
+                                "Background cleanup: failed to cleanup S3 batch files for embedded dataset {}: {}",
+                                embedded_dataset.embedded_dataset_id, e
+                            );
+                        }
+                    }
+                }
+                info!(
+                    dataset_transform_id,
+                    "Background cleanup completed for deleted dataset transform"
+                );
+            });
+
             HttpResponse::NoContent().finish()
         }
         Err(e) => {
@@ -543,6 +614,125 @@ pub async fn retry_failed_batches(
 }
 
 #[utoipa::path(
+    post,
+    path = "/api/dataset-transforms/{transform_id}/batches/{batch_id}/retry",
+    tag = "Dataset Transforms",
+    params(
+        ("transform_id" = i32, Path, description = "Dataset Transform ID"),
+        ("batch_id" = i32, Path, description = "Batch ID")
+    ),
+    responses(
+        (status = 200, description = "Failed batch retried successfully"),
+        (status = 404, description = "Dataset transform or batch not found"),
+        (status = 401, description = "Unauthorized"),
+    ),
+)]
+#[post("/api/dataset-transforms/{transform_id}/batches/{batch_id}/retry")]
+#[tracing::instrument(
+    name = "retry_single_failed_batch",
+    skip(user, pool, nats_client),
+    fields(dataset_transform_id, batch_id)
+)]
+pub async fn retry_single_failed_batch(
+    user: AuthenticatedUser,
+    pool: Data<Pool<Postgres>>,
+    nats_client: Data<NatsClient>,
+    path: Path<(i32, i32)>,
+) -> impl Responder {
+    let (dataset_transform_id, batch_id) = path.into_inner();
+
+    // Verify the transform exists and user has access
+    let _transform = match dataset_transforms::get_dataset_transform(
+        &pool,
+        &user.as_owner(),
+        dataset_transform_id,
+    )
+    .await
+    {
+        Ok(t) => t,
+        Err(e) => {
+            error!("Dataset transform not found: {}", e);
+            return not_found(format!("Dataset transform not found: {}", e));
+        }
+    };
+
+    // Reset the single failed batch to pending
+    let batch = match dataset_transform_batches::reset_single_failed_batch(
+        &pool,
+        batch_id,
+        dataset_transform_id,
+    )
+    .await
+    {
+        Ok(Some(b)) => b,
+        Ok(None) => {
+            return not_found("Batch not found or is not in failed status".to_string());
+        }
+        Err(e) => {
+            error!("Failed to reset batch: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to reset batch: {}", e)
+            }));
+        }
+    };
+
+    // Delete the corresponding transform_processed_files records
+    let batch_keys = vec![batch.batch_key.clone()];
+    match embedded_datasets::delete_processed_batches_for_retry(
+        &pool,
+        dataset_transform_id,
+        &batch_keys,
+    )
+    .await
+    {
+        Ok(deleted) => {
+            info!(
+                dataset_transform_id,
+                batch_id, deleted, "Deleted processed-file records for single batch retry"
+            );
+        }
+        Err(e) => {
+            error!("Failed to delete processed batch records: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to clean up processed records: {}", e)
+            }));
+        }
+    }
+
+    // Reconcile stats from actual batch data
+    if let Err(e) = reconcile_from_batches(&pool, dataset_transform_id).await {
+        error!("Failed to reconcile stats after single batch retry: {}", e);
+    }
+
+    // Trigger the scanner to rediscover the batch
+    if let Err(e) = crate::transforms::dataset::scanner::trigger_dataset_transform_scan(
+        &nats_client,
+        dataset_transform_id,
+        &user.as_owner(),
+    )
+    .await
+    {
+        error!("Failed to trigger scan after single batch retry: {}", e);
+        return HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": format!("Batch reset but failed to trigger scan: {}", e)
+        }));
+    }
+
+    info!(
+        dataset_transform_id,
+        batch_id, "Retry: reset single batch and triggered scanner"
+    );
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "message": "Failed batch reset and scan triggered",
+        "dataset_transform_id": dataset_transform_id,
+        "batch_id": batch_id,
+        "batch_key": batch.batch_key,
+        "retried_count": 1,
+    }))
+}
+
+#[utoipa::path(
     get,
     path = "/api/dataset-transforms/{id}/stats",
     tag = "Dataset Transforms",
@@ -614,73 +804,6 @@ pub async fn get_dataset_transform_stats(
             error!("Dataset transform not found: {}", e);
             HttpResponse::NotFound().json(serde_json::json!({
                 "error": format!("Dataset transform not found: {}", e)
-            }))
-        }
-    }
-}
-
-#[derive(Deserialize, utoipa::ToSchema, Debug)]
-pub struct BatchDatasetTransformStatsRequest {
-    pub dataset_transform_ids: Vec<i32>,
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/dataset-transforms-batch-stats",
-    tag = "Dataset Transforms",
-    request_body = BatchDatasetTransformStatsRequest,
-    responses(
-        (status = 200, description = "Batch transform statistics"),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Dataset transform not found"),
-    ),
-)]
-#[post("/api/dataset-transforms-batch-stats")]
-#[tracing::instrument(name = "get_batch_dataset_transform_stats", skip(user, pool))]
-pub async fn get_batch_dataset_transform_stats(
-    user: AuthenticatedUser,
-    pool: Data<Pool<Postgres>>,
-    body: Json<BatchDatasetTransformStatsRequest>,
-) -> impl Responder {
-    let transform_ids = &body.dataset_transform_ids;
-
-    // Verify ownership in a single batched query instead of N sequential queries
-    let owned_ids = match dataset_transforms::verify_dataset_transform_ownership(
-        &pool,
-        &user.as_owner(),
-        transform_ids,
-    )
-    .await
-    {
-        Ok(ids) => ids,
-        Err(e) => {
-            error!("Failed to verify ownership: {}", e);
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": "Failed to verify ownership"
-            }));
-        }
-    };
-
-    // Log warning if some IDs were not found/owned, but proceed with owned ones
-    if owned_ids.len() != transform_ids.len() {
-        let missing: Vec<_> = transform_ids
-            .iter()
-            .filter(|id| !owned_ids.contains(id))
-            .collect();
-        tracing::warn!(
-            "Some dataset transforms not found or not owned: {:?}",
-            missing
-        );
-    }
-
-    match dataset_transforms::get_batch_dataset_transform_stats(&pool, &user.as_owner(), &owned_ids)
-        .await
-    {
-        Ok(stats_map) => HttpResponse::Ok().json(stats_map),
-        Err(e) => {
-            error!("Failed to get batch stats: {}", e);
-            HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": "Failed to fetch batch statistics"
             }))
         }
     }
@@ -778,31 +901,56 @@ pub async fn get_dataset_transform_detailed_stats(
         }
     };
 
-    // Get stats for all embedded datasets in a single batch query (eliminates N+1)
-    let embedded_dataset_ids: Vec<i32> = embedded_datasets_list
-        .iter()
-        .map(|ed| ed.embedded_dataset_id)
-        .collect();
+    // Get the source dataset's total_chunks for accurate per-embedder progress.
+    // This is the ground-truth expected count per embedded dataset.
+    let source_total_chunks: i64 =
+        match datasets::get_dataset_total_chunks(&pool, transform.source_dataset_id).await {
+            Ok(tc) => tc,
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to get source dataset total_chunks for dataset {}: {}",
+                    transform.source_dataset_id,
+                    e
+                );
+                0
+            }
+        };
 
-    let stats_map = match embedded_datasets::get_batch_embedded_dataset_stats(
-        &pool,
-        &user.as_owner(),
-        &embedded_dataset_ids,
-    )
-    .await
-    {
-        Ok(map) => map,
-        Err(e) => {
-            error!("Failed to get batch embedded dataset stats: {}", e);
-            std::collections::HashMap::new()
+    // Get stats for each embedded dataset individually
+    let mut stats_map = std::collections::HashMap::new();
+    for ed in &embedded_datasets_list {
+        match embedded_datasets::get_embedded_dataset_stats(
+            &pool,
+            &user.as_owner(),
+            ed.embedded_dataset_id,
+        )
+        .await
+        {
+            Ok(stats) => {
+                stats_map.insert(ed.embedded_dataset_id, stats);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to get stats for embedded dataset {}: {}",
+                    ed.embedded_dataset_id,
+                    e
+                );
+            }
         }
-    };
+    }
 
     // Build per-embedder stats using the batch-fetched data
     let per_embedder_stats: Vec<serde_json::Value> = embedded_datasets_list
         .iter()
         .map(|ed| {
             if let Some(stats) = stats_map.get(&ed.embedded_dataset_id) {
+                // Per-embedder expected total is the source dataset's total_chunks
+                // (each embedder must embed every chunk independently)
+                let total_expected = source_total_chunks;
+                let chunks_done = stats.total_chunks_embedded + stats.total_chunks_failed;
+                let is_completed = total_expected > 0
+                    && chunks_done >= total_expected
+                    && stats.processing_batches == 0;
                 serde_json::json!({
                     "embedded_dataset_id": ed.embedded_dataset_id,
                     "embedder_id": ed.embedder_id,
@@ -815,10 +963,12 @@ pub async fn get_dataset_transform_detailed_stats(
                     "total_chunks_embedded": stats.total_chunks_embedded,
                     "total_chunks_failed": stats.total_chunks_failed,
                     "total_chunks_processing": stats.total_chunks_processing,
+                    "total_chunks_expected": total_expected,
                     "last_run_at": stats.last_run_at,
                     "first_processing_at": stats.first_processing_at,
                     "avg_processing_duration_ms": stats.avg_processing_duration_ms,
                     "is_processing": stats.processing_batches > 0,
+                    "is_completed": is_completed,
                 })
             } else {
                 serde_json::json!({
@@ -826,6 +976,7 @@ pub async fn get_dataset_transform_detailed_stats(
                     "embedder_id": ed.embedder_id,
                     "collection_name": ed.collection_name,
                     "title": ed.title,
+                    "total_chunks_expected": source_total_chunks,
                     "error": "Stats not available",
                 })
             }

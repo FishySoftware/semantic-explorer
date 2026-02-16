@@ -3,10 +3,8 @@ use sqlx::{
     Pool, Postgres,
     types::chrono::{DateTime, Utc},
 };
-use std::time::Instant;
 
 use crate::datasets::models::{ChunkWithMetadata, Dataset, DatasetItem};
-use semantic_explorer_core::observability::record_database_query;
 
 const GET_DATASET_QUERY: &str = r#"
     SELECT dataset_id, title, details, owner_id, owner_display_name, tags, is_public, created_at, updated_at FROM datasets
@@ -15,13 +13,8 @@ const GET_DATASET_QUERY: &str = r#"
 
 const GET_DATASETS_PAGINATED_QUERY: &str = r#"
     SELECT d.dataset_id, d.title, d.details, d.owner_id, d.owner_display_name, d.tags, d.is_public, d.item_count, d.total_chunks, d.created_at, d.updated_at,
-        COALESCE(dt_stats.transform_count, 0)::bigint AS transform_count
+        COUNT(*) OVER() AS total_count
     FROM datasets d
-    LEFT JOIN (
-        SELECT source_dataset_id, COUNT(*) AS transform_count
-        FROM dataset_transforms
-        GROUP BY source_dataset_id
-    ) dt_stats ON dt_stats.source_dataset_id = d.dataset_id
     WHERE d.owner_id = $1
     ORDER BY d.created_at DESC
     LIMIT $2 OFFSET $3
@@ -29,24 +22,11 @@ const GET_DATASETS_PAGINATED_QUERY: &str = r#"
 
 const GET_DATASETS_PAGINATED_SEARCH_QUERY: &str = r#"
     SELECT d.dataset_id, d.title, d.details, d.owner_id, d.owner_display_name, d.tags, d.is_public, d.item_count, d.total_chunks, d.created_at, d.updated_at,
-        COALESCE(dt_stats.transform_count, 0)::bigint AS transform_count
+        COUNT(*) OVER() AS total_count
     FROM datasets d
-    LEFT JOIN (
-        SELECT source_dataset_id, COUNT(*) AS transform_count
-        FROM dataset_transforms
-        GROUP BY source_dataset_id
-    ) dt_stats ON dt_stats.source_dataset_id = d.dataset_id
     WHERE d.owner_id = $3 AND (d.title ILIKE $4 OR d.details ILIKE $4 OR $5 = ANY(d.tags))
     ORDER BY d.created_at DESC
     LIMIT $1 OFFSET $2
-"#;
-
-const COUNT_DATASETS_QUERY: &str = r#"
-    SELECT COUNT(*) as count FROM datasets WHERE owner_id = $1
-"#;
-
-const COUNT_DATASETS_SEARCH_QUERY: &str = r#"
-    SELECT COUNT(*) as count FROM datasets WHERE owner_id = $1 AND (title ILIKE $2 OR details ILIKE $2 OR $3 = ANY(tags))
 "#;
 
 const CREATE_DATASET_QUERY: &str = r#"
@@ -109,12 +89,17 @@ const COUNT_DATASET_ITEMS_WITH_SEARCH_QUERY: &str = r#"
     SELECT COUNT(*) as count FROM dataset_items WHERE dataset_id = $1 AND title ILIKE $2
 "#;
 
-const GET_DATASET_ITEMS_MODIFIED_SINCE_QUERY: &str = r#"
+/// Scanner query: fetches dataset items with item_id > last_processed_item_id.
+/// Uses item_id (PostgreSQL SERIAL, monotonically increasing) as the watermark
+/// instead of timestamps. This eliminates the MVCC race condition where concurrent
+/// transactions insert items with created_at timestamps BEFORE the scanner's
+/// query_start_time, causing them to be permanently skipped.
+const GET_DATASET_ITEMS_FOR_SCANNER_QUERY: &str = r#"
     SELECT item_id, dataset_id, title, chunks, metadata, created_at, COALESCE(updated_at, created_at) as updated_at
     FROM dataset_items
-    WHERE dataset_id = $1 AND COALESCE(updated_at, created_at) >= $2
-    ORDER BY COALESCE(updated_at, created_at) ASC, item_id ASC
-    LIMIT $3 OFFSET $4
+    WHERE dataset_id = $1 AND item_id > $2
+    ORDER BY item_id ASC
+    LIMIT $3
 "#;
 
 /// Get the dataset's version (updated_at timestamp) for efficient stats refresh (#4)
@@ -190,16 +175,11 @@ pub(crate) async fn get_dataset(
     owner_id: &str,
     dataset_id: i32,
 ) -> Result<Dataset> {
-    let start = Instant::now();
     let result = sqlx::query_as::<_, Dataset>(GET_DATASET_QUERY)
         .bind(dataset_id)
         .bind(owner_id)
         .fetch_one(pool)
         .await;
-
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "datasets", duration, success);
 
     Ok(result?)
 }
@@ -217,7 +197,7 @@ pub(crate) struct DatasetWithStatsRow {
     pub(crate) total_chunks: i64,
     pub(crate) created_at: Option<DateTime<Utc>>,
     pub(crate) updated_at: Option<DateTime<Utc>>,
-    pub(crate) transform_count: i64,
+    pub(crate) total_count: i64,
 }
 
 #[derive(Debug)]
@@ -235,19 +215,6 @@ pub(crate) async fn get_datasets_paginated(
     limit: i64,
     offset: i64,
 ) -> Result<PaginatedDatasetsResult> {
-    // Get total count
-    let start_count = Instant::now();
-    let count_result: (i64,) = sqlx::query_as(COUNT_DATASETS_QUERY)
-        .bind(owner_id)
-        .fetch_one(pool)
-        .await?;
-    let duration_count = start_count.elapsed().as_secs_f64();
-    record_database_query("SELECT", "datasets", duration_count, true);
-
-    let total_count = count_result.0;
-
-    // Get paginated items
-    let start = Instant::now();
     let result = sqlx::query_as::<_, DatasetWithStatsRow>(GET_DATASETS_PAGINATED_QUERY)
         .bind(owner_id)
         .bind(limit)
@@ -255,11 +222,8 @@ pub(crate) async fn get_datasets_paginated(
         .fetch_all(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "datasets", duration, success);
-
     let items = result?;
+    let total_count = items.first().map_or(0, |r| r.total_count);
     Ok(PaginatedDatasetsResult {
         items,
         total_count,
@@ -278,21 +242,6 @@ pub(crate) async fn get_datasets_paginated_search(
 ) -> Result<PaginatedDatasetsResult> {
     let search_pattern = format!("%{}%", search_query);
 
-    // Get total count
-    let start_count = Instant::now();
-    let count_result: (i64,) = sqlx::query_as(COUNT_DATASETS_SEARCH_QUERY)
-        .bind(owner_id)
-        .bind(&search_pattern)
-        .bind(search_query)
-        .fetch_one(pool)
-        .await?;
-    let duration_count = start_count.elapsed().as_secs_f64();
-    record_database_query("SELECT", "datasets", duration_count, true);
-
-    let total_count = count_result.0;
-
-    // Get paginated items
-    let start = Instant::now();
     let result = sqlx::query_as::<_, DatasetWithStatsRow>(GET_DATASETS_PAGINATED_SEARCH_QUERY)
         .bind(limit)
         .bind(offset)
@@ -302,11 +251,8 @@ pub(crate) async fn get_datasets_paginated_search(
         .fetch_all(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "datasets", duration, success);
-
     let items = result?;
+    let total_count = items.first().map_or(0, |r| r.total_count);
     Ok(PaginatedDatasetsResult {
         items,
         total_count,
@@ -325,7 +271,6 @@ pub(crate) async fn create_dataset(
     tags: &[String],
     is_public: bool,
 ) -> Result<Dataset> {
-    let start = Instant::now();
     let result = sqlx::query_as::<_, Dataset>(CREATE_DATASET_QUERY)
         .bind(title)
         .bind(details)
@@ -336,10 +281,6 @@ pub(crate) async fn create_dataset(
         .fetch_one(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("INSERT", "datasets", duration, success);
-
     Ok(result?)
 }
 
@@ -349,16 +290,11 @@ pub(crate) async fn delete_dataset(
     dataset_id: i32,
     owner_id: &str,
 ) -> Result<()> {
-    let start = Instant::now();
     let result = sqlx::query(DELETE_DATASET_QUERY)
         .bind(dataset_id)
         .bind(owner_id)
         .execute(pool)
         .await;
-
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("DELETE", "datasets", duration, success);
 
     result?;
     Ok(())
@@ -392,9 +328,6 @@ pub(crate) async fn create_dataset_items_batch(
     dataset_id: i32,
     items: Vec<(String, Vec<ChunkWithMetadata>, serde_json::Value)>,
 ) -> Result<(Vec<DatasetItem>, Vec<String>)> {
-    use std::time::Instant;
-    let start = Instant::now();
-
     if items.is_empty() {
         return Ok((Vec::new(), Vec::new()));
     }
@@ -450,10 +383,6 @@ pub(crate) async fn create_dataset_items_batch(
     }
 
     tx.commit().await?;
-
-    let duration = start.elapsed().as_secs_f64();
-    let success = failed.is_empty();
-    record_database_query("INSERT", "dataset_items", duration, success);
 
     Ok((successful, failed))
 }
@@ -573,32 +502,24 @@ pub(crate) async fn count_dataset_items_with_search(
     Ok(count.0)
 }
 
-#[tracing::instrument(name = "database.get_dataset_items_modified_since", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", dataset_id = %dataset_id))]
-pub(crate) async fn get_dataset_items_modified_since(
+/// Fetch dataset items for the scanner using item_id-based watermark.
+/// Uses `item_id > last_processed_item_id` to find new items, which is safe under
+/// concurrent inserts because PostgreSQL SERIAL IDs are monotonically increasing.
+/// Pass `last_processed_item_id = 0` for the initial scan (fetches all items).
+#[tracing::instrument(name = "database.get_dataset_items_for_scanner", skip(pool), fields(database.system = "postgresql", database.operation = "SELECT", dataset_id = %dataset_id))]
+pub(crate) async fn get_dataset_items_for_scanner(
     pool: &Pool<Postgres>,
     dataset_id: i32,
-    since_timestamp: Option<DateTime<Utc>>,
+    last_processed_item_id: i32,
     limit: i64,
-    offset: i64,
 ) -> Result<Vec<DatasetItem>> {
-    let query = if let Some(timestamp) = since_timestamp {
-        sqlx::query_as::<_, DatasetItem>(GET_DATASET_ITEMS_MODIFIED_SINCE_QUERY)
-            .bind(dataset_id)
-            .bind(timestamp)
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(pool)
-            .await?
-    } else {
-        // If no timestamp provided, return all items (still respecting caller's pagination)
-        sqlx::query_as::<_, DatasetItem>(GET_DATASET_ITEMS_QUERY)
-            .bind(dataset_id)
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(pool)
-            .await?
-    };
-    Ok(query)
+    let items = sqlx::query_as::<_, DatasetItem>(GET_DATASET_ITEMS_FOR_SCANNER_QUERY)
+        .bind(dataset_id)
+        .bind(last_processed_item_id)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+    Ok(items)
 }
 
 /// Get the dataset's version (updated_at timestamp) for efficient stats refresh (#4)
@@ -614,6 +535,20 @@ pub(crate) async fn get_dataset_version(
     Ok(version)
 }
 
+/// Get the source dataset's total_chunks count.
+/// Used by the detailed-stats endpoint to provide the expected total per embedded dataset.
+pub(crate) async fn get_dataset_total_chunks(
+    pool: &Pool<Postgres>,
+    dataset_id: i32,
+) -> Result<i64> {
+    let total_chunks =
+        sqlx::query_scalar::<_, i64>("SELECT total_chunks FROM datasets WHERE dataset_id = $1")
+            .bind(dataset_id)
+            .fetch_one(pool)
+            .await?;
+    Ok(total_chunks)
+}
+
 #[tracing::instrument(name = "database.update_dataset", skip(pool), fields(database.system = "postgresql", database.operation = "UPDATE", dataset_id = %dataset_id, owner_id = %owner_id))]
 pub(crate) async fn update_dataset(
     pool: &Pool<Postgres>,
@@ -624,7 +559,6 @@ pub(crate) async fn update_dataset(
     tags: &[String],
     is_public: bool,
 ) -> Result<Dataset> {
-    let start = Instant::now();
     let result = sqlx::query_as::<_, Dataset>(UPDATE_DATASET_QUERY)
         .bind(title)
         .bind(details)
@@ -635,10 +569,6 @@ pub(crate) async fn update_dataset(
         .fetch_one(pool)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("UPDATE", "datasets", duration, success);
-
     Ok(result?)
 }
 
@@ -648,16 +578,11 @@ pub(crate) async fn delete_dataset_item(
     item_id: i32,
     dataset_id: i32,
 ) -> Result<DatasetItem> {
-    let start = Instant::now();
     let result = sqlx::query_as::<_, DatasetItem>(DELETE_DATASET_ITEM_QUERY)
         .bind(item_id)
         .bind(dataset_id)
         .fetch_one(pool)
         .await;
-
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("DELETE", "dataset_items", duration, success);
 
     Ok(result?)
 }
@@ -668,16 +593,11 @@ pub(crate) async fn get_public_datasets(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<Dataset>> {
-    let start = Instant::now();
     let result = sqlx::query_as::<_, Dataset>(GET_PUBLIC_DATASETS_QUERY)
         .bind(limit)
         .bind(offset)
         .fetch_all(pool)
         .await;
-
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "datasets", duration, success);
 
     Ok(result?)
 }
@@ -687,15 +607,10 @@ pub(crate) async fn get_recent_public_datasets(
     pool: &Pool<Postgres>,
     limit: i32,
 ) -> Result<Vec<Dataset>> {
-    let start = Instant::now();
     let result = sqlx::query_as::<_, Dataset>(GET_RECENT_PUBLIC_DATASETS_QUERY)
         .bind(limit)
         .fetch_all(pool)
         .await;
-
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("SELECT", "datasets", duration, success);
 
     Ok(result?)
 }
@@ -709,7 +624,6 @@ pub(crate) async fn grab_public_dataset(
 ) -> Result<Dataset> {
     let mut tx = pool.begin().await?;
 
-    let start = Instant::now();
     let result = sqlx::query_as::<_, Dataset>(GRAB_PUBLIC_DATASET_QUERY)
         .bind(dataset_id)
         .bind(owner_id)
@@ -717,23 +631,14 @@ pub(crate) async fn grab_public_dataset(
         .fetch_one(&mut *tx)
         .await;
 
-    let duration = start.elapsed().as_secs_f64();
-    let success = result.is_ok();
-    record_database_query("INSERT", "datasets", duration, success);
-
     let new_dataset = result?;
 
     // Copy all items in a single INSERT...SELECT (avoids N+1 inserts and N trigger firings)
-    let copy_start = Instant::now();
     let copy_result = sqlx::query(COPY_DATASET_ITEMS_QUERY)
         .bind(new_dataset.dataset_id)
         .bind(dataset_id)
         .execute(&mut *tx)
         .await;
-
-    let copy_duration = copy_start.elapsed().as_secs_f64();
-    let copy_success = copy_result.is_ok();
-    record_database_query("INSERT", "dataset_items", copy_duration, copy_success);
 
     match copy_result {
         Ok(result) => {
