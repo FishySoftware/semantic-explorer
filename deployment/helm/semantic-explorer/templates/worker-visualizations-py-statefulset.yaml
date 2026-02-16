@@ -91,7 +91,7 @@ spec:
             # Phase 2: Wait for cluster consensus (majority of peers connected)
             {{- if and (not .Values.qdrant.external.enabled) (gt (int .Values.qdrant.replicaCount) 1) }}
             echo "Waiting for Qdrant cluster consensus..."
-            until wget -qO- "http://${QDRANT_HOST}:${QDRANT_REST_PORT}/cluster" 2>/dev/null | grep -q '"state":"Follower"\|"state":"Leader"'; do
+            until wget -qO- "http://${QDRANT_HOST}:${QDRANT_REST_PORT}/cluster" 2>/dev/null | grep -q '"role":"Follower"\|"role":"Leader"'; do
               echo "Qdrant cluster not ready (consensus not formed), waiting..."
               sleep 3
             done

@@ -571,8 +571,6 @@ async fn run_health_server(
     shutdown: Arc<AtomicBool>,
     port: u16,
 ) -> Result<()> {
-    use std::io::Write;
-
     let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
         Ok(l) => {
             info!(port = port, "Health check server listening");
@@ -585,7 +583,7 @@ async fn run_health_server(
     };
 
     loop {
-        let (stream, _) = listener.accept().await?;
+        let (mut stream, _) = listener.accept().await?;
         let is_shutdown = shutdown.load(Ordering::SeqCst);
         let current_in_flight = in_flight.load(Ordering::SeqCst);
         let effective = concurrency.effective_limit();
@@ -595,54 +593,59 @@ async fn run_health_server(
         let svc = service_name.clone();
 
         tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
             let mut buf = [0u8; 1024];
-            let stream = stream.into_std().ok();
-            if let Some(mut stream) = stream {
-                use std::io::Read;
-                let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-                let n = stream.read(&mut buf).unwrap_or(0);
-                let request = String::from_utf8_lossy(&buf[..n]);
+            // Use tokio async read with a timeout instead of blocking std I/O
+            let n = match tokio::time::timeout(
+                Duration::from_secs(2),
+                stream.read(&mut buf),
+            )
+            .await
+            {
+                Ok(Ok(n)) => n,
+                _ => 0,
+            };
+            let request = String::from_utf8_lossy(&buf[..n]);
 
-                let (status, body) = if request.contains("GET /healthz") {
-                    if is_shutdown {
-                        ("503 Service Unavailable", "{\"status\":\"shutting_down\"}")
-                    } else {
-                        ("200 OK", "{\"status\":\"ok\"}")
-                    }
-                } else if request.contains("GET /readyz") {
-                    if is_shutdown {
-                        ("503 Service Unavailable", "{\"status\":\"shutting_down\"}")
-                    } else {
-                        ("200 OK", "{\"status\":\"ready\"}")
-                    }
-                } else if request.contains("GET /status") {
-                    // Return detailed JSON status (we'll format inline)
-                    let json = format!(
-                        "{{\"service\":\"{}\",\"in_flight\":{},\"effective_limit\":{},\
-                         \"max_limit\":{},\"available_permits\":{},\
-                         \"downstream_pressure\":{}}}",
-                        svc, current_in_flight, effective, max, available, pressured
-                    );
-                    // Can't use the json variable with a static lifetime; write directly
-                    let response = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-                        json.len(),
-                        json
-                    );
-                    let _ = stream.write_all(response.as_bytes());
-                    return;
+            let (status, body) = if request.contains("GET /healthz") {
+                if is_shutdown {
+                    ("503 Service Unavailable", "{\"status\":\"shutting_down\"}")
                 } else {
-                    ("404 Not Found", "{\"error\":\"not_found\"}")
-                };
-
-                let response = format!(
-                    "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-                    status,
-                    body.len(),
-                    body
+                    ("200 OK", "{\"status\":\"ok\"}")
+                }
+            } else if request.contains("GET /readyz") {
+                if is_shutdown {
+                    ("503 Service Unavailable", "{\"status\":\"shutting_down\"}")
+                } else {
+                    ("200 OK", "{\"status\":\"ready\"}")
+                }
+            } else if request.contains("GET /status") {
+                // Return detailed JSON status
+                let json = format!(
+                    "{{\"service\":\"{}\",\"in_flight\":{},\"effective_limit\":{},\
+                     \"max_limit\":{},\"available_permits\":{},\
+                     \"downstream_pressure\":{}}}",
+                    svc, current_in_flight, effective, max, available, pressured
                 );
-                let _ = stream.write_all(response.as_bytes());
-            }
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                    json.len(),
+                    json
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+                return;
+            } else {
+                ("404 Not Found", "{\"error\":\"not_found\"}")
+            };
+
+            let response = format!(
+                "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                status,
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes()).await;
         });
     }
 }
