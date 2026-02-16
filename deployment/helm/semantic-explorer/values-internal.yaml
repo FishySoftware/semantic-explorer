@@ -1,0 +1,302 @@
+# values-internal.yaml
+# Full internal deployment — all infrastructure deployed from this chart.
+# Inherits from values.yaml; only overrides are listed here.
+#
+# Usage:
+#   helm install semantic-explorer ./deployment/helm/semantic-explorer \
+#     -f deployment/helm/semantic-explorer/values-internal.yaml \
+#     -n semantic-explorer --create-namespace
+#
+# You MUST set at minimum:
+#   - api.ingress.hosts / tls
+#   - dex.config.issuer + dex.ingress (if using OIDC login)
+#   - encryption.masterKey (generate with: openssl rand -hex 32)
+#
+# NOTE: valkey.auth.usersExistingSecret defaults to "semantic-explorer-secrets",
+#   which matches the install example above (release name = "semantic-explorer").
+#   If you use a different release name, update it:
+#     --set valkey.auth.usersExistingSecret=<release-name>-semantic-explorer-secrets
+
+# =============================================================================
+# GLOBAL
+# =============================================================================
+global:
+  storageClass: ""  # Set to your RKE2 StorageClass (e.g. "longhorn", "local-path")
+
+# =============================================================================
+# API
+# =============================================================================
+api:
+  replicaCount: 3
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 1Gi
+    limits:
+      cpu: 4000m
+      memory: 8Gi
+  ingress:
+    enabled: true
+    className: "nginx"
+    annotations: {}
+    hosts:
+      - host: semantic-explorer.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+    #  - secretName: semantic-explorer-tls
+    #    hosts:
+    #      - semantic-explorer.example.com
+
+# =============================================================================
+# WORKERS
+# =============================================================================
+workerCollections:
+  replicaCount: 3
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 1Gi
+    limits:
+      cpu: 4000m
+      memory: 2Gi
+
+workerDatasets:
+  replicaCount: 3
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 2Gi
+    limits:
+      cpu: 4000m
+      memory: 8Gi
+
+workerVisualizationsPy:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 4Gi
+    limits:
+      cpu: 4000m
+      memory: 8Gi
+
+# =============================================================================
+# EMBEDDING INFERENCE API (GPU)
+# =============================================================================
+embeddingInferenceApi:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 8Gi
+      nvidia.com/gpu: 1
+    limits:
+      cpu: 4000m
+      memory: 16Gi
+      nvidia.com/gpu: 1
+  persistence:
+    storageClass: ""  # Inherit global or set explicitly
+
+# =============================================================================
+# LLM INFERENCE API (GPU)
+# =============================================================================
+llmInferenceApi:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 8Gi
+      nvidia.com/gpu: 1
+    limits:
+      cpu: 4000m
+      memory: 16Gi
+      nvidia.com/gpu: 1
+  persistence:
+    storageClass: ""  # Inherit global or set explicitly
+
+# =============================================================================
+# POSTGRESQL (internal)
+# =============================================================================
+postgresql:
+  enabled: true
+  primary:
+    resources:
+      requests:
+        cpu: 2000m
+        memory: 4Gi
+      limits:
+        cpu: 4000m
+        memory: 8Gi
+    persistence:
+      storageClass: ""  # Inherit global or set explicitly
+      size: 100Gi
+
+# =============================================================================
+# NATS (internal)
+# =============================================================================
+nats:
+  enabled: true
+  config:
+    cluster:
+      replicas: 3
+    jetstream:
+      fileStore:
+        pvc:
+          size: 10Gi
+          storageClassName: ""  # Inherit global or set explicitly
+  resources:
+    requests:
+      cpu: 100m
+      memory: 2Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+
+# =============================================================================
+# QDRANT (internal)
+# =============================================================================
+qdrant:
+  enabled: true
+  replicaCount: 3
+  resources:
+    requests:
+      cpu: 6000m
+      memory: 8Gi
+    limits:
+      cpu: 8000m
+      memory: 8Gi
+  persistence:
+    storageClass: ""  # Inherit global or set explicitly
+    size: 100Gi
+
+# =============================================================================
+# MINIO (internal S3-compatible storage)
+# =============================================================================
+minio:
+  enabled: true
+  replicas: 4
+  rootUser: admin
+  rootPassword: ""  # Auto-generated by MinIO subchart
+  resources:
+    requests:
+      cpu: 6000m
+      memory: 8Gi
+    limits:
+      cpu: 6000m
+      memory: 8Gi
+  persistence:
+    storageClass: ""  # Inherit global or set explicitly
+    size: 100Gi
+  ingress:
+    enabled: false
+    # Uncomment to expose MinIO console externally
+    # className: "nginx"
+    # hosts:
+    #   - host: minio.example.com
+    #     paths:
+    #       - path: /
+    #         pathType: Prefix
+    # tls: []
+
+# =============================================================================
+# VALKEY (internal Redis-compatible cache)
+# =============================================================================
+valkey:
+  enabled: true
+  auth:
+    enabled: true
+    aclUsers:
+      default:
+        permissions: "~* &* +@all"
+        # The password key in our auto-generated secret
+        passwordKey: "valkey-password"
+    # Points to the chart's auto-generated secret (matching release name above).
+    # If you change the release name, update this too:
+    #   <release-name>-semantic-explorer-secrets
+    usersExistingSecret: "semantic-explorer-secrets"
+  master:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+# =============================================================================
+# DEX (internal OIDC provider)
+# =============================================================================
+dex:
+  enabled: true
+  config:
+    issuer: ""  # MUST SET: e.g. "https://dex.example.com"
+  ingress:
+    enabled: false
+    # className: "nginx"
+    # hosts:
+    #   - host: dex.example.com
+    #     paths:
+    #       - path: /
+    #         pathType: Prefix
+    # tls: []
+
+# =============================================================================
+# OBSERVABILITY
+# =============================================================================
+observability:
+  otelCollector:
+    enabled: true
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+      limits:
+        cpu: 2000m
+        memory: 2Gi
+  quickwit:
+    enabled: true
+    replicaCount: 2
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 2000m
+        memory: 4Gi
+    persistence:
+      storageClass: ""  # Inherit global or set explicitly
+      size: 50Gi
+
+prometheus:
+  enabled: true
+  server:
+    persistentVolume:
+      storageClass: ""  # Inherit global or set explicitly
+      size: 50Gi
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+
+grafana:
+  enabled: true
+  persistence:
+    storageClassName: ""  # Inherit global or set explicitly
+    size: 5Gi
+  ingress:
+    enabled: false
+    # ingressClassName: "nginx"
+    # hosts:
+    #   - grafana.example.com
+    # tls: []
+
+# =============================================================================
+# ENCRYPTION
+# =============================================================================
+encryption:
+  masterKey: ""  # MUST SET for production: openssl rand -hex 32

@@ -5020,7 +5020,7 @@ data:
                 "uid": "prometheus"
               },
               "expr": "sum by (scanner_type) (rate(scanner_backpressure_skips_total[$__rate_interval]))",
-              "legendFormat": "{{ \"{{scanner_type}}\" }}",
+              "legendFormat": "{{ `{{scanner_type}}` }}",
               "refId": "A"
             }
           ],
@@ -5102,7 +5102,7 @@ data:
                 "uid": "prometheus"
               },
               "expr": "sum by (scanner_type) (rate(scanner_batches_created_total[$__rate_interval]))",
-              "legendFormat": "{{ \"{{scanner_type}}\" }}",
+              "legendFormat": "{{ `{{scanner_type}}` }}",
               "refId": "A"
             }
           ],
@@ -5183,7 +5183,7 @@ data:
                 "uid": "prometheus"
               },
               "expr": "sum by (scanner_type) (increase(scanner_failed_batch_recoveries_total[5m]))",
-              "legendFormat": "{{ \"{{scanner_type}}\" }}",
+              "legendFormat": "{{ `{{scanner_type}}` }}",
               "refId": "A"
             }
           ],
@@ -5345,7 +5345,7 @@ data:
                 "uid": "prometheus"
               },
               "expr": "sum by (batch_type) (increase(scanner_pending_batch_recoveries_total[5m]))",
-              "legendFormat": "{{ \"{{batch_type}}\" }}",
+              "legendFormat": "{{ `{{batch_type}}` }}",
               "refId": "A"
             }
           ],

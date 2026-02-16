@@ -431,10 +431,10 @@ Valkey password secret name
 {{- else }}
 {{- printf "%s-valkey-external" (include "semantic-explorer.fullname" .) }}
 {{- end }}
-{{- else if .Values.valkey.auth.existingSecret }}
-{{- .Values.valkey.auth.existingSecret }}
+{{- else if .Values.valkey.auth.usersExistingSecret }}
+{{- .Values.valkey.auth.usersExistingSecret }}
 {{- else }}
-{{- printf "%s-valkey" .Release.Name }}
+{{- printf "%s-valkey-auth" .Release.Name }}
 {{- end }}
 {{- end }}
 
@@ -445,7 +445,11 @@ Valkey password secret key
 {{- if .Values.valkey.external.enabled }}
 {{- .Values.valkey.external.passwordKey | default "password" }}
 {{- else }}
-{{- .Values.valkey.auth.existingSecretPasswordKey | default "password" }}
+{{- $defaultUser := dict }}
+{{- if .Values.valkey.auth.aclUsers }}
+{{- $defaultUser = index .Values.valkey.auth.aclUsers "default" | default dict }}
+{{- end }}
+{{- $defaultUser.passwordKey | default "default-password" }}
 {{- end }}
 {{- end }}
 
