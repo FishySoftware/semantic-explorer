@@ -597,11 +597,7 @@ async fn run_health_server(
 
             let mut buf = [0u8; 1024];
             // Use tokio async read with a timeout instead of blocking std I/O
-            let n = match tokio::time::timeout(
-                Duration::from_secs(2),
-                stream.read(&mut buf),
-            )
-            .await
+            let n = match tokio::time::timeout(Duration::from_secs(2), stream.read(&mut buf)).await
             {
                 Ok(Ok(n)) => n,
                 _ => 0,
