@@ -37,9 +37,12 @@ The API server orchestrates all system operations:
 ```mermaid
 graph TD
     subgraph "HTTP Layer"
-        API[API Endpoints]
-        AUTH[OIDC Auth Middleware]
+        PROM_MW[Prometheus Metrics]
         CORS[CORS Middleware]
+        SEC[Security Headers]
+        COMP[Compression]
+        AUTH[OIDC Auth Middleware]
+        API[API Endpoints]
     end
 
     subgraph "Services"
@@ -66,6 +69,7 @@ graph TD
         NATS[NATS JetStream]
         QD[(Qdrant)]
         S3[(S3/MinIO)]
+        VK[(Valkey Cache)]
     end
 
     subgraph "Embedding Providers"
@@ -82,12 +86,12 @@ graph TD
         COH_LLM[Cohere]
     end
 
-    API --> AUTH --> CORS
-    CORS --> COLL & DS & EMB & TRANS & SEARCH & CHAT
+    PROM_MW --> CORS --> SEC --> COMP --> AUTH --> API
+    API --> COLL & DS & EMB & TRANS & SEARCH & CHAT
 
-    COLL --> PG & S3
-    DS --> PG
-    EMB --> PG
+    COLL --> PG & S3 & VK
+    DS --> PG & VK
+    EMB --> PG & VK
     TRANS --> NATS & PG
 
     SEARCH --> QD & PG
@@ -114,12 +118,25 @@ graph TD
 ## API Endpoints
 
 <details>
+<summary><strong>Authentication</strong></summary>
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/auth/authorize` | Get OIDC authorization URL |
+| `GET` | `/api/auth/token` | Get access token from session cookie |
+| `POST` | `/api/token` | Exchange auth code for tokens |
+| `GET` | `/auth_callback` | OIDC callback handler |
+| `GET` | `/logout` | Logout and clear session |
+
+</details>
+
+<details>
 <summary><strong>Health</strong></summary>
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/health/live` | Liveness probe |
-| `GET` | `/health/ready` | Readiness probe (checks DB) |
+| `GET` | `/health/ready` | Readiness probe (checks PostgreSQL, Qdrant, S3, NATS) |
 
 </details>
 
@@ -173,7 +190,6 @@ graph TD
 | `GET` | `/api/embedded-datasets/{id}/points` | List vector points |
 | `GET` | `/api/embedded-datasets/{id}/points/{point_id}/vector` | Get point vector |
 | `GET` | `/api/embedded-datasets/{id}/processed-batches` | Get processed batches |
-| `POST` | `/api/embedded-datasets/batch-stats` | Batch stats for multiple |
 | `GET` | `/api/datasets/{dataset_id}/embedded-datasets` | Get by source dataset |
 | `POST` | `/api/embedded-datasets/standalone` | Create standalone embedded dataset |
 | `POST` | `/api/embedded-datasets/{id}/push-vectors` | Push vectors to embedded dataset |
@@ -231,6 +247,7 @@ graph TD
 | `POST` | `/api/collection-transforms/{id}/trigger` | Trigger execution |
 | `GET` | `/api/collection-transforms/{id}/stats` | Get statistics |
 | `GET` | `/api/collection-transforms/{id}/processed-files` | List processed files |
+| `POST` | `/api/collection-transforms/{id}/retry-failed` | Retry failed files |
 | `POST` | `/api/collection-transforms/batch-stats` | Batch stats |
 | `GET` | `/api/collection-transforms/stream` | SSE status stream |
 | `GET` | `/api/collections/{collection_id}/transforms` | Get by collection |
@@ -256,7 +273,7 @@ graph TD
 | `GET` | `/api/dataset-transforms/{id}/batches/{batch_id}` | Get batch |
 | `GET` | `/api/dataset-transforms/{id}/batches/stats` | Batch stats |
 | `POST` | `/api/dataset-transforms/{id}/retry-failed` | Retry failed batches |
-| `POST` | `/api/dataset-transforms-batch-stats` | Batch stats for multiple |
+| `POST` | `/api/dataset-transforms/{id}/batches/{batch_id}/retry` | Retry single batch |
 | `GET` | `/api/dataset-transforms/stream` | SSE status stream |
 | `GET` | `/api/datasets/{dataset_id}/transforms` | Get by dataset |
 
@@ -342,6 +359,7 @@ Visualization transforms generate interactive 2D scatter plots from high-dimensi
 | `GET` | `/swagger-ui` | Interactive API documentation |
 | `GET` | `/api/users/@me` | Get current user info |
 | `GET` | `/api/status/nats` | NATS connection status |
+| `GET` | `/metrics` | Prometheus metrics |
 
 </details>
 
@@ -378,6 +396,22 @@ This service uses shared configuration from `semantic-explorer-core`. See the [r
 | `CORS_ALLOWED_ORIGINS` | - | Comma-separated allowed origins |
 | `LOG_FORMAT` | `json` | `json` or `pretty` |
 | `RECONCILIATION_INTERVAL_SECS` | `300` | NATS-coordinated reconciliation interval (batch recovery + backfill scans) |
+
+### Valkey Cache (Optional)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VALKEY_URL` | `redis://localhost:6379` | Valkey/Redis connection URL |
+| `VALKEY_READ_URL` | Same as `VALKEY_URL` | Read replica URL |
+| `VALKEY_PASSWORD` | - | Authentication password |
+| `VALKEY_TLS_ENABLED` | `false` | Enable TLS for Valkey connections |
+| `VALKEY_POOL_SIZE` | `10` | Connection pool size |
+| `VALKEY_BEARER_CACHE_TTL_SECS` | `3600` | Bearer token cache TTL (1 hour) |
+| `VALKEY_RESOURCE_CACHE_TTL_SECS` | `300` | Resource listing cache TTL (5 min) |
+| `VALKEY_CONNECT_TIMEOUT_SECS` | `5` | Connection timeout |
+| `VALKEY_RESPONSE_TIMEOUT_SECS` | `2` | Response timeout |
+
+> Valkey is optional — the system degrades gracefully without it.
 
 ### Worker Configuration Variables
 

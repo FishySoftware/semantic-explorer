@@ -22,12 +22,12 @@ The `semantic-explorer-ui` is built with Svelte 5 and provides:
 - **Embedder Configuration** - Manage multiple embedding models and providers
 - **LLM Management** - Configure and test LLM providers (OpenAI, Cohere and Internal LLM inference API)
 - **Transform Pipelines** - Orchestrate document extraction, embedding, and visualization workflows
-- **Real-time Progress** - Live updates via Server-Sent Events (SSE)
-- **Interactive Visualizations** - 3D/2D visualizations using Deck.gl and datamapplot
+- **Real-time Progress** - Polling-based progress tracking for transforms, SSE streaming for chat
+- **Interactive Visualizations** - Interactive visualizations rendered via datamapplot (embeds Deck.gl in generated HTML)
 - **Semantic Search** - Vector similarity search across embedded datasets
-- **RAG Chat** - Chat with documents using retrieval-augmented generation
+- **RAG Chat** - Chat with documents using retrieval-augmented generation with SSE streaming
 - **Marketplace** - Discover and grab public resources
-- **Theme Support** - Dark/light theme with system preference detection
+- **Theme Support** - Light/dark/system theme with persistence
 
 ## Project Structure
 
@@ -35,38 +35,79 @@ The `semantic-explorer-ui` is built with Svelte 5 and provides:
 semantic-explorer-ui/
 ├── src/
 │   ├── main.ts                  # Application entry point
-│   ├── App.svelte               # Root component with routing
+│   ├── App.svelte               # Root component with hash-based routing
 │   ├── app.css                  # Global styles (Tailwind)
 │   └── lib/
 │       ├── ApiExamples.svelte   # API examples component
 │       ├── Sidebar.svelte       # Navigation sidebar
 │       ├── TopBanner.svelte     # Top navigation banner
-│       ├── pages/               # Page components (22 pages)
+│       ├── composables/         # Svelte 5 composables
+│       │   └── useChatStream.svelte.ts  # SSE chat streaming
+│       ├── pages/               # Page components (26 pages)
+│       │   ├── Dashboard.svelte
 │       │   ├── Collections.svelte
 │       │   ├── Datasets.svelte
 │       │   ├── Embedders.svelte
 │       │   ├── Chat.svelte
 │       │   ├── Search.svelte
+│       │   ├── NatsStatus.svelte
+│       │   ├── VisualizationCompare.svelte
 │       │   └── ...
-│       ├── components/          # Reusable UI components
+│       ├── components/          # Reusable UI components (34 components)
 │       │   ├── FormField.svelte
 │       │   ├── StatusBadge.svelte
 │       │   ├── LoadingState.svelte
+│       │   ├── SortableTable.svelte
+│       │   ├── search/          # Search result components
+│       │   │   ├── SearchResultsTable.svelte
+│       │   │   ├── ResultCell.svelte
+│       │   │   └── ExpandedRowContent.svelte
 │       │   └── ...
 │       ├── utils/               # Shared utilities
-│       │   ├── api.ts          # API client functions
+│       │   ├── api.ts           # API client (apiCall, handleApiResponse)
+│       │   ├── errorHandler.ts  # Global error handler setup
 │       │   ├── notifications.ts # Toast notification system
-│       │   ├── sse.ts          # Server-Sent Events utilities
-│       │   ├── theme.ts        # Theme management
-│       │   ├── ui-helpers.ts   # Common UI helper functions
-│       │   └── icons.ts        # SVG icon components
-│       └── types/              # TypeScript type definitions
-│           └── visualizations.ts
+│       │   ├── polling.ts       # Polling with race condition prevention
+│       │   ├── scoreColors.ts   # Similarity score color mapping
+│       │   ├── theme.ts         # Theme management (light/dark/system)
+│       │   └── ui-helpers.ts    # Date formatting, clipboard, etc.
+│       └── types/               # TypeScript type definitions
+│           └── models.ts        # All API model interfaces
 ├── public/                      # Static assets
-├── dist/                        # Build output
+├── dist/                        # Build output (served by API at /ui/)
 └── package.json                 # Dependencies and scripts
 ```
 
+## Architecture
+
+```mermaid
+graph TB
+    subgraph "Svelte UI"
+        ROUTER[Hash Router<br/>App.svelte]
+
+        subgraph "Pages"
+            COLL[Collections]
+            DS[Datasets]
+            EMB[Embedders]
+            LLM[LLMs]
+            TRANS[Transforms]
+            VIZ[Visualizations]
+            SEARCH[Search]
+            CHAT[Chat]
+            MARKET[Marketplace]
+        end
+
+        subgraph "Components"
+            FORMS[Form Components]
+            MODALS[Modal Dialogs]
+            PROGRESS[Progress Panels]
+            CARDS[Cards & Lists]
+        end
+
+        subgraph "Services"
+            API[API Client<br/>api.ts]
+            SSE[SSE Client<br/>sse.ts]
+            STATE[Svelte 5 Runes<br/>State Management]
         end
     end
 
@@ -79,8 +120,7 @@ semantic-explorer-ui/
     COLL & DS & EMB & LLM & TRANS & VIZ & SEARCH & CHAT & MARKET --> API & SSE & STATE
     API --> SERVER
     SSE --> SERVER
-
-````
+```
 
 ## User Flow
 
@@ -101,7 +141,7 @@ flowchart TD
     J --> K[Generate<br/>Embeddings]
 
     K --> L[Create Visualization<br/>Transform]
-    L --> M[View 3D<br/>Visualization]
+    L --> M[View Interactive<br/>Visualization]
 
     K --> N[Semantic Search]
     K --> O[Chat with<br/>Documents]
@@ -112,45 +152,50 @@ flowchart TD
 
 ## Technologies
 
-| Technology      | Version | Purpose                  |
-| --------------- | ------- | ------------------------ |
-| Svelte          | 5.50    | UI framework             |
-| TypeScript      | 5.9     | Type safety              |
-| Vite (rolldown) | 7.3     | Build tool               |
-| Tailwind CSS    | 4.1     | Styling                  |
-| Flowbite Svelte | 1.31    | UI component library     |
-| Deck.gl         | 9.2     | WebGL visualizations     |
-| marked          | 17.0    | Markdown rendering       |
-| highlight.js    | 11.11   | Code syntax highlighting |
-| DOMPurify       | 3.3     | HTML sanitization        |
+| Technology      | Version | Purpose                                           |
+| --------------- | ------- | ------------------------------------------------- |
+| Svelte          | 5.50    | UI framework (runes-based reactivity)             |
+| TypeScript      | 5.9     | Type safety                                       |
+| Vite (rolldown) | 7.3     | Build tool with code-splitting                    |
+| Tailwind CSS    | 4.1     | Utility-first CSS styling                         |
+| Flowbite Svelte | 1.31    | UI component library (buttons, modals, spinners)  |
+| Deck.gl         | 9.2     | Used by datamapplot HTML output (not imported directly) |
+| marked          | 17.0    | Markdown rendering (chat, documentation)          |
+| highlight.js    | 11.11   | Code syntax highlighting                          |
+| DOMPurify       | 3.3     | HTML sanitization                                 |
 
 ## Page Structure
 
-| Page                           | Route                            | Description                    |
-| ------------------------------ | -------------------------------- | ------------------------------ |
-| Dashboard                      | `/`                              | Overview and quick actions     |
-| Collections                    | `/collections`                   | List and create collections    |
-| Collection Detail              | `/collections/{id}`              | View/manage collection files   |
-| Collection Transforms          | `/collection-transforms`         | Text extraction pipelines      |
-| Collection Transform Detail    | `/collection-transforms/{id}`    | Transform details              |
-| Datasets                       | `/datasets`                      | List and create datasets       |
-| Dataset Detail                 | `/datasets/{id}`                 | View dataset items             |
-| Dataset Transforms             | `/dataset-transforms`            | Embedding generation pipelines |
-| Dataset Transform Detail       | `/dataset-transforms/{id}`       | Transform details              |
-| Embedded Datasets              | `/embedded-datasets`             | Vector collections             |
-| Embedded Dataset Detail        | `/embedded-datasets/{id}`        | View embeddings                |
-| Embedders                      | `/embedders`                     | Embedder configurations        |
-| Embedder Detail                | `/embedders/{id}`                | Edit embedder                  |
-| LLMs                           | `/llms`                          | LLM provider configurations    |
-| Visualization Transforms       | `/visualization-transforms`      | Visualization pipelines        |
-| Visualization Transform Detail | `/visualization-transforms/{id}` | Transform details              |
-| Visualizations                 | `/visualizations`                | Generated visualizations       |
-| Visualization Detail           | `/visualizations/{id}`           | View visualization             |
-| Search                         | `/search`                        | Semantic search interface      |
-| Chat                           | `/chat`                          | Chat with documents            |
-| Marketplace                    | `/marketplace`                   | Public resources               |
-| Grab Resource                  | `/grab`                          | Clone marketplace resources    |
-| Documentation                  | `/docs`                          | Help documentation             |
+All routes use hash-based navigation (`#/path`).
+
+| Page                           | Hash Route                                   | Description                    |
+| ------------------------------ | -------------------------------------------- | ------------------------------ |
+| Dashboard                      | `#/dashboard`                                | Overview and quick actions     |
+| Collections                    | `#/collections`                              | List and create collections    |
+| Collection Detail              | `#/collections/{id}/details`                 | View/manage collection files   |
+| Collection Transforms          | `#/collection-transforms`                    | Text extraction pipelines      |
+| Collection Transform Detail    | `#/collection-transforms/{id}/details`       | Transform progress and details |
+| Datasets                       | `#/datasets`                                 | List and create datasets       |
+| Dataset Detail                 | `#/datasets/{id}/details`                    | View dataset items             |
+| Dataset Transforms             | `#/dataset-transforms`                       | Embedding generation pipelines |
+| Dataset Transform Detail       | `#/dataset-transforms/{id}/details`          | Transform progress and details |
+| Embedded Datasets              | `#/embedded-datasets`                        | Vector collections             |
+| Embedded Dataset Detail        | `#/embedded-datasets/{id}/details`           | View embeddings                |
+| Embedders                      | `#/embedders`                                | Embedder configurations        |
+| Embedder Detail                | `#/embedders/{id}/details`                   | Edit embedder                  |
+| LLMs                           | `#/llms`                                     | LLM provider configurations    |
+| LLM Detail                     | `#/llms/{id}/details`                        | Edit LLM provider              |
+| Visualization Transforms       | `#/visualization-transforms`                 | Visualization pipelines        |
+| Visualization Transform Detail | `#/visualization-transforms/{id}/details`    | Transform progress and details |
+| Visualizations                 | `#/visualizations`                           | Generated visualizations       |
+| Visualization Detail           | `#/visualizations/{id}/details`              | View interactive visualization |
+| Visualization Compare          | `#/visualizations/compare?ids=...`           | Side-by-side comparison        |
+| Search                         | `#/search`                                   | Semantic search interface      |
+| Chat                           | `#/chat`                                     | RAG chat with documents        |
+| Marketplace                    | `#/marketplace`                              | Public resources               |
+| Grab Resource                  | `#/marketplace/{type}/{id}/grab`             | Clone marketplace resources    |
+| NATS Status                    | `#/status/nats`                              | NATS connection status         |
+| Documentation                  | `#/documentation`                            | Help documentation             |
 
 ## Component Library
 
@@ -169,12 +214,17 @@ flowchart TD
 - `ConfirmDialog` - Confirmation modal
 - `StatusBadge` - Status indicator badge
 - `PageHeader` - Page header with title and actions
+- `SortableTable` - Table with column sort support
 
 ### Progress Components
 
 - `UploadProgressPanel` - File upload progress
-- `DatasetTransformProgressPanel` - Transform progress
+- `DatasetTransformProgressPanel` - Dataset transform progress
+- `TransformProgressPanel` - Generic transform progress
+- `TransformProcessingBanner` - Processing status banner
+- `VisualizationProgressBanner` - Visualization generation banner
 - `TransformCard` - Transform status card
+- `TransformDetailHeader` - Transform detail page header
 - `TransformsList` - List of transforms
 
 ### State Components
@@ -182,18 +232,32 @@ flowchart TD
 - `LoadingState` - Loading spinner and message
 - `EmptyState` - Empty content placeholder
 - `ErrorState` - Error display with retry
+- `SkeletonLoader` - Skeleton loading placeholders
 
 ### Modal Components
 
 - `CreateCollectionTransformModal` - Create extraction pipeline
 - `CreateDatasetTransformModal` - Create embedding pipeline
+- `ApiIntegrationModal` - API integration examples
+
+### Chat Components
+
+- `ChatInput` - Chat message input
+- `ChatMessage` - Chat message display (with markdown rendering)
+- `ChatSettings` - Chat configuration (temperature, max tokens, etc.)
+- `ChatSidebar` - Chat session management
+
+### Search Components
+
+- `SearchResultsTable` - Search results with expandable rows
+- `ResultCell` - Individual result cell rendering
+- `ExpandedRowContent` - Expanded result details
 
 ### Utility Components
 
 - `ErrorBoundary` - Error handling wrapper
 - `ToastHost` - Toast notifications
-- `ThemeToggle` - Dark/light mode switch
-- `StatsGrid` - Statistics display
+- `StatsGrid` - Statistics display grid
 
 ## State Management
 
@@ -215,45 +279,79 @@ let filteredItems = $derived(items.filter((item) => item.title.includes(searchQu
 
 ## API Client
 
-API calls are made through a centralized client:
+API calls are made through a centralized client in `api.ts`:
 
 ```typescript
-// src/lib/api/api.ts
-export async function getCollections(): Promise<Collection[]> {
-	const response = await fetch('/api/collections');
-	if (!response.ok) throw new Error('Failed to fetch collections');
+// src/lib/utils/api.ts
+export async function handleApiResponse<T>(response: Response): Promise<T> {
+	if (!response.ok) {
+		const errorText = await response.text();
+		let errorMessage = `Request failed with status ${response.status}`;
+		try {
+			const errorJson = JSON.parse(errorText);
+			if (errorJson.error) errorMessage = errorJson.error;
+		} catch {
+			if (errorText) errorMessage = errorText;
+		}
+		throw new Error(errorMessage);
+	}
 	return response.json();
 }
 
-export async function createCollection(data: CreateCollectionRequest): Promise<Collection> {
-	const response = await fetch('/api/collections', {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(data),
-	});
-	if (!response.ok) throw new Error('Failed to create collection');
-	return response.json();
+export async function apiCall<T>(url: string, options?: RequestInit): Promise<T> {
+	const response = await fetch(url, options);
+	return await handleApiResponse<T>(response);
 }
 ```
 
-## Server-Sent Events (SSE)
-
-Real-time updates are received via SSE:
+Page components call the API directly using these helpers:
 
 ```typescript
-// Transform progress streaming
-const eventSource = new EventSource(`/api/dataset-transforms/${transformId}/stream`);
+// In a page component
+const collections = await apiCall<PaginatedResponse<Collection>>(
+	`/api/collections?limit=${limit}&offset=${offset}`
+);
+```
 
-eventSource.addEventListener('progress', (event) => {
-	const data = JSON.parse(event.data);
-	updateProgress(data.processed, data.total);
-});
+## Real-time Updates
 
-eventSource.addEventListener('complete', () => {
-	eventSource.close();
-	showSuccess('Transform completed!');
+### Transform Progress (Polling)
+
+Transform progress is tracked via polling with race condition prevention:
+
+```typescript
+// src/lib/utils/polling.ts
+import { createPollingInterval } from '$lib/utils/polling';
+
+const poller = createPollingInterval(
+	async () => {
+		const transform = await apiCall<Transform>(`/api/transforms/${id}`);
+		updateProgress(transform);
+	},
+	{ interval: 3000, maxErrors: 5 }
+);
+
+// poller.stop(), poller.resume(), poller.isPolling()
+```
+
+### Chat Streaming (SSE)
+
+RAG chat uses Server-Sent Events for real-time streaming via the `useChatStream` composable:
+
+```typescript
+// src/lib/composables/useChatStream.svelte.ts
+const { messages, isGenerating, streamingState, sendMessage, cleanup } = useChatStream({
+	sessionId,
+	getSettings: () => ({ maxChunks, minSimilarityScore, temperature, maxTokens, systemPrompt }),
+	callbacks: {
+		onRetrievalComplete: (messageId, documents) => { /* ... */ },
+		onContent: (messageId, content) => { /* ... */ },
+		onComplete: (messageId, content, documents) => { /* ... */ },
+	},
 });
 ```
+
+Events flow: `connected` → `retrieval_complete` → `content` (streamed chunks) → `complete`
 
 ## Visualization Integration
 

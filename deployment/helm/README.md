@@ -91,10 +91,23 @@ The GitHub Actions workflow [`.github/workflows/publish-helm-chart.yaml`](../../
 
 ```
 semantic-explorer/
-├── Chart.yaml          # Chart metadata
+├── Chart.yaml          # Chart metadata (v1.1.0, appVersion 1.1.0, kubeVersion >=1.24.0)
 ├── values.yaml         # Default configuration values
-├── charts/             # Dependency charts
+├── charts/             # Dependency charts (nats, qdrant, minio, valkey, grafana, prometheus)
 ├── templates/          # Kubernetes resource templates
+│   ├── api/            # API StatefulSet, Service, ServiceAccount
+│   ├── worker-*/       # Worker StatefulSets and ServiceAccounts
+│   ├── embedding-*/    # Embedding Inference API StatefulSet
+│   ├── llm-*/          # LLM Inference API StatefulSet
+│   ├── dex/            # Dex OIDC provider ConfigMap, Deployment, Service, Ingress
+│   ├── grafana/        # 6 Grafana dashboard ConfigMaps
+│   ├── hpa.yaml        # Horizontal Pod Autoscaler
+│   ├── ingress.yaml    # Ingress resource
+│   ├── networkpolicy.yaml  # Network policies
+│   ├── pdb.yaml        # Pod Disruption Budget
+│   ├── postgresql.yaml # PostgreSQL StatefulSet
+│   ├── secrets.yaml    # Secrets
+│   └── ...             # ServiceMonitor, OTEL Collector, Quickwit, MinIO init
 └── .helmignore        # Files to exclude from packaging
 ```
 
@@ -123,6 +136,7 @@ The chart includes the following optional dependencies:
 - **NATS** - Message broker for async communication
 - **Qdrant** - Vector database for embeddings
 - **MinIO** - Object storage
+- **Valkey** - Redis-compatible cache for bearer tokens and resource listings
 - **Grafana** - Monitoring dashboards
 - **Prometheus** - Metrics collection
 

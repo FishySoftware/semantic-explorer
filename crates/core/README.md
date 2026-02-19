@@ -46,6 +46,7 @@ The library initializes these streams on startup:
 | `DATASET_TRANSFORMS` | `workers.dataset-transform` | WorkQueue | Embedding generation jobs |
 | `VISUALIZATION_TRANSFORMS` | `workers.visualization-transform` | WorkQueue | UMAP/HDBSCAN jobs |
 | `SCANNER_TRIGGERS` | `scan.trigger.>` | WorkQueue | Event-driven transform triggers and NATS-coordinated reconciliation |
+| `AUDIT_EVENTS` | `audit.events` | Limits (30 days) | Audit event persistence |
 | `DLQ_TRANSFORMS` | `dlq.*-transforms` | Limits (30 days) | Dead letter queue |
 | `TRANSFORM_STATUS` | `transforms.*.status.>` | Limits (1 hour) | SSE real-time updates |
 
@@ -77,7 +78,7 @@ All configuration is loaded from environment variables at startup. See the [root
 | `DATABASE_URL` | - | PostgreSQL connection string (**required**) |
 | `DB_MAX_CONNECTIONS` | `15` | Maximum pool connections |
 | `DB_MIN_CONNECTIONS` | `2` | Minimum pool connections |
-| `DB_ACQUIRE_TIMEOUT_SECS` | `30` | Connection acquire timeout |
+| `DB_ACQUIRE_TIMEOUT_SECS` | `5` | Connection acquire timeout |
 | `DB_IDLE_TIMEOUT_SECS` | `300` | Idle connection timeout |
 | `DB_MAX_LIFETIME_SECS` | `1800` | Maximum connection lifetime |
 
@@ -177,6 +178,37 @@ All configuration is loaded from environment variables at startup. See the [root
 </details>
 
 <details>
+<summary><strong>ValkeyConfig</strong></summary>
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VALKEY_URL` | `redis://localhost:6379` | Valkey/Redis connection URL |
+| `VALKEY_READ_URL` | Same as `VALKEY_URL` | Read replica URL |
+| `VALKEY_PASSWORD` | - | Authentication password |
+| `VALKEY_TLS_ENABLED` | `false` | Enable TLS for Valkey connections |
+| `VALKEY_POOL_SIZE` | `10` | Connection pool size |
+| `VALKEY_BEARER_CACHE_TTL_SECS` | `3600` | Bearer token cache TTL (1 hour) |
+| `VALKEY_RESOURCE_CACHE_TTL_SECS` | `300` | Resource listing cache TTL (5 min) |
+| `VALKEY_CONNECT_TIMEOUT_SECS` | `5` | Connection timeout |
+| `VALKEY_RESPONSE_TIMEOUT_SECS` | `2` | Response timeout |
+
+> Valkey is optional. The system degrades gracefully without it.
+
+</details>
+
+<details>
+<summary><strong>OidcConfig</strong></summary>
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OIDC_CLIENT_ID` | - | OIDC client identifier (**required**) |
+| `OIDC_CLIENT_SECRET` | - | OIDC client secret (**required**) |
+| `OIDC_ISSUER_URL` | - | OIDC issuer URL (**required**) |
+| `OIDC_USE_PKCE` | `false` | Enable PKCE flow |
+
+</details>
+
+<details>
 <summary><strong>EmbeddingInferenceConfig</strong></summary>
 
 | Variable | Default | Description |
@@ -193,6 +225,19 @@ All configuration is loaded from environment variables at startup. See the [root
 |----------|---------|-------------|
 | `LLM_INFERENCE_API_URL` | `http://localhost:8091` | Local LLM API URL |
 | `LLM_INFERENCE_API_TIMEOUT_SECS` | `120` | Request timeout |
+
+</details>
+
+<details>
+<summary><strong>WorkerConfig</strong></summary>
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WORKER_SEARCH_BATCH_SIZE` | `200` | Batch size for search operations |
+| `WORKER_CHAT_BATCH_SIZE` | `500` | Batch size for chat document inserts |
+| `WORKER_DATASET_BATCH_SIZE` | `1000` | Batch size for dataset processing |
+| `WORKER_S3_DELETE_BATCH_SIZE` | `1000` | Batch size for S3 delete operations |
+| `WORKER_QDRANT_UPLOAD_CHUNK_SIZE` | `200` | Chunk size for Qdrant uploads |
 
 </details>
 

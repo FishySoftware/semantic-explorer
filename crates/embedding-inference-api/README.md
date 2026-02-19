@@ -87,11 +87,13 @@ curl -X POST http://localhost:8090/api/rerank \
 | `INFERENCE_ALLOWED_RERANK_MODELS` | - | Comma-separated reranker list or `*` |
 | `INFERENCE_MAX_BATCH_SIZE` | `128` | Maximum batch size per request |
 | `INFERENCE_MAX_CONCURRENT_REQUESTS` | `2` | Max concurrent embedding requests |
-| `INFERENCE_QUEUE_TIMEOUT_MS` | `5000` | How long to queue requests before 503 |
+| `INFERENCE_QUEUE_TIMEOUT_MS` | `30000` | Queue timeout before returning 503 |
 | `INFERENCE_MODEL_PATH` | - | Custom ONNX model directory |
 | `HF_HOME` | - | HuggingFace cache directory |
 | `HF_ENDPOINT` | - | HuggingFace mirror URL (for air-gapped) |
 | `CORS_ALLOWED_ORIGINS` | `*` | Comma-separated CORS origins |
+| `GPU_PRESSURE_THRESHOLD` | `98.0` | VRAM % threshold to reject requests |
+| `HF_TOKEN` | - | HuggingFace token for gated models |
 
 ### Observability
 
@@ -175,7 +177,7 @@ These models use the **Candle** transformer backend with SafeTensors weights. Th
 | Model | Parameters | Context Length | Languages | Description |
 |-------|------------|---------------|-----------|-------------|
 | `BAAI/bge-reranker-base` | 278M | 512 | English, Chinese | Cross-encoder model optimized for reranking tasks, built on RetroMAE architecture |
-| `rozgo/bge-reranker-v2-m3` | 568M | 8192 | Multilingual (100+) | Lightweight reranker model with strong multilingual capabilities, supports long documents |
+| `BAAI/bge-reranker-v2-m3` | 568M | 8192 | Multilingual (100+) | Lightweight reranker model with strong multilingual capabilities, supports long documents |
 | `jinaai/jina-reranker-v1-turbo-en` | 37.8M | 8192 | English | Fast reranker model with 6-layer architecture, optimized for speed and accuracy |
 | `jinaai/jina-reranker-v2-base-multilingual` | 278M | 1024 | Multilingual (100+) | Listwise reranker for agentic RAG with function-calling and code search capabilities |
 
@@ -234,7 +236,6 @@ cargo run -p embedding-inference-api
 
 # Mix of ONNX and Qwen3 models
 export INFERENCE_ALLOWED_EMBEDDING_MODELS="Qdrant/all-MiniLM-L6-v2-onnx,Qwen/Qwen3-Embedding-0.6B"
-export QWEN3_DTYPE=bf16
 cargo run -p embedding-inference-api
 ```
 

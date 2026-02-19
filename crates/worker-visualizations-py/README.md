@@ -172,17 +172,17 @@ sequenceDiagram
 |------------|---------|---------|
 | Python | 3.12+ | Language |
 | asyncio | stdlib | Async runtime |
-| nats-py | 2.12 | Message queue consumer |
-| qdrant-client | 1.16 | Vector database client |
-| umap-learn | 0.5 | Dimensionality reduction |
-| fast-hdbscan | 0.2 | Density-based clustering |
-| datamapplot | 0.6 | Interactive visualization |
+| nats-py | 2.12.0 | Message queue consumer |
+| qdrant-client | 1.16.2 | Vector database client |
+| umap-learn | 0.5.11 | Dimensionality reduction |
+| fast-hdbscan | 0.2.2 | Density-based clustering |
+| datamapplot | 0.6.4 | Interactive visualization |
 | numpy | 1.26+ | Numerical operations |
-| pydantic | 2.12 | Data validation |
-| boto3 | 1.42 | S3 storage client |
-| openai | 2.15 | OpenAI API client |
-| cohere | 5.20 | Cohere API client |
-| opentelemetry | 1.39 | Distributed tracing |
+| pydantic | 2.12.5 | Data validation |
+| boto3 | 1.42.26 | S3 storage client |
+| openai | 2.15.0 | OpenAI API client |
+| cohere | 5.20.1 | Cohere API client |
+| opentelemetry | 1.39.1 | Distributed tracing |
 
 ## Module Structure
 
@@ -208,6 +208,7 @@ sequenceDiagram
 | `AWS_ENDPOINT_URL` | string | **required** | S3 endpoint URL |
 | `S3_BUCKET_NAME` | string | **required** | S3 bucket name for visualization HTML files |
 | `PROCESSING_TIMEOUT_SECS` | integer | `3600` | Job timeout (1 hour) |
+| `MAX_CONCURRENT_JOBS` | integer | `3` | Max concurrent visualization jobs |
 | `WORKER_ID` | string | UUID | Unique worker identifier |
 | `LOG_LEVEL` | string | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR) |
 | `LOG_FORMAT` | string | `json` | Log format (`json` or `text`) |

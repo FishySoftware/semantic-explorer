@@ -29,7 +29,7 @@ The collections worker:
 - **Adaptive concurrency**: Dynamically adjusts parallelism based on downstream pressure (503s)
 - **Circuit breakers**: S3 operations protected by circuit breaker pattern
 - **Automatic retries**: Exponential backoff with sensible defaults for transient failures
-- **Health endpoint**: `/healthz`, `/readyz`, `/status` for Kubernetes probes
+- **Health endpoint**: `/healthz`, `/readyz`, `/status` for Kubernetes probes (default port `8082`)
 
 ---
 
@@ -99,8 +99,9 @@ The collections worker:
 | Format | Extensions |
 |--------|------------|
 | ZIP | `.zip` |
-| TAR | `.tar` |
 | GZIP | `.tar.gz`, `.tgz` |
+
+> **Note:** Plain `.tar` archives (without gzip compression) are not supported.
 
 </details>
 
@@ -132,7 +133,7 @@ The collections worker:
 
 Tree-sitter support for:
 
-Rust, Python, JavaScript, TypeScript, Go, Java, C, C++, Bash, HTML, CSS, JSON, YAML, TOML
+Rust, Python, JavaScript, TypeScript, TSX, Go, Java, C, C++, Bash, HTML, CSS, JSON, YAML, TOML
 
 ---
 
@@ -167,6 +168,9 @@ Rust, Python, JavaScript, TypeScript, Go, Java, C, C++, Bash, HTML, CSS, JSON, Y
 | `SERVICE_NAME` | `worker-collections` | Service name for telemetry |
 | `NATS_URL` | `nats://localhost:4222` | NATS server URL |
 | `MAX_CONCURRENT_JOBS` | `10` | Concurrent job limit |
+| `HEALTH_CHECK_PORT` | `8082` | Health check HTTP server port |
+| `EMBEDDING_INFERENCE_API_URL` | `http://localhost:8090` | Internal embedding API URL |
+| `EMBEDDING_MAX_CONCURRENT_REQUESTS` | `3` | Max concurrent embedding requests |
 
 ### S3 Storage (from core)
 

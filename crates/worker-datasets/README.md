@@ -29,7 +29,7 @@ The datasets worker:
 - **Adaptive concurrency**: Dynamically adjusts parallelism based on downstream pressure (503s)
 - **Circuit breakers**: Qdrant, S3, and inference API operations protected
 - **Automatic retries**: Exponential backoff with sensible defaults for transient failures
-- **Health endpoint**: `/healthz`, `/readyz`, `/status` for Kubernetes probes
+- **Health endpoint**: `/healthz`, `/readyz`, `/status` for Kubernetes probes (default port `8083`)
 
 ---
 
@@ -80,6 +80,10 @@ Embedder configuration comes from the job payload, not environment variables.
 | `SERVICE_NAME` | `worker-datasets` | Service name for telemetry |
 | `NATS_URL` | `nats://localhost:4222` | NATS server URL |
 | `MAX_CONCURRENT_JOBS` | `10` | Concurrent job limit |
+| `HEALTH_CHECK_PORT` | `8083` | Health check HTTP server port |
+| `EMBEDDING_INFERENCE_API_URL` | `http://localhost:8090` | Internal embedding API URL |
+| `EMBEDDING_MAX_CONCURRENT_REQUESTS` | `3` | Max concurrent embedding requests |
+| `QDRANT_PARALLEL_UPLOADS` | `4` | Parallel Qdrant upload tasks |
 
 ### S3 Storage (from core)
 
@@ -159,7 +163,8 @@ The worker automatically:
 - Creates collections if they don't exist
 - Configures cosine distance metric
 - Enables on-disk storage for large collections
-- Upserts points in chunks of 100 to avoid overwhelming Qdrant
+- Upserts points in chunks of 1000 to avoid overwhelming Qdrant
+- Enables on-disk storage for vectors and payloads
 
 ---
 

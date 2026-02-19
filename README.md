@@ -323,7 +323,6 @@ semantic-explorer/
 | `PATCH` | `/api/embedded-datasets/{embedded_dataset_id}` | Update embedded dataset |
 | `DELETE` | `/api/embedded-datasets/{embedded_dataset_id}` | Delete embedded dataset |
 | `GET` | `/api/embedded-datasets/{embedded_dataset_id}/stats` | Get statistics |
-| `POST` | `/api/embedded-datasets/batch-stats` | Batch stats for multiple |
 | `GET` | `/api/embedded-datasets/{embedded_dataset_id}/points` | Get vector points |
 | `GET` | `/api/embedded-datasets/{embedded_dataset_id}/points/{point_id}/vector` | Get point vector |
 | `GET` | `/api/embedded-datasets/{embedded_dataset_id}/processed-batches` | Get processed batches |
@@ -398,8 +397,8 @@ semantic-explorer/
 | `PATCH` | `/api/collection-transforms/{transform_id}` | Update collection transform |
 | `DELETE` | `/api/collection-transforms/{transform_id}` | Delete collection transform |
 | `GET` | `/api/collection-transforms/{transform_id}/stats` | Get transform statistics |
-| `POST` | `/api/collection-transforms/batch-stats` | Batch stats for multiple |
 | `GET` | `/api/collection-transforms/{transform_id}/processed-files` | List processed files |
+| `POST` | `/api/collection-transforms/{transform_id}/retry-failed` | Retry failed files |
 | `GET` | `/api/collection-transforms/stream` | Stream transform status (SSE) |
 | `POST` | `/api/collection-transforms/{transform_id}/trigger` | Trigger transform |
 | `GET` | `/api/collections/{collection_id}/transforms` | Get transforms for collection |
@@ -412,11 +411,11 @@ semantic-explorer/
 | `DELETE` | `/api/dataset-transforms/{transform_id}` | Delete dataset transform |
 | `GET` | `/api/dataset-transforms/{transform_id}/stats` | Get transform statistics |
 | `GET` | `/api/dataset-transforms/{transform_id}/detailed-stats` | Get detailed stats |
-| `POST` | `/api/dataset-transforms-batch-stats` | Batch stats for multiple |
 | `GET` | `/api/dataset-transforms/{transform_id}/batches` | List batches |
 | `GET` | `/api/dataset-transforms/{transform_id}/batches/{batch_id}` | Get batch |
 | `GET` | `/api/dataset-transforms/{transform_id}/batches/stats` | Batch stats |
 | `POST` | `/api/dataset-transforms/{transform_id}/retry-failed` | Retry failed batches |
+| `POST` | `/api/dataset-transforms/{transform_id}/batches/{batch_id}/retry` | Retry single batch |
 | `GET` | `/api/dataset-transforms/stream` | Stream transform status (SSE) |
 | `POST` | `/api/dataset-transforms/{transform_id}/trigger` | Trigger transform |
 | `GET` | `/api/datasets/{dataset_id}/transforms` | Get transforms for dataset |
@@ -434,14 +433,33 @@ semantic-explorer/
 | `GET` | `/api/visualization-transforms/stream` | Stream transform status (SSE) |
 | `POST` | `/api/visualization-transforms/{transform_id}/trigger` | Trigger transform |
 
+### Authentication
+| Method | Endpoint | Description |
+|---------|----------|-------------|
+| `GET` | `/api/auth/authorize` | Get OIDC authorization URL |
+| `GET` | `/api/auth/token` | Get access token from session cookie |
+| `POST` | `/api/token` | Exchange auth code for tokens |
+| `GET` | `/auth_callback` | OIDC callback handler |
+| `GET` | `/logout` | Logout and clear session |
+
+### Authentication
+| Method | Endpoint | Description |
+|---------|----------|-------------|
+| `GET` | `/api/auth/authorize` | Get OIDC authorization URL |
+| `GET` | `/api/auth/token` | Get access token from session cookie |
+| `POST` | `/api/token` | Exchange auth code for tokens |
+| `GET` | `/auth_callback` | OIDC callback handler |
+| `GET` | `/logout` | Logout and clear session |
+
 ### Health & System
 | Method | Endpoint | Description |
 |---------|----------|-------------|
 | `GET` | `/health/live` | Liveness probe |
-| `GET` | `/health/ready` | Readiness probe |
+| `GET` | `/health/ready` | Readiness probe (checks PostgreSQL, Qdrant, S3, NATS) |
 | `GET` | `/api/users/@me` | Get current authenticated user |
 | `GET` | `/api/status/nats` | Get NATS connection status |
 | `GET` | `/swagger-ui` | OpenAPI/Swagger UI |
+| `GET` | `/metrics` | Prometheus metrics |
 
 ---
 
@@ -571,7 +589,7 @@ See [`deployment/helm/`](deployment/helm/) for detailed Helm chart configuration
 | `DATABASE_URL` | - | **Yes** | PostgreSQL connection string |
 | `DB_MAX_CONNECTIONS` | `15` | No | Maximum pool connections |
 | `DB_MIN_CONNECTIONS` | `2` | No | Minimum pool connections |
-| `DB_ACQUIRE_TIMEOUT_SECS` | `30` | No | Connection acquire timeout |
+| `DB_ACQUIRE_TIMEOUT_SECS` | `5` | No | Connection acquire timeout |
 | `DB_IDLE_TIMEOUT_SECS` | `300` | No | Idle connection timeout |
 | `DB_MAX_LIFETIME_SECS` | `1800` | No | Maximum connection lifetime |
 
@@ -666,6 +684,22 @@ Workers automatically adjust their concurrency based on downstream service healt
 NATS consumer tuning, circuit breaker, and retry policy parameters use production-tested
 defaults and no longer require environment variables. This eliminates ~40 configuration
 variables while maintaining the same resilience behavior.
+
+### Valkey Cache (Optional)
+
+| Variable | Default | Required | Description |
+|-----------|----------|----------|-------------|
+| `VALKEY_URL` | `redis://localhost:6379` | No | Valkey/Redis connection URL |
+| `VALKEY_READ_URL` | Same as `VALKEY_URL` | No | Read replica URL |
+| `VALKEY_PASSWORD` | - | No | Authentication password |
+| `VALKEY_TLS_ENABLED` | `false` | No | Enable TLS for Valkey connections |
+| `VALKEY_POOL_SIZE` | `10` | No | Connection pool size |
+| `VALKEY_BEARER_CACHE_TTL_SECS` | `3600` | No | Bearer token cache TTL (1 hour) |
+| `VALKEY_RESOURCE_CACHE_TTL_SECS` | `300` | No | Resource listing cache TTL (5 min) |
+| `VALKEY_CONNECT_TIMEOUT_SECS` | `5` | No | Connection timeout |
+| `VALKEY_RESPONSE_TIMEOUT_SECS` | `2` | No | Response timeout |
+
+> Valkey is optional. The system degrades gracefully without it — bearer tokens are validated against the OIDC provider on every request and resource listings are always fetched from PostgreSQL.
 
 ### Inference APIs
 
