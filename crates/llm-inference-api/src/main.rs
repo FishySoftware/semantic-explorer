@@ -7,6 +7,7 @@ mod api;
 mod config;
 mod errors;
 mod llm;
+mod model_preload;
 mod models;
 mod observability;
 
@@ -59,6 +60,19 @@ async fn main() -> Result<()> {
         count = config.models.allowed_models.len(),
         "Allowed LLM models configured"
     );
+
+    // Pre-download models that would otherwise ignore HF_ENDPOINT.
+    // This is a blocking (synchronous) operation using hf-hub's ureq-based API,
+    // so we run it on a blocking thread to avoid starving the tokio runtime.
+    {
+        let preload_config = config.models.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = model_preload::preload_models(&preload_config) {
+                tracing::error!(error = %e, "Model preload failed — downstream loaders may fail");
+            }
+        })
+        .await?;
+    }
 
     // Initialize model cache with warmup benchmark
     llm::init_cache(&config.models).await;

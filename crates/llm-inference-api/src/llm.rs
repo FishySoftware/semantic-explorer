@@ -442,7 +442,9 @@ async fn load_gguf_model(
 ///   -> Explicit tokenizer override
 ///
 /// Returns: (repo_id, gguf_filename, tokenizer_repo)
-fn parse_gguf_model_id(model_id: &str) -> Result<(String, String, String), InferenceError> {
+pub(crate) fn parse_gguf_model_id(
+    model_id: &str,
+) -> Result<(String, String, String), InferenceError> {
     // Check if it's a GGUF model (case-insensitive check for -gguf or .gguf)
     let lower = model_id.to_lowercase();
     if !lower.contains("-gguf") && !lower.ends_with(".gguf") {

@@ -7,6 +7,7 @@ mod api;
 mod config;
 mod embedding;
 mod errors;
+mod model_preload;
 mod models;
 mod observability;
 mod reranker;
@@ -61,6 +62,19 @@ async fn main() -> Result<()> {
         use semantic_explorer_core::observability::gpu_monitor;
         gpu_monitor::init();
         config.models.resolve_effective_arena_size();
+    }
+
+    // Pre-download models that would otherwise ignore HF_ENDPOINT / HF_TOKEN.
+    // This is a blocking (synchronous) operation using hf-hub's ureq-based API,
+    // so we run it on a blocking thread to avoid starving the tokio runtime.
+    {
+        let preload_config = config.models.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = model_preload::preload_models(&preload_config) {
+                tracing::error!(error = %e, "Model preload failed — downstream loaders may fail");
+            }
+        })
+        .await?;
     }
 
     // Initialize queue configuration before loading models

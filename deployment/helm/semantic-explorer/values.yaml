@@ -561,8 +561,14 @@ embeddingInferenceApi:
     # CORS_ALLOWED_ORIGINS: "https://your-domain.com"
     # HuggingFace cache directory - mounted from PVC
     HF_HOME: "/models"
-    # For airgapped deployments, set HF_ENDPOINT to your Artifactory proxy
+    # For airgapped deployments, set HF_ENDPOINT to your Artifactory proxy.
+    # The service pre-downloads models using HF_ENDPOINT at startup before
+    # passing them to fastembed (which ignores HF_ENDPOINT internally).
     # HF_ENDPOINT: "https://artifactory.company.com/huggingface"
+    # If your mirror uses a private CA, set SSL_CERT_FILE to a mounted CA bundle
+    # (or append the cert to /usr/local/share/ca-certificates/ and run update-ca-certificates).
+    # SSL_CERT_FILE: "/etc/ssl/certs/ca-certificates.crt"
+    # HF_TOKEN: "your-huggingface-token"  # Required if using private models or rate-limited public models
   envFrom: []
   # GPU node selector - adjust labels based on your cluster
   # Example: nvidia.com/gpu.present: "true" or accelerator: "nvidia"
@@ -703,8 +709,13 @@ llmInferenceApi:
     HF_HOME: "/models"
     # Home directory for appuser (used by mistral.rs for ~/.cache/huggingface)
     HOME: "/home/appuser"
-    # For airgapped deployments, set HF_ENDPOINT to your Artifactory proxy
+    # For airgapped deployments, set HF_ENDPOINT to your Artifactory proxy.
+    # The service pre-downloads models using HF_ENDPOINT at startup before
+    # passing them to mistral.rs (which ignores HF_ENDPOINT internally).
     # HF_ENDPOINT: "https://artifactory.company.com/huggingface"
+    # If your mirror uses a private CA, set SSL_CERT_FILE to a mounted CA bundle
+    # (or append the cert to /usr/local/share/ca-certificates/ and run update-ca-certificates).
+    # SSL_CERT_FILE: "/etc/ssl/certs/ca-certificates.crt"
     SERVICE_NAME: "llm-inference-api"
   envFrom: []
   # GPU node selector - adjust labels based on your cluster

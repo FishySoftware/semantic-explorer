@@ -67,6 +67,8 @@ pub struct ModelConfig {
     /// HuggingFace endpoint URL for downloading models (HF_ENDPOINT)
     /// Use this to point to an Artifactory proxy or local mirror
     pub hf_endpoint: Option<String>,
+    /// HuggingFace API token for accessing gated/private models (HF_TOKEN)
+    pub hf_token: Option<String>,
     /// Custom model directory for user-provided ONNX models
     pub model_path: Option<PathBuf>,
     /// Allowed embedding models configuration
@@ -162,6 +164,11 @@ impl InferenceConfig {
             tracing::info!(hf_endpoint = %hf_endpoint, "Using custom HF_ENDPOINT for model downloads");
         }
 
+        // Log HF_TOKEN presence (never log the actual token)
+        if self.models.hf_token.is_some() {
+            tracing::info!("HF_TOKEN is set — authenticated HuggingFace API access enabled");
+        }
+
         // Log custom model path if configured
         if let Some(ref model_path) = self.models.model_path {
             if model_path.exists() {
@@ -245,6 +252,7 @@ impl ModelConfig {
         Ok(Self {
             hf_home: env::var("HF_HOME").ok().map(PathBuf::from),
             hf_endpoint: env::var("HF_ENDPOINT").ok(),
+            hf_token: env::var("HF_TOKEN").ok(),
             model_path: env::var("INFERENCE_MODEL_PATH").ok().map(PathBuf::from),
             all_embedding_models,
             allowed_embedding_models,
@@ -396,6 +404,7 @@ mod tests {
         let model = ModelConfig {
             hf_home: Some(PathBuf::from("/tmp/hf_cache")),
             hf_endpoint: Some("https://hf-mirror.example.com".to_string()),
+            hf_token: Some("hf_test_token".to_string()),
             model_path: Some(PathBuf::from("/models/custom")),
             all_embedding_models: false,
             allowed_embedding_models: vec![
@@ -428,6 +437,7 @@ mod tests {
         let config_all_allowed = ModelConfig {
             hf_home: None,
             hf_endpoint: None,
+            hf_token: None,
             model_path: None,
             all_embedding_models: true,
             allowed_embedding_models: vec![],
@@ -448,6 +458,7 @@ mod tests {
         let config_restricted = ModelConfig {
             hf_home: None,
             hf_endpoint: None,
+            hf_token: None,
             model_path: None,
             all_embedding_models: false,
             allowed_embedding_models: vec![
@@ -479,6 +490,7 @@ mod tests {
         let config_no_rerankers = ModelConfig {
             hf_home: None,
             hf_endpoint: None,
+            hf_token: None,
             model_path: None,
             all_embedding_models: false,
             allowed_embedding_models: vec!["BAAI/bge-small-en-v1.5".to_string()],

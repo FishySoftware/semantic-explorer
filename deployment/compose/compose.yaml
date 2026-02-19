@@ -270,9 +270,12 @@ services:
       # - CUDA_ARENA_EXTEND_STRATEGY=next_power_of_two
       # HuggingFace cache for models (mount a volume for persistence)
       - HF_HOME=/models
-      # For airgapped deployments: pre-download models and mount at HF_HOME
-      # For proxy deployments: set HF_ENDPOINT to your Artifactory proxy
+      # For airgapped deployments: set HF_ENDPOINT to your Artifactory proxy.
+      # The service pre-downloads models using HF_ENDPOINT at startup before
+      # passing them to fastembed (which ignores HF_ENDPOINT internally).
       # - HF_ENDPOINT=https://artifactory.company.com/huggingface
+      # If your mirror uses a private CA, point SSL_CERT_FILE to a mounted CA bundle.
+      # - SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
       - SERVICE_NAME=embedding-inference-api
       - ENCRYPTION_MASTER_KEY=${ENCRYPTION_MASTER_KEY:-e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4}
@@ -332,9 +335,12 @@ services:
       - GPU_PRESSURE_THRESHOLD=95.0
       # HuggingFace cache for models (mount a volume for persistence)
       - HF_HOME=/models
-      # For airgapped deployments: pre-download models and mount at HF_HOME
-      # For proxy deployments: set HF_ENDPOINT to your Artifactory proxy
+      # For airgapped deployments: set HF_ENDPOINT to your Artifactory proxy.
+      # The service pre-downloads models using HF_ENDPOINT at startup before
+      # passing them to mistral.rs (which ignores HF_ENDPOINT internally).
       # - HF_ENDPOINT=https://artifactory.company.com/huggingface
+      # If your mirror uses a private CA, point SSL_CERT_FILE to a mounted CA bundle.
+      # - SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
       - SERVICE_NAME=llm-inference-api
       - ENCRYPTION_MASTER_KEY=${ENCRYPTION_MASTER_KEY:-e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4}
