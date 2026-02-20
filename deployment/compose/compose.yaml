@@ -48,8 +48,8 @@ services:
       - PUBLIC_URL=http://localhost:8080
       - LOG_FORMAT=json
       - AWS_REGION=us-east-1
-      - AWS_ACCESS_KEY_ID=test_access_key
-      - AWS_SECRET_ACCESS_KEY=test_secret_key
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:test_access_key}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:test_secret_key}
       - AWS_ENDPOINT_URL=http://minio-1:9000
       - S3_BUCKET_NAME=semantic-explorer-local
       - S3_FORCE_PATH_STYLE=true
@@ -58,7 +58,7 @@ services:
       - QDRANT_URL=http://qdrant:6334
       - QDRANT_TIMEOUT_SECS=30
       - QDRANT_CONNECT_TIMEOUT_SECS=10
-      - DATABASE_URL=postgresql://user:password@postgres:5432/explorer
+      - DATABASE_URL=postgresql://${POSTGRES_USER:user}:${POSTGRES_PASSWORD:password}@postgres:5432/${POSTGRES_DB:explorer}
       - DB_MIN_CONNECTIONS=2
       - DB_MAX_CONNECTIONS=20
       - DB_ACQUIRE_TIMEOUT_SECS=30
@@ -66,7 +66,7 @@ services:
       - DB_MAX_LIFETIME_SECS=1800
       - OIDC_ISSUER_URL=http://localhost:5556/dex
       - OIDC_CLIENT_ID=semantic-explorer
-      - OIDC_CLIENT_SECRET=ZXhhbXBsZS1hcHAtc2VjcmV0
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET}
       - NATS_URL=nats://nats-1:4222
       - VALKEY_URL=redis://valkey:6379
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
@@ -120,8 +120,8 @@ services:
       - RUST_LOG=info
       - LOG_FORMAT=json
       - NATS_URL=nats://nats-1:4222
-      - AWS_ACCESS_KEY_ID=test_access_key
-      - AWS_SECRET_ACCESS_KEY=test_secret_key
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - AWS_REGION=us-east-1
       - AWS_ENDPOINT_URL=http://minio-1:9000
       - S3_BUCKET_NAME=semantic-explorer-local
@@ -162,8 +162,8 @@ services:
       - RUST_LOG=info
       - LOG_FORMAT=json
       - NATS_URL=nats://nats-1:4222
-      - AWS_ACCESS_KEY_ID=test_access_key
-      - AWS_SECRET_ACCESS_KEY=test_secret_key
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - AWS_REGION=us-east-1
       - AWS_ENDPOINT_URL=http://minio-1:9000
       - S3_BUCKET_NAME=semantic-explorer-local
@@ -214,8 +214,8 @@ services:
       - NATS_FETCH_TIMEOUT=5.0
       - QDRANT_URL=http://qdrant:6334
       - AWS_ENDPOINT_URL=http://minio-1:9000
-      - AWS_ACCESS_KEY_ID=test_access_key
-      - AWS_SECRET_ACCESS_KEY=test_secret_key
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - AWS_REGION=us-east-1
       - S3_BUCKET_NAME=semantic-explorer-local
       - S3_FORCE_PATH_STYLE=true
@@ -366,8 +366,8 @@ services:
     hostname: minio-1
     restart: unless-stopped
     environment:
-      MINIO_ROOT_USER: test_access_key
-      MINIO_ROOT_PASSWORD: test_secret_key
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_PROMETHEUS_AUTH_TYPE: public
       MINIO_SCANNER_SPEED: default
     command: server http://minio-{1...4}:9000/data --address ":9000" --console-address ":9001"
@@ -390,8 +390,8 @@ services:
     hostname: minio-2
     restart: unless-stopped
     environment:
-      MINIO_ROOT_USER: test_access_key
-      MINIO_ROOT_PASSWORD: test_secret_key
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_PROMETHEUS_AUTH_TYPE: public
       MINIO_SCANNER_SPEED: default
     command: server http://minio-{1...4}:9000/data --address ":9000" --console-address ":9001"
@@ -411,8 +411,8 @@ services:
     hostname: minio-3
     restart: unless-stopped
     environment:
-      MINIO_ROOT_USER: test_access_key
-      MINIO_ROOT_PASSWORD: test_secret_key
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_PROMETHEUS_AUTH_TYPE: public
       MINIO_SCANNER_SPEED: default
     command: server http://minio-{1...4}:9000/data --address ":9000" --console-address ":9001"
@@ -432,8 +432,8 @@ services:
     hostname: minio-4
     restart: unless-stopped
     environment:
-      MINIO_ROOT_USER: test_access_key
-      MINIO_ROOT_PASSWORD: test_secret_key
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_PROMETHEUS_AUTH_TYPE: public
       MINIO_SCANNER_SPEED: default
     command: server http://minio-{1...4}:9000/data --address ":9000" --console-address ":9001"
@@ -460,13 +460,16 @@ services:
         condition: service_healthy
       minio-4:
         condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     entrypoint: >
       /bin/sh -c '
       echo "Waiting for cluster to stabilize...";
       sleep 5;
       
       echo "Configuring MinIO client...";
-      mc alias set myminio http://minio-1:9000 test_access_key test_secret_key;
+      mc alias set myminio http://minio-1:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD;
       
       echo "Creating bucket: semantic-explorer-local";
       mc mb myminio/semantic-explorer-local --ignore-existing;
@@ -516,15 +519,15 @@ services:
     image: postgres:16.3-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: explorer
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - postgres_data:/var/lib/postgresql/data:rw
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U user -d explorer"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -536,7 +539,7 @@ services:
     image: prometheuscommunity/postgres-exporter:latest
     restart: unless-stopped
     environment:
-      DATA_SOURCE_NAME: postgresql://user:password@postgres:5432/explorer?sslmode=disable
+      DATA_SOURCE_NAME: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
     ports:
       - "9187:9187"
     depends_on:

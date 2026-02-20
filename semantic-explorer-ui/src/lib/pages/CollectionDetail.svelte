@@ -9,6 +9,15 @@
 	import TabPanel from '../components/TabPanel.svelte';
 	import TransformsList from '../components/TransformsList.svelte';
 	import UploadProgressPanel from '../components/UploadProgressPanel.svelte';
+	import type {
+		Collection,
+		CollectionFile,
+		CollectionTransform,
+		DatasetTransform,
+		PaginatedFiles,
+		ProcessedFile,
+	} from '../types/models';
+	import { apiDelete, apiGet, apiPatch, apiPostFormData } from '../utils/api';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { formatDate, formatFileSize } from '../utils/ui-helpers';
 
@@ -17,80 +26,6 @@
 		status: 'pending' | 'uploading' | 'completed' | 'failed';
 		progress: number;
 		error?: string;
-	}
-
-	interface CollectionFile {
-		key: string;
-		size: number;
-		last_modified: string | null;
-		content_type: string | null;
-	}
-
-	interface PaginatedFiles {
-		files: CollectionFile[];
-		page: number;
-		page_size: number;
-		has_more: boolean;
-		continuation_token: string | null;
-		total_count: number | null;
-	}
-
-	interface PaginatedResponse<T> {
-		items: T[];
-		total_count: number;
-		limit: number;
-		offset: number;
-	}
-
-	interface Collection {
-		collection_id: number;
-		title: string;
-		details: string | null;
-		owner: string;
-		bucket: string;
-		tags: string[];
-		is_public: boolean;
-	}
-
-	interface CollectionTransform {
-		collection_transform_id: number;
-		title: string;
-		collection_id: number;
-		dataset_id: number;
-		owner: string;
-		is_enabled: boolean;
-		chunk_size: number;
-		job_config: Record<string, any>;
-		created_at: string;
-		updated_at: string;
-		last_run_at?: string;
-		last_run_status?: string;
-		last_run_stats?: Record<string, any>;
-	}
-
-	interface DatasetTransform {
-		dataset_transform_id: number;
-		title: string;
-		source_dataset_id: number;
-		embedder_ids: number[];
-		owner_id: string;
-		owner_display_name: string;
-		is_enabled: boolean;
-		job_config: any;
-		created_at: string;
-		updated_at: string;
-	}
-
-	interface ProcessedFile {
-		id: number;
-		transform_type: string;
-		transform_id: number;
-		file_key: string;
-		processed_at: string;
-		item_count: number;
-		process_status: string;
-		process_error: string | null;
-		processing_duration_ms: number | null;
 	}
 
 	interface FailedFileWithTransform extends ProcessedFile {
@@ -239,21 +174,17 @@
 	async function fetchCollectionTransforms() {
 		try {
 			transformsLoading = true;
-			const response = await fetch(`/api/collections/${collectionId}/transforms`);
-			if (response.ok) {
-				const transforms: CollectionTransform[] = await response.json();
-				collectionTransforms = transforms.sort(
-					(a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-				);
+			const transforms = await apiGet<CollectionTransform[]>(
+				`/api/collections/${collectionId}/transforms`
+			);
+			collectionTransforms = transforms.sort(
+				(a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+			);
 
-				// Fetch stats for each collection transform and merge into the objects
-				await fetchCollectionTransformStats();
-
-				// Fetch dataset transforms for each target dataset
-				await fetchDatasetTransformsForCollectionTargets();
-			}
-		} catch (e) {
-			toastStore.error(formatError(e, 'Failed to load transforms'));
+			await fetchCollectionTransformStats();
+			await fetchDatasetTransformsForCollectionTargets();
+		} catch (fetchError) {
+			toastStore.error(formatError(fetchError, 'Failed to load transforms'));
 		} finally {
 			transformsLoading = false;
 		}
@@ -263,42 +194,37 @@
 		await Promise.all(
 			collectionTransforms.map(async (transform) => {
 				try {
-					const response = await fetch(
+					const stats = await apiGet<Record<string, unknown>>(
 						`/api/collection-transforms/${transform.collection_transform_id}/stats`
 					);
-					if (response.ok) {
-						const stats = await response.json();
-						transform.last_run_stats = stats;
-						transform.last_run_at = stats.last_run_at;
-						transform.last_run_status = stats.total_files_processed > 0 ? 'completed' : undefined;
-					}
-				} catch (e) {
+					transform.last_run_stats = stats;
+					transform.last_run_at = stats.last_run_at as string | undefined;
+					transform.last_run_status =
+						(stats.total_files_processed as number) > 0 ? 'completed' : undefined;
+				} catch (statsError) {
 					console.error(
 						`Failed to fetch stats for collection transform ${transform.collection_transform_id}:`,
-						e
+						statsError
 					);
 				}
 			})
 		);
-		// Trigger reactivity by reassigning
 		collectionTransforms = [...collectionTransforms];
 	}
 
 	async function fetchDatasetTransformsForCollectionTargets() {
-		// Get unique dataset IDs from collection transforms
 		const datasetIds = [...new Set(collectionTransforms.map((t) => t.dataset_id))];
 		const allTransforms: DatasetTransform[] = [];
 
 		await Promise.all(
 			datasetIds.map(async (datasetId) => {
 				try {
-					const response = await fetch(`/api/datasets/${datasetId}/transforms`);
-					if (response.ok) {
-						const transforms: DatasetTransform[] = await response.json();
-						allTransforms.push(...transforms);
-					}
-				} catch (e) {
-					console.error(`Failed to fetch dataset transforms for dataset ${datasetId}:`, e);
+					const transforms = await apiGet<DatasetTransform[]>(
+						`/api/datasets/${datasetId}/transforms`
+					);
+					allTransforms.push(...transforms);
+				} catch (fetchError) {
+					console.error(`Failed to fetch dataset transforms for dataset ${datasetId}:`, fetchError);
 				}
 			})
 		);
@@ -312,16 +238,13 @@
 		try {
 			failedFilesLoading = true;
 			const offset = failedFilesPage * failedFilesPageSize;
-			const response = await fetch(
+			const data = await apiGet<{ items: FailedFileWithTransform[]; total_count: number }>(
 				`/api/collections/${collectionId}/failed-files?limit=${failedFilesPageSize}&offset=${offset}`
 			);
-			if (response.ok) {
-				const data = (await response.json()) as PaginatedResponse<FailedFileWithTransform>;
-				failedFiles = data.items;
-				failedFilesTotalCount = data.total_count;
-			}
-		} catch (e) {
-			console.error('Failed to fetch failed files:', e);
+			failedFiles = data.items;
+			failedFilesTotalCount = data.total_count;
+		} catch (fetchError) {
+			console.error('Failed to fetch failed files:', fetchError);
 		} finally {
 			failedFilesLoading = false;
 		}
@@ -329,15 +252,10 @@
 
 	async function fetchAllowedFileTypes() {
 		try {
-			const response = await fetch('/api/collections-allowed-file-types');
-			if (response.ok) {
-				const mimeTypes: string[] = await response.json();
-				// Convert MIME types to file input accept format
-				// Use MIME types directly as they're more reliable than extensions
-				allowedFileTypes = mimeTypes.join(',');
-			}
-		} catch (e) {
-			console.error('Failed to fetch allowed file types:', e);
+			const mimeTypes = await apiGet<string[]>('/api/collections-allowed-file-types');
+			allowedFileTypes = mimeTypes.join(',');
+		} catch (fetchError) {
+			console.error('Failed to fetch allowed file types:', fetchError);
 			// Don't block upload if this fails, just skip the restriction
 			allowedFileTypes = '';
 		}
@@ -346,18 +264,9 @@
 	async function fetchCollection() {
 		try {
 			pageLoading = true;
-			const response = await fetch('/api/collections');
-			if (!response.ok) {
-				throw new Error(`Failed to fetch collections: ${response.statusText}`);
-			}
-			const data = await response.json();
-			const collections: Collection[] = data.collections ?? [];
-			collection = collections.find((c) => c.collection_id === collectionId) || null;
-			if (!collection) {
-				throw new Error('Collection not found');
-			}
-		} catch (e) {
-			const message = formatError(e, 'Failed to fetch collection');
+			collection = await apiGet<Collection>(`/api/collections/${collectionId}`);
+		} catch (fetchError) {
+			const message = formatError(fetchError, 'Failed to fetch collection');
 			error = message;
 			toastStore.error(message);
 		} finally {
@@ -374,11 +283,9 @@
 			if (continuationToken) {
 				params.append('continuation_token', continuationToken);
 			}
-			const response = await fetch(`/api/collections/${collectionId}/files?${params.toString()}`);
-			if (!response.ok) {
-				throw new Error(`Failed to fetch files: ${response.statusText}`);
-			}
-			paginatedFiles = await response.json();
+			paginatedFiles = await apiGet<PaginatedFiles>(
+				`/api/collections/${collectionId}/files?${params.toString()}`
+			);
 
 			if (
 				paginatedFiles &&
@@ -390,8 +297,8 @@
 			if (paginatedFiles && paginatedFiles.total_count === null && totalCount !== null) {
 				paginatedFiles.total_count = totalCount;
 			}
-		} catch (e) {
-			const message = formatError(e, 'Failed to fetch files');
+		} catch (fetchError) {
+			const message = formatError(fetchError, 'Failed to fetch files');
 			error = message;
 			toastStore.error(message);
 		} finally {
@@ -408,8 +315,8 @@
 			document.body.appendChild(a);
 			a.click();
 			document.body.removeChild(a);
-		} catch (e) {
-			toastStore.error(formatError(e, 'Failed to download file'));
+		} catch (downloadError) {
+			toastStore.error(formatError(downloadError, 'Failed to download file'));
 		}
 	}
 
@@ -431,16 +338,7 @@
 
 		try {
 			deletingFile = target.key;
-			const response = await fetch(
-				`/api/collections/${collectionId}/files/${encodeURIComponent(target.key)}`,
-				{
-					method: 'DELETE',
-				}
-			);
-
-			if (!response.ok) {
-				throw new Error(`Failed to delete file: ${response.statusText}`);
-			}
+			await apiDelete(`/api/collections/${collectionId}/files/${encodeURIComponent(target.key)}`);
 
 			if (totalCount !== null) {
 				totalCount = totalCount - 1;
@@ -448,8 +346,8 @@
 
 			await fetchFiles();
 			toastStore.success('File deleted');
-		} catch (e) {
-			toastStore.error(formatError(e, 'Failed to delete file'));
+		} catch (deleteError) {
+			toastStore.error(formatError(deleteError, 'Failed to delete file'));
 		} finally {
 			deletingFile = null;
 		}
@@ -461,19 +359,11 @@
 		collectionPendingDelete = false;
 
 		try {
-			const response = await fetch(`/api/collections/${collection.collection_id}`, {
-				method: 'DELETE',
-			});
-
-			if (!response.ok) {
-				const errorText = await response.text();
-				throw new Error(`Failed to delete collection: ${errorText}`);
-			}
-
+			await apiDelete(`/api/collections/${collection.collection_id}`);
 			toastStore.success('Collection deleted successfully');
 			onBack();
-		} catch (e) {
-			const message = formatError(e, 'Failed to delete collection');
+		} catch (deleteError) {
+			const message = formatError(deleteError, 'Failed to delete collection');
 			toastStore.error(message);
 		}
 	}
@@ -533,28 +423,19 @@
 
 		try {
 			updatingPublic = true;
-			const response = await fetch(`/api/collections/${collectionId}`, {
-				method: 'PATCH',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					title: collection.title,
-					details: collection.details,
-					tags: collection.tags,
-					is_public: !collection.is_public,
-				}),
+			const updatedCollection = await apiPatch<Collection>(`/api/collections/${collectionId}`, {
+				title: collection.title,
+				details: collection.details,
+				tags: collection.tags,
+				is_public: !collection.is_public,
 			});
 
-			if (!response.ok) {
-				throw new Error(`Failed to update collection: ${response.statusText}`);
-			}
-
-			const updatedCollection = await response.json();
 			collection = updatedCollection;
 			toastStore.success(
 				updatedCollection.is_public ? 'Collection is now public' : 'Collection is now private'
 			);
-		} catch (e) {
-			toastStore.error(formatError(e, 'Failed to update collection visibility'));
+		} catch (toggleError) {
+			toastStore.error(formatError(toggleError, 'Failed to update collection visibility'));
 		} finally {
 			updatingPublic = false;
 		}
@@ -593,27 +474,18 @@
 		try {
 			saving = true;
 			editError = null;
-			const response = await fetch(`/api/collections/${collectionId}`, {
-				method: 'PATCH',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					title: editTitle.trim(),
-					details: editDetails.trim() || null,
-					tags,
-					is_public: collection.is_public,
-				}),
+			const updatedCollection = await apiPatch<Collection>(`/api/collections/${collectionId}`, {
+				title: editTitle.trim(),
+				details: editDetails.trim() || null,
+				tags,
+				is_public: collection.is_public,
 			});
 
-			if (!response.ok) {
-				throw new Error(`Failed to update collection: ${response.statusText}`);
-			}
-
-			const updatedCollection = await response.json();
 			collection = updatedCollection;
 			editMode = false;
 			toastStore.success('Collection updated successfully');
-		} catch (e) {
-			const message = formatError(e, 'Failed to update collection');
+		} catch (saveError) {
+			const message = formatError(saveError, 'Failed to update collection');
 			editError = message;
 			toastStore.error(message);
 		} finally {
@@ -697,16 +569,10 @@
 				}
 
 				try {
-					const response = await fetch(`/api/collections/${collectionId}/files`, {
-						method: 'POST',
-						body: formData,
-					});
-
-					if (!response.ok) {
-						throw new Error(`HTTP ${response.status}`);
-					}
-
-					const result = await response.json();
+					const result = await apiPostFormData<{
+						completed: string[];
+						failed: { name: string; error: string }[];
+					}>(`/api/collections/${collectionId}/files`, formData);
 
 					if (result.completed && result.completed.length > 0) {
 						completedFiles.push(...result.completed);
@@ -728,14 +594,16 @@
 							}
 						}
 					}
-				} catch (e) {
-					// Entire batch request failed — mark all files in this batch as failed
+				} catch (batchError) {
 					for (const file of batch) {
-						uploadFailedFiles.push({ name: file.name, error: formatError(e, 'Upload error') });
+						uploadFailedFiles.push({
+							name: file.name,
+							error: formatError(batchError, 'Upload error'),
+						});
 						const idx = fileStatuses.findIndex((f) => f.name === file.name);
 						if (idx >= 0) {
 							fileStatuses[idx].status = 'failed';
-							fileStatuses[idx].error = formatError(e, 'Upload error');
+							fileStatuses[idx].error = formatError(batchError, 'Upload error');
 						}
 					}
 				}
@@ -791,8 +659,8 @@
 					`Failed to upload ${uploadFailedFiles.length} file${uploadFailedFiles.length === 1 ? '' : 's'} — see Failed Files tab for details`
 				);
 			}
-		} catch (e) {
-			toastStore.error(formatError(e, 'Failed to upload files'));
+		} catch (uploadError) {
+			toastStore.error(formatError(uploadError, 'Failed to upload files'));
 		} finally {
 			uploading = false;
 			// Keep the status panel visible longer if there are failures so user can see errors

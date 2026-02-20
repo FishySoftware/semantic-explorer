@@ -60,6 +60,8 @@ commonAnnotations: {}
 api:
   enabled: true
   replicaCount: 3
+  terminationGracePeriodSeconds: 45
+  preStopSleepSeconds: 5
   image:
     repository: jofish89/semantic-explorer
     tag: "latest"

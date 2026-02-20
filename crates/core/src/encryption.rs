@@ -5,6 +5,8 @@ use base64::{Engine, engine::general_purpose::STANDARD as base64_engine};
 use rand::RngExt;
 use std::env;
 
+const ENCRYPTION_PREFIX: &str = "enc:v1:";
+
 /// Encryption service for API keys and secrets
 /// Uses AES-256-GCM for authenticated encryption
 #[derive(Clone)]
@@ -43,40 +45,41 @@ impl EncryptionService {
     }
 
     /// Encrypt a secret (API key) using AES-256-GCM
-    /// Returns base64-encoded ciphertext with nonce prepended
+    /// Returns prefixed base64-encoded ciphertext with nonce prepended
     pub fn encrypt(&self, plaintext: &str) -> Result<String> {
         let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&self.master_key));
 
-        // Generate a random nonce (12 bytes for GCM)
         let mut rng = rand::rng();
         let mut nonce_bytes = [0u8; 12];
         rng.fill(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
-        // Encrypt the plaintext
         let ciphertext = cipher
             .encrypt(nonce, plaintext.as_bytes())
             .map_err(|e| anyhow!("Encryption failed: {}", e))?;
 
-        // Combine nonce + ciphertext and encode as base64
-        // Format: base64(nonce || ciphertext)
         let mut encrypted_data = nonce_bytes.to_vec();
         encrypted_data.extend_from_slice(&ciphertext);
 
-        Ok(base64_engine.encode(&encrypted_data))
+        Ok(format!(
+            "{}{}",
+            ENCRYPTION_PREFIX,
+            base64_engine.encode(&encrypted_data)
+        ))
     }
 
     /// Decrypt a secret (API key) encrypted with AES-256-GCM
-    /// Expects base64-encoded input with nonce prepended
     pub fn decrypt(&self, encrypted: &str) -> Result<String> {
         let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&self.master_key));
 
-        // Decode from base64
+        let base64_data = encrypted.strip_prefix(ENCRYPTION_PREFIX).ok_or_else(|| {
+            anyhow!("Invalid encrypted data: missing '{ENCRYPTION_PREFIX}' prefix")
+        })?;
+
         let encrypted_data = base64_engine
-            .decode(encrypted)
+            .decode(base64_data)
             .map_err(|e| anyhow!("Failed to decode base64: {}", e))?;
 
-        // Extract nonce (first 12 bytes) and ciphertext (rest)
         if encrypted_data.len() < 12 {
             return Err(anyhow!(
                 "Encrypted data too short (must contain at least 12-byte nonce)"
@@ -86,7 +89,6 @@ impl EncryptionService {
         let (nonce_bytes, ciphertext) = encrypted_data.split_at(12);
         let nonce = Nonce::from_slice(nonce_bytes);
 
-        // Decrypt the ciphertext
         let plaintext = cipher
             .decrypt(nonce, ciphertext)
             .map_err(|e| anyhow!("Decryption failed: {}", e))?;
@@ -95,13 +97,9 @@ impl EncryptionService {
             .map_err(|e| anyhow!("Decrypted data is not valid UTF-8: {}", e))
     }
 
-    /// Check if a string looks like encrypted data
+    /// Check if a string is encrypted using the deterministic prefix
     pub fn is_encrypted(&self, data: &str) -> bool {
-        // Try to decode as base64 and check if length is plausible
-        base64_engine
-            .decode(data)
-            .map(|decoded| decoded.len() >= 12) // At least nonce + some ciphertext
-            .unwrap_or(false)
+        data.starts_with(ENCRYPTION_PREFIX)
     }
 }
 
@@ -125,12 +123,27 @@ mod tests {
         let plaintext = "sk-1234567890abcdef";
         let encrypted = service.encrypt(plaintext).expect("Encryption failed");
 
-        // Encrypted should be different and base64-encoded
         assert_ne!(plaintext, encrypted);
-        assert!(base64_engine.decode(&encrypted).is_ok());
+        assert!(encrypted.starts_with(ENCRYPTION_PREFIX));
 
         let decrypted = service.decrypt(&encrypted).expect("Decryption failed");
         assert_eq!(plaintext, decrypted);
+    }
+
+    #[test]
+    fn test_decrypt_without_prefix_fails() {
+        let service = EncryptionService {
+            master_key: *b"01234567890123456789012345678901",
+        };
+
+        let plaintext = "sk-test-key";
+        let encrypted = service.encrypt(plaintext).expect("Encryption failed");
+        let unprefixed = encrypted
+            .strip_prefix(ENCRYPTION_PREFIX)
+            .expect("should have prefix");
+
+        let result = service.decrypt(unprefixed);
+        assert!(result.is_err(), "Decrypting without prefix should fail");
     }
 
     #[test]
@@ -141,6 +154,9 @@ mod tests {
 
         let plaintext = "not_encrypted_key";
         assert!(!service.is_encrypted(plaintext));
+
+        let base64_looking = "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSBsb25nIGVub3VnaCBzdHJpbmc=";
+        assert!(!service.is_encrypted(base64_looking));
 
         let encrypted = service.encrypt(plaintext).expect("Encryption failed");
         assert!(service.is_encrypted(&encrypted));

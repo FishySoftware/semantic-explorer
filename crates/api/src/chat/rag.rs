@@ -8,7 +8,7 @@ use qdrant_client::{Qdrant, qdrant::point_id::PointIdOptions};
 use regex::Regex;
 use semantic_explorer_core::encryption::EncryptionService;
 use sqlx::{Pool, Postgres};
-use tracing::{debug, error, instrument, warn};
+use tracing::{debug, error, instrument};
 
 /// Regex pattern for matching "Chunk N" references in LLM responses
 static CHUNK_REFERENCE_REGEX: Lazy<Regex> =
@@ -58,7 +58,8 @@ pub async fn retrieve_documents(
     let embedder_base_url = embedder_config.base_url;
     let embedder_api_key = embedder_config.api_key_encrypted;
     let embedder_config_value = embedder_config.config;
-    let _dimensions = embedder_config.dimensions;
+    let dimensions = embedder_config.dimensions;
+    let _ = dimensions;
     debug!(collection = %collection_name, embedder_id = embedder_id, "retrieving documents from Qdrant");
 
     let _collection_info = qdrant_client
@@ -72,7 +73,7 @@ pub async fn retrieve_documents(
     debug!(collection = %collection_name, "collection found");
 
     // Generate embedding using the actual embedder service
-    let query_embedding = match generate_embedding(
+    let query_embedding = generate_embedding(
         &embedder_provider,
         &embedder_base_url,
         embedder_api_key.as_deref(),
@@ -81,15 +82,10 @@ pub async fn retrieve_documents(
         Some(internal_inference_url),
     )
     .await
-    {
-        Ok(embedding) => embedding,
-        Err(e) => {
-            error!(error = %e, "failed to generate embedding");
-            // Fallback to placeholder embedding
-            warn!("falling back to placeholder embedding for query");
-            generate_simple_embedding(query, _dimensions as usize)
-        }
-    };
+    .map_err(|e| {
+        error!(error = %e, "failed to generate embedding for RAG query");
+        format!("Embedding service unavailable: {e}. Please try again later.")
+    })?;
 
     let search_builder = SearchPointsBuilder::new(
         &collection_name,
@@ -160,32 +156,6 @@ pub async fn retrieve_documents(
         "final document count after filtering"
     );
     Ok(documents)
-}
-
-/// Generate a simple embedding from text
-/// This is a placeholder implementation that creates a vector based on character/word frequencies
-/// In production, this would call an actual embedding service
-fn generate_simple_embedding(text: &str, dimension: usize) -> Vec<f32> {
-    let mut embedding = vec![0.0; dimension];
-
-    // Simple hash-based approach: distribute text characters across the vector
-    let normalized_text = text.to_lowercase();
-    for ch in normalized_text.chars() {
-        if !embedding.is_empty() {
-            let position = (ch as usize).wrapping_mul(31) % embedding.len();
-            embedding[position] += 1.0;
-        }
-    }
-
-    // Normalize the vector
-    let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if norm > 0.0 {
-        for val in &mut embedding {
-            *val /= norm;
-        }
-    }
-
-    embedding
 }
 
 pub fn build_context(documents: &[RetrievedDocument]) -> String {

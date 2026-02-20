@@ -31,7 +31,7 @@ pub struct CompletionRequest {
     /// Maximum number of tokens to generate (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<usize>,
-    /// Stop sequences (optional, kept for OpenAI API compatibility)
+    /// Stop sequences (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     #[allow(dead_code)]
     pub stop: Option<Vec<String>>,

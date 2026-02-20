@@ -277,8 +277,12 @@ where
             info!("Shutdown signal received, initiating graceful shutdown...");
             shutdown_clone.store(true, Ordering::SeqCst);
 
-            // Wait for in-flight jobs to complete (max 5 minutes)
-            let shutdown_timeout = Duration::from_secs(300);
+            // Wait for in-flight jobs to complete
+            let shutdown_timeout_secs: u64 = std::env::var("WORKER_SHUTDOWN_TIMEOUT_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(300);
+            let shutdown_timeout = Duration::from_secs(shutdown_timeout_secs);
             let start = std::time::Instant::now();
 
             while in_flight_clone.load(Ordering::SeqCst) > 0 {

@@ -7,6 +7,7 @@ use std::sync::OnceLock;
 use tokio::sync::Semaphore;
 use tokio::time::sleep;
 
+use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 use crate::http_client::HTTP_CLIENT;
 use crate::models::EmbedderConfig;
 
@@ -16,6 +17,21 @@ const DEFAULT_LOCAL_BATCH_SIZE: usize = 128;
 
 // Global semaphore to limit concurrent embedding API requests
 static EMBEDDING_SEMAPHORE: OnceLock<Arc<Semaphore>> = OnceLock::new();
+
+/// Circuit breaker for the embedding inference API.
+/// Prevents cascading failures when the inference service is down or
+/// persistently returning errors.
+static INFERENCE_CIRCUIT_BREAKER: OnceLock<Arc<CircuitBreaker>> = OnceLock::new();
+
+/// Get the inference circuit breaker (creating a default if not yet initialized).
+fn inference_circuit_breaker() -> &'static Arc<CircuitBreaker> {
+    INFERENCE_CIRCUIT_BREAKER.get_or_init(|| {
+        CircuitBreaker::new(CircuitBreakerConfig::from_env_with_prefix(
+            "inference",
+            "INFERENCE_CB",
+        ))
+    })
+}
 
 /// Cached embedding inference API URL (set once at startup)
 static EMBEDDING_INFERENCE_API_URL: OnceLock<String> = OnceLock::new();
@@ -60,10 +76,19 @@ static DOWNSTREAM_PRESSURE_SET_AT: AtomicU64 = AtomicU64::new(0);
 /// Auto-clear timeout for DOWNSTREAM_PRESSURE (seconds).
 /// If no successful response clears the flag within this window, we
 /// optimistically reset it so adaptive concurrency can ramp back up.
-const DOWNSTREAM_PRESSURE_TIMEOUT_SECS: u64 = 60;
+/// Seconds before we auto-clear downstream-pressure even without a success.
+fn downstream_pressure_timeout_secs() -> u64 {
+    static VALUE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *VALUE.get_or_init(|| {
+        std::env::var("EMBEDDING_DOWNSTREAM_PRESSURE_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(60)
+    })
+}
 
 /// Check if the downstream embedding service is signalling overload.
-/// Auto-clears after `DOWNSTREAM_PRESSURE_TIMEOUT_SECS` if no success has
+/// Auto-clears after the configured timeout if no success has
 /// reset the flag, preventing permanent pressure lock when all requests fail.
 pub fn is_downstream_under_pressure() -> bool {
     if !DOWNSTREAM_PRESSURE.load(Ordering::Relaxed) {
@@ -76,10 +101,10 @@ pub fn is_downstream_under_pressure() -> bool {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        if now.saturating_sub(set_at) >= DOWNSTREAM_PRESSURE_TIMEOUT_SECS {
+        if now.saturating_sub(set_at) >= downstream_pressure_timeout_secs() {
             // Auto-clear: pressure has been set for too long without a success
             tracing::info!(
-                timeout_secs = DOWNSTREAM_PRESSURE_TIMEOUT_SECS,
+                timeout_secs = downstream_pressure_timeout_secs(),
                 "Auto-clearing downstream pressure flag after timeout"
             );
             DOWNSTREAM_PRESSURE.store(false, Ordering::Relaxed);
@@ -321,7 +346,22 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
     let mut last_error = None;
     let mut used_server_retry_delay = false; // Track if we already waited per server's Retry-After
 
+    let circuit = inference_circuit_breaker();
+
     for attempt in 0..=max_retries {
+        // Check circuit breaker before each attempt
+        if !circuit.should_allow().await {
+            let batch_duration = batch_start.elapsed().as_secs_f64();
+            crate::observability::record_embedding_batch(
+                model_name,
+                batch_duration,
+                chunk_count,
+                false,
+            );
+            return Err(anyhow::anyhow!(
+                "Inference circuit breaker is open — embedding service unavailable"
+            ));
+        }
         // Apply exponential backoff only if we didn't already use server's Retry-After delay
         if attempt > 0 && !used_server_retry_delay {
             let delay = Duration::from_secs(1 << (attempt - 1).min(4)); // Cap at 16 seconds
@@ -350,6 +390,8 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
                     // Clear downstream pressure on success
                     DOWNSTREAM_PRESSURE.store(false, Ordering::Relaxed);
                     DOWNSTREAM_PRESSURE_SET_AT.store(0, Ordering::Relaxed);
+
+                    circuit.record_success().await;
 
                     // Aggregate metrics: record once per batch with total duration
                     let batch_duration = batch_start.elapsed().as_secs_f64();
@@ -396,6 +438,7 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
                     let text = resp.text().await.unwrap_or_default();
 
                     consecutive_503s += 1;
+                    circuit.record_failure().await;
                     tracing::warn!(
                         attempt = attempt,
                         retry_after_secs = retry_after,
@@ -445,9 +488,11 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
                     return Err(anyhow::anyhow!("Embedder API error {}: {}", status, text));
                 }
 
+                circuit.record_failure().await;
                 last_error = Some(anyhow::anyhow!("Embedder API error {}: {}", status, text));
             }
             Err(e) => {
+                circuit.record_failure().await;
                 last_error = Some(anyhow::anyhow!("Failed to send request to {}: {}", url, e));
             }
         }

@@ -61,7 +61,6 @@ helm.sh/chart: {{ include "semantic-explorer.chart" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
-app.kubernetes.io/component: api
 {{- with .Values.commonLabels }}
 {{ toYaml . }}
 {{- end }}
@@ -86,7 +85,6 @@ helm.sh/chart: {{ include "semantic-explorer.chart" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
-app.kubernetes.io/component: worker-collections
 {{- with .Values.commonLabels }}
 {{ toYaml . }}
 {{- end }}
@@ -111,7 +109,6 @@ helm.sh/chart: {{ include "semantic-explorer.chart" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
-app.kubernetes.io/component: worker-datasets
 {{- with .Values.commonLabels }}
 {{ toYaml . }}
 {{- end }}
@@ -136,7 +133,6 @@ helm.sh/chart: {{ include "semantic-explorer.chart" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
-app.kubernetes.io/component: worker-visualizations
 {{- with .Values.commonLabels }}
 {{ toYaml . }}
 {{- end }}
@@ -272,7 +268,6 @@ helm.sh/chart: {{ include "semantic-explorer.chart" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
-app.kubernetes.io/component: worker-visualizations-py
 {{- with .Values.commonLabels }}
 {{ toYaml . }}
 {{- end }}
@@ -474,7 +469,6 @@ helm.sh/chart: {{ include "semantic-explorer.chart" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
-app.kubernetes.io/component: quickwit
 {{- with .Values.commonLabels }}
 {{ toYaml . }}
 {{- end }}
@@ -592,7 +586,6 @@ helm.sh/chart: {{ include "semantic-explorer.chart" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
-app.kubernetes.io/component: grafana
 {{- with .Values.commonLabels }}
 {{ toYaml . }}
 {{- end }}
@@ -789,7 +782,6 @@ helm.sh/chart: {{ include "semantic-explorer.chart" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
-app.kubernetes.io/component: embedding-inference-api
 {{- with .Values.commonLabels }}
 {{ toYaml . }}
 {{- end }}
@@ -844,7 +836,6 @@ helm.sh/chart: {{ include "semantic-explorer.chart" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
-app.kubernetes.io/component: llm-inference-api
 {{- with .Values.commonLabels }}
 {{ toYaml . }}
 {{- end }}
@@ -900,7 +891,6 @@ helm.sh/chart: {{ include "semantic-explorer.chart" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
-app.kubernetes.io/component: dex
 {{- with .Values.commonLabels }}
 {{ toYaml . }}
 {{- end }}

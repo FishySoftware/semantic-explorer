@@ -123,8 +123,10 @@ graph TD
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/auth/authorize` | Get OIDC authorization URL |
-| `GET` | `/api/auth/token` | Get access token from session cookie |
 | `POST` | `/api/token` | Exchange auth code for tokens |
+| `POST` | `/api/auth/device` | Initiate OAuth2 device authorization flow |
+| `POST` | `/api/auth/device/poll` | Poll for device authorization completion |
+| `POST` | `/api/auth/refresh` | Refresh access token using refresh token |
 | `GET` | `/auth_callback` | OIDC callback handler |
 | `GET` | `/logout` | Logout and clear session |
 
@@ -406,7 +408,7 @@ This service uses shared configuration from `semantic-explorer-core`. See the [r
 | `VALKEY_PASSWORD` | - | Authentication password |
 | `VALKEY_TLS_ENABLED` | `false` | Enable TLS for Valkey connections |
 | `VALKEY_POOL_SIZE` | `10` | Connection pool size |
-| `VALKEY_BEARER_CACHE_TTL_SECS` | `3600` | Bearer token cache TTL (1 hour) |
+| `VALKEY_BEARER_CACHE_TTL_SECS` | `3600` | L2 bearer token cache TTL (1 hour) |
 | `VALKEY_RESOURCE_CACHE_TTL_SECS` | `300` | Resource listing cache TTL (5 min) |
 | `VALKEY_CONNECT_TIMEOUT_SECS` | `5` | Connection timeout |
 | `VALKEY_RESPONSE_TIMEOUT_SECS` | `2` | Response timeout |
@@ -527,15 +529,32 @@ Handled automatically by the OIDC login flow. The browser stores an `HttpOnly` s
 
 **Obtaining a Bearer Token**
 
-*From an active browser session:*
+*OAuth2 Device Flow (for CLI tools / scripts / headless environments):*
 
 ```bash
-# If you're already logged in via the browser, retrieve your token:
-curl 'https://your-instance.example.com/api/auth/token' \
-  -b 'access_token=<SESSION_COOKIE>'
+# Step 1: Initiate device authorization
+curl -X POST 'https://your-instance.example.com/api/auth/device'
+# Returns: { "device_code": "...", "user_code": "...", "verification_uri": "...", "expires_in": 300, "interval": 5 }
+
+# Step 2: User visits verification_uri in browser, authenticates, and enters user_code
+
+# Step 3: Poll for completion
+curl -X POST 'https://your-instance.example.com/api/auth/device/poll' \
+  -H 'Content-Type: application/json' \
+  -d '{"device_code": "<DEVICE_CODE>"}'
+# Returns: { "access_token": "...", "refresh_token": "...", "token_type": "Bearer", ... }
+
+# Step 4: Use the access_token as a Bearer token
+curl 'https://your-instance.example.com/api/users/@me' \
+  -H 'Authorization: Bearer <ACCESS_TOKEN>'
+
+# Step 5: Refresh when expired
+curl -X POST 'https://your-instance.example.com/api/auth/refresh' \
+  -H 'Content-Type: application/json' \
+  -d '{"refresh_token": "<REFRESH_TOKEN>"}'
 ```
 
-*Programmatic OIDC flow (for API clients / CLI tools):*
+*Programmatic OIDC flow (authorization code):*
 
 ```bash
 # Step 1: Get the authorization URL
@@ -557,7 +576,7 @@ curl 'https://your-instance.example.com/api/users/@me' \
 
 ### Encryption
 
-API keys for embedders and LLMs are encrypted with AES-256-GCM before storage.
+API keys for embedders and LLMs are encrypted with AES-256-GCM (with `enc:v1:` prefix) before storage.
 
 Generate a master key:
 ```bash
@@ -566,11 +585,12 @@ openssl rand -hex 32
 
 ### Audit Logging
 
-All API actions logged to PostgreSQL `audit_events` table with:
+All API actions logged asynchronously via NATS JetStream to PostgreSQL `audit_events` table with:
 - User identity (OIDC subject)
 - Action type
 - Resource type and ID
 - Timestamp and IP address
+- Outcome and error details
 
 ---
 

@@ -82,6 +82,7 @@ spec:
         fsGroupChangePolicy: "OnRootMismatch"
         seccompProfile:
           type: RuntimeDefault
+      terminationGracePeriodSeconds: {{ .Values.embeddingInferenceApi.terminationGracePeriodSeconds | default 60 }}
       {{- with .Values.embeddingInferenceApi.priorityClassName }}
       priorityClassName: {{ . }}
       {{- end }}
@@ -90,11 +91,15 @@ spec:
         image: {{ include "semantic-explorer.embeddingInferenceApi.image" . }}
         imagePullPolicy: {{ .Values.embeddingInferenceApi.image.pullPolicy }}
         securityContext:
-          # Non-root container security
           allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
           capabilities:
             drop:
               - ALL
+        lifecycle:
+          preStop:
+            exec:
+              command: ["sh", "-c", "sleep {{ .Values.embeddingInferenceApi.preStopSleepSeconds | default 15 }}"]
         ports:
         - name: http
           containerPort: 8090

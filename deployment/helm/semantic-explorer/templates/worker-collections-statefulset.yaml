@@ -43,6 +43,7 @@ spec:
       {{- with .Values.workerCollections.priorityClassName }}
       priorityClassName: {{ . }}
       {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.workerCollections.terminationGracePeriodSeconds | default 330 }}
       initContainers:
       {{- if not .Values.nats.external.enabled }}
       - name: wait-for-nats
@@ -119,6 +120,10 @@ spec:
         imagePullPolicy: {{ .Values.workerCollections.image.pullPolicy }}
         securityContext:
           {{- toYaml .Values.global.podSecurityContext | nindent 10 }}
+        lifecycle:
+          preStop:
+            exec:
+              command: ["sh", "-c", "sleep {{ .Values.workerCollections.preStopSleepSeconds | default 5 }}"]
         env:
         {{- range $key, $value := .Values.workerCollections.env }}
         - name: {{ $key }}

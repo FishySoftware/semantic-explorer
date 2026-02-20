@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { CodeOutline } from 'flowbite-svelte-icons';
-	import { onMount } from 'svelte';
 	import { copyToClipboard } from './utils/ui-helpers';
 
 	let {
@@ -14,19 +13,9 @@
 	}>();
 
 	let showExamples = $state(false);
-	let accessToken = $state<string>('');
 	let copied = $state(false);
 
-	async function fetchAccessToken(): Promise<string> {
-		try {
-			const res = await fetch('/api/auth/token', { credentials: 'include' });
-			if (!res.ok) return '';
-			const data = await res.json();
-			return data.access_token || '';
-		} catch {
-			return '';
-		}
-	}
+	const TOKEN_PLACEHOLDER = '<YOUR_ACCESS_TOKEN>';
 
 	function getCurlExample(): string {
 		const baseUrl = window.location.origin;
@@ -34,9 +23,7 @@
 
 		let curl = `curl '${fullUrl}'`;
 
-		if (accessToken) {
-			curl += ` \\\n  -H 'Authorization: Bearer ${accessToken}'`;
-		}
+		curl += ` \\\n  -H 'Authorization: Bearer ${TOKEN_PLACEHOLDER}'`;
 
 		if (method !== 'GET') {
 			curl += ` \\\n  -X ${method}`;
@@ -56,20 +43,15 @@
 
 		let python = `import requests\n\n`;
 
-		if (accessToken) {
-			python += `headers = {'Authorization': 'Bearer ${accessToken}'}\n`;
-		}
+		python += `headers = {'Authorization': 'Bearer ${TOKEN_PLACEHOLDER}'}\n`;
 
 		if (body) {
 			python += `data = ${JSON.stringify(body, null, 2)}\n\n`;
 		}
 
 		python += `response = requests.${method.toLowerCase()}(\n`;
-		python += `    '${fullUrl}'`;
-
-		if (accessToken) {
-			python += `,\n    headers=headers`;
-		}
+		python += `    '${fullUrl}',\n`;
+		python += `    headers=headers`;
 
 		if (body) {
 			python += `,\n    json=data`;
@@ -90,10 +72,6 @@
 			console.error('Failed to copy:', err);
 		}
 	}
-
-	onMount(async () => {
-		accessToken = await fetchAccessToken();
-	});
 </script>
 
 <div class="mt-4">
@@ -107,13 +85,12 @@
 
 	{#if showExamples}
 		<div class="mt-4 space-y-4">
-			{#if !accessToken}
-				<div
-					class="p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg text-yellow-800 dark:text-yellow-400 text-sm"
-				>
-					⚠️ No access token found. You may need to log in first.
-				</div>
-			{/if}
+			<div
+				class="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg text-blue-800 dark:text-blue-400 text-sm"
+			>
+				Use <code>POST /api/auth/device</code> (OAuth2 Device Authorization Grant) to obtain an access
+				token for programmatic API use.
+			</div>
 
 			<div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-4">
 				<div class="flex items-center justify-between mb-2">

@@ -18,8 +18,6 @@ use tracing::{debug, warn};
 
 use crate::observability::valkey_metrics;
 
-/// Wrapper holding both write (primary) and read (replica) Valkey connections.
-/// The read connection falls back to the primary if no read replica is configured.
 #[derive(Clone)]
 pub struct ValkeyClients {
     /// Write client — connects to the Valkey primary for SET operations.
@@ -193,12 +191,6 @@ pub(crate) fn parse_info_field(info: &str, field: &str) -> Option<f64> {
         .find(|line| line.starts_with(&format!("{field}:")))
         .and_then(|line| line.split(':').nth(1))
         .and_then(|val| val.trim().parse::<f64>().ok())
-}
-
-/// Extract the cache type label from a cache key for metrics.
-/// e.g., "bearer:abc123" → "bearer", "collection:uuid" → "collection"
-fn _cache_type_from_key(key: &str) -> &str {
-    key.split(':').next().unwrap_or("unknown")
 }
 
 /// Delete all keys matching a prefix pattern using SCAN + DEL.

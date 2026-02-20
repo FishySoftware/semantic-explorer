@@ -1,11 +1,10 @@
-use std::collections::HashMap;
 use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::future::{Ready, ready};
 use std::rc::Rc;
 use std::str::FromStr;
-use std::sync::{Arc, RwLock};
-use std::time::Instant;
+use std::sync::Arc;
+use std::time::Duration as StdDuration;
 
 use crate::storage::valkey::{self, ValkeyClients};
 
@@ -205,20 +204,54 @@ impl error::ResponseError for AuthError {
     }
 }
 
-/// TTL for cached bearer token → userinfo lookups (seconds).
-/// Matches the Valkey L2 default so L1 ≤ L2.
-const BEARER_CACHE_TTL_SECS: u64 = 3600;
+/// Default TTL for L1 cached bearer token → userinfo lookups (seconds).
+/// Override with env var `BEARER_L1_CACHE_TTL_SECS`.
+///
+/// **Staleness window:** In a multi-replica Kubernetes deployment each pod
+/// maintains its own L1 cache.  A revoked token may continue to resolve
+/// until the L1 entry expires.  Keep this value short (30–120 s) when fast
+/// revocation is important; longer values (up to 3 600 s) reduce OIDC
+/// userinfo round-trips.  L1 TTL should always be ≤ the L2 Valkey TTL.
+const DEFAULT_BEARER_L1_CACHE_TTL_SECS: u64 = 60;
+
+/// Default maximum number of entries the in-memory L1 bearer cache may hold.
+/// Override with env var `BEARER_L1_CACHE_MAX_CAPACITY`.
+/// Beyond this, least-recently-used entries are evicted automatically.
+const DEFAULT_BEARER_L1_CACHE_MAX_CAPACITY: u64 = 10_000;
 
 /// Default Valkey TTL for shared bearer token cache (seconds).
 /// Overridden by `ValkeyConfig::bearer_cache_ttl_secs` (env `VALKEY_BEARER_CACHE_TTL_SECS`).
 const DEFAULT_VALKEY_BEARER_TTL_SECS: u64 = 3600;
 
-/// L1 in-memory cache keyed by token hash → (CachedUserInfo, insert_time).
-/// Avoids a DB round-trip on every request from the same replica.
-/// Uses std::sync::RwLock (not tokio) so it can be held across .await-free
-/// sections without pinning to a single executor thread.
-type BearerTokenCache = Arc<RwLock<HashMap<String, (CachedUserInfo, Instant)>>>;
+/// L1 in-memory cache keyed by token hash → CachedUserInfo.
+/// Backed by `moka::sync::Cache` which provides thread-safe, bounded LRU
+/// eviction and automatic TTL expiry — no manual eviction task needed.
+pub type BearerTokenCache = Arc<moka::sync::Cache<String, CachedUserInfo>>;
 
+/// Create a new L1 bearer token cache with bounded capacity and TTL eviction.
+///
+/// Reads configuration from environment:
+/// - `BEARER_L1_CACHE_TTL_SECS` — TTL per entry (default: 60)
+/// - `BEARER_L1_CACHE_MAX_CAPACITY` — max entries (default: 10 000)
+pub fn new_bearer_token_cache() -> BearerTokenCache {
+    let ttl_secs: u64 = std::env::var("BEARER_L1_CACHE_TTL_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_BEARER_L1_CACHE_TTL_SECS);
+    let max_capacity: u64 = std::env::var("BEARER_L1_CACHE_MAX_CAPACITY")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_BEARER_L1_CACHE_MAX_CAPACITY);
+
+    tracing::info!(ttl_secs, max_capacity, "Initializing L1 bearer token cache");
+
+    Arc::new(
+        moka::sync::Cache::builder()
+            .max_capacity(max_capacity)
+            .time_to_live(StdDuration::from_secs(ttl_secs))
+            .build(),
+    )
+}
 /// Hash a bearer token with SHA-256 so raw credentials are never persisted.
 fn hash_bearer_token(token: &str) -> String {
     let mut hasher = Sha256::new();
@@ -278,18 +311,13 @@ where
                 let token_hash = hash_bearer_token(&token);
 
                 // L1: check in-memory cache (sub-microsecond, same-replica hits)
-                let cached = bearer_cache.read().ok().and_then(|guard| {
-                    let (info, inserted_at) = guard.get(&token_hash)?;
-                    if inserted_at.elapsed().as_secs() < BEARER_CACHE_TTL_SECS {
-                        Some(info.clone())
-                    } else {
-                        None
-                    }
-                });
+                let cached = bearer_cache.get(&token_hash);
 
                 let user_info = if let Some(info) = cached {
+                    semantic_explorer_core::observability::record_bearer_l1_cache_hit();
                     info
                 } else {
+                    semantic_explorer_core::observability::record_bearer_l1_cache_miss();
                     // L2: check Valkey cache (shared across replicas)
                     let valkey_hit =
                         if let Some(valkey) = req.app_data::<web::Data<ValkeyClients>>() {
@@ -301,9 +329,7 @@ where
 
                     if let Some(info) = valkey_hit {
                         // Populate L1 from L2 hit
-                        if let Ok(mut guard) = bearer_cache.write() {
-                            guard.insert(token_hash, (info.clone(), Instant::now()));
-                        }
+                        bearer_cache.insert(token_hash, info.clone());
                         info
                     } else {
                         // Cache miss: call OIDC userinfo endpoint
@@ -317,9 +343,7 @@ where
                         let cached_info = cached_user_info_from_userinfo(&info);
 
                         // Write to L1
-                        if let Ok(mut guard) = bearer_cache.write() {
-                            guard.insert(token_hash.clone(), (cached_info.clone(), Instant::now()));
-                        }
+                        bearer_cache.insert(token_hash.clone(), cached_info.clone());
                         // Write to L2 Valkey (fire-and-forget; don't block the response)
                         if let Some(valkey) = req.app_data::<web::Data<ValkeyClients>>() {
                             let conn = valkey.write.clone();
@@ -338,6 +362,10 @@ where
                         cached_info
                     }
                 };
+
+                semantic_explorer_core::observability::record_bearer_l1_cache_size(
+                    bearer_cache.entry_count(),
+                );
 
                 req.extensions_mut()
                     .insert(AuthenticatedUser { access: user_info });
@@ -746,32 +774,6 @@ pub(crate) struct TokenRequest {
     code: String,
     nonce: String,
     pkce_verifier: Option<String>,
-}
-
-/// GET /api/auth/token — Returns the current session's access token for API use.
-///
-/// Browser-authenticated users can call this endpoint to retrieve their
-/// access token (stored in an HttpOnly cookie) for use as a Bearer token
-/// in programmatic API calls.
-///
-/// Response (JSON):
-/// ```json
-/// {
-///   "access_token": "<token>",
-///   "token_type": "Bearer"
-/// }
-/// ```
-pub(crate) async fn get_cookie_token_endpoint(req: HttpRequest) -> actix_web::Result<HttpResponse> {
-    let token = req
-        .cookie(&AuthCookies::AccessToken.to_string())
-        .ok_or_else(|| {
-            error::ErrorUnauthorized("No access token cookie found. Please log in first.")
-        })?;
-
-    Ok(HttpResponse::Ok().json(serde_json::json!({
-        "access_token": token.value(),
-        "token_type": "Bearer",
-    })))
 }
 
 /// GET /api/auth/authorize — Returns the OIDC authorization URL for API clients.

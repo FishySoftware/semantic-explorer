@@ -98,6 +98,35 @@ pub(crate) async fn get_recent_public_collections(
         (status = 500, description = "Internal Server Error"),
     ),
     params(
+        ("limit" = i64, Query, description = "Maximum number of results"),
+        ("offset" = i64, Query, description = "Offset for pagination"),
+    ),
+    tag = "Marketplace",
+)]
+#[get("/api/marketplace/datasets")]
+#[tracing::instrument(name = "get_public_datasets", skip(_user, pool))]
+pub(crate) async fn get_public_datasets(
+    _user: AuthenticatedUser,
+    pool: Data<Pool<Postgres>>,
+    Query(params): Query<MarketplacePaginationParams>,
+) -> impl Responder {
+    let limit = params.limit.clamp(1, MAX_MARKETPLACE_LIMIT);
+    let offset = params.offset.max(0);
+    match datasets::get_public_datasets(&pool.into_inner(), limit, offset).await {
+        Ok(datasets_list) => HttpResponse::Ok().json(datasets_list),
+        Err(e) => {
+            tracing::error!(error = %e, "failed to fetch public datasets");
+            ApiError::Internal(format!("error fetching public datasets: {:?}", e)).error_response()
+        }
+    }
+}
+
+#[utoipa::path(
+    responses(
+        (status = 200, description = "OK", body = Vec<Dataset>),
+        (status = 500, description = "Internal Server Error"),
+    ),
+    params(
         ("limit" = i32, Query, description = "Number of recent datasets to fetch"),
     ),
     tag = "Marketplace",
@@ -119,8 +148,6 @@ pub(crate) async fn get_recent_public_datasets(
         }
     }
 }
-
-//TODO: implement pagination and search for these later on.
 
 #[utoipa::path(
     responses(
@@ -182,37 +209,12 @@ pub(crate) async fn get_recent_public_llms(
 
 #[utoipa::path(
     responses(
-        (status = 200, description = "OK", body = Vec<Dataset>),
+        (status = 200, description = "OK", body = Vec<Embedder>),
         (status = 500, description = "Internal Server Error"),
     ),
     params(
         ("limit" = i64, Query, description = "Maximum number of results"),
         ("offset" = i64, Query, description = "Offset for pagination"),
-    ),
-    tag = "Marketplace",
-)]
-#[get("/api/marketplace/datasets")]
-#[tracing::instrument(name = "get_public_datasets", skip(_user, pool))]
-pub(crate) async fn get_public_datasets(
-    _user: AuthenticatedUser,
-    pool: Data<Pool<Postgres>>,
-    Query(params): Query<MarketplacePaginationParams>,
-) -> impl Responder {
-    let limit = params.limit.clamp(1, MAX_MARKETPLACE_LIMIT);
-    let offset = params.offset.max(0);
-    match datasets::get_public_datasets(&pool.into_inner(), limit, offset).await {
-        Ok(datasets_list) => HttpResponse::Ok().json(datasets_list),
-        Err(e) => {
-            tracing::error!(error = %e, "failed to fetch public datasets");
-            ApiError::Internal(format!("error fetching public datasets: {:?}", e)).error_response()
-        }
-    }
-}
-
-#[utoipa::path(
-    responses(
-        (status = 200, description = "OK", body = Vec<Embedder>),
-        (status = 500, description = "Internal Server Error"),
     ),
     tag = "Marketplace",
 )]
@@ -222,8 +224,11 @@ pub(crate) async fn get_public_embedders(
     _user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
     encryption: Data<EncryptionService>,
+    Query(params): Query<MarketplacePaginationParams>,
 ) -> impl Responder {
-    match embedders::get_public_embedders(&pool.into_inner(), &encryption).await {
+    let limit = params.limit.clamp(1, MAX_MARKETPLACE_LIMIT);
+    let offset = params.offset.max(0);
+    match embedders::get_public_embedders(&pool.into_inner(), limit, offset, &encryption).await {
         Ok(embedders_list) => HttpResponse::Ok().json(embedders_list),
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch public embedders");
@@ -237,6 +242,10 @@ pub(crate) async fn get_public_embedders(
         (status = 200, description = "OK", body = Vec<LLMModel>),
         (status = 500, description = "Internal Server Error"),
     ),
+    params(
+        ("limit" = i64, Query, description = "Maximum number of results"),
+        ("offset" = i64, Query, description = "Offset for pagination"),
+    ),
     tag = "Marketplace",
 )]
 #[get("/api/marketplace/llms")]
@@ -245,8 +254,11 @@ pub(crate) async fn get_public_llms(
     _user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
     encryption: Data<EncryptionService>,
+    Query(params): Query<MarketplacePaginationParams>,
 ) -> impl Responder {
-    match llms::get_public_llms(&pool.into_inner(), &encryption).await {
+    let limit = params.limit.clamp(1, MAX_MARKETPLACE_LIMIT);
+    let offset = params.offset.max(0);
+    match llms::get_public_llms(&pool.into_inner(), limit, offset, &encryption).await {
         Ok(llms_list) => HttpResponse::Ok().json(llms_list),
         Err(e) => {
             tracing::error!(error = %e, "failed to fetch public LLMs");

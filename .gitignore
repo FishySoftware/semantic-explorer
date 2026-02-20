@@ -25,3 +25,4 @@ crates/worker-visualizations-py/fonts
 
 plans/
 .roo
+**/.env

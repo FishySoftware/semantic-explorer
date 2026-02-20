@@ -147,6 +147,7 @@ const GET_PUBLIC_EMBEDDERS_QUERY: &str = r#"
     FROM embedders
     WHERE is_public = TRUE
     ORDER BY created_at DESC
+    LIMIT $1 OFFSET $2
 "#;
 
 const GET_RECENT_PUBLIC_EMBEDDERS_QUERY: &str = r#"
@@ -395,9 +396,13 @@ pub(crate) async fn update_embedder(
 #[tracing::instrument(name = "database.get_public_embedders", skip(pool, encryption), fields(database.system = "postgresql", database.operation = "SELECT"))]
 pub(crate) async fn get_public_embedders(
     pool: &Pool<Postgres>,
+    limit: i64,
+    offset: i64,
     encryption: &EncryptionService,
 ) -> Result<Vec<Embedder>> {
     let result = sqlx::query_as::<_, Embedder>(GET_PUBLIC_EMBEDDERS_QUERY)
+        .bind(limit)
+        .bind(offset)
         .fetch_all(pool)
         .await;
 

@@ -165,8 +165,8 @@ spec:
       {{- end }}
   {{- end }}
 {{- end }}
----
 {{- if .Values.embeddingInferenceApi.autoscaling.enabled }}
+---
 apiVersion: {{ include "semantic-explorer.hpa.apiVersion" . }}
 kind: HorizontalPodAutoscaler
 metadata:
@@ -195,8 +195,8 @@ spec:
       {{- end }}
   {{- end }}
 {{- end }}
----
 {{- if .Values.llmInferenceApi.autoscaling.enabled }}
+---
 apiVersion: {{ include "semantic-explorer.hpa.apiVersion" . }}
 kind: HorizontalPodAutoscaler
 metadata:

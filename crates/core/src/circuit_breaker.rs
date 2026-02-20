@@ -142,21 +142,6 @@ impl CircuitBreaker {
         })
     }
 
-    /// Create circuit breaker for Qdrant operations
-    pub fn for_qdrant() -> Arc<Self> {
-        Self::new(CircuitBreakerConfig::new("qdrant"))
-    }
-
-    /// Create circuit breaker for S3 operations
-    pub fn for_s3() -> Arc<Self> {
-        Self::new(CircuitBreakerConfig::new("s3"))
-    }
-
-    /// Create circuit breaker for inference API operations
-    pub fn for_inference() -> Arc<Self> {
-        Self::new(CircuitBreakerConfig::new("inference"))
-    }
-
     /// Get the current circuit state
     pub async fn state(&self) -> CircuitState {
         self.state.read().await.state
@@ -308,6 +293,35 @@ pub struct CircuitBreakerMetrics {
     pub state_transitions: u32,
 }
 
+/// Registry of circuit breakers for external services.
+/// Intended to be shared as application state (e.g., `web::Data`).
+#[derive(Clone)]
+pub struct CircuitBreakers {
+    pub qdrant: Arc<CircuitBreaker>,
+    pub s3: Arc<CircuitBreaker>,
+}
+
+impl std::fmt::Debug for CircuitBreakers {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CircuitBreakers")
+            .field("qdrant", &self.qdrant.config.name)
+            .field("s3", &self.s3.config.name)
+            .finish()
+    }
+}
+
+impl CircuitBreakers {
+    pub fn from_env() -> Self {
+        Self {
+            qdrant: CircuitBreaker::new(CircuitBreakerConfig::from_env_with_prefix(
+                "qdrant",
+                "QDRANT_CB",
+            )),
+            s3: CircuitBreaker::new(CircuitBreakerConfig::from_env_with_prefix("s3", "S3_CB")),
+        }
+    }
+}
+
 /// Error returned when circuit breaker rejects a request
 #[derive(Debug, Clone)]
 pub struct CircuitOpenError {
@@ -334,7 +348,7 @@ impl std::error::Error for CircuitOpenError {}
 ///
 /// # Example
 /// ```ignore
-/// let circuit = CircuitBreaker::for_qdrant();
+/// let circuit = CircuitBreaker::new(CircuitBreakerConfig::new("qdrant"));
 /// let result = with_circuit_breaker(&circuit, || async {
 ///     qdrant_client.upsert_points(...).await
 /// }).await?;

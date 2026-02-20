@@ -65,6 +65,7 @@ spec:
         fsGroupChangePolicy: "OnRootMismatch"
         seccompProfile:
           type: RuntimeDefault
+      terminationGracePeriodSeconds: {{ .Values.llmInferenceApi.terminationGracePeriodSeconds | default 60 }}
       {{- with .Values.llmInferenceApi.priorityClassName }}
       priorityClassName: {{ . }}
       {{- end }}
@@ -73,11 +74,15 @@ spec:
         image: {{ include "semantic-explorer.llmInferenceApi.image" . }}
         imagePullPolicy: {{ .Values.llmInferenceApi.image.pullPolicy }}
         securityContext:
-          # Non-root container security
           allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
           capabilities:
             drop:
               - ALL
+        lifecycle:
+          preStop:
+            exec:
+              command: ["sh", "-c", "sleep {{ .Values.llmInferenceApi.preStopSleepSeconds | default 15 }}"]
         ports:
         - name: http
           containerPort: 8091

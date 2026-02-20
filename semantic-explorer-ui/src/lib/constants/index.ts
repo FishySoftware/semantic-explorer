@@ -1,0 +1,31 @@
+export const POLLING_INTERVAL_MS = 5000;
+export const DEFAULT_TOAST_DURATION_MS = 4000;
+export const MIN_TOAST_DURATION_MS = 1500;
+
+export const DEFAULT_PAGE_SIZE = 10;
+export const LARGE_PAGE_SIZE = 50;
+export const MAX_FETCH_LIMIT = 1000;
+export const SESSIONS_FETCH_LIMIT = 200;
+export const DASHBOARD_RECENT_LIMIT = 5;
+export const FILES_PAGE_SIZE = 10;
+export const FAILED_FILES_PAGE_SIZE = 25;
+export const BATCHES_PAGE_SIZE = 10;
+export const VISUALIZATIONS_PAGE_SIZE = 20;
+export const MARKETPLACE_FETCH_LIMIT = 200;
+
+export const DEFAULT_MAX_CHUNKS = 5;
+export const DEFAULT_MIN_SIMILARITY_SCORE = 0.2;
+export const DEFAULT_TEMPERATURE = 0.7;
+export const DEFAULT_MAX_TOKENS = 2000;
+
+export const DEFAULT_BATCH_SIZE = 100;
+export const DEFAULT_DIMENSIONS = 1536;
+export const DEFAULT_MAX_INPUT_TOKENS = 8191;
+export const DEFAULT_TRUNCATE_STRATEGY = 'NONE';
+
+export const HIGH_SCORE_THRESHOLD = 0.8;
+export const MEDIUM_SCORE_THRESHOLD = 0.5;
+
+export const CLIPBOARD_MESSAGE_DURATION_MS = 2000;
+export const SEARCH_DEBOUNCE_MS = 300;
+export const NAVIGATION_DELAY_MS = 500;

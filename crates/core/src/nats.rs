@@ -258,61 +258,42 @@ async fn ensure_stream(
 }
 
 fn stream_config_differs(current: &StreamConfig, desired: &StreamConfig) -> bool {
-    if current.name != desired.name {
-        tracing::debug!(
-            "Stream config differs: name {:?} vs {:?}",
-            current.name,
-            desired.name
-        );
-        return true;
-    }
-    if current.subjects != desired.subjects {
-        tracing::debug!(
-            "Stream config differs: subjects {:?} vs {:?}",
-            current.subjects,
-            desired.subjects
-        );
-        return true;
-    }
-    if current.retention != desired.retention {
-        tracing::debug!(
-            "Stream config differs: retention {:?} vs {:?}",
-            current.retention,
-            desired.retention
-        );
-        return true;
-    }
-    if current.num_replicas != desired.num_replicas {
-        tracing::debug!(
-            "Stream config differs: num_replicas {:?} vs {:?}",
-            current.num_replicas,
-            desired.num_replicas
-        );
-        return true;
-    }
-    if current.max_age != desired.max_age {
-        tracing::debug!(
-            "Stream config differs: max_age {:?} vs {:?}",
-            current.max_age,
-            desired.max_age
-        );
-        return true;
-    }
-    if current.max_messages != desired.max_messages {
-        tracing::debug!(
-            "Stream config differs: max_messages {:?} vs {:?}",
-            current.max_messages,
-            desired.max_messages
-        );
-        return true;
-    }
-    if current.duplicate_window != desired.duplicate_window {
-        tracing::debug!(
-            "Stream config differs: duplicate_window {:?} vs {:?}",
-            current.duplicate_window,
-            desired.duplicate_window
-        );
-        return true;
+    let checks: &[(&str, bool)] = &[
+        ("name", current.name != desired.name),
+        ("subjects", current.subjects != desired.subjects),
+        ("retention", current.retention != desired.retention),
+        ("num_replicas", current.num_replicas != desired.num_replicas),
+        ("max_age", current.max_age != desired.max_age),
+        ("max_messages", current.max_messages != desired.max_messages),
+        (
+            "max_messages_per_subject",
+            current.max_messages_per_subject != desired.max_messages_per_subject,
+        ),
+        ("max_bytes", current.max_bytes != desired.max_bytes),
+        (
+            "max_msg_size",
+            current.max_message_size != desired.max_message_size,
+        ),
+        (
+            "duplicate_window",
+            current.duplicate_window != desired.duplicate_window,
+        ),
+        ("storage", current.storage != desired.storage),
+        ("discard", current.discard != desired.discard),
+        ("allow_rollup", current.allow_rollup != desired.allow_rollup),
+        ("deny_delete", current.deny_delete != desired.deny_delete),
+        ("deny_purge", current.deny_purge != desired.deny_purge),
+    ];
+
+    for (field_name, differs) in checks {
+        if *differs {
+            tracing::debug!(
+                "Stream '{}' config differs on field: {}",
+                current.name,
+                field_name
+            );
+            return true;
+        }
     }
     false
 }

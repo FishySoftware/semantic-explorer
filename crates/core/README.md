@@ -18,10 +18,10 @@ Configuration, observability, NATS JetStream, encryption, storage utilities, and
 | Module | Description |
 |--------|-------------|
 | `config` | Centralized environment variable configuration |
-| `observability` | OpenTelemetry tracing, Prometheus metrics, structured logging, GPU monitoring |
+| `observability` | OpenTelemetry tracing, Prometheus metrics, structured logging, GPU monitoring (11 submodules: database, gpu, inference, nats, pipeline, scanner, search, storage, valkey, worker) |
 | `nats` | JetStream stream and consumer initialization |
 | `adaptive_concurrency` | Dynamic concurrency controller with 503 backpressure |
-| `encryption` | AES-256-GCM encryption for API keys |
+| `encryption` | AES-256-GCM encryption with `enc:v1:` prefix for API keys |
 | `storage` | S3 document upload/download utilities |
 | `embedder` | Embedding API client (OpenAI, Cohere, internal) |
 | `http_client` | Shared HTTP client with TLS support |
@@ -187,7 +187,7 @@ All configuration is loaded from environment variables at startup. See the [root
 | `VALKEY_PASSWORD` | - | Authentication password |
 | `VALKEY_TLS_ENABLED` | `false` | Enable TLS for Valkey connections |
 | `VALKEY_POOL_SIZE` | `10` | Connection pool size |
-| `VALKEY_BEARER_CACHE_TTL_SECS` | `3600` | Bearer token cache TTL (1 hour) |
+| `VALKEY_BEARER_CACHE_TTL_SECS` | `3600` | L2 bearer token cache TTL (1 hour) |
 | `VALKEY_RESOURCE_CACHE_TTL_SECS` | `300` | Resource listing cache TTL (5 min) |
 | `VALKEY_CONNECT_TIMEOUT_SECS` | `5` | Connection timeout |
 | `VALKEY_RESPONSE_TIMEOUT_SECS` | `2` | Response timeout |
@@ -311,13 +311,14 @@ Prefixes used: `qdrant`, `s3`, `inference`, `dataset_scanner`
 
 ## Encryption
 
-AES-256-GCM encryption for storing sensitive data (API keys).
+AES-256-GCM encryption for storing sensitive data (API keys). Values are prefixed with `enc:v1:` for deterministic detection.
 
 ```rust
 use semantic_explorer_core::encryption::EncryptionService;
 
 let service = EncryptionService::from_env()?;
 let encrypted = service.encrypt("my-api-key")?;
+assert!(encrypted.starts_with("enc:v1:"));
 let decrypted = service.decrypt(&encrypted)?;
 ```
 

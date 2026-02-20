@@ -758,17 +758,14 @@ pub(crate) async fn regenerate_chat_message(
         Ok(msg) => msg,
         Err(e) => {
             tracing::error!(error = %e, message_id, "message not found");
-            return HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("message not found: {:?}", e)
-            }));
+            return ApiError::NotFound(format!("message not found: {:?}", e)).error_response();
         }
     };
 
     // Verify it's an assistant message
     if message.role != "assistant" {
-        return HttpResponse::BadRequest().json(serde_json::json!({
-            "error": "can only regenerate assistant messages"
-        }));
+        return ApiError::BadRequest("can only regenerate assistant messages".into())
+            .error_response();
     }
 
     // Get session info
@@ -776,9 +773,7 @@ pub(crate) async fn regenerate_chat_message(
         Ok(s) => s,
         Err(e) => {
             tracing::error!(error = %e, session_id = %message.session_id, "session not found");
-            return HttpResponse::NotFound().json(serde_json::json!({
-                "error": format!("session not found: {:?}", e)
-            }));
+            return ApiError::NotFound(format!("session not found: {:?}", e)).error_response();
         }
     };
 
@@ -796,9 +791,7 @@ pub(crate) async fn regenerate_chat_message(
         Ok(msgs) => msgs,
         Err(e) => {
             tracing::error!(error = %e, "failed to get messages");
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": format!("failed to get messages: {:?}", e)
-            }));
+            return ApiError::Internal(format!("failed to get messages: {:?}", e)).error_response();
         }
     };
 
@@ -812,9 +805,8 @@ pub(crate) async fn regenerate_chat_message(
     let user_query = match user_message {
         Some(msg) => &msg.content,
         None => {
-            return HttpResponse::BadRequest().json(serde_json::json!({
-                "error": "no user message found before assistant message"
-            }));
+            return ApiError::BadRequest("no user message found before assistant message".into())
+                .error_response();
         }
     };
 
@@ -824,7 +816,8 @@ pub(crate) async fn regenerate_chat_message(
     // Check if streaming is requested
     if query.stream {
         return HttpResponse::NotImplemented().json(serde_json::json!({
-            "error": "streaming regeneration not yet implemented - use non-streaming for now"
+            "error": "NotImplemented",
+            "message": "streaming regeneration not yet implemented - use non-streaming for now"
         }));
     }
 
@@ -846,9 +839,8 @@ pub(crate) async fn regenerate_chat_message(
         Ok(response) => response,
         Err(e) => {
             tracing::error!(error = %e, "failed to generate LLM response");
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": format!("failed to generate response: {}", e)
-            }));
+            return ApiError::Internal(format!("failed to generate response: {}", e))
+                .error_response();
         }
     };
 
@@ -867,9 +859,7 @@ pub(crate) async fn regenerate_chat_message(
     .await
     {
         tracing::error!(error = %e, "failed to update message");
-        return HttpResponse::InternalServerError().json(serde_json::json!({
-            "error": format!("failed to update message: {:?}", e)
-        }));
+        return ApiError::Internal(format!("failed to update message: {:?}", e)).error_response();
     }
 
     // Track regeneration event

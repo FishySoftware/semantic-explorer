@@ -27,7 +27,6 @@ The collections worker:
 
 - **Non-blocking extraction**: CPU-intensive extraction runs in `spawn_blocking` thread pool
 - **Adaptive concurrency**: Dynamically adjusts parallelism based on downstream pressure (503s)
-- **Circuit breakers**: S3 operations protected by circuit breaker pattern
 - **Automatic retries**: Exponential backoff with sensible defaults for transient failures
 - **Health endpoint**: `/healthz`, `/readyz`, `/status` for Kubernetes probes (default port `8082`)
 

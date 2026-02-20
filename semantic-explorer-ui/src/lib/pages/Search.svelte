@@ -12,7 +12,7 @@
 		PaginatedResponse,
 		SearchResponse,
 	} from '../types/models';
-	import { apiCall } from '../utils/api';
+	import { apiGet, apiPost } from '../utils/api';
 	import { formatError, toastStore } from '../utils/notifications';
 
 	let {
@@ -99,16 +99,16 @@
 			error = null;
 
 			const [datasetsResponse, embeddedDatasetsResponse, embeddersResponse] = await Promise.all([
-				apiCall<PaginatedResponse<Dataset>>('/api/datasets?limit=1000'),
-				apiCall<PaginatedEmbeddedDatasetList>('/api/embedded-datasets?limit=1000'),
-				apiCall<PaginatedResponse<Embedder>>('/api/embedders?limit=1000'),
+				apiGet<PaginatedResponse<Dataset>>('/api/datasets?limit=1000'),
+				apiGet<PaginatedEmbeddedDatasetList>('/api/embedded-datasets?limit=1000'),
+				apiGet<PaginatedResponse<Embedder>>('/api/embedders?limit=1000'),
 			]);
 
 			datasets = datasetsResponse.items;
 			embedders = embeddersResponse.items;
 			// Filter out standalone datasets - they don't have embedders and can't be searched
 			allEmbeddedDatasets = embeddedDatasetsResponse.embedded_datasets.filter(
-				(ed) =>
+				(ed: EmbeddedDataset) =>
 					!ed.is_standalone &&
 					!(ed.dataset_transform_id === 0 && ed.source_dataset_id === 0 && ed.embedder_id === 0)
 			);
@@ -166,20 +166,14 @@
 						}
 					: null;
 
-			const response = await apiCall<SearchResponse>('/api/search', {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-				},
-				body: JSON.stringify({
-					query: searchQuery,
-					embedded_dataset_ids: Array.from(selectedEmbeddedDatasetIds),
-					limit,
-					score_threshold: scoreThreshold,
-					search_mode: searchMode,
-					...(filters && { filters }),
-					...(searchParams && { search_params: searchParams }),
-				}),
+			const response = await apiPost<SearchResponse>('/api/search', {
+				query: searchQuery,
+				embedded_dataset_ids: Array.from(selectedEmbeddedDatasetIds),
+				limit,
+				score_threshold: scoreThreshold,
+				search_mode: searchMode,
+				...(filters && { filters }),
+				...(searchParams && { search_params: searchParams }),
 			});
 
 			searchResults = response;

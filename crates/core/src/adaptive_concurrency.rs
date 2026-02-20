@@ -123,11 +123,16 @@ impl AdaptiveConcurrency {
 
     /// Background task that adjusts concurrency based on pressure signals.
     ///
-    /// Runs every 5 seconds:
+    /// Runs every `ADAPTIVE_CONCURRENCY_SCALING_INTERVAL_SECS` seconds (default 5):
     /// - If pressure is active: halve the effective limit (min 1)
     /// - If pressure has cleared for 2 consecutive ticks: increase by 1 toward max
     async fn run_scaler(&self) {
-        let mut ticker = tokio::time::interval(Duration::from_secs(5));
+        let scaling_interval_secs: u64 =
+            std::env::var("ADAPTIVE_CONCURRENCY_SCALING_INTERVAL_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(5);
+        let mut ticker = tokio::time::interval(Duration::from_secs(scaling_interval_secs));
         let mut ticks_without_pressure: u32 = 0;
 
         loop {

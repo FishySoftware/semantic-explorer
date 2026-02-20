@@ -4,29 +4,10 @@
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import LoadingState from '../components/LoadingState.svelte';
 	import TabPanel from '../components/TabPanel.svelte';
+	import type { LLM } from '../types/models';
+	import { apiDelete, apiGet, apiPatch } from '../utils/api';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { formatDate } from '../utils/ui-helpers';
-
-	interface LLM {
-		llm_id: number;
-		name: string;
-		owner_id: string;
-		owner_display_name: string;
-		provider: string;
-		base_url: string;
-		api_key: string | null;
-		config: Record<string, any>;
-		is_public: boolean;
-		created_at: string;
-		updated_at: string;
-	}
-
-	interface PaginatedLLMList {
-		items: LLM[];
-		total_count: number;
-		limit: number;
-		offset: number;
-	}
 
 	interface Props {
 		llmId: number;
@@ -39,7 +20,6 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
-	// Edit form state
 	let editMode = $state(false);
 	let editFormName = $state('');
 	let editFormApiKey = $state('');
@@ -49,10 +29,8 @@
 	let editError = $state<string | null>(null);
 	let editLoading = $state(false);
 
-	// Delete state
 	let llmPendingDelete = $state(false);
 
-	// Tab state
 	let activeTab = $state('overview');
 
 	const tabs = [{ id: 'overview', label: 'Overview', icon: '⚙️' }];
@@ -61,19 +39,10 @@
 		try {
 			loading = true;
 			error = null;
-			const response = await fetch('/api/llms?limit=1000');
-			if (!response.ok) {
-				throw new Error(`Failed to fetch LLMs: ${response.statusText}`);
-			}
-			const data: PaginatedLLMList = await response.json();
-			const foundLLM = data.items.find((l) => l.llm_id === llmId);
-			if (!foundLLM) {
-				throw new Error(`LLM with ID ${llmId} not found`);
-			}
-			llm = foundLLM;
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to fetch LLM';
-			toastStore.error(formatError(e, 'Failed to fetch LLM'));
+			llm = await apiGet<LLM>(`/api/llms/${llmId}`);
+		} catch (fetchError) {
+			error = formatError(fetchError, 'Failed to fetch LLM');
+			toastStore.error(error);
 		} finally {
 			loading = false;
 		}
@@ -108,7 +77,7 @@
 			return;
 		}
 
-		let parsedConfig: Record<string, any>;
+		let parsedConfig: Record<string, unknown>;
 		try {
 			parsedConfig = JSON.parse(editFormConfig);
 		} catch {
@@ -120,29 +89,19 @@
 			editLoading = true;
 			editError = null;
 
-			const response = await fetch(`/api/llms/${llm.llm_id}`, {
-				method: 'PATCH',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					name: editFormName.trim(),
-					base_url: editFormBaseUrl.trim(),
-					api_key: editFormApiKey.trim() || null,
-					config: parsedConfig,
-					is_public: editFormIsPublic,
-				}),
+			const updatedLLM = await apiPatch<LLM>(`/api/llms/${llm.llm_id}`, {
+				name: editFormName.trim(),
+				base_url: editFormBaseUrl.trim(),
+				api_key: editFormApiKey.trim() || null,
+				config: parsedConfig,
+				is_public: editFormIsPublic,
 			});
 
-			if (!response.ok) {
-				const errorText = await response.text();
-				throw new Error(`Failed to update LLM: ${errorText}`);
-			}
-
-			const updatedLLM = await response.json();
 			llm = updatedLLM;
 			editMode = false;
 			toastStore.success('LLM updated successfully');
-		} catch (e) {
-			const message = formatError(e, 'Failed to update LLM');
+		} catch (saveError) {
+			const message = formatError(saveError, 'Failed to update LLM');
 			editError = message;
 			toastStore.error(message);
 		} finally {
@@ -156,19 +115,11 @@
 		llmPendingDelete = false;
 
 		try {
-			const response = await fetch(`/api/llms/${llm.llm_id}`, {
-				method: 'DELETE',
-			});
-
-			if (!response.ok) {
-				const errorText = await response.text();
-				throw new Error(`Failed to delete LLM: ${errorText}`);
-			}
-
+			await apiDelete(`/api/llms/${llm.llm_id}`);
 			toastStore.success('LLM deleted successfully');
 			onBack();
-		} catch (e) {
-			const message = formatError(e, 'Failed to delete LLM');
+		} catch (deleteError) {
+			const message = formatError(deleteError, 'Failed to delete LLM');
 			toastStore.error(message);
 		}
 	}

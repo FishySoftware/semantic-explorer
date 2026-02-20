@@ -112,6 +112,10 @@ spec:
         imagePullPolicy: {{ .Values.workerVisualizationsPy.image.pullPolicy }}
         securityContext:
           {{- toYaml .Values.global.podSecurityContext | nindent 10 }}
+        lifecycle:
+          preStop:
+            exec:
+              command: ["sh", "-c", "sleep {{ .Values.workerVisualizationsPy.preStopSleepSeconds | default 5 }}"]
         ports:
         - name: health
           containerPort: 8081

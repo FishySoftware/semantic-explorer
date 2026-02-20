@@ -437,17 +437,10 @@ semantic-explorer/
 | Method | Endpoint | Description |
 |---------|----------|-------------|
 | `GET` | `/api/auth/authorize` | Get OIDC authorization URL |
-| `GET` | `/api/auth/token` | Get access token from session cookie |
 | `POST` | `/api/token` | Exchange auth code for tokens |
-| `GET` | `/auth_callback` | OIDC callback handler |
-| `GET` | `/logout` | Logout and clear session |
-
-### Authentication
-| Method | Endpoint | Description |
-|---------|----------|-------------|
-| `GET` | `/api/auth/authorize` | Get OIDC authorization URL |
-| `GET` | `/api/auth/token` | Get access token from session cookie |
-| `POST` | `/api/token` | Exchange auth code for tokens |
+| `POST` | `/api/auth/device` | Initiate OAuth2 device authorization flow |
+| `POST` | `/api/auth/device/poll` | Poll for device authorization completion |
+| `POST` | `/api/auth/refresh` | Refresh access token using refresh token |
 | `GET` | `/auth_callback` | OIDC callback handler |
 | `GET` | `/logout` | Logout and clear session |
 
@@ -637,6 +630,7 @@ See [`deployment/helm/`](deployment/helm/) for detailed Helm chart configuration
 | `OIDC_INACTIVITY_TIMEOUT_SECS` | `1800` | No | Inactivity timeout (30 min) |
 | `OIDC_MAX_CONCURRENT_SESSIONS` | `5` | No | Max sessions per user |
 | `OIDC_REFRESH_TOKEN_ROTATION_ENABLED` | `true` | No | Enable token rotation |
+| `BEARER_L1_CACHE_TTL_SECS` | `60` | No | In-memory (moka) L1 bearer cache TTL |
 
 ### Encryption & TLS
 
@@ -682,8 +676,7 @@ Workers automatically adjust their concurrency based on downstream service healt
 #### Hardcoded Defaults
 
 NATS consumer tuning, circuit breaker, and retry policy parameters use production-tested
-defaults and no longer require environment variables. This eliminates ~40 configuration
-variables while maintaining the same resilience behavior.
+defaults and no longer require environment variables.
 
 ### Valkey Cache (Optional)
 
@@ -694,7 +687,7 @@ variables while maintaining the same resilience behavior.
 | `VALKEY_PASSWORD` | - | No | Authentication password |
 | `VALKEY_TLS_ENABLED` | `false` | No | Enable TLS for Valkey connections |
 | `VALKEY_POOL_SIZE` | `10` | No | Connection pool size |
-| `VALKEY_BEARER_CACHE_TTL_SECS` | `3600` | No | Bearer token cache TTL (1 hour) |
+| `VALKEY_BEARER_CACHE_TTL_SECS` | `3600` | No | L2 bearer token cache TTL (1 hour) |
 | `VALKEY_RESOURCE_CACHE_TTL_SECS` | `300` | No | Resource listing cache TTL (5 min) |
 | `VALKEY_CONNECT_TIMEOUT_SECS` | `5` | No | Connection timeout |
 | `VALKEY_RESPONSE_TIMEOUT_SECS` | `2` | No | Response timeout |
@@ -906,24 +899,26 @@ print(response.json())
 
 **Obtaining a token:**
 
-1. **From the UI**: Log in via the browser, then use `GET /api/auth/token` to retrieve your session's access token.
+1. **Device flow (CLI/scripts)**: Use `POST /api/auth/device` to initiate a device authorization flow, then poll `POST /api/auth/device/poll` until the user approves in their browser.
 2. **Programmatic flow**: Use `GET /api/auth/authorize` to get an OIDC authorization URL, authenticate, then exchange the code via `POST /api/token`.
+3. **Token refresh**: Use `POST /api/auth/refresh` with a refresh token to obtain new access tokens without re-authenticating.
 
 See the [API README](crates/api/README.md) for the full authentication flow.
 
 ### Encryption
 
-- **Secrets**: AES-256-GCM encryption for API keys stored in database
+- **Secrets**: AES-256-GCM encryption with `enc:v1:` prefix for API keys stored in database
 - **TLS**: HTTPS support with custom certificates
 - **mTLS**: Mutual TLS for service-to-service communication
 
 ### Audit Logging
 
-All API actions logged to PostgreSQL `audit_events` table:
+All API actions logged asynchronously via NATS JetStream to PostgreSQL `audit_events` table:
 - User identity (OIDC subject)
 - Action type (CREATE, UPDATE, DELETE)
 - Resource type and ID
 - Timestamp and IP address
+- Outcome (success/failure) and error details
 
 ---
 

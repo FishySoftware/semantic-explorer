@@ -1,6 +1,7 @@
 use actix_web::{HttpResponse, Responder, get, web::Data};
 use aws_sdk_s3::Client as S3Client;
 use qdrant_client::Qdrant;
+use semantic_explorer_core::config::S3Config;
 use serde::Serialize;
 use sqlx::{Pool, Postgres};
 use std::time::Instant;
@@ -70,12 +71,13 @@ pub async fn readiness(
     pool: Data<Pool<Postgres>>,
     qdrant_client: Data<Qdrant>,
     s3_client: Data<S3Client>,
+    s3_config: Data<S3Config>,
     nats_client: Data<async_nats::Client>,
 ) -> impl Responder {
     let (postgres_health, qdrant_health, s3_health, nats_health) = tokio::join!(
         check_postgres(&pool),
         check_qdrant(&qdrant_client),
-        check_s3(&s3_client),
+        check_s3(&s3_client, &s3_config.bucket_name),
         check_nats(&nats_client),
     );
 
@@ -141,9 +143,9 @@ async fn check_qdrant(client: &Qdrant) -> ComponentHealth {
     }
 }
 
-async fn check_s3(client: &S3Client) -> ComponentHealth {
+async fn check_s3(client: &S3Client, bucket_name: &str) -> ComponentHealth {
     let start = Instant::now();
-    match client.list_buckets().send().await {
+    match client.head_bucket().bucket(bucket_name).send().await {
         Ok(_) => ComponentHealth {
             status: HealthStatus::Healthy,
             latency_ms: Some(start.elapsed().as_secs_f64() * 1000.0),

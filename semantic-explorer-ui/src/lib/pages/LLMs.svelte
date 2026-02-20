@@ -11,6 +11,7 @@
 		PaginatedLLMList,
 		ProviderDefaultConfig,
 	} from '$lib/types/models';
+	import { asLLMConfig } from '$lib/types/models';
 	import { formatError, toastStore } from '$lib/utils/notifications';
 	import { Table, TableBody, TableBodyCell, TableHead, TableHeadCell } from 'flowbite-svelte';
 	import { onMount } from 'svelte';
@@ -168,9 +169,9 @@
 			}
 
 			testMessage = `Connection successful! Response: "${responseText.trim()}"`;
-		} catch (e: any) {
+		} catch (error: unknown) {
 			testStatus = 'error';
-			testMessage = e.message || 'Test failed.';
+			testMessage = formatError(error, 'Test failed.');
 		}
 	}
 
@@ -226,9 +227,9 @@
 			const data: PaginatedLLMList = await response.json();
 			llms = data.items;
 			totalCount = data.total_count;
-		} catch (e: any) {
-			console.error('Error fetching LLMs:', e);
-			error = e.message || 'Failed to load LLMs';
+		} catch (fetchError: unknown) {
+			console.error('Error fetching LLMs:', fetchError);
+			error = formatError(fetchError, 'Failed to load LLMs');
 		} finally {
 			loading = false;
 			initialFetchDone = true;
@@ -258,7 +259,7 @@
 		formConfig = JSON.stringify(llm.config, null, 2);
 		formIsPublic = llm.is_public;
 		try {
-			const cfg = llm.config || {};
+			const cfg = asLLMConfig(llm.config || {});
 			const defaults = providerDefaults[formProvider] || {};
 
 			if (cfg.model && defaults.models?.includes(cfg.model)) {
@@ -370,9 +371,9 @@
 				await fetchLLMs();
 			}
 			toastStore.success(`LLM ${editingLLM ? 'updated' : 'created'} successfully!`);
-		} catch (e: any) {
-			console.error('Error saving LLM:', e);
-			const msg = formatError(e, 'Failed to save LLM');
+		} catch (saveError: unknown) {
+			console.error('Error saving LLM:', saveError);
+			const msg = formatError(saveError, 'Failed to save LLM');
 			formError = msg;
 			toastStore.error(msg);
 		} finally {
@@ -400,9 +401,9 @@
 			}
 			toastStore.success('LLM deleted');
 			await fetchLLMs();
-		} catch (e: any) {
-			console.error('Error deleting LLM:', e);
-			const message = formatError(e, 'Failed to delete LLM');
+		} catch (deleteError: unknown) {
+			console.error('Error deleting LLM:', deleteError);
+			const message = formatError(deleteError, 'Failed to delete LLM');
 			error = message;
 			toastStore.error(message);
 		}

@@ -1,43 +1,119 @@
-export interface ErrorNotification {
-	message: string;
-	details?: string;
+export class ApiError extends Error {
+	public readonly status: number;
+	public readonly details?: string;
+
+	constructor(status: number, message: string, details?: string) {
+		super(message);
+		this.name = 'ApiError';
+		this.status = status;
+		this.details = details;
+	}
 }
 
-export async function handleApiResponse<T>(response: Response): Promise<T> {
-	if (!response.ok) {
-		const errorText = await response.text();
-		console.error(`API Error [${response.status}]:`, errorText);
+async function parseErrorResponse(response: Response): Promise<ApiError> {
+	const errorText = await response.text();
+	let errorMessage = `Request failed with status ${response.status}`;
 
-		let errorMessage = `Request failed with status ${response.status}`;
-		try {
-			const errorJson = JSON.parse(errorText);
-			if (errorJson.error) {
-				errorMessage = errorJson.error;
-			}
-		} catch {
-			if (errorText) {
-				errorMessage = errorText;
-			}
+	try {
+		const errorJson = JSON.parse(errorText);
+		if (errorJson.error) {
+			errorMessage = errorJson.error;
 		}
+	} catch {
+		if (errorText) {
+			errorMessage = errorText;
+		}
+	}
 
-		throw new Error(errorMessage);
+	return new ApiError(response.status, errorMessage, errorText);
+}
+
+export async function apiGet<T>(url: string, signal?: AbortSignal): Promise<T> {
+	const response = await fetch(url, { signal });
+	if (!response.ok) {
+		throw await parseErrorResponse(response);
 	}
 	return response.json();
 }
 
-export async function apiCall<T>(url: string, options?: RequestInit): Promise<T> {
-	try {
-		const response = await fetch(url, options);
-		return await handleApiResponse<T>(response);
-	} catch (error) {
-		console.error('API call failed:', error);
-		throw error;
+export async function apiPost<T>(url: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+	const options: RequestInit = {
+		method: 'POST',
+		signal,
+	};
+	if (body !== undefined) {
+		options.headers = { 'Content-Type': 'application/json' };
+		options.body = JSON.stringify(body);
+	}
+	const response = await fetch(url, options);
+	if (!response.ok) {
+		throw await parseErrorResponse(response);
+	}
+	return response.json();
+}
+
+export async function apiPatch<T>(url: string, body: unknown, signal?: AbortSignal): Promise<T> {
+	const response = await fetch(url, {
+		method: 'PATCH',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(body),
+		signal,
+	});
+	if (!response.ok) {
+		throw await parseErrorResponse(response);
+	}
+	return response.json();
+}
+
+export async function apiDelete(url: string, signal?: AbortSignal): Promise<void> {
+	const response = await fetch(url, { method: 'DELETE', signal });
+	if (!response.ok) {
+		throw await parseErrorResponse(response);
 	}
 }
 
-export function showError(error: Error | unknown): string {
-	if (error instanceof Error) {
-		return error.message;
+export async function apiPostRaw(
+	url: string,
+	body: unknown,
+	signal?: AbortSignal
+): Promise<Response> {
+	const response = await fetch(url, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(body),
+		signal,
+	});
+	if (!response.ok) {
+		throw await parseErrorResponse(response);
 	}
-	return String(error);
+	return response;
+}
+
+export async function apiPostFormData<T>(
+	url: string,
+	formData: FormData,
+	signal?: AbortSignal
+): Promise<T> {
+	const response = await fetch(url, {
+		method: 'POST',
+		body: formData,
+		signal,
+	});
+	if (!response.ok) {
+		throw await parseErrorResponse(response);
+	}
+	return response.json();
+}
+
+export function buildQueryString(
+	params: Record<string, string | number | boolean | undefined | null>
+): string {
+	const searchParams = new URLSearchParams();
+	for (const [key, value] of Object.entries(params)) {
+		if (value !== undefined && value !== null && value !== '') {
+			searchParams.append(key, String(value));
+		}
+	}
+	const queryString = searchParams.toString();
+	return queryString ? `?${queryString}` : '';
 }

@@ -14,11 +14,11 @@ export interface StreamingState {
 
 export interface StreamingCallbacks {
 	onConnected?: () => void;
-	onRetrievalComplete?: (_messageId: number, _documents: RetrievedDocument[]) => void;
-	onContent?: (_messageId: number, _content: string) => void;
-	onProgress?: (_progress: StreamingProgress) => void;
-	onComplete?: (_messageId: number, _content: string, _documents: RetrievedDocument[]) => void;
-	onError?: (_error: string) => void;
+	onRetrievalComplete?: (messageId: number, documents: RetrievedDocument[]) => void;
+	onContent?: (messageId: number, content: string) => void;
+	onProgress?: (progress: StreamingProgress) => void;
+	onComplete?: (messageId: number, content: string, documents: RetrievedDocument[]) => void;
+	onError?: (error: string) => void;
 }
 
 export interface RetrievedDocument {
@@ -28,15 +28,17 @@ export interface RetrievedDocument {
 	item_title: string | null;
 }
 
+export interface ChatStreamSettings {
+	maxChunks: number;
+	minSimilarityScore: number;
+	temperature: number;
+	maxTokens: number;
+	systemPrompt: string;
+}
+
 export interface UseChatStreamOptions {
 	sessionId: string;
-	getSettings: () => {
-		maxChunks: number;
-		minSimilarityScore: number;
-		temperature: number;
-		maxTokens: number;
-		systemPrompt: string;
-	};
+	getSettings: () => ChatStreamSettings;
 	callbacks: StreamingCallbacks;
 }
 
@@ -44,52 +46,63 @@ export interface UseChatStreamResult {
 	messages: ChatMessage[];
 	isGenerating: boolean;
 	streamingState: StreamingState;
-	sendMessage: (_content: string) => Promise<void>;
-	regenerateMessage: (_messageId: number) => Promise<void>;
+	sendMessage: (content: string) => Promise<void>;
+	regenerateMessage: (messageId: number) => Promise<void>;
+	setMessages: (msgs: ChatMessage[]) => void;
 	cleanup: () => void;
+}
+
+let tempIdCounter = -1;
+
+function nextTempId(): number {
+	return tempIdCounter--;
 }
 
 export function useChatStream(options: UseChatStreamOptions): UseChatStreamResult {
 	const { sessionId, getSettings, callbacks } = options;
 
-	// State
 	let messages = $state<ChatMessage[]>([]);
 	let isGenerating = $state(false);
 	let streamingState = $state<StreamingState>({
 		status: null,
 		progress: null,
 	});
-	let eventSource: EventSource | null = null;
-	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+	let abortController: AbortController | null = null;
 	let accumulatedContent = '';
 	let actualMessageId: number | null = null;
-	let assistantPlaceholderId: number | 0;
+	let assistantPlaceholderId = 0;
 	let retrievedDocs: RetrievedDocument[] = [];
 	let buffer = '';
 
-	// Cleanup function
-	function cleanup() {
-		if (reconnectTimer) {
-			clearTimeout(reconnectTimer);
-			reconnectTimer = null;
-		}
-		if (eventSource) {
-			eventSource.close();
-			eventSource = null;
-		}
+	function resetStreamState() {
+		streamingState.status = null;
+		streamingState.progress = null;
+		isGenerating = false;
 	}
 
-	// Process SSE data
-	function processSSEData(data_str: string): void {
-		if (!data_str) return;
+	function cleanup() {
+		if (abortController) {
+			abortController.abort();
+			abortController = null;
+		}
+		resetStreamState();
+	}
 
-		const data = JSON.parse(data_str);
+	function updateMessage(targetId: number, updater: (msg: ChatMessage) => ChatMessage) {
+		messages = messages.map((msg) => (msg.message_id === targetId ? updater(msg) : msg));
+	}
+
+	function processSSEData(dataStr: string): void {
+		if (!dataStr) return;
+
+		const data = JSON.parse(dataStr);
 		const eventType = streamingState.status || data.type;
 
 		switch (eventType) {
 			case 'connected':
 				streamingState.status = 'retrieving';
-				if (callbacks.onConnected) callbacks.onConnected();
+				callbacks.onConnected?.();
 				break;
 
 			case 'retrieval_complete':
@@ -98,9 +111,7 @@ export function useChatStream(options: UseChatStreamOptions): UseChatStreamResul
 				if (data.text) {
 					accumulatedContent += data.text;
 				}
-				if (callbacks.onRetrievalComplete) {
-					callbacks.onRetrievalComplete(data.message_id, retrievedDocs);
-				}
+				callbacks.onRetrievalComplete?.(data.message_id, retrievedDocs);
 				streamingState.status = 'generating';
 				streamingState.progress = {
 					messageId: actualMessageId!,
@@ -112,14 +123,9 @@ export function useChatStream(options: UseChatStreamOptions): UseChatStreamResul
 			case 'content': {
 				const chunk = data.content || data.text || '';
 				accumulatedContent += chunk;
-				messages = messages.map((msg: ChatMessage) =>
-					msg.message_id === (actualMessageId || assistantPlaceholderId)
-						? { ...msg, content: accumulatedContent }
-						: msg
-				);
-				if (callbacks.onContent) {
-					callbacks.onContent(actualMessageId || assistantPlaceholderId, accumulatedContent);
-				}
+				const resolvedId = actualMessageId || assistantPlaceholderId;
+				updateMessage(resolvedId, (msg) => ({ ...msg, content: accumulatedContent }));
+				callbacks.onContent?.(resolvedId, accumulatedContent);
 				break;
 			}
 
@@ -129,79 +135,85 @@ export function useChatStream(options: UseChatStreamOptions): UseChatStreamResul
 					charCount: data.char_count,
 					elapsedSeconds: data.elapsed_seconds,
 				};
-				if (callbacks.onProgress) {
-					callbacks.onProgress(streamingState.progress);
-				}
+				callbacks.onProgress?.(streamingState.progress);
 				break;
 
 			case 'complete': {
 				const finalContent = data.content || accumulatedContent;
-				messages = messages.map((msg: ChatMessage) =>
-					msg.message_id === data.message_id
-						? { ...msg, status: 'complete', content: finalContent }
-						: msg
-				);
-				if (callbacks.onComplete) {
-					callbacks.onComplete(data.message_id, finalContent, retrievedDocs);
-				}
-				streamingState.status = null;
-				streamingState.progress = null;
-				isGenerating = false;
+				updateMessage(data.message_id, (msg) => ({
+					...msg,
+					status: 'complete',
+					content: finalContent,
+				}));
+				callbacks.onComplete?.(data.message_id, finalContent, retrievedDocs);
+				resetStreamState();
 				break;
 			}
 
 			case 'error': {
 				const error = data.error || 'Streaming error occurred';
-				if (callbacks.onError) {
-					callbacks.onError(error);
-				}
+				callbacks.onError?.(error);
 				if (actualMessageId) {
-					messages = messages.map((msg: ChatMessage) =>
-						msg.message_id === actualMessageId ? { ...msg, status: 'error' } : msg
-					);
+					updateMessage(actualMessageId, (msg) => ({ ...msg, status: 'error' }));
 				}
-				streamingState.status = null;
-				streamingState.progress = null;
-				isGenerating = false;
+				resetStreamState();
 				break;
 			}
 		}
 	}
 
-	// Start streaming
+	function processBufferedLines(lines: string[]): void {
+		for (const line of lines) {
+			if (line.startsWith('event:')) {
+				continue;
+			}
+			if (!line.startsWith('data:')) continue;
+
+			const dataStr = line.substring(5).trim();
+			if (!dataStr) continue;
+
+			try {
+				processSSEData(dataStr);
+			} catch (parseError) {
+				console.error('Error parsing SSE data:', parseError, 'Line:', line);
+			}
+		}
+	}
+
 	async function sendMessage(content: string): Promise<void> {
 		if (!content.trim() || isGenerating) return;
+
+		cleanup();
+		abortController = new AbortController();
 
 		isGenerating = true;
 		streamingState.status = 'connecting';
 		accumulatedContent = '';
-		actualMessageId = Date.now();
-		assistantPlaceholderId = Date.now() + 1;
+		actualMessageId = null;
+		assistantPlaceholderId = nextTempId();
 		retrievedDocs = [];
+		buffer = '';
 
-		// Add user message optimistically
+		const userTempId = nextTempId();
+		const now = new SvelteDate().toISOString();
+
 		messages = [
 			...messages,
 			{
-				message_id: actualMessageId,
+				message_id: userTempId,
 				role: 'user',
 				content,
-				created_at: new SvelteDate().toISOString(),
+				created_at: now,
 				tokens_used: null,
 				metadata: null,
 				documents_retrieved: null,
 				status: 'complete',
 			},
-		];
-
-		// Add placeholder assistant message
-		messages = [
-			...messages,
 			{
 				message_id: assistantPlaceholderId,
 				role: 'assistant',
 				content: '',
-				created_at: new SvelteDate().toISOString(),
+				created_at: now,
 				tokens_used: null,
 				metadata: null,
 				documents_retrieved: 0,
@@ -211,14 +223,12 @@ export function useChatStream(options: UseChatStreamOptions): UseChatStreamResul
 		];
 
 		try {
-			// Get current settings at the time of sending
 			const { maxChunks, minSimilarityScore, temperature, maxTokens, systemPrompt } = getSettings();
 
 			const response = await fetch(`/api/chat/sessions/${sessionId}/messages/stream`, {
 				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-				},
+				headers: { 'Content-Type': 'application/json' },
+				signal: abortController.signal,
 				body: JSON.stringify({
 					content,
 					max_context_documents: maxChunks,
@@ -239,7 +249,6 @@ export function useChatStream(options: UseChatStreamOptions): UseChatStreamResul
 			}
 
 			const decoder = new TextDecoder();
-			let currentEventType = '';
 
 			while (true) {
 				const { done, value } = await reader.read();
@@ -247,103 +256,50 @@ export function useChatStream(options: UseChatStreamOptions): UseChatStreamResul
 
 				buffer += decoder.decode(value, { stream: true });
 				const lines = buffer.split('\n');
-
-				// Keep the last incomplete line in buffer
 				buffer = lines.pop() || '';
-
-				for (const line of lines) {
-					if (line.startsWith('event:')) {
-						currentEventType = line.substring(6).trim();
-						continue;
-					}
-
-					if (!line.startsWith('data:')) continue;
-
-					const data_str = line.substring(5).trim();
-					if (!data_str) continue;
-
-					try {
-						currentEventType = '';
-						processSSEData(data_str);
-					} catch (e) {
-						console.error('Error parsing SSE data:', e, 'Line:', line);
-					}
-				}
+				processBufferedLines(lines);
 			}
 
-			// Process any remaining data in buffer after stream ends
 			if (buffer.trim()) {
 				const remainingLines = buffer.split('\n');
-				for (const line of remainingLines) {
-					if (line.startsWith('event:')) {
-						currentEventType = line.substring(6).trim();
-					} else if (line.startsWith('data:')) {
-						const data_str = line.substring(5).trim();
-						if (data_str) {
-							try {
-								const data = JSON.parse(data_str);
-								if (currentEventType === 'content') {
-									const chunk = data.content || data.text || '';
-									accumulatedContent += chunk;
-									messages = messages.map((msg: ChatMessage) =>
-										msg.message_id === (actualMessageId || assistantPlaceholderId)
-											? { ...msg, content: accumulatedContent }
-											: msg
-									);
-								} else if (currentEventType === 'complete') {
-									messages = messages.map((msg: ChatMessage) =>
-										msg.message_id === data.message_id
-											? { ...msg, status: 'complete', content: accumulatedContent }
-											: msg
-									);
-								}
-							} catch (e) {
-								console.error('Error parsing remaining SSE data:', e);
-							}
-						}
-						currentEventType = '';
-					}
-				}
+				processBufferedLines(remainingLines);
 			}
 
-			// Ensure cleanup happens after stream ends
 			if (isGenerating) {
 				if (actualMessageId) {
-					messages = messages.map((msg: ChatMessage) =>
-						msg.message_id === actualMessageId
-							? { ...msg, status: 'complete', content: accumulatedContent }
-							: msg
-					);
+					updateMessage(actualMessageId, (msg) => ({
+						...msg,
+						status: 'complete',
+						content: accumulatedContent,
+					}));
 				}
-				isGenerating = false;
-				streamingState.status = null;
-				streamingState.progress = null;
+				resetStreamState();
 			}
 		} catch (error) {
-			const errorMessage = error instanceof Error ? error.message : 'An error occurred';
-			if (callbacks.onError) {
-				callbacks.onError(errorMessage);
+			if (error instanceof DOMException && error.name === 'AbortError') {
+				return;
 			}
-			isGenerating = false;
-			streamingState.status = null;
-			streamingState.progress = null;
+			const errorMessage = error instanceof Error ? error.message : 'An error occurred';
+			callbacks.onError?.(errorMessage);
+			resetStreamState();
+		} finally {
+			abortController = null;
 		}
 	}
 
-	// Regenerate message
 	async function regenerateMessage(messageId: number): Promise<void> {
 		if (isGenerating) return;
 
+		cleanup();
+		abortController = new AbortController();
 		isGenerating = true;
 
-		// Update message status to incomplete
-		messages = messages.map((msg: ChatMessage) =>
-			msg.message_id === messageId ? { ...msg, status: 'incomplete', content: '' } : msg
-		);
+		updateMessage(messageId, (msg) => ({ ...msg, status: 'incomplete', content: '' }));
 
 		try {
 			const response = await fetch(`/api/chat/messages/${messageId}/regenerate?stream=false`, {
 				method: 'POST',
+				signal: abortController.signal,
 			});
 
 			if (!response.ok) {
@@ -352,34 +308,29 @@ export function useChatStream(options: UseChatStreamOptions): UseChatStreamResul
 
 			const result = await response.json();
 
-			// Update message with new content
-			messages = messages.map((msg: ChatMessage) =>
-				msg.message_id === messageId
-					? {
-							...msg,
-							content: result.content,
-							status: 'complete',
-							retrieved_documents: result.retrieved_documents || [],
-						}
-					: msg
-			);
+			updateMessage(messageId, (msg) => ({
+				...msg,
+				content: result.content,
+				status: 'complete',
+				retrieved_documents: result.retrieved_documents || [],
+			}));
 
-			if (callbacks.onComplete) {
-				callbacks.onComplete(messageId, result.content, result.retrieved_documents || []);
-			}
+			callbacks.onComplete?.(messageId, result.content, result.retrieved_documents || []);
 		} catch (error) {
-			const errorMessage = error instanceof Error ? error.message : 'An error occurred';
-			if (callbacks.onError) {
-				callbacks.onError(errorMessage);
+			if (error instanceof DOMException && error.name === 'AbortError') {
+				return;
 			}
-
-			// Update message status to error
-			messages = messages.map((msg: ChatMessage) =>
-				msg.message_id === messageId ? { ...msg, status: 'error' } : msg
-			);
+			const errorMessage = error instanceof Error ? error.message : 'An error occurred';
+			callbacks.onError?.(errorMessage);
+			updateMessage(messageId, (msg) => ({ ...msg, status: 'error' }));
 		} finally {
 			isGenerating = false;
+			abortController = null;
 		}
+	}
+
+	function setMessages(msgs: ChatMessage[]) {
+		messages = msgs;
 	}
 
 	return {
@@ -392,6 +343,7 @@ export function useChatStream(options: UseChatStreamOptions): UseChatStreamResul
 		streamingState,
 		sendMessage,
 		regenerateMessage,
+		setMessages,
 		cleanup,
 	};
 }

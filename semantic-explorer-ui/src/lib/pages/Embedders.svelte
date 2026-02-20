@@ -5,6 +5,7 @@
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import SearchInput from '$lib/components/SearchInput.svelte';
 	import type { Embedder, PaginatedResponse, ProviderDefaultConfig } from '$lib/types/models';
+	import { asEmbedderConfig, asProviderConfig } from '$lib/types/models';
 	import { formatError, toastStore } from '$lib/utils/notifications';
 	import { Table, TableBody, TableBodyCell, TableHead, TableHeadCell } from 'flowbite-svelte';
 	import { onMount } from 'svelte';
@@ -113,8 +114,8 @@
 				console.error('Failed to fetch inference models:', response.statusText);
 				return;
 			}
-			const embedderModels: any[] = await response.json();
-			inferenceModels = [...new Set(embedderModels.map((m: any) => m.id))].sort();
+			const embedderModels: Array<{ id: string; dimensions?: number }> = await response.json();
+			inferenceModels = [...new Set(embedderModels.map((m) => m.id))].sort();
 			const dimMap: Record<string, number> = {};
 			for (const model of embedderModels) {
 				if (model.dimensions) {
@@ -201,9 +202,9 @@
 			}
 
 			testMessage = `Connection successful! Generated ${embeddingCount} embedding(s).`;
-		} catch (e: any) {
+		} catch (error: unknown) {
 			testStatus = 'error';
-			testMessage = e.message || 'Test failed.';
+			testMessage = formatError(error, 'Test failed.');
 		}
 	}
 
@@ -260,9 +261,9 @@
 			const data: PaginatedResponse<Embedder> = await response.json();
 			embedders = data.items;
 			totalCount = data.total_count;
-		} catch (e: any) {
-			console.error('Error fetching embedders:', e);
-			error = e.message || 'Failed to load embedders';
+		} catch (fetchError: unknown) {
+			console.error('Error fetching embedders:', fetchError);
+			error = formatError(fetchError, 'Failed to load embedders');
 		} finally {
 			loading = false;
 			initialFetchDone = true;
@@ -292,11 +293,11 @@
 		formConfig = JSON.stringify(embedder.config, null, 2);
 		formBatchSize = embedder.batch_size ?? 100;
 		formDimensions = embedder.dimensions ?? 1536;
-		formMaxInputTokens = (embedder as any).max_input_tokens ?? 8191;
-		formTruncateStrategy = (embedder as any).truncate_strategy ?? 'NONE';
+		formMaxInputTokens = embedder.max_input_tokens ?? 8191;
+		formTruncateStrategy = embedder.truncate_strategy ?? 'NONE';
 		formIsPublic = embedder.is_public ?? false;
 		try {
-			const cfg = embedder.config || {};
+			const cfg = asEmbedderConfig(embedder.config || {});
 			const defaults = providerDefaults[formProvider] || {};
 
 			if (cfg.model && defaults.models?.includes(cfg.model)) {
@@ -360,11 +361,10 @@
 				localModel = defaults.models?.[0] || '';
 				customModel = '';
 				// Update the config with the provider's default model
-				let config: Record<string, any> = {};
+				let config: Record<string, unknown> = {};
 				try {
 					config = JSON.parse(formConfig);
 				} catch {
-					// Ignore parsing errors, use defaults
 					config = { ...defaults.config };
 				}
 				if (defaults.models?.[0]) {
@@ -375,7 +375,9 @@
 
 			localInputType = defaults.inputTypes?.[0] || '';
 			localDimensions =
-				defaults.config.dimensions || (localModel && inferenceModelDimensions[localModel]) || null;
+				asProviderConfig(defaults.config).dimensions ||
+				(localModel && inferenceModelDimensions[localModel]) ||
+				null;
 
 			// Set batch size based on provider
 			if (formProvider === 'openai') {
@@ -390,10 +392,10 @@
 
 			formDimensions = localDimensions ?? 1536;
 			customInputType = '';
-			customEmbeddingTypes = defaults.config.embedding_types
-				? defaults.config.embedding_types.join(', ')
+			customEmbeddingTypes = asProviderConfig(defaults.config).embedding_types
+				? asProviderConfig(defaults.config).embedding_types!.join(', ')
 				: '';
-			customTruncate = defaults.config.truncate || '';
+			customTruncate = asProviderConfig(defaults.config).truncate || '';
 		}
 	}
 
@@ -470,9 +472,9 @@
 			showCreateForm = false;
 			toastStore.success(`Embedder ${editingEmbedder ? 'updated' : 'created'} successfully!`);
 			await fetchEmbedders();
-		} catch (e: any) {
-			console.error('Error saving embedder:', e);
-			const msg = formatError(e, 'Failed to save embedder');
+		} catch (saveError: unknown) {
+			console.error('Error saving embedder:', saveError);
+			const msg = formatError(saveError, 'Failed to save embedder');
 			formError = msg;
 			toastStore.error(msg);
 		} finally {
@@ -500,9 +502,9 @@
 			}
 			toastStore.success('Embedder deleted');
 			await fetchEmbedders();
-		} catch (e: any) {
-			console.error('Error deleting embedder:', e);
-			const message = formatError(e, 'Failed to delete embedder');
+		} catch (deleteError: unknown) {
+			console.error('Error deleting embedder:', deleteError);
+			const message = formatError(deleteError, 'Failed to delete embedder');
 			error = message;
 			toastStore.error(message);
 		}

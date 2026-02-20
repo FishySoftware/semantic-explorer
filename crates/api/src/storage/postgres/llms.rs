@@ -83,6 +83,7 @@ const GET_PUBLIC_LLMS_QUERY: &str = r#"
     FROM llms
     WHERE is_public = TRUE
     ORDER BY created_at DESC
+    LIMIT $1 OFFSET $2
 "#;
 
 const GET_RECENT_PUBLIC_LLMS_QUERY: &str = r#"
@@ -219,9 +220,13 @@ pub(crate) async fn get_llms_with_search(
 #[tracing::instrument(name = "database.get_public_llms", skip(pool, encryption), fields(database.system = "postgresql", database.operation = "SELECT"))]
 pub(crate) async fn get_public_llms(
     pool: &Pool<Postgres>,
+    limit: i64,
+    offset: i64,
     encryption: &EncryptionService,
 ) -> Result<Vec<LargeLanguageModel>> {
     let result = sqlx::query_as::<_, LargeLanguageModel>(GET_PUBLIC_LLMS_QUERY)
+        .bind(limit)
+        .bind(offset)
         .fetch_all(pool)
         .await;
 

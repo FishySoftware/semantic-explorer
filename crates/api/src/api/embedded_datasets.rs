@@ -472,9 +472,7 @@ pub async fn get_point_vector(
         }
     } else {
         error!("Failed to parse point_id as UUID or u64: {}", point_id);
-        return HttpResponse::BadRequest().json(serde_json::json!({
-            "error": format!("Invalid point_id format: must be a valid UUID or numeric ID")
-        }));
+        return bad_request("Invalid point_id format: must be a valid UUID or numeric ID");
     };
 
     let points = match qdrant_client
@@ -506,9 +504,12 @@ pub async fn get_point_vector(
             .as_ref()
             .and_then(|vo| match vo {
                 qdrant_client::qdrant::vectors_output::VectorsOptions::Vector(vector_output) => {
-                    // VectorOutput has the data field - clone the entire vector
-                    #[allow(deprecated)]
-                    Some(vector_output.data.clone())
+                    match vector_output.clone().into_vector() {
+                        qdrant_client::qdrant::vector_output::Vector::Dense(dense) => {
+                            Some(dense.data)
+                        }
+                        _ => None,
+                    }
                 }
                 _ => None,
             })

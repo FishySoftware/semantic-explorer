@@ -27,7 +27,6 @@ The datasets worker:
 
 - **Qdrant client caching**: Clients cached by URL to avoid connection overhead
 - **Adaptive concurrency**: Dynamically adjusts parallelism based on downstream pressure (503s)
-- **Circuit breakers**: Qdrant, S3, and inference API operations protected
 - **Automatic retries**: Exponential backoff with sensible defaults for transient failures
 - **Health endpoint**: `/healthz`, `/readyz`, `/status` for Kubernetes probes (default port `8083`)
 

@@ -46,12 +46,15 @@ pub enum ApiError {
     /// Bad request / validation error (400)
     #[error("{0}")]
     BadRequest(String),
-    /// Unauthorized access (401) - Ready for Phase 5.2 migration
+    /// Unauthorized access (401)
     #[error("{0}")]
     Unauthorized(String),
     /// Conflict - resource has dependencies (409)
     #[error("{0}")]
     Conflict(String),
+    /// Service temporarily unavailable (503) — circuit breaker open
+    #[error("{0}")]
+    ServiceUnavailable(String),
     /// Internal server error (500)
     #[error("{0}")]
     Internal(String),
@@ -70,6 +73,7 @@ impl ResponseError for ApiError {
             ApiError::BadRequest(_) => StatusCode::BAD_REQUEST,
             ApiError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             ApiError::Conflict(_) => StatusCode::CONFLICT,
+            ApiError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             ApiError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::Validation(_) => StatusCode::BAD_REQUEST,
@@ -84,6 +88,7 @@ impl ResponseError for ApiError {
             ApiError::BadRequest(msg) => ("BadRequest", msg.clone()),
             ApiError::Unauthorized(msg) => ("Unauthorized", msg.clone()),
             ApiError::Conflict(msg) => ("Conflict", msg.clone()),
+            ApiError::ServiceUnavailable(msg) => ("ServiceUnavailable", msg.clone()),
             ApiError::Internal(msg) => ("InternalServerError", msg.clone()),
             ApiError::Database(e) => {
                 // Log the actual error for debugging but don't expose to client

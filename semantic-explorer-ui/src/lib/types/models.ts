@@ -19,13 +19,12 @@ export interface ProcessedFile {
 	processing_duration_ms: number | null;
 }
 
-// --- Datasets ---
-
 export interface Dataset {
 	dataset_id: number;
 	title: string;
 	details: string | null;
 	owner: string;
+	owner_display_name?: string;
 	tags: string[];
 	is_public: boolean;
 	item_count?: number;
@@ -49,9 +48,9 @@ export interface DatasetItemSummary {
 export interface DatasetItemChunks {
 	chunks: Array<{
 		content: string;
-		metadata: Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+		metadata: Record<string, unknown>;
 	}>;
-	metadata: Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+	metadata: Record<string, unknown>;
 }
 
 export interface PaginatedItems {
@@ -67,7 +66,7 @@ export interface DatasetTransform {
 	embedder_ids: number[];
 	owner: string;
 	is_enabled: boolean;
-	job_config: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+	job_config: Record<string, unknown>;
 	created_at: string;
 	updated_at: string;
 }
@@ -130,8 +129,6 @@ export interface DatasetTransformBatch {
 	updated_at: string;
 }
 
-// --- Embedded Datasets ---
-
 export interface EmbeddedDataset {
 	embedded_dataset_id: number;
 	title: string;
@@ -139,44 +136,39 @@ export interface EmbeddedDataset {
 	source_dataset_id: number;
 	embedder_id: number;
 	owner: string;
+	owner_display_name?: string;
 	collection_name: string;
-	dimensions?: number; // Vector dimensions (required for standalone, derived from embedder otherwise)
+	dimensions?: number;
 	created_at: string;
 	updated_at: string;
-	// Optional fields (populated via joins or separate fetches)
 	source_dataset_title?: string;
 	embedder_name?: string;
 	active_point_count?: number;
-	is_standalone?: boolean; // True if dataset_transform_id, source_dataset_id, and embedder_id are 0
-	collection_id?: number; // Collection ID if this embedded dataset was created from a collection transform
-	collection_title?: string; // Collection title if this embedded dataset was created from a collection transform
+	is_standalone?: boolean;
+	collection_id?: number;
+	collection_title?: string;
 }
 
-// Request to create a standalone embedded dataset
 export interface CreateStandaloneEmbeddedDatasetRequest {
 	title: string;
 	dimensions: number;
 }
 
-// A single vector point for push operations
 export interface VectorPoint {
 	id: string;
 	vector: number[];
 	payload: Record<string, unknown>;
 }
 
-// Request to push vectors to a standalone embedded dataset
 export interface PushVectorsRequest {
 	points: VectorPoint[];
 }
 
-// Response from push vectors operation
 export interface PushVectorsResponse {
 	points_inserted: number;
 	collection_name: string;
 }
 
-// Define the specific list response structure for Embedded Datasets as it uses a different field name
 export interface PaginatedEmbeddedDatasetList {
 	embedded_datasets: EmbeddedDataset[];
 	total_count: number;
@@ -209,23 +201,23 @@ export interface ProcessedBatch {
 	processing_duration_ms: number | null;
 }
 
-// --- Embedders ---
-
 export interface Embedder {
 	embedder_id: number;
 	name: string;
 	owner: string;
+	owner_display_name?: string;
 	provider: string;
 	base_url: string;
 	api_key: string | null;
-	config: Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+	config: Record<string, unknown>;
 	batch_size?: number;
 	dimensions?: number;
+	max_input_tokens?: number;
+	truncate_strategy?: string;
 	collection_name: string;
 	is_public: boolean;
 	created_at: string;
 	updated_at: string;
-	// Optional fields
 	title?: string;
 }
 
@@ -235,21 +227,20 @@ export type ProviderDefaultConfig = {
 	inputTypes?: string[];
 	embeddingTypes?: string[];
 	truncate?: string[];
-	config: Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+	config: Record<string, unknown>;
 };
-
-// --- Collections ---
 
 export interface Collection {
 	collection_id: number;
 	title: string;
 	details: string | null;
 	owner: string;
+	owner_display_name?: string;
 	bucket: string;
 	tags: string[];
+	is_public?: boolean;
 	created_at: string;
 	updated_at: string;
-	// Stats
 	total_files?: number;
 	total_size_bytes?: number;
 	processed_files?: number;
@@ -289,9 +280,12 @@ export interface CollectionTransform {
 	owner_display_name: string;
 	is_enabled: boolean;
 	chunk_size: number;
-	job_config: Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+	job_config: Record<string, unknown>;
 	created_at: string;
 	updated_at: string;
+	last_run_stats?: Record<string, unknown>;
+	last_run_at?: string;
+	last_run_status?: string;
 }
 
 export interface CollectionTransformStats {
@@ -302,8 +296,6 @@ export interface CollectionTransformStats {
 	total_items_created: number;
 	last_run_at: string | null;
 }
-
-// --- Visualizations ---
 
 export interface VisualizationStats {
 	visualization_transform_id: number;
@@ -333,7 +325,6 @@ export interface VisualizationConfig {
 	min_samples: number | null;
 	topic_naming_llm_id: number | null;
 	topic_naming_prompt: string;
-	// Datamapplot create_interactive_plot parameters
 	inline_data: boolean;
 	noise_label: string;
 	noise_color: string;
@@ -349,7 +340,6 @@ export interface VisualizationConfig {
 	cluster_boundary_polygons: boolean;
 	polygon_alpha: number;
 	cvd_safer: boolean;
-	// Datamapplot render_html parameters
 	title: string | null;
 	sub_title: string | null;
 	title_font_size: number;
@@ -381,6 +371,14 @@ export interface VisualizationConfig {
 	background_image: string | null;
 }
 
+export interface VisualizationTransformRunStats {
+	n_points?: number;
+	n_clusters?: number;
+	processing_duration_ms?: number;
+	point_count?: number;
+	cluster_count?: number;
+}
+
 export interface VisualizationTransform {
 	visualization_transform_id: number;
 	title: string;
@@ -393,13 +391,7 @@ export interface VisualizationTransform {
 	last_run_status: string | null;
 	last_run_at: string | null;
 	last_error: string | null;
-	last_run_stats: {
-		n_points?: number;
-		n_clusters?: number;
-		processing_duration_ms?: number;
-		point_count?: number;
-		cluster_count?: number;
-	} | null;
+	last_run_stats: VisualizationTransformRunStats | null;
 	created_at: string;
 	updated_at: string;
 }
@@ -432,13 +424,11 @@ export interface DatabaseVisualization {
 	created_at: string;
 }
 
-// --- Search ---
-
 export interface SearchMatch {
 	id: string;
 	score: number;
 	text: string;
-	metadata: Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+	metadata: Record<string, unknown>;
 }
 
 export interface DocumentResult {
@@ -468,8 +458,6 @@ export interface SearchResponse {
 	search_mode: 'documents' | 'chunks';
 }
 
-// --- Chat & LLMs ---
-
 export interface ModelInfo {
 	id: string;
 	name: string;
@@ -490,7 +478,7 @@ export interface LLM {
 	provider: string;
 	base_url: string;
 	api_key: string | null;
-	config: Record<string, any> | any; // eslint-disable-line @typescript-eslint/no-explicit-any
+	config: Record<string, unknown>;
 	is_public: boolean;
 	created_at: string;
 	updated_at: string;
@@ -518,10 +506,9 @@ export interface ChatMessage {
 	content: string;
 	created_at: string;
 	tokens_used: number | null;
-	metadata: Record<string, any> | null; // eslint-disable-line @typescript-eslint/no-explicit-any
-	// Frontend/Optional props
+	metadata: Record<string, unknown> | null;
 	documents_retrieved?: number | null;
-	status?: string; // 'complete', 'incomplete', 'error'
+	status?: string;
 	retrieved_documents?: RetrievedDocument[];
 	embedded_dataset_id?: number;
 }
@@ -531,4 +518,69 @@ export interface RetrievedDocument {
 	text: string;
 	similarity_score: number;
 	item_title: string | null;
+}
+
+export interface MarketplaceCollection {
+	collection_id: number;
+	title: string;
+	details: string | null;
+	owner_display_name: string;
+	tags: string[];
+	is_public: boolean;
+	created_at?: string;
+}
+
+export interface MarketplaceDataset {
+	dataset_id: number;
+	title: string;
+	details: string | null;
+	owner_display_name: string;
+	tags: string[];
+	is_public: boolean;
+	created_at?: string;
+}
+
+export interface MarketplaceEmbedder {
+	embedder_id: number;
+	name: string;
+	owner_display_name: string;
+	provider: string;
+	base_url: string;
+	dimensions: number;
+	is_public: boolean;
+	created_at?: string;
+}
+
+export interface MarketplaceLLM {
+	llm_id: number;
+	name: string;
+	owner_display_name: string;
+	provider: string;
+	base_url: string;
+	is_public: boolean;
+	created_at?: string;
+}
+
+export interface EmbedderConfigFields {
+	model?: string;
+	dimensions?: number;
+	input_type?: string;
+	embedding_types?: string[];
+	truncate?: string;
+}
+
+export interface LLMConfigFields {
+	model?: string;
+}
+
+export function asEmbedderConfig(config: Record<string, unknown>): EmbedderConfigFields {
+	return config as EmbedderConfigFields;
+}
+
+export function asLLMConfig(config: Record<string, unknown>): LLMConfigFields {
+	return config as LLMConfigFields;
+}
+
+export function asProviderConfig(config: Record<string, unknown>): EmbedderConfigFields {
+	return config as EmbedderConfigFields;
 }

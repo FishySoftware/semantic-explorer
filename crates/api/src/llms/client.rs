@@ -43,13 +43,13 @@ pub struct ChatRequest {
 pub struct ChatResponse {
     /// Generated message
     pub message: ChatMessage,
-    /// Model used (kept for API compatibility and logging)
+    /// Model used
     #[allow(dead_code)]
     pub model: String,
-    /// Number of tokens generated (kept for API compatibility and metrics)
+    /// Number of tokens generated
     #[allow(dead_code)]
     pub tokens_generated: usize,
-    /// Reason generation stopped (length, stop, eos, error) (kept for API compatibility)
+    /// Reason generation stopped (length, stop, eos, error)
     #[allow(dead_code)]
     pub finish_reason: String,
 }

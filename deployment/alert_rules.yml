@@ -198,6 +198,21 @@ groups:
             Queue has {{ $value }} pending messages.
             Workers may be lagging. Check worker processes.
 
+      - alert: DLQMessagesAppearing
+        expr: |
+          rate(dlq_messages_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: info
+          service: worker
+        annotations:
+          summary: "Jobs arriving in Dead Letter Queue"
+          description: |
+            Transform type: {{ $labels.transform_type }}
+            Reason: {{ $labels.reason }}
+            Jobs are being sent to the DLQ after exhausting retries.
+            This is an early warning — investigate before it escalates.
+
       - alert: DLQMessagesGrowing
         expr: |
           increase(dlq_messages_total[1h]) > 10

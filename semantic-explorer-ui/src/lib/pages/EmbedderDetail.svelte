@@ -4,47 +4,11 @@
 	import ConfirmDialog from '../components/ConfirmDialog.svelte';
 	import LoadingState from '../components/LoadingState.svelte';
 	import TabPanel from '../components/TabPanel.svelte';
+	import type { Dataset, EmbeddedDataset, Embedder } from '../types/models';
+	import { asEmbedderConfig } from '../types/models';
+	import { apiDelete, apiGet, apiPatch } from '../utils/api';
 	import { formatError, toastStore } from '../utils/notifications';
 	import { formatDate } from '../utils/ui-helpers';
-
-	interface Embedder {
-		embedder_id: number;
-		name: string;
-		owner: string;
-		provider: string;
-		base_url: string;
-		api_key: string | null;
-		config: Record<string, any>;
-		batch_size?: number;
-		dimensions?: number;
-		collection_name: string;
-		is_public: boolean;
-		created_at: string;
-		updated_at: string;
-	}
-
-	interface EmbeddedDataset {
-		embedded_dataset_id: number;
-		title: string;
-		source_dataset_id: number;
-		embedder_id: number;
-		owner: string;
-		collection_name: string;
-		created_at: string;
-		updated_at: string;
-	}
-
-	interface Dataset {
-		dataset_id: number;
-		title: string;
-	}
-
-	interface PaginatedEmbedderList {
-		items: Embedder[];
-		total_count: number;
-		limit: number;
-		offset: number;
-	}
 
 	interface Props {
 		embedderId: number;
@@ -90,18 +54,9 @@
 		try {
 			loading = true;
 			error = null;
-			const response = await fetch('/api/embedders?limit=10&offset=0');
-			if (!response.ok) {
-				throw new Error(`Failed to fetch embedders: ${response.statusText}`);
-			}
-			const data: PaginatedEmbedderList = await response.json();
-			const embedders: Embedder[] = data.items;
-			embedder = embedders.find((e) => e.embedder_id === embedderId) || null;
-			if (!embedder) {
-				throw new Error('Embedder not found');
-			}
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to fetch embedder';
+			embedder = await apiGet<Embedder>(`/api/embedders/${embedderId}`);
+		} catch (fetchError) {
+			error = formatError(fetchError, 'Failed to fetch embedder');
 		} finally {
 			loading = false;
 		}
@@ -112,15 +67,12 @@
 			return datasetsCache.get(datasetId) || null;
 		}
 		try {
-			const response = await fetch(`/api/datasets/${datasetId}`);
-			if (response.ok) {
-				const dataset = await response.json();
-				datasetsCache.set(datasetId, dataset);
-				datasetsCache = datasetsCache; // Trigger reactivity
-				return dataset;
-			}
-		} catch (e) {
-			console.error(`Failed to fetch dataset ${datasetId}:`, e);
+			const dataset = await apiGet<Dataset>(`/api/datasets/${datasetId}`);
+			datasetsCache.set(datasetId, dataset);
+			datasetsCache = datasetsCache;
+			return dataset;
+		} catch (fetchError) {
+			console.error(`Failed to fetch dataset ${datasetId}:`, fetchError);
 		}
 		return null;
 	}
@@ -128,22 +80,17 @@
 	async function fetchEmbeddedDatasets() {
 		try {
 			embeddingsLoading = true;
-			const response = await fetch('/api/embedded-datasets');
-			if (!response.ok) {
-				throw new Error(`Failed to fetch embedded datasets: ${response.statusText}`);
-			}
-			const data = await response.json();
-			const allEmbeddedDatasets: EmbeddedDataset[] = data.embedded_datasets || [];
+			const data = await apiGet<{ embedded_datasets: EmbeddedDataset[] }>('/api/embedded-datasets');
+			const allEmbeddedDatasets = data.embedded_datasets || [];
 			embeddedDatasets = allEmbeddedDatasets
 				.filter((ed) => ed.embedder_id === embedderId)
 				.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
-			// Fetch dataset information for each embedded dataset
 			for (const ed of embeddedDatasets) {
 				await fetchDataset(ed.source_dataset_id);
 			}
-		} catch (e) {
-			toastStore.error(formatError(e, 'Failed to load embedded datasets'));
+		} catch (fetchError) {
+			toastStore.error(formatError(fetchError, 'Failed to load embedded datasets'));
 		} finally {
 			embeddingsLoading = false;
 		}
@@ -158,8 +105,8 @@
 		editFormConfig = JSON.stringify(embedder.config, null, 2);
 		editFormBatchSize = embedder.batch_size ?? 100;
 		editFormDimensions = embedder.dimensions ?? 1536;
-		editFormMaxInputTokens = (embedder as any).max_input_tokens ?? 8191;
-		editFormTruncateStrategy = (embedder as any).truncate_strategy ?? 'NONE';
+		editFormMaxInputTokens = embedder.max_input_tokens ?? 8191;
+		editFormTruncateStrategy = embedder.truncate_strategy ?? 'NONE';
 		editFormIsPublic = embedder.is_public || false;
 		editError = null;
 	}
@@ -189,22 +136,12 @@
 				is_public: editFormIsPublic,
 			};
 
-			const response = await fetch(`/api/embedders/${embedderId}`, {
-				method: 'PATCH',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(body),
-			});
-
-			if (!response.ok) {
-				throw new Error(`Failed to save embedder: ${response.statusText}`);
-			}
-
-			const updatedEmbedder = await response.json();
+			const updatedEmbedder = await apiPatch<Embedder>(`/api/embedders/${embedderId}`, body);
 			embedder = updatedEmbedder;
 			editMode = false;
 			toastStore.success('Embedder updated successfully');
-		} catch (e) {
-			editError = formatError(e, 'Failed to save embedder');
+		} catch (saveError) {
+			editError = formatError(saveError, 'Failed to save embedder');
 		} finally {
 			editLoading = false;
 		}
@@ -214,12 +151,13 @@
 		testMessage = '';
 		try {
 			testStatus = 'testing';
-			let config: Record<string, any>;
+			let config: Record<string, unknown>;
 			if (editMode) {
 				config = JSON.parse(editFormConfig);
 			} else {
 				config = embedder?.config || {};
 			}
+			const typedConfig = asEmbedderConfig(config);
 			const provider = embedder?.provider || 'openai';
 			const baseUrl = editMode ? editFormBaseUrl : embedder?.base_url || '';
 			const apiKey = editMode ? editFormApiKey : embedder?.api_key || '';
@@ -236,8 +174,8 @@
 					},
 					body: JSON.stringify({
 						input: testText,
-						model: config.model || 'text-embedding-3-small',
-						...(config.dimensions && { dimensions: config.dimensions }),
+						model: typedConfig.model || 'text-embedding-3-small',
+						...(typedConfig.dimensions && { dimensions: typedConfig.dimensions }),
 					}),
 				});
 			} else if (provider === 'cohere') {
@@ -249,14 +187,14 @@
 					},
 					body: JSON.stringify({
 						texts: testText,
-						model: config.model || 'embed-v4.0',
-						...(config.input_type && { input_type: config.input_type }),
-						...(config.embedding_types && { embedding_types: config.embedding_types }),
-						...(config.truncate && { truncate: config.truncate }),
+						model: typedConfig.model || 'embed-v4.0',
+						...(typedConfig.input_type && { input_type: typedConfig.input_type }),
+						...(typedConfig.embedding_types && { embedding_types: typedConfig.embedding_types }),
+						...(typedConfig.truncate && { truncate: typedConfig.truncate }),
 					}),
 				});
 			} else if (provider === 'huggingface') {
-				const model = config.model || 'sentence-transformers/all-MiniLM-L6-v2';
+				const model = typedConfig.model || 'sentence-transformers/all-MiniLM-L6-v2';
 				response = await fetch(`${baseUrl}/pipeline/feature-extraction/${model}`, {
 					method: 'POST',
 					headers: {
@@ -297,9 +235,9 @@
 			}
 
 			testMessage = `Connection successful! Generated ${embeddingCount} embedding(s).`;
-		} catch (e: any) {
+		} catch (testError: unknown) {
 			testStatus = 'error';
-			testMessage = e.message || 'Test failed.';
+			testMessage = formatError(testError, 'Test failed.');
 		}
 	}
 
@@ -307,15 +245,7 @@
 		if (!embedder) return;
 
 		try {
-			const response = await fetch(`/api/embedders/${embedderId}`, {
-				method: 'DELETE',
-			});
-
-			if (!response.ok) {
-				const body = await response.json().catch(() => null);
-				throw new Error(body?.message || `Failed to delete embedder: ${response.statusText}`);
-			}
-
+			await apiDelete(`/api/embedders/${embedderId}`);
 			toastStore.success('Embedder deleted successfully');
 			embedderPendingDelete = false;
 			onBack();

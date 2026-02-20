@@ -1,7 +1,9 @@
 use crate::observability::record_storage_operation;
 use anyhow::{Context, Result, bail};
 use aws_config::{BehaviorVersion, Region};
-use aws_sdk_s3::{Client, config::Credentials};
+use aws_sdk_s3::Client;
+use aws_sdk_s3::config::Credentials;
+use aws_sdk_s3::types::{Delete, ObjectIdentifier};
 use once_cell::sync::Lazy;
 use serde::Serialize;
 use std::{env, time::Instant};
@@ -103,12 +105,12 @@ pub async fn upload_document(client: &Client, document: DocumentUpload) -> Resul
     Ok(())
 }
 
-#[tracing::instrument(name = "s3.list_files", skip(s3_client), fields(storage.system = "s3", bucket = %bucket, page = %page, page_size = %page_size))]
+#[tracing::instrument(name = "s3.list_files", skip(s3_client), fields(storage.system = "s3", bucket = %bucket, page_size = %page_size))]
 pub async fn list_files(
     s3_client: &Client,
     bucket: &str,
-    page: i32,
     page_size: i32,
+    start_after: Option<&str>,
 ) -> Result<PaginatedFiles> {
     let start = Instant::now();
 
@@ -117,61 +119,37 @@ pub async fn list_files(
         .bucket(bucket)
         .max_keys(page_size + 1);
 
-    if page > 0 {
-        let skip = page * page_size;
-        let mut temp_paginator = s3_client
-            .list_objects_v2()
-            .bucket(bucket)
-            .into_paginator()
-            .send();
-
-        let mut count = 0;
-        let mut continuation_token = None;
-
-        while let Some(result) = temp_paginator.next().await {
-            let output = result?;
-            for _ in output.contents() {
-                count += 1;
-                if count == skip {
-                    continuation_token = output.next_continuation_token().map(|s| s.to_string());
-                    break;
-                }
-            }
-            if continuation_token.is_some() || count >= skip {
-                break;
-            }
-        }
-
-        if let Some(token) = continuation_token {
-            request = request.continuation_token(token);
-        }
+    if let Some(cursor) = start_after {
+        request = request.start_after(cursor);
     }
 
     let output = request.send().await?;
-    let mut files = Vec::with_capacity(page_size as usize);
-    let mut count = 0;
+    let all_objects = output.contents();
+    let has_more = all_objects.len() > page_size as usize;
 
-    for obj in output.contents() {
-        if count < page_size {
-            files.push(CollectionFile {
-                key: obj.key().unwrap_or_default().to_string(),
-                size: obj.size().unwrap_or(0),
-                last_modified: obj.last_modified().map(|d| d.to_string()),
-                content_type: None,
-            });
-            count += 1;
-        }
-    }
+    let files: Vec<CollectionFile> = all_objects
+        .iter()
+        .take(page_size as usize)
+        .map(|obj| CollectionFile {
+            key: obj.key().unwrap_or_default().to_string(),
+            size: obj.size().unwrap_or(0),
+            last_modified: obj.last_modified().map(|d| d.to_string()),
+            content_type: None,
+        })
+        .collect();
 
-    let has_more = output.contents().len() > page_size as usize;
-    let continuation_token = output.next_continuation_token().map(|s| s.to_string());
+    let continuation_token = if has_more {
+        files.last().map(|f| f.key.clone())
+    } else {
+        None
+    };
 
     let duration = start.elapsed().as_secs_f64();
     record_storage_operation("list", duration, None, true);
 
     Ok(PaginatedFiles {
         files,
-        page,
+        page: 0,
         page_size,
         has_more,
         continuation_token,
@@ -342,6 +320,7 @@ pub async fn delete_file_by_key(client: &Client, bucket: &str, key: &str) -> Res
 pub async fn delete_files_by_prefix(client: &Client, bucket: &str, prefix: &str) -> Result<usize> {
     let start = Instant::now();
     let mut deleted_count = 0usize;
+    const BATCH_SIZE: usize = 1000;
 
     tracing::info!(
         bucket = %bucket,
@@ -358,17 +337,77 @@ pub async fn delete_files_by_prefix(client: &Client, bucket: &str, prefix: &str)
 
     while let Some(result) = paginator.next().await {
         let output = result?;
-        for obj in output.contents() {
-            if let Some(key) = obj.key() {
-                if let Err(e) = client.delete_object().bucket(bucket).key(key).send().await {
+        let keys: Vec<String> = output
+            .contents()
+            .iter()
+            .filter_map(|obj| obj.key().map(|k| k.to_string()))
+            .collect();
+
+        if keys.is_empty() {
+            continue;
+        }
+
+        for batch in keys.chunks(BATCH_SIZE) {
+            let object_identifiers: Result<Vec<ObjectIdentifier>, _> = batch
+                .iter()
+                .map(|key| ObjectIdentifier::builder().key(key).build())
+                .collect();
+
+            let object_identifiers = match object_identifiers {
+                Ok(ids) => ids,
+                Err(e) => {
                     tracing::warn!(
                         bucket = %bucket,
-                        key = %key,
+                        prefix = %prefix,
                         error = %e,
-                        "Failed to delete file during prefix cleanup (continuing)"
+                        "Failed to build ObjectIdentifier for batch deletion"
                     );
-                } else {
-                    deleted_count += 1;
+                    continue;
+                }
+            };
+
+            let delete_request = match Delete::builder()
+                .set_objects(Some(object_identifiers))
+                .build()
+            {
+                Ok(req) => req,
+                Err(e) => {
+                    tracing::warn!(
+                        bucket = %bucket,
+                        prefix = %prefix,
+                        error = %e,
+                        "Failed to build Delete request for batch deletion"
+                    );
+                    continue;
+                }
+            };
+
+            match client
+                .delete_objects()
+                .bucket(bucket)
+                .delete(delete_request)
+                .send()
+                .await
+            {
+                Ok(response) => {
+                    deleted_count += response.deleted().len();
+                    for error in response.errors() {
+                        tracing::warn!(
+                            bucket = %bucket,
+                            key = %error.key().unwrap_or("unknown"),
+                            code = %error.code().unwrap_or("unknown"),
+                            message = %error.message().unwrap_or("unknown"),
+                            "Failed to delete object in batch"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        bucket = %bucket,
+                        prefix = %prefix,
+                        error = %e,
+                        "Batch delete failed during prefix cleanup (continuing)"
+                    );
                 }
             }
         }

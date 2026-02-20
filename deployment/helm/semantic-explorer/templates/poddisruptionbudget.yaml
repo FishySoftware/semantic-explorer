@@ -79,7 +79,7 @@ spec:
 {{- end }}
 ---
 {{- if and .Values.embeddingInferenceApi.enabled .Values.embeddingInferenceApi.podDisruptionBudget.enabled }}
-apiVersion: policy/v1
+apiVersion: {{ include "semantic-explorer.pdb.apiVersion" . }}
 kind: PodDisruptionBudget
 metadata:
   name: {{ include "semantic-explorer.fullname" . }}-embedding-inference-api
@@ -94,7 +94,7 @@ spec:
 {{- end }}
 ---
 {{- if and .Values.llmInferenceApi.enabled .Values.llmInferenceApi.podDisruptionBudget.enabled }}
-apiVersion: policy/v1
+apiVersion: {{ include "semantic-explorer.pdb.apiVersion" . }}
 kind: PodDisruptionBudget
 metadata:
   name: {{ include "semantic-explorer.fullname" . }}-llm-inference-api

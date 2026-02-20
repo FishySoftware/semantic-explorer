@@ -434,9 +434,8 @@ spec:
       port: 7281
   {{- end }}
 {{- end }}
-{{- end }}
----
 {{- if .Values.embeddingInferenceApi.enabled }}
+---
 # Inference API Network Policy
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -548,4 +547,4 @@ spec:
         except:
         - 169.254.169.254/32  # Block AWS metadata
   {{- end }}
-{{- end }}
+{{- end }}{{- end }}

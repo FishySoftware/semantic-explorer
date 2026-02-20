@@ -34,7 +34,9 @@
 			return result.item_title;
 		} else {
 			// For chunks, use item_title from metadata if available
-			return result.metadata?.item_title || `Chunk ${result.metadata?.chunk_index ?? '?'}`;
+			const itemTitle = result.metadata?.item_title;
+			const chunkIndex = result.metadata?.chunk_index;
+			return (typeof itemTitle === 'string' ? itemTitle : '') || `Chunk ${chunkIndex ?? '?'}`;
 		}
 	});
 </script>

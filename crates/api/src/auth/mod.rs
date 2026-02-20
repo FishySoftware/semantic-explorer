@@ -9,6 +9,7 @@ use utoipa::ToSchema;
 use crate::audit::events;
 use crate::errors::{ApiError, unauthorized};
 
+pub(crate) mod device_flow;
 pub(crate) mod oidc;
 mod openid;
 pub(crate) mod openid_middleware;

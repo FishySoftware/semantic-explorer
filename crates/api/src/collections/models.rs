@@ -83,6 +83,18 @@ pub(crate) struct CollectionSearchQuery {
     pub(crate) offset: i64,
 }
 
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct CollectionListQuery {
+    #[serde(default = "default_collection_list_limit")]
+    pub(crate) limit: i64,
+    #[serde(default)]
+    pub(crate) offset: i64,
+}
+
+fn default_collection_list_limit() -> i64 {
+    20
+}
+
 fn default_collection_limit() -> i64 {
     10
 }

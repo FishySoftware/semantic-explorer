@@ -187,15 +187,18 @@ pub mod events {
     use actix_web::HttpRequest;
     use std::sync::OnceLock;
 
-    // Global clients for audit event handling
     static AUDIT_DB_POOL: OnceLock<Pool<Postgres>> = OnceLock::new();
     static AUDIT_NATS_CLIENT: OnceLock<async_nats::Client> = OnceLock::new();
 
-    /// Initialize the audit infrastructure (database pool and NATS client)
-    /// Call this during application startup
+    /// Initialize the audit infrastructure (database pool and NATS client).
     pub fn init(pool: Pool<Postgres>, nats_client: async_nats::Client) {
         let _ = AUDIT_DB_POOL.set(pool);
         let _ = AUDIT_NATS_CLIENT.set(nats_client);
+    }
+
+    /// Returns `true` if [`init()`] has been called.
+    pub fn is_initialized() -> bool {
+        AUDIT_DB_POOL.get().is_some() && AUDIT_NATS_CLIENT.get().is_some()
     }
 
     /// Get the audit database pool if initialized

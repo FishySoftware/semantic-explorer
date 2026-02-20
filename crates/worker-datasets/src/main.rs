@@ -1,5 +1,5 @@
 use anyhow::Result;
-use semantic_explorer_core::config::NatsConfig;
+use semantic_explorer_core::config::{EmbeddingInferenceConfig, NatsConfig};
 use semantic_explorer_core::nats::connect_with_retry;
 use semantic_explorer_core::worker::WorkerContext;
 use semantic_explorer_core::{storage::initialize_client, worker};
@@ -26,14 +26,12 @@ async fn main() -> Result<()> {
     let nats_config = NatsConfig::from_env()?;
     let nats_client = connect_with_retry(&nats_config.url).await?;
 
-    // Initialize embedding client config from env at startup
-    let embedding_api_url = std::env::var("EMBEDDING_INFERENCE_API_URL")
-        .unwrap_or_else(|_| "http://localhost:8090".to_string());
-    let embedding_max_concurrent = std::env::var("EMBEDDING_MAX_CONCURRENT_REQUESTS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(3usize);
-    semantic_explorer_core::embedder::init_embedder(&embedding_api_url, embedding_max_concurrent);
+    // Initialize embedding client config from centralized config
+    let embedding_config = EmbeddingInferenceConfig::from_env()?;
+    semantic_explorer_core::embedder::init_embedder(
+        &embedding_config.url,
+        embedding_config.max_concurrent_requests,
+    );
 
     // Initialize job-level config from env at startup
     let qdrant_parallel_uploads: usize = std::env::var("QDRANT_PARALLEL_UPLOADS")

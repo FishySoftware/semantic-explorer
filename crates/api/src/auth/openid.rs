@@ -25,6 +25,7 @@ use url::Url;
 #[derive(Clone)]
 pub(crate) struct OpenID {
     client: ExtendedClient,
+    client_id: String,
     provider_metadata: ExtendedProviderMetadata,
     post_logout_redirect_url: Option<String>,
     scopes: Vec<Scope>,
@@ -49,6 +50,7 @@ pub(crate) struct AuthorizationUrl {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct AdditionalMetadata {
     end_session_endpoint: Option<EndSessionUrl>,
+    device_authorization_endpoint: Option<url::Url>,
 }
 
 impl AdditionalProviderMetadata for AdditionalMetadata {}
@@ -133,6 +135,7 @@ impl OpenID {
 
         Ok(Self {
             client,
+            client_id,
             provider_metadata,
             post_logout_redirect_url,
             scopes: scopes.iter().map(|s| Scope::new(s.to_string())).collect(),
@@ -245,5 +248,27 @@ impl OpenID {
         }
 
         Ok(logout_request.http_get_url())
+    }
+
+    /// Return the device_authorization_endpoint from provider metadata, if Dex has it enabled.
+    pub(crate) fn device_authorization_endpoint(&self) -> Option<&url::Url> {
+        self.provider_metadata
+            .additional_metadata()
+            .device_authorization_endpoint
+            .as_ref()
+    }
+
+    /// Return the token endpoint from provider metadata.
+    pub(crate) fn token_endpoint(&self) -> Option<String> {
+        self.provider_metadata
+            .token_endpoint()
+            .map(|url| url.to_string())
+    }
+
+    /// Return the client_id used by this OpenID client.
+    pub(crate) fn client_id(&self) -> &str {
+        // The client_id is set during init; retrieve it from the metadata.
+        // CoreClient doesn't expose client_id directly, so we store it separately.
+        &self.client_id
     }
 }

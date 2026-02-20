@@ -6,12 +6,19 @@
 	import ChatSidebar from '../components/ChatSidebar.svelte';
 	import PageHeader from '../components/PageHeader.svelte';
 	import { useChatStream } from '../composables/useChatStream.svelte';
+	import {
+		DEFAULT_MAX_CHUNKS,
+		DEFAULT_MAX_TOKENS,
+		DEFAULT_MIN_SIMILARITY_SCORE,
+		DEFAULT_TEMPERATURE,
+	} from '../constants';
 	import type {
 		ChatMessage as ChatMessageType,
 		ChatSession,
 		EmbeddedDataset,
 		LLM,
 	} from '../types/models';
+	import { apiDelete, apiGet, apiPost } from '../utils/api';
 	import { formatError, toastStore } from '../utils/notifications';
 
 	// Session management
@@ -19,7 +26,6 @@
 	let embeddedDatasets = $state<EmbeddedDataset[]>([]);
 	let llms = $state<LLM[]>([]);
 	let currentSession = $state<ChatSession | null>(null);
-	let currentMessages = $state<ChatMessageType[]>([]);
 	let messagesLoading = $state(false);
 
 	// Create form state
@@ -33,16 +39,18 @@
 	let inputValue = $state('');
 
 	// RAG Configuration
-	let maxChunks = $state(5);
-	let minSimilarityScore = $state(0.2);
+	let maxChunks = $state(DEFAULT_MAX_CHUNKS);
+	let minSimilarityScore = $state(DEFAULT_MIN_SIMILARITY_SCORE);
 
 	// LLM Configuration
-	let temperature = $state(0.7);
-	let maxTokens = $state(2000);
+	let temperature = $state(DEFAULT_TEMPERATURE);
+	let maxTokens = $state(DEFAULT_MAX_TOKENS);
 	let systemPrompt = $state('');
 
 	// Chat stream state
 	let chatStream = $state<ReturnType<typeof useChatStream> | null>(null);
+
+	let currentMessages = $derived(chatStream?.messages ?? []);
 
 	// Auto-scroll to messages container
 	let messagesContainer = $state<HTMLDivElement | null>(null);
@@ -74,46 +82,35 @@
 
 	async function fetchSessions() {
 		try {
-			const response = await fetch('/api/chat/sessions?limit=200');
-			if (!response.ok) {
-				throw new Error(`Failed to fetch chat sessions: ${response.statusText}`);
-			}
-			const data = await response.json();
+			const data = await apiGet<{ sessions: ChatSession[] }>('/api/chat/sessions?limit=200');
 			sessions = data.sessions;
-		} catch (e) {
-			const message = formatError(e, 'Failed to fetch chat sessions');
+		} catch (error) {
+			const message = formatError(error, 'Failed to fetch chat sessions');
 			toastStore.error(message);
 		}
 	}
 
 	async function fetchEmbeddedDatasets() {
 		try {
-			const response = await fetch('/api/embedded-datasets?limit=1000');
-			if (!response.ok) {
-				throw new Error(`Failed to fetch embedded datasets: ${response.statusText}`);
-			}
-			const data = (await response.json()) as { embedded_datasets: EmbeddedDataset[] };
-			// Filter out standalone datasets - they don't have embedders and can't be used for RAG
+			const data = await apiGet<{ embedded_datasets: EmbeddedDataset[] }>(
+				'/api/embedded-datasets?limit=1000'
+			);
 			embeddedDatasets = data.embedded_datasets.filter(
-				(ed) =>
+				(ed: EmbeddedDataset) =>
 					!ed.is_standalone &&
 					!(ed.dataset_transform_id === 0 && ed.source_dataset_id === 0 && ed.embedder_id === 0)
 			);
-		} catch (e) {
-			console.error('Failed to fetch embedded datasets:', e);
+		} catch (error) {
+			console.error('Failed to fetch embedded datasets:', error);
 		}
 	}
 
 	async function fetchLLMs() {
 		try {
-			const response = await fetch('/api/llms?limit=100');
-			if (!response.ok) {
-				throw new Error(`Failed to fetch LLMs: ${response.statusText}`);
-			}
-			const data = (await response.json()) as { items: LLM[] };
+			const data = await apiGet<{ items: LLM[] }>('/api/llms?limit=100');
 			llms = data.items;
-		} catch (e) {
-			console.error('Failed to fetch LLMs:', e);
+		} catch (error) {
+			console.error('Failed to fetch LLMs:', error);
 		}
 	}
 
@@ -126,28 +123,17 @@
 		try {
 			const title = newSessionTitle.trim();
 
-			const response = await fetch('/api/chat/sessions', {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-				},
-				body: JSON.stringify({
-					embedded_dataset_id: newSessionEmbeddedDatasetId,
-					llm_id: newSessionLLMId,
-					title: title,
-				}),
+			const newSession = await apiPost<ChatSession>('/api/chat/sessions', {
+				embedded_dataset_id: newSessionEmbeddedDatasetId,
+				llm_id: newSessionLLMId,
+				title: title,
 			});
 
-			if (!response.ok) {
-				throw new Error(`Failed to create chat session: ${response.statusText}`);
-			}
-
-			const newSession = await response.json();
 			sessions = [...sessions, newSession];
 
 			// Select the new session
 			currentSession = newSession;
-			currentMessages = [];
+			chatStream?.setMessages([]);
 			inputValue = '';
 
 			toastStore.success('Chat session created successfully');
@@ -165,15 +151,12 @@
 			currentSession = session;
 			inputValue = '';
 
-			const response = await fetch(`/api/chat/sessions/${session.session_id}/messages`);
-			if (!response.ok) {
-				throw new Error(`Failed to fetch messages: ${response.statusText}`);
-			}
-
-			const data = await response.json();
-			currentMessages = data.messages;
-		} catch (e) {
-			const message = formatError(e, 'Failed to load chat messages');
+			const data = await apiGet<{ messages: ChatMessageType[] }>(
+				`/api/chat/sessions/${session.session_id}/messages`
+			);
+			chatStream?.setMessages(data.messages);
+		} catch (error) {
+			const message = formatError(error, 'Failed to load chat messages');
 			toastStore.error(message);
 		} finally {
 			messagesLoading = false;
@@ -191,19 +174,13 @@
 		}
 
 		try {
-			const response = await fetch(`/api/chat/sessions/${session.session_id}`, {
-				method: 'DELETE',
-			});
-
-			if (!response.ok) {
-				throw new Error(`Failed to delete session: ${response.statusText}`);
-			}
+			await apiDelete(`/api/chat/sessions/${session.session_id}`);
 
 			sessions = sessions.filter((s) => s.session_id !== session.session_id);
 
 			if (currentSession?.session_id === session.session_id) {
 				currentSession = null;
-				currentMessages = [];
+				chatStream?.setMessages([]);
 			}
 
 			toastStore.success('Chat session deleted successfully');
@@ -229,33 +206,6 @@
 		const content = inputValue.trim();
 		inputValue = '';
 
-		// Add optimistic user message
-		const tempUserMessage = {
-			message_id: Date.now(),
-			role: 'user' as const,
-			content,
-			created_at: new Date().toISOString(),
-			tokens_used: null,
-			metadata: null,
-			documents_retrieved: null,
-			status: 'complete' as const,
-		};
-		currentMessages = [...currentMessages, tempUserMessage];
-
-		// Add placeholder assistant message
-		const tempAssistantMessage = {
-			message_id: Date.now() + 1,
-			role: 'assistant' as const,
-			content: '',
-			created_at: new Date().toISOString(),
-			tokens_used: null,
-			metadata: null,
-			documents_retrieved: 0,
-			status: 'incomplete' as const,
-		};
-		currentMessages = [...currentMessages, tempAssistantMessage];
-
-		// Initialize chat stream if needed
 		if (!chatStream) {
 			chatStream = useChatStream({
 				sessionId: currentSession.session_id,
@@ -268,7 +218,6 @@
 				}),
 				callbacks: {
 					onComplete: () => {
-						// Refresh messages after completion
 						fetchMessagesForCurrentSession();
 					},
 					onError: (error) => {
@@ -280,18 +229,16 @@
 		}
 
 		await chatStream.sendMessage(content);
-		// Refresh to get actual messages from server
 		await fetchMessagesForCurrentSession();
 	}
 
 	async function fetchMessagesForCurrentSession() {
 		if (!currentSession) return;
 		try {
-			const response = await fetch(`/api/chat/sessions/${currentSession.session_id}/messages`);
-			if (response.ok) {
-				const data = await response.json();
-				currentMessages = data.messages;
-			}
+			const data = await apiGet<{ messages: ChatMessageType[] }>(
+				`/api/chat/sessions/${currentSession.session_id}/messages`
+			);
+			chatStream?.setMessages(data.messages);
 		} catch {
 			// Silently fail - messages will be out of sync but user can refresh
 		}

@@ -106,7 +106,8 @@ graph TB
 
         subgraph "Services"
             API[API Client<br/>api.ts]
-            SSE[SSE Client<br/>sse.ts]
+            POLL[Polling<br/>polling.ts]
+            STREAM[Chat SSE<br/>useChatStream]
             STATE[Svelte 5 Runes<br/>State Management]
         end
     end
@@ -117,9 +118,10 @@ graph TB
 
     ROUTER --> COLL & DS & EMB & LLM & TRANS & VIZ & SEARCH & CHAT & MARKET
     COLL & DS & EMB & LLM & TRANS & VIZ & SEARCH & CHAT & MARKET --> FORMS & MODALS & PROGRESS & CARDS
-    COLL & DS & EMB & LLM & TRANS & VIZ & SEARCH & CHAT & MARKET --> API & SSE & STATE
+    COLL & DS & EMB & LLM & TRANS & VIZ & SEARCH & CHAT & MARKET --> API & POLL & STREAM & STATE
     API --> SERVER
-    SSE --> SERVER
+    POLL --> SERVER
+    STREAM --> SERVER
 ```
 
 ## User Flow
@@ -148,54 +150,54 @@ flowchart TD
 
     B --> P[Marketplace]
     P --> Q[Grab Public<br/>Resources]
-````
+```
 
 ## Technologies
 
-| Technology      | Version | Purpose                                           |
-| --------------- | ------- | ------------------------------------------------- |
-| Svelte          | 5.50    | UI framework (runes-based reactivity)             |
-| TypeScript      | 5.9     | Type safety                                       |
-| Vite (rolldown) | 7.3     | Build tool with code-splitting                    |
-| Tailwind CSS    | 4.1     | Utility-first CSS styling                         |
-| Flowbite Svelte | 1.31    | UI component library (buttons, modals, spinners)  |
+| Technology      | Version | Purpose                                                 |
+| --------------- | ------- | ------------------------------------------------------- |
+| Svelte          | 5.50    | UI framework (runes-based reactivity)                   |
+| TypeScript      | 5.9     | Type safety                                             |
+| Vite (rolldown) | 7.3     | Build tool with code-splitting                          |
+| Tailwind CSS    | 4.1     | Utility-first CSS styling                               |
+| Flowbite Svelte | 1.31    | UI component library (buttons, modals, spinners)        |
 | Deck.gl         | 9.2     | Used by datamapplot HTML output (not imported directly) |
-| marked          | 17.0    | Markdown rendering (chat, documentation)          |
-| highlight.js    | 11.11   | Code syntax highlighting                          |
-| DOMPurify       | 3.3     | HTML sanitization                                 |
+| marked          | 17.0    | Markdown rendering (chat, documentation)                |
+| highlight.js    | 11.11   | Code syntax highlighting                                |
+| DOMPurify       | 3.3     | HTML sanitization                                       |
 
 ## Page Structure
 
 All routes use hash-based navigation (`#/path`).
 
-| Page                           | Hash Route                                   | Description                    |
-| ------------------------------ | -------------------------------------------- | ------------------------------ |
-| Dashboard                      | `#/dashboard`                                | Overview and quick actions     |
-| Collections                    | `#/collections`                              | List and create collections    |
-| Collection Detail              | `#/collections/{id}/details`                 | View/manage collection files   |
-| Collection Transforms          | `#/collection-transforms`                    | Text extraction pipelines      |
-| Collection Transform Detail    | `#/collection-transforms/{id}/details`       | Transform progress and details |
-| Datasets                       | `#/datasets`                                 | List and create datasets       |
-| Dataset Detail                 | `#/datasets/{id}/details`                    | View dataset items             |
-| Dataset Transforms             | `#/dataset-transforms`                       | Embedding generation pipelines |
-| Dataset Transform Detail       | `#/dataset-transforms/{id}/details`          | Transform progress and details |
-| Embedded Datasets              | `#/embedded-datasets`                        | Vector collections             |
-| Embedded Dataset Detail        | `#/embedded-datasets/{id}/details`           | View embeddings                |
-| Embedders                      | `#/embedders`                                | Embedder configurations        |
-| Embedder Detail                | `#/embedders/{id}/details`                   | Edit embedder                  |
-| LLMs                           | `#/llms`                                     | LLM provider configurations    |
-| LLM Detail                     | `#/llms/{id}/details`                        | Edit LLM provider              |
-| Visualization Transforms       | `#/visualization-transforms`                 | Visualization pipelines        |
-| Visualization Transform Detail | `#/visualization-transforms/{id}/details`    | Transform progress and details |
-| Visualizations                 | `#/visualizations`                           | Generated visualizations       |
-| Visualization Detail           | `#/visualizations/{id}/details`              | View interactive visualization |
-| Visualization Compare          | `#/visualizations/compare?ids=...`           | Side-by-side comparison        |
-| Search                         | `#/search`                                   | Semantic search interface      |
-| Chat                           | `#/chat`                                     | RAG chat with documents        |
-| Marketplace                    | `#/marketplace`                              | Public resources               |
-| Grab Resource                  | `#/marketplace/{type}/{id}/grab`             | Clone marketplace resources    |
-| NATS Status                    | `#/status/nats`                              | NATS connection status         |
-| Documentation                  | `#/documentation`                            | Help documentation             |
+| Page                           | Hash Route                                | Description                    |
+| ------------------------------ | ----------------------------------------- | ------------------------------ |
+| Dashboard                      | `#/dashboard`                             | Overview and quick actions     |
+| Collections                    | `#/collections`                           | List and create collections    |
+| Collection Detail              | `#/collections/{id}/details`              | View/manage collection files   |
+| Collection Transforms          | `#/collection-transforms`                 | Text extraction pipelines      |
+| Collection Transform Detail    | `#/collection-transforms/{id}/details`    | Transform progress and details |
+| Datasets                       | `#/datasets`                              | List and create datasets       |
+| Dataset Detail                 | `#/datasets/{id}/details`                 | View dataset items             |
+| Dataset Transforms             | `#/dataset-transforms`                    | Embedding generation pipelines |
+| Dataset Transform Detail       | `#/dataset-transforms/{id}/details`       | Transform progress and details |
+| Embedded Datasets              | `#/embedded-datasets`                     | Vector collections             |
+| Embedded Dataset Detail        | `#/embedded-datasets/{id}/details`        | View embeddings                |
+| Embedders                      | `#/embedders`                             | Embedder configurations        |
+| Embedder Detail                | `#/embedders/{id}/details`                | Edit embedder                  |
+| LLMs                           | `#/llms`                                  | LLM provider configurations    |
+| LLM Detail                     | `#/llms/{id}/details`                     | Edit LLM provider              |
+| Visualization Transforms       | `#/visualization-transforms`              | Visualization pipelines        |
+| Visualization Transform Detail | `#/visualization-transforms/{id}/details` | Transform progress and details |
+| Visualizations                 | `#/visualizations`                        | Generated visualizations       |
+| Visualization Detail           | `#/visualizations/{id}/details`           | View interactive visualization |
+| Visualization Compare          | `#/visualizations/compare?ids=...`        | Side-by-side comparison        |
+| Search                         | `#/search`                                | Semantic search interface      |
+| Chat                           | `#/chat`                                  | RAG chat with documents        |
+| Marketplace                    | `#/marketplace`                           | Public resources               |
+| Grab Resource                  | `#/marketplace/{type}/{id}/grab`          | Clone marketplace resources    |
+| NATS Status                    | `#/status/nats`                           | NATS connection status         |
+| Documentation                  | `#/documentation`                         | Help documentation             |
 
 ## Component Library
 
@@ -344,9 +346,15 @@ const { messages, isGenerating, streamingState, sendMessage, cleanup } = useChat
 	sessionId,
 	getSettings: () => ({ maxChunks, minSimilarityScore, temperature, maxTokens, systemPrompt }),
 	callbacks: {
-		onRetrievalComplete: (messageId, documents) => { /* ... */ },
-		onContent: (messageId, content) => { /* ... */ },
-		onComplete: (messageId, content, documents) => { /* ... */ },
+		onRetrievalComplete: (messageId, documents) => {
+			/* ... */
+		},
+		onContent: (messageId, content) => {
+			/* ... */
+		},
+		onComplete: (messageId, content, documents) => {
+			/* ... */
+		},
 	},
 });
 ```
@@ -355,30 +363,18 @@ Events flow: `connected` → `retrieval_complete` → `content` (streamed chunks
 
 ## Visualization Integration
 
-Interactive visualizations use Deck.gl:
+Visualizations are generated by the Python worker using `datamapplot.create_interactive_plot()` (which internally embeds Deck.gl for WebGL rendering). The generated HTML is stored in S3 and rendered in the UI via iframes:
 
-```typescript
-import { Deck, ScatterplotLayer } from 'deck.gl';
-
-const deck = new Deck({
-	canvas: 'deck-canvas',
-	initialViewState: {
-		longitude: 0,
-		latitude: 0,
-		zoom: 1,
-	},
-	layers: [
-		new ScatterplotLayer({
-			data: points,
-			getPosition: (d) => [d.x, d.y],
-			getColor: (d) => clusterColors[d.cluster],
-			getRadius: 5,
-			pickable: true,
-			onHover: ({ object }) => setTooltip(object),
-		}),
-	],
-});
+```svelte
+<!-- VisualizationDetail.svelte -->
+{#if htmlContent}
+	<iframe title="Visualization" srcdoc={htmlContent} class="w-full h-full border-0"></iframe>
+{/if}
 ```
+
+The `VisualizationCompare` page allows side-by-side comparison of multiple visualizations by loading their HTML content into separate iframes.
+
+> **Note:** While `@deck.gl/*` packages are listed in `package.json` and have Vite code-splitting rules, they are not directly imported in the Svelte source. Deck.gl is used within the datamapplot-generated HTML that runs inside the iframe.
 
 ## Development
 
@@ -419,26 +415,6 @@ npm run preview
 npm run build-watch
 ```
 
-## Project Structure
-
-```
-semantic-explorer-ui/
-├── src/
-│   ├── lib/
-│   │   ├── components/    # Reusable UI components
-│   │   ├── pages/         # Page components (routes)
-│   │   └── utils/         # Utility functions
-│   ├── App.svelte         # Root application component
-│   ├── main.ts            # Application entry point
-│   └── app.css            # Global styles (Tailwind)
-├── public/                # Static assets
-├── index.html             # HTML template
-├── vite.config.ts         # Vite configuration
-├── svelte.config.js       # Svelte configuration
-├── tsconfig.json          # TypeScript configuration
-└── package.json           # Dependencies and scripts
-```
-
 ## Configuration
 
 ### Vite Configuration
@@ -449,18 +425,19 @@ The application is served at `/ui/` path by the API server:
 // vite.config.ts
 export default defineConfig({
 	base: '/ui/',
-	resolve: {
-		alias: {
-			$lib: path.resolve('./src/lib'),
-		},
-	},
+	resolve: { alias: { $lib: path.resolve('./src/lib') } },
+	css: { transformer: 'postcss' },
 	build: {
 		chunkSizeWarningLimit: 1024,
 		rollupOptions: {
 			output: {
-				// Manual chunks for deck.gl, flowbite, highlight.js, marked
 				manualChunks(id: string) {
-					/* ... */
+					if (id.includes('deck.gl') || id.includes('@deck.gl')) return 'deck-gl';
+					if (id.includes('@loaders.gl')) return 'loaders-gl';
+					if (id.includes('flowbite')) return 'flowbite';
+					if (id.includes('highlight.js')) return 'highlight';
+					if (id.includes('marked')) return 'marked';
+					if (id.includes('node_modules')) return 'vendor';
 				},
 			},
 		},
@@ -522,7 +499,7 @@ COPY nginx.conf /etc/nginx/nginx.conf
 - Firefox (latest 2 versions)
 - Safari (latest 2 versions)
 
-WebGL 2.0 support required for visualizations.
+WebGL 2.0 support required for datamapplot visualizations (rendered inside iframes).
 
 ## Accessibility
 
@@ -542,19 +519,23 @@ WebGL 2.0 support required for visualizations.
 
 ## Theme Support
 
-Toggle between light and dark themes:
+Three theme modes (light, dark, system) managed via `theme.ts`:
 
-```svelte
-<script>
-	let darkMode = $state(localStorage.getItem('theme') === 'dark');
+```typescript
+// src/lib/utils/theme.ts
+export type Theme = 'light' | 'dark' | 'system';
 
-	$effect(() => {
-		document.documentElement.classList.toggle('dark', darkMode);
-		localStorage.setItem('theme', darkMode ? 'dark' : 'light');
-	});
-</script>
+export function getTheme(): Theme {
+	return (localStorage.getItem('theme-preference') as Theme) || 'system';
+}
 
-<ThemeToggle bind:darkMode />
+export function setTheme(theme: Theme): void {
+	localStorage.setItem('theme-preference', theme);
+	applyTheme(theme);
+}
+
+// applyTheme() toggles the 'dark' class on <html> element
+// 'system' mode uses matchMedia('(prefers-color-scheme: dark)')
 ```
 
 ## License

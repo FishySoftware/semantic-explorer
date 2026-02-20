@@ -43,7 +43,7 @@ spec:
       {{- with .Values.api.priorityClassName }}
       priorityClassName: {{ . }}
       {{- end }}
-      terminationGracePeriodSeconds: 30
+      terminationGracePeriodSeconds: {{ .Values.api.terminationGracePeriodSeconds | default 45 }}
       initContainers:
       - name: wait-for-postgresql
         image: {{ include "semantic-explorer.initContainer.image" . }}
@@ -202,6 +202,10 @@ spec:
         imagePullPolicy: {{ .Values.api.image.pullPolicy }}
         securityContext:
           {{- toYaml .Values.global.podSecurityContext | nindent 10 }}
+        lifecycle:
+          preStop:
+            exec:
+              command: ["sh", "-c", "sleep {{ .Values.api.preStopSleepSeconds | default 5 }}"]
         ports:
         - name: http
           containerPort: {{ .Values.api.service.targetPort }}

@@ -49,8 +49,8 @@ async fn main() -> Result<()> {
     // Load centralized configuration - fail fast if required config is missing
     let config = AppConfig::from_env()?;
 
-    // Initialize HTTP client with TLS configuration
-    semantic_explorer_core::http_client::initialize(&config.tls)?;
+    // Force-initialize the global HTTP client so TLS errors surface immediately
+    let _ = &*semantic_explorer_core::http_client::HTTP_CLIENT;
 
     // Initialize encryption service for secrets (API keys)
     let encryption_service = EncryptionService::from_env().map_err(|e| {
@@ -168,6 +168,8 @@ async fn main() -> Result<()> {
         scanner_config,
     };
 
+    let circuit_breakers = semantic_explorer_core::circuit_breaker::CircuitBreakers::from_env();
+
     // Start trigger listener (all instances listen, NATS coordinates)
     let _scanner_listener = transforms::trigger::start_trigger_listener(scanner_ctx);
 
@@ -177,6 +179,10 @@ async fn main() -> Result<()> {
 
     // Initialize audit event infrastructure (database and NATS)
     audit::events::init(pool.clone(), nats_client.clone());
+    debug_assert!(
+        audit::events::is_initialized(),
+        "audit infrastructure must be initialized before serving requests"
+    );
 
     // Start background Valkey metrics polling (every 30s)
     let _valkey_stats_handle = if let Some(ref clients) = valkey_clients {
@@ -278,6 +284,7 @@ async fn main() -> Result<()> {
             .app_data(web::Data::new(inference_config.clone()))
             .app_data(web::Data::new(llm_inference_config.clone()))
             .app_data(web::Data::new(worker_config.clone()))
+            .app_data(web::Data::new(circuit_breakers.clone()))
             .into_utoipa_app()
             .openapi(ApiDoc::openapi())
             .service(api::collections::get_collection)

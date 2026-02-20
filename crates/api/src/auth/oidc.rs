@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use actix_web::dev::ServiceRequest;
 use actix_web::web;
@@ -8,8 +7,10 @@ use anyhow::Result;
 use semantic_explorer_core::config::OidcConfig;
 use url::Url;
 
+use super::device_flow;
 use super::openid::OpenID;
 use super::openid_middleware;
+use super::openid_middleware::BearerTokenCache;
 
 #[derive(Clone)]
 pub(crate) struct ActixWebOpenId {
@@ -18,8 +19,7 @@ pub(crate) struct ActixWebOpenId {
     use_pkce: bool,
     redirect_path: String,
     logout_path: String,
-    bearer_cache:
-        Arc<RwLock<HashMap<String, (openid_middleware::CachedUserInfo, std::time::Instant)>>>,
+    bearer_cache: BearerTokenCache,
 }
 
 struct ActixWebOpenIdBuilder {
@@ -79,7 +79,7 @@ impl ActixWebOpenIdBuilder {
             should_auth: self.should_auth,
             use_pkce: self.use_pkce,
             logout_path: self.logout_path,
-            bearer_cache: Arc::new(RwLock::new(HashMap::new())),
+            bearer_cache: openid_middleware::new_bearer_token_cache(),
         })
     }
 }
@@ -129,8 +129,16 @@ impl ActixWebOpenId {
                     .route(web::get().to(openid_middleware::authorize_endpoint)),
             )
             .service(
-                web::resource("/api/auth/token")
-                    .route(web::get().to(openid_middleware::get_cookie_token_endpoint)),
+                web::resource("/api/auth/device")
+                    .route(web::post().to(device_flow::device_authorize_endpoint)),
+            )
+            .service(
+                web::resource("/api/auth/device/poll")
+                    .route(web::post().to(device_flow::device_poll_endpoint)),
+            )
+            .service(
+                web::resource("/api/auth/refresh")
+                    .route(web::post().to(device_flow::refresh_token_endpoint)),
             )
             .app_data(web::Data::new(client.clone()));
         }

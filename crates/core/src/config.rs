@@ -149,6 +149,8 @@ pub struct EmbeddingInferenceConfig {
     pub url: String,
     /// Request timeout in seconds
     pub timeout_secs: u64,
+    /// Maximum concurrent embedding API requests (default: 3)
+    pub max_concurrent_requests: usize,
 }
 
 /// LLM inference API configuration
@@ -188,7 +190,8 @@ pub struct ValkeyConfig {
     pub password: Option<String>,
     /// Enable TLS for Valkey connections
     pub tls_enabled: bool,
-    /// Connection pool size (default: 10)
+    /// Reserved for future connection pool sizing.
+    /// Currently unused — `ConnectionManager` provides built-in multiplexing.
     pub pool_size: u32,
     /// TTL for bearer token cache entries in seconds (default: 3600).
     /// Dex issues tokens valid for 24h; caching for 1h is safe and avoids
@@ -517,6 +520,10 @@ impl EmbeddingInferenceConfig {
                 .unwrap_or_else(|_| "120".to_string())
                 .parse()
                 .context("EMBEDDING_INFERENCE_API_TIMEOUT_SECS must be a number")?,
+            max_concurrent_requests: env::var("EMBEDDING_MAX_CONCURRENT_REQUESTS")
+                .unwrap_or_else(|_| "3".to_string())
+                .parse()
+                .context("EMBEDDING_MAX_CONCURRENT_REQUESTS must be a number")?,
         })
     }
 }

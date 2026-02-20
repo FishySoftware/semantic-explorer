@@ -5,15 +5,16 @@ use actix_web::{
 };
 use aws_sdk_s3::{Client, primitives::ByteStream};
 use sqlx::{Pool, Postgres};
-use std::{collections::HashMap, time::Instant};
+use std::time::Instant;
 use tracing::{error, info, warn};
 
 use crate::{
     audit::{ResourceType, events},
     auth::AuthenticatedUser,
     collections::models::{
-        Collection, CollectionSearchQuery, CollectionUpload, CollectionUploadResponse,
-        CreateCollection, FailedUploadFile, FileListQuery, PaginatedCollections, UpdateCollection,
+        Collection, CollectionListQuery, CollectionSearchQuery, CollectionUpload,
+        CollectionUploadResponse, CreateCollection, FailedUploadFile, FileListQuery,
+        PaginatedCollections, UpdateCollection,
     },
     errors::ApiError,
     storage::{
@@ -55,23 +56,14 @@ use semantic_explorer_core::{
 pub(crate) async fn get_collections(
     user: AuthenticatedUser,
     pool: Data<Pool<Postgres>>,
-    query: web::Query<HashMap<String, String>>,
+    web::Query(query): web::Query<CollectionListQuery>,
     valkey: Option<Data<ValkeyClients>>,
     valkey_config: Option<Data<ValkeyConfig>>,
 ) -> impl Responder {
     let pool = &pool.into_inner();
 
-    let limit: i64 = query
-        .get("limit")
-        .and_then(|l: &String| l.parse::<i64>().ok())
-        .unwrap_or(20)
-        .clamp(1, 1000);
-
-    let offset: i64 = query
-        .get("offset")
-        .and_then(|o: &String| o.parse::<i64>().ok())
-        .unwrap_or(0)
-        .max(0);
+    let limit = query.limit.clamp(1, 1000);
+    let offset = query.offset.max(0);
 
     let cache_key = format!("collections:{}:{}:{}", user.as_owner(), limit, offset);
 
@@ -469,28 +461,7 @@ pub(crate) async fn upload_to_collection(
         let file_path = temp_file.file.path().to_owned();
         let file_size = temp_file.size;
 
-        let file_bytes = match tokio::fs::read(&file_path).await {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                tracing::error!(file_name = %file_name, error = %e, "Failed to read temp file");
-                let item_duration = item_start.elapsed().as_secs_f64();
-                semantic_explorer_core::observability::record_document_upload(
-                    "collection",
-                    item_duration,
-                    false,
-                );
-                failed.push(FailedUploadFile {
-                    name: file_name,
-                    error: format!("Failed to read file: {}", e),
-                });
-                continue;
-            }
-        };
-
-        let validation_result = validate_upload_file(&file_bytes, &file_name).await;
-
-        // Free memory immediately after validation
-        drop(file_bytes);
+        let validation_result = validate_upload_file(&file_path, &file_name).await;
 
         if !validation_result.is_valid {
             tracing::warn!(

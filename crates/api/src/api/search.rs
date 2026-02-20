@@ -20,10 +20,9 @@ use crate::{
     },
     storage::postgres::{embedded_datasets, embedders},
 };
+use semantic_explorer_core::circuit_breaker::CircuitBreakers;
 use semantic_explorer_core::config::{EmbeddingInferenceConfig, WorkerConfig};
 use semantic_explorer_core::encryption::EncryptionService;
-
-//TODO: Refactor this mess properly.
 
 #[utoipa::path(
     request_body = SearchRequest,
@@ -57,9 +56,15 @@ pub(crate) async fn search(
     encryption: Data<EncryptionService>,
     worker_config: Data<WorkerConfig>,
     inference_config: Data<EmbeddingInferenceConfig>,
+    circuit_breakers: Data<CircuitBreakers>,
     Json(search_request): Json<SearchRequest>,
 ) -> impl Responder {
     let start_time = std::time::Instant::now();
+
+    if !circuit_breakers.qdrant.should_allow().await {
+        return ApiError::ServiceUnavailable("Search service temporarily unavailable".to_string())
+            .error_response();
+    }
 
     if search_request.embedded_dataset_ids.is_empty() {
         return ApiError::BadRequest("At least one embedded dataset must be selected".to_string())
@@ -321,6 +326,19 @@ pub(crate) async fn search(
 
     // Execute all searches in parallel
     let results = future::join_all(search_tasks).await;
+
+    // Record Qdrant circuit breaker outcome based on search results.
+    // If any result has a non-collection-missing error, record as failure.
+    let had_qdrant_failure = results.iter().any(|r| {
+        r.error
+            .as_ref()
+            .is_some_and(|msg| msg.contains("Search failed:"))
+    });
+    if had_qdrant_failure {
+        circuit_breakers.qdrant.record_failure().await;
+    } else {
+        circuit_breakers.qdrant.record_success().await;
+    }
 
     let duration = start_time.elapsed().as_secs_f64();
     let total_results: usize = results.iter().map(|r| r.matches.len()).sum();
