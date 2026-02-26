@@ -471,6 +471,8 @@ workerVisualizationsPy:
 embeddingInferenceApi:
   enabled: true
   replicaCount: 2
+  # RuntimeClassName for GPU workloads (e.g., "nvidia")
+  runtimeClassName: ""
   image:
     repository: jofish89/embedding-inference-api
     tag: "latest"
@@ -625,6 +627,8 @@ embeddingInferenceApi:
 llmInferenceApi:
   enabled: true
   replicaCount: 2
+  # RuntimeClassName for GPU workloads (e.g., "nvidia")
+  runtimeClassName: ""
   image:
     repository: jofish89/llm-inference-api
     tag: "latest"

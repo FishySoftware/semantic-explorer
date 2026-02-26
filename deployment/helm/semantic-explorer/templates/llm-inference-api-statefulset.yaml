@@ -66,6 +66,9 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       terminationGracePeriodSeconds: {{ .Values.llmInferenceApi.terminationGracePeriodSeconds | default 60 }}
+      {{- with .Values.llmInferenceApi.runtimeClassName }}
+      runtimeClassName: {{ . }}
+      {{- end }}
       {{- with .Values.llmInferenceApi.priorityClassName }}
       priorityClassName: {{ . }}
       {{- end }}

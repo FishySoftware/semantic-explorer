@@ -504,6 +504,16 @@ Prometheus metrics available at `/metrics`.
 
 OIDC authentication required for all `/api/*` endpoints. Health endpoints are unauthenticated.
 
+#### OIDC Signing Key Refresh
+
+The API automatically refreshes the OIDC provider's signing keys (JWKS) to handle key rotation without downtime:
+
+- **Proactive refresh**: Every 5 minutes, the provider metadata is re-discovered before token verification.
+- **Retry on failure**: If an ID token signature verification fails (e.g., Dex rotated keys during a redeploy), the API immediately re-fetches the provider's JWKS and retries once.
+- **Anti-stampede**: A 10-second minimum interval between forced refresh attempts prevents concurrent requests from overwhelming the OIDC provider.
+
+This ensures seamless recovery when the OIDC provider (e.g., Dex) rotates signing keys — no API restart required.
+
 The API supports two authentication methods:
 
 **1. Bearer Token (recommended for programmatic access)**

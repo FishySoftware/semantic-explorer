@@ -39,30 +39,6 @@ spec:
         fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
-      initContainers:
-      - name: wait-for-minio
-        image: {{ include "semantic-explorer.initContainer.image" . }}
-        securityContext:
-          {{- include "semantic-explorer.initContainer.securityContext" . | nindent 10 }}
-        command:
-          - sh
-          - -c
-          - |
-            echo "Waiting for MinIO at {{ include "semantic-explorer.minio.host" . }}:{{ include "semantic-explorer.minio.port" . }}..."
-            until nc -z {{ include "semantic-explorer.minio.host" . }} {{ include "semantic-explorer.minio.port" . }}; do
-              echo "MinIO not ready, waiting..."
-              sleep 5
-            done
-            echo "MinIO is ready!"
-            # Additional delay for cluster stabilization
-            sleep 10
-        resources:
-          requests:
-            cpu: 10m
-            memory: 16Mi
-          limits:
-            cpu: 100m
-            memory: 64Mi
       containers:
       - name: minio-init
         image: minio/mc:latest

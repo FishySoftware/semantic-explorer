@@ -20,7 +20,27 @@ use openidconnect::{
 use openidconnect::{Client, IdToken, reqwest};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::sync::RwLock;
 use url::Url;
+
+/// How often to proactively refresh the OIDC provider's signing keys (seconds).
+/// Prevents "Signature verification failed" errors when the provider (e.g., Dex)
+/// rotates its signing keys between deployments or on schedule.
+const JWKS_REFRESH_INTERVAL_SECS: u64 = 300; // 5 minutes
+
+/// Minimum time between forced JWKS refresh attempts (seconds).
+/// Prevents hammering the OIDC provider on persistent verification failures.
+const JWKS_MIN_REFRESH_INTERVAL_SECS: u64 = 10;
+
+/// Refreshable OIDC client state for ID token signature verification.
+/// When the provider rotates signing keys, we re-discover provider metadata
+/// and rebuild this client so new tokens can be verified without a restart.
+struct VerificationState {
+    client: ExtendedClient,
+    last_refreshed: Instant,
+}
 
 #[derive(Clone)]
 pub(crate) struct OpenID {
@@ -33,6 +53,12 @@ pub(crate) struct OpenID {
     pub(crate) redirect_on_error: bool,
     allow_all_audiences: bool,
     pub(crate) use_pkce: bool,
+    /// Refreshable verification client — re-discovered when OIDC signing keys rotate.
+    verification: Arc<RwLock<VerificationState>>,
+    /// Stored for rebuilding the verification client on key refresh.
+    issuer_url: String,
+    client_secret_str: Option<String>,
+    redirect_uri: RedirectUrl,
 }
 
 pub(crate) struct OpenIDTokens {
@@ -118,20 +144,27 @@ impl OpenID {
         redirect_on_error: bool,
     ) -> Result<Self> {
         let http_client = get_http_client()?;
-        let provider_metadata =
-            ExtendedProviderMetadata::discover_async(IssuerUrl::new(issuer_url)?, &http_client)
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to discover OpenID Provider: {e}"))?;
-
-        let client = CoreClient::from_provider_metadata(
-            provider_metadata.clone(),
-            ClientId::new(client_id.to_string()),
-            client_secret.map(|client_secret| ClientSecret::new(client_secret.to_string())),
+        let provider_metadata = ExtendedProviderMetadata::discover_async(
+            IssuerUrl::new(issuer_url.clone())?,
+            &http_client,
         )
-        .set_redirect_uri(
-            RedirectUrl::new(redirect_uri.to_string())
-                .map_err(|e| anyhow::anyhow!("Invalid redirect URL: {e}"))?,
-        );
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to discover OpenID Provider: {e}"))?;
+
+        let redirect_url = RedirectUrl::new(redirect_uri.to_string())
+            .map_err(|e| anyhow::anyhow!("Invalid redirect URL: {e}"))?;
+
+        let build_client = |metadata: &ExtendedProviderMetadata| -> ExtendedClient {
+            CoreClient::from_provider_metadata(
+                metadata.clone(),
+                ClientId::new(client_id.clone()),
+                client_secret.as_ref().map(|s| ClientSecret::new(s.clone())),
+            )
+            .set_redirect_uri(redirect_url.clone())
+        };
+
+        let client = build_client(&provider_metadata);
+        let verification_client = build_client(&provider_metadata);
 
         Ok(Self {
             client,
@@ -143,6 +176,13 @@ impl OpenID {
             use_pkce,
             redirect_on_error,
             allow_all_audiences,
+            verification: Arc::new(RwLock::new(VerificationState {
+                client: verification_client,
+                last_refreshed: Instant::now(),
+            })),
+            issuer_url,
+            client_secret_str: client_secret,
+            redirect_uri: redirect_url,
         })
     }
 
@@ -216,15 +256,125 @@ impl OpenID {
         id_token: &'a ExtendedIdToken,
         nonce: String,
     ) -> Result<&'a CoreIdTokenClaims, ClaimsVerificationError> {
-        id_token.claims(
-            &self
-                .client
-                .id_token_verifier()
-                .set_other_audience_verifier_fn(|audience| {
-                    self.allow_all_audiences || self.additional_audiences.contains(audience)
-                }),
-            &Nonce::new(nonce),
+        // Proactively refresh if signing keys are stale
+        self.maybe_refresh_verification_keys().await;
+
+        // First attempt with current keys
+        let result = {
+            let state = self.verification.read().await;
+            id_token.claims(
+                &state
+                    .client
+                    .id_token_verifier()
+                    .set_other_audience_verifier_fn(|audience| {
+                        self.allow_all_audiences || self.additional_audiences.contains(audience)
+                    }),
+                &Nonce::new(nonce.clone()),
+            )
+        };
+
+        match result {
+            Ok(claims) => Ok(claims),
+            Err(e) if Self::is_key_related_error(&e) => {
+                tracing::info!(
+                    "ID token signature verification failed, refreshing OIDC provider keys and retrying"
+                );
+                self.force_refresh_verification_keys().await;
+
+                // Retry with refreshed keys
+                let state = self.verification.read().await;
+                id_token.claims(
+                    &state
+                        .client
+                        .id_token_verifier()
+                        .set_other_audience_verifier_fn(|audience| {
+                            self.allow_all_audiences || self.additional_audiences.contains(audience)
+                        }),
+                    &Nonce::new(nonce),
+                )
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Check if signing keys should be proactively refreshed based on age.
+    async fn maybe_refresh_verification_keys(&self) {
+        let needs_refresh = {
+            let state = self.verification.read().await;
+            state.last_refreshed.elapsed().as_secs() >= JWKS_REFRESH_INTERVAL_SECS
+        };
+        if needs_refresh {
+            self.force_refresh_verification_keys().await;
+        }
+    }
+
+    /// Force re-discover OIDC provider metadata and rebuild the verification client.
+    /// This picks up rotated signing keys from the provider (e.g., Dex).
+    async fn force_refresh_verification_keys(&self) {
+        // Quick check under read lock to avoid unnecessary write lock contention
+        {
+            let state = self.verification.read().await;
+            if state.last_refreshed.elapsed().as_secs() < JWKS_MIN_REFRESH_INTERVAL_SECS {
+                return;
+            }
+        }
+
+        // Perform HTTP discovery without holding any lock (avoids blocking readers)
+        let http_client = match get_http_client() {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("Failed to build HTTP client for JWKS refresh: {e}");
+                return;
+            }
+        };
+
+        let issuer = match IssuerUrl::new(self.issuer_url.clone()) {
+            Ok(u) => u,
+            Err(e) => {
+                tracing::warn!("Invalid issuer URL during JWKS refresh: {e}");
+                return;
+            }
+        };
+
+        let metadata = match ExtendedProviderMetadata::discover_async(issuer, &http_client).await {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!("Failed to refresh OIDC provider metadata: {e}");
+                // Update timestamp to avoid hot-loop retries
+                let mut state = self.verification.write().await;
+                state.last_refreshed = Instant::now();
+                return;
+            }
+        };
+
+        // Acquire write lock and update
+        let mut state = self.verification.write().await;
+        // Double-check: another task may have refreshed while we were discovering
+        if state.last_refreshed.elapsed().as_secs() < JWKS_MIN_REFRESH_INTERVAL_SECS {
+            return;
+        }
+
+        let new_client = CoreClient::from_provider_metadata(
+            metadata,
+            ClientId::new(self.client_id.clone()),
+            self.client_secret_str
+                .as_ref()
+                .map(|s| ClientSecret::new(s.clone())),
         )
+        .set_redirect_uri(self.redirect_uri.clone());
+
+        tracing::info!(
+            "Successfully refreshed OIDC verification keys from {}",
+            self.issuer_url
+        );
+        state.client = new_client;
+        state.last_refreshed = Instant::now();
+    }
+
+    /// Whether the error indicates a signing key mismatch that might be
+    /// resolved by refreshing JWKS from the OIDC provider.
+    fn is_key_related_error(err: &ClaimsVerificationError) -> bool {
+        matches!(err, ClaimsVerificationError::SignatureVerification(_))
     }
 
     pub(crate) fn get_logout_uri(&self, id_token: &ExtendedIdToken) -> Result<Url> {

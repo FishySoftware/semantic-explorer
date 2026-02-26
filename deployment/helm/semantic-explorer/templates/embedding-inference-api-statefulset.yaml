@@ -83,6 +83,9 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       terminationGracePeriodSeconds: {{ .Values.embeddingInferenceApi.terminationGracePeriodSeconds | default 60 }}
+      {{- with .Values.embeddingInferenceApi.runtimeClassName }}
+      runtimeClassName: {{ . }}
+      {{- end }}
       {{- with .Values.embeddingInferenceApi.priorityClassName }}
       priorityClassName: {{ . }}
       {{- end }}

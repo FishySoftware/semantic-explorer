@@ -57,8 +57,8 @@ spec:
   - to:
     - podSelector:
         matchLabels:
-          {{- include "semantic-explorer.selectorLabels" . | nindent 10 }}
-          app.kubernetes.io/component: nats
+          app.kubernetes.io/name: nats
+          app.kubernetes.io/instance: {{ .Release.Name }}
     ports:
     - protocol: TCP
       port: 4222
@@ -66,8 +66,8 @@ spec:
   - to:
     - podSelector:
         matchLabels:
-          {{- include "semantic-explorer.selectorLabels" . | nindent 10 }}
-          app.kubernetes.io/component: qdrant
+          app.kubernetes.io/name: qdrant
+          app.kubernetes.io/instance: {{ .Release.Name }}
     ports:
     - protocol: TCP
       port: 6334
@@ -147,8 +147,8 @@ spec:
   - to:
     - podSelector:
         matchLabels:
-          {{- include "semantic-explorer.selectorLabels" . | nindent 10 }}
-          app.kubernetes.io/component: nats
+          app.kubernetes.io/name: nats
+          app.kubernetes.io/instance: {{ .Release.Name }}
     ports:
     - protocol: TCP
       port: 4222
@@ -212,8 +212,8 @@ spec:
   - to:
     - podSelector:
         matchLabels:
-          {{- include "semantic-explorer.selectorLabels" . | nindent 10 }}
-          app.kubernetes.io/component: nats
+          app.kubernetes.io/name: nats
+          app.kubernetes.io/instance: {{ .Release.Name }}
     ports:
     - protocol: TCP
       port: 4222
@@ -221,8 +221,8 @@ spec:
   - to:
     - podSelector:
         matchLabels:
-          {{- include "semantic-explorer.selectorLabels" . | nindent 10 }}
-          app.kubernetes.io/component: qdrant
+          app.kubernetes.io/name: qdrant
+          app.kubernetes.io/instance: {{ .Release.Name }}
     ports:
     - protocol: TCP
       port: 6334
