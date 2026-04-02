@@ -25,7 +25,7 @@ boto3==1.42.26  # Latest: Full Python 3.12 support
 python-dotenv==1.2.1  # Latest: Full Python 3.12 support
 
 # HTTP server and async framework
-aiohttp==3.13.3  # Latest: Full Python 3.12 support
+aiohttp==3.13.4  # Latest: Full Python 3.12 support
 prometheus-client==0.24.0  # Latest: Full Python 3.12 support
 
 # Observability - OpenTelemetry (all at latest stable versions)
