@@ -43,20 +43,20 @@ reqwest = { workspace = true }
 regex = { workspace = true }
 infer = { workspace = true }
 sha2 = { workspace = true }
+hex = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 once_cell = { workspace = true }
 redis = { workspace = true }
 moka = { workspace = true }
 
 [target.'cfg(target_env = "musl")'.dependencies]
-mimalloc = { version = "0.1.48", features = ["v3"], default-features = false }
+mimalloc = { version = "0.1.51", features = [], default-features = false }
+
+[dev-dependencies]
+tempfile = "3"
 
 [lints.clippy]
 enum_glob_use = "deny"
 
 [lints.rust]
 unsafe_code = "forbid"
-
-[dev-dependencies]
-tempfile = "3"
-

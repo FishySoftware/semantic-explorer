@@ -442,7 +442,7 @@ fn run_model_worker(
             let queue_wait = req.enqueued_at.elapsed();
             let texts_count = req.texts.len();
             let total_chars: usize = req.texts.iter().map(|t| t.len()).sum();
-            let avg_chars = if texts_count > 0 { total_chars / texts_count } else { 0 };
+            let avg_chars = if texts_count > 0 { total_chars.checked_div(texts_count).unwrap_or(0) } else { 0 };
 
             let embed_start = Instant::now();
 

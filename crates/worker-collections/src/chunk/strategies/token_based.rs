@@ -124,7 +124,7 @@ fn chunk_by_tokens(
         let chunk_tokens = &tokens[start..end];
 
         // Decode tokens back to text
-        let chunk_text = bpe.decode(chunk_tokens.to_vec())?;
+        let chunk_text = bpe.decode(chunk_tokens)?;
         chunks.push(chunk_text.trim().to_string());
 
         // Move start, accounting for overlap
@@ -156,9 +156,9 @@ fn get_overlap_text(text: &str, bpe: &CoreBPE, overlap_tokens: usize) -> String 
     }
 
     let overlap_start = tokens.len() - overlap_tokens;
-    let overlap_tokens = &tokens[overlap_start..];
+    let overlap_tokens: &[u32] = &tokens[overlap_start..];
 
-    bpe.decode(overlap_tokens.to_vec())
+    bpe.decode(overlap_tokens)
         .unwrap_or_default()
         .trim()
         .to_string()

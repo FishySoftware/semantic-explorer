@@ -792,8 +792,8 @@ For systems with NVIDIA GPUs, the inference APIs support CUDA acceleration:
 
 ```bash
 cd semantic-explorer-ui
-npm install
-npm run build
+bun install
+bun run dev
 ```
 
 ### Docker Images
@@ -832,7 +832,7 @@ python -m pytest tests/
 
 # UI tests
 cd semantic-explorer-ui
-npm test
+bun  test
 ```
 
 ---

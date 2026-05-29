@@ -23,6 +23,4 @@ deployment/helm/semantic-explorer/values-custom.yaml
 
 crates/worker-visualizations-py/fonts
 
-plans/
-.roo
 **/.env
