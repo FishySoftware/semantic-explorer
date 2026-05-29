@@ -66,24 +66,22 @@ fn extract_core_metadata(
             Ok(Event::Start(ref e)) => {
                 current_tag = String::from_utf8_lossy(e.local_name().as_ref()).to_string();
             }
-            Ok(Event::Text(e)) => {
-                if !current_tag.is_empty() {
-                    let text = e.decode()?.to_string();
-                    if !text.is_empty() {
-                        let key = match current_tag.as_str() {
-                            "title" => "title",
-                            "subject" => "subject",
-                            "creator" => "author",
-                            "keywords" => "keywords",
-                            "description" => "description",
-                            "lastModifiedBy" => "last_modified_by",
-                            "created" => "creation_date",
-                            "modified" => "modification_date",
-                            "category" => "category",
-                            _ => &current_tag,
-                        };
-                        metadata.insert(key.to_string(), json!(text));
-                    }
+            Ok(Event::Text(e)) if !current_tag.is_empty() => {
+                let text = e.decode()?.to_string();
+                if !text.is_empty() {
+                    let key = match current_tag.as_str() {
+                        "title" => "title",
+                        "subject" => "subject",
+                        "creator" => "author",
+                        "keywords" => "keywords",
+                        "description" => "description",
+                        "lastModifiedBy" => "last_modified_by",
+                        "created" => "creation_date",
+                        "modified" => "modification_date",
+                        "category" => "category",
+                        _ => &current_tag,
+                    };
+                    metadata.insert(key.to_string(), json!(text));
                 }
             }
             Ok(Event::End(_)) => {
@@ -120,28 +118,26 @@ fn extract_app_metadata(
             Ok(Event::Start(ref e)) => {
                 current_tag = String::from_utf8_lossy(e.local_name().as_ref()).to_string();
             }
-            Ok(Event::Text(e)) => {
-                if !current_tag.is_empty() {
-                    let text = e.decode()?.to_string();
-                    if !text.is_empty() {
-                        let key = match current_tag.as_str() {
-                            "Application" => "application",
-                            "AppVersion" => "app_version",
-                            "Company" => "company",
-                            "Pages" => "page_count",
-                            "Words" => "word_count",
-                            "Characters" => "character_count",
-                            "Template" => "template",
-                            "TotalTime" => "total_editing_time",
-                            _ => continue,
-                        };
+            Ok(Event::Text(e)) if !current_tag.is_empty() => {
+                let text = e.decode()?.to_string();
+                if !text.is_empty() {
+                    let key = match current_tag.as_str() {
+                        "Application" => "application",
+                        "AppVersion" => "app_version",
+                        "Company" => "company",
+                        "Pages" => "page_count",
+                        "Words" => "word_count",
+                        "Characters" => "character_count",
+                        "Template" => "template",
+                        "TotalTime" => "total_editing_time",
+                        _ => continue,
+                    };
 
-                        // Try to parse numeric values
-                        if let Ok(num) = text.parse::<i64>() {
-                            metadata.insert(key.to_string(), json!(num));
-                        } else {
-                            metadata.insert(key.to_string(), json!(text));
-                        }
+                    // Try to parse numeric values
+                    if let Ok(num) = text.parse::<i64>() {
+                        metadata.insert(key.to_string(), json!(num));
+                    } else {
+                        metadata.insert(key.to_string(), json!(text));
                     }
                 }
             }

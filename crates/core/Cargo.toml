@@ -33,3 +33,10 @@ hex = { workspace = true }
 rustls = { workspace = true }
 pem = { workspace = true }
 nvml-wrapper = "0.12.0"
+
+
+[lints.clippy]
+enum_glob_use = "deny"
+
+[lints.rust]
+unsafe_code = "forbid"

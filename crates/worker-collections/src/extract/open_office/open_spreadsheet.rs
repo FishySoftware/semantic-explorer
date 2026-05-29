@@ -40,12 +40,10 @@ pub(crate) fn extract_text(content: &[u8]) -> Result<String> {
                         texts.push("\n".to_string());
                     }
                 }
-                Ok(Event::Text(e)) => {
-                    if to_read {
-                        let text = e.decode()?.to_string();
-                        texts.push(text);
-                        to_read = false;
-                    }
+                Ok(Event::Text(e)) if to_read => {
+                    let text = e.decode()?.to_string();
+                    texts.push(text);
+                    to_read = false;
                 }
                 Ok(Event::Eof) => break,
                 Err(error) => error!(

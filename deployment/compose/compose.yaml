@@ -234,129 +234,129 @@ services:
       - semantic-explorer-net
 
   # Embedding inference service for embeddings and reranking (CUDA GPU accelerated)
-  embedding-inference-api:
-    image: jofish89/embedding-inference-api:0.4.1-cuda12-sm89
-    depends_on:
-      otel-collector:
-        condition: service_started
-    restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    environment:
-      - RUST_LOG=info,actix_web_prom=error
-      - LOG_FORMAT=json
-      - INFERENCE_HOSTNAME=0.0.0.0
-      - INFERENCE_PORT=8090
-      - CORS_ALLOWED_ORIGINS=*
-      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
-      - INFERENCE_ALLOWED_EMBEDDING_MODELS=sentence-transformers/all-MiniLM-L6-v2
-      - INFERENCE_ALLOWED_RERANK_MODELS=jinaai/jina-reranker-v2-base-multilingual
-      - INFERENCE_MAX_BATCH_SIZE=256
-      # Maximum concurrent embedding requests (for backpressure control)
-      # When at capacity, the API returns 503 with Retry-After header
-      - INFERENCE_MAX_CONCURRENT_REQUESTS=5
-      # GPU pressure threshold (0-100) - requests rejected above this
-      - GPU_PRESSURE_THRESHOLD=95.0
-      # CUDA memory arena size limit (e.g. '4G', '512M', '8589934592')
-      # Unset or 0 = use all available GPU memory (default)
-      # - CUDA_ARENA_SIZE=4G
-      # Arena extend strategy: 'next_power_of_two' (default, fewer larger allocs)
-      # or 'same_as_requested' (exact-sized allocs, more predictable)
-      # - CUDA_ARENA_EXTEND_STRATEGY=next_power_of_two
-      # HuggingFace cache for models (mount a volume for persistence)
-      - HF_HOME=/models
-      # For airgapped deployments: set HF_ENDPOINT to your Artifactory proxy.
-      # The service pre-downloads models using HF_ENDPOINT at startup before
-      # passing them to fastembed (which ignores HF_ENDPOINT internally).
-      # - HF_ENDPOINT=https://artifactory.company.com/huggingface
-      # If your mirror uses a private CA, point SSL_CERT_FILE to a mounted CA bundle.
-      # - SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
-      - SERVICE_NAME=embedding-inference-api
-      - ENCRYPTION_MASTER_KEY=${ENCRYPTION_MASTER_KEY:-e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4}
-    volumes:
-      - inference_models:/models:rw
-      - tensorrt_cache:/tensorrt-cache:rw
-    ports:
-      - "8090:8090"
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8090/health/live"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 120s
-    networks:
-      - semantic-explorer-net
+  # embedding-inference-api:
+  #   image: jofish89/embedding-inference-api:0.4.1-cuda12-sm89
+  #   depends_on:
+  #     otel-collector:
+  #       condition: service_started
+  #   restart: unless-stopped
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   environment:
+  #     - RUST_LOG=info,actix_web_prom=error
+  #     - LOG_FORMAT=json
+  #     - INFERENCE_HOSTNAME=0.0.0.0
+  #     - INFERENCE_PORT=8090
+  #     - CORS_ALLOWED_ORIGINS=*
+  #     - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+  #     - INFERENCE_ALLOWED_EMBEDDING_MODELS=sentence-transformers/all-MiniLM-L6-v2
+  #     - INFERENCE_ALLOWED_RERANK_MODELS=jinaai/jina-reranker-v2-base-multilingual
+  #     - INFERENCE_MAX_BATCH_SIZE=256
+  #     # Maximum concurrent embedding requests (for backpressure control)
+  #     # When at capacity, the API returns 503 with Retry-After header
+  #     - INFERENCE_MAX_CONCURRENT_REQUESTS=5
+  #     # GPU pressure threshold (0-100) - requests rejected above this
+  #     - GPU_PRESSURE_THRESHOLD=95.0
+  #     # CUDA memory arena size limit (e.g. '4G', '512M', '8589934592')
+  #     # Unset or 0 = use all available GPU memory (default)
+  #     # - CUDA_ARENA_SIZE=4G
+  #     # Arena extend strategy: 'next_power_of_two' (default, fewer larger allocs)
+  #     # or 'same_as_requested' (exact-sized allocs, more predictable)
+  #     # - CUDA_ARENA_EXTEND_STRATEGY=next_power_of_two
+  #     # HuggingFace cache for models (mount a volume for persistence)
+  #     - HF_HOME=/models
+  #     # For airgapped deployments: set HF_ENDPOINT to your Artifactory proxy.
+  #     # The service pre-downloads models using HF_ENDPOINT at startup before
+  #     # passing them to fastembed (which ignores HF_ENDPOINT internally).
+  #     # - HF_ENDPOINT=https://artifactory.company.com/huggingface
+  #     # If your mirror uses a private CA, point SSL_CERT_FILE to a mounted CA bundle.
+  #     # - SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+  #     - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+  #     - SERVICE_NAME=embedding-inference-api
+  #     - ENCRYPTION_MASTER_KEY=${ENCRYPTION_MASTER_KEY:-e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4}
+  #   volumes:
+  #     - inference_models:/models:rw
+  #     - tensorrt_cache:/tensorrt-cache:rw
+  #   ports:
+  #     - "8090:8090"
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-sf", "http://localhost:8090/health/live"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 3
+  #     start_period: 120s
+  #   networks:
+  #     - semantic-explorer-net
 
-  # LLM inference service for text generation (CUDA GPU accelerated)
-  llm-inference-api:
-    image: jofish89/llm-inference-api:0.4.1-cuda12-sm89
-    depends_on:
-      otel-collector:
-        condition: service_started
-    restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    environment:
-      - RUST_LOG=info,actix_web_prom=error
-      - LOG_FORMAT=json
-      - LLM_INFERENCE_HOSTNAME=0.0.0.0
-      - LLM_INFERENCE_PORT=8091
-      - CORS_ALLOWED_ORIGINS=*
-      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
-      # Model Configuration
-      # RECOMMENDED: Use pre-quantized models for fast loading
-      # GGUF: Works on CPU, CUDA, Metal (any device)
-      #   Example: TheBloke/Mistral-7B-Instruct-v0.2-GGUF
-      # GPTQ: Works on CUDA only (NVIDIA GPUs)
-      #   Example: TheBloke/Mistral-7B-Instruct-v0.2-GPTQ
-      # See: https://huggingface.co/TheBloke
-      - LLM_ALLOWED_MODELS=microsoft/Phi-3-mini-4k-instruct-gguf:Phi-3-mini-4k-instruct-q4.gguf@microsoft/Phi-3-mini-4k-instruct
-      - LLM_MAX_CONCURRENT_REQUESTS=5
-      - LLM_DEFAULT_TEMPERATURE=0.5
-      - LLM_DEFAULT_TOP_P=0.9
-      - LLM_DEFAULT_MAX_TOKENS=512
-      - LLM_MAX_TOKENS_LIMIT=4096
-      # Quantization (Optional - NOT recommended, use GGUF models instead)
-      # Runtime ISQ is SLOW (5-10 min) and NOT cached between restarts
-      - LLM_ENABLE_ISQ=false
-      # - LLM_ISQ_TYPE=Q4_K
-      # GPU pressure threshold (0-100) - requests rejected above this
-      - GPU_PRESSURE_THRESHOLD=95.0
-      # HuggingFace cache for models (mount a volume for persistence)
-      - HF_HOME=/models
-      # For airgapped deployments: set HF_ENDPOINT to your Artifactory proxy.
-      # The service pre-downloads models using HF_ENDPOINT at startup before
-      # passing them to mistral.rs (which ignores HF_ENDPOINT internally).
-      # - HF_ENDPOINT=https://artifactory.company.com/huggingface
-      # If your mirror uses a private CA, point SSL_CERT_FILE to a mounted CA bundle.
-      # - SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
-      - SERVICE_NAME=llm-inference-api
-      - ENCRYPTION_MASTER_KEY=${ENCRYPTION_MASTER_KEY:-e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4}
-    volumes:
-      - llm_models:/models:rw
-      - llm_hf_cache:/home/appuser/.cache:rw
-    ports:
-      - "8091:8091"
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8091/health/live"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 120s
-    networks:
-      - semantic-explorer-net
+  # # LLM inference service for text generation (CUDA GPU accelerated)
+  # llm-inference-api:
+  #   image: jofish89/llm-inference-api:0.4.1-cuda12-sm89
+  #   depends_on:
+  #     otel-collector:
+  #       condition: service_started
+  #   restart: unless-stopped
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   environment:
+  #     - RUST_LOG=info,actix_web_prom=error
+  #     - LOG_FORMAT=json
+  #     - LLM_INFERENCE_HOSTNAME=0.0.0.0
+  #     - LLM_INFERENCE_PORT=8091
+  #     - CORS_ALLOWED_ORIGINS=*
+  #     - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+  #     # Model Configuration
+  #     # RECOMMENDED: Use pre-quantized models for fast loading
+  #     # GGUF: Works on CPU, CUDA, Metal (any device)
+  #     #   Example: TheBloke/Mistral-7B-Instruct-v0.2-GGUF
+  #     # GPTQ: Works on CUDA only (NVIDIA GPUs)
+  #     #   Example: TheBloke/Mistral-7B-Instruct-v0.2-GPTQ
+  #     # See: https://huggingface.co/TheBloke
+  #     - LLM_ALLOWED_MODELS=microsoft/Phi-3-mini-4k-instruct-gguf:Phi-3-mini-4k-instruct-q4.gguf@microsoft/Phi-3-mini-4k-instruct
+  #     - LLM_MAX_CONCURRENT_REQUESTS=5
+  #     - LLM_DEFAULT_TEMPERATURE=0.5
+  #     - LLM_DEFAULT_TOP_P=0.9
+  #     - LLM_DEFAULT_MAX_TOKENS=512
+  #     - LLM_MAX_TOKENS_LIMIT=4096
+  #     # Quantization (Optional - NOT recommended, use GGUF models instead)
+  #     # Runtime ISQ is SLOW (5-10 min) and NOT cached between restarts
+  #     - LLM_ENABLE_ISQ=false
+  #     # - LLM_ISQ_TYPE=Q4_K
+  #     # GPU pressure threshold (0-100) - requests rejected above this
+  #     - GPU_PRESSURE_THRESHOLD=95.0
+  #     # HuggingFace cache for models (mount a volume for persistence)
+  #     - HF_HOME=/models
+  #     # For airgapped deployments: set HF_ENDPOINT to your Artifactory proxy.
+  #     # The service pre-downloads models using HF_ENDPOINT at startup before
+  #     # passing them to mistral.rs (which ignores HF_ENDPOINT internally).
+  #     # - HF_ENDPOINT=https://artifactory.company.com/huggingface
+  #     # If your mirror uses a private CA, point SSL_CERT_FILE to a mounted CA bundle.
+  #     # - SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+  #     - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+  #     - SERVICE_NAME=llm-inference-api
+  #     - ENCRYPTION_MASTER_KEY=${ENCRYPTION_MASTER_KEY:-e9d7c7c2864110d9511423ec979416298843e39a2538d19eb1d94947c61b41c4}
+  #   volumes:
+  #     - llm_models:/models:rw
+  #     - llm_hf_cache:/home/appuser/.cache:rw
+  #   ports:
+  #     - "8091:8091"
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-sf", "http://localhost:8091/health/live"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 3
+  #     start_period: 120s
+  #   networks:
+  #     - semantic-explorer-net
 
 
   # MinIO distributed cluster - 4 nodes for production-like erasure coding
