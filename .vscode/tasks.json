@@ -114,7 +114,8 @@
                 "Run Worker Datasets",
                 "Run Worker Visualizations",
                 "Run Embedding Inference API",
-                "Run LLM Inference API"
+                "Run LLM Inference API",
+                "Run UI Watch"
             ],
             "dependsOrder": "parallel",
             "problemMatcher": []

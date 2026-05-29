@@ -256,7 +256,7 @@ pub fn new_bearer_token_cache() -> BearerTokenCache {
 fn hash_bearer_token(token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
-    format!("{:x}", hasher.finalize())
+    hex::encode(hasher.finalize())
 }
 
 pub(crate) struct OpenIdMiddleware<S> {

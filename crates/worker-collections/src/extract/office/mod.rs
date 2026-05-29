@@ -66,8 +66,8 @@ fn extract_core_metadata(
             Ok(Event::Start(ref e)) => {
                 current_tag = String::from_utf8_lossy(e.local_name().as_ref()).to_string();
             }
-            Ok(Event::Text(e)) => {
-                if !current_tag.is_empty() {
+            Ok(Event::Text(e))
+                if !current_tag.is_empty() => {
                     let text = e.decode()?.to_string();
                     if !text.is_empty() {
                         let key = match current_tag.as_str() {
@@ -85,7 +85,6 @@ fn extract_core_metadata(
                         metadata.insert(key.to_string(), json!(text));
                     }
                 }
-            }
             Ok(Event::End(_)) => {
                 current_tag.clear();
             }
@@ -120,8 +119,8 @@ fn extract_app_metadata(
             Ok(Event::Start(ref e)) => {
                 current_tag = String::from_utf8_lossy(e.local_name().as_ref()).to_string();
             }
-            Ok(Event::Text(e)) => {
-                if !current_tag.is_empty() {
+            Ok(Event::Text(e))
+                if !current_tag.is_empty() => {
                     let text = e.decode()?.to_string();
                     if !text.is_empty() {
                         let key = match current_tag.as_str() {
@@ -144,7 +143,6 @@ fn extract_app_metadata(
                         }
                     }
                 }
-            }
             Ok(Event::End(_)) => {
                 current_tag.clear();
             }

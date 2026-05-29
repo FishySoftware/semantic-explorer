@@ -44,32 +44,30 @@ pub(crate) fn extract_document_metadata(content: &[u8]) -> Result<serde_json::Va
             Ok(Event::Start(ref e)) => {
                 current_tag = String::from_utf8_lossy(e.local_name().as_ref()).to_string();
             }
-            Ok(Event::Text(e)) => {
-                if !current_tag.is_empty() {
-                    let text = e.decode()?.to_string();
-                    if !text.is_empty() {
-                        let key = match current_tag.as_str() {
-                            "title" => "title",
-                            "description" => "description",
-                            "subject" => "subject",
-                            "keyword" => "keywords",
-                            "initial-creator" => "author",
-                            "creator" => "last_modified_by",
-                            "creation-date" => "creation_date",
-                            "date" => "modification_date",
-                            "language" => "language",
-                            "editing-cycles" => "revision_count",
-                            "editing-duration" => "editing_duration",
-                            "generator" => "application",
-                            _ => continue,
-                        };
+            Ok(Event::Text(e)) if !current_tag.is_empty() => {
+                let text = e.decode()?.to_string();
+                if !text.is_empty() {
+                    let key = match current_tag.as_str() {
+                        "title" => "title",
+                        "description" => "description",
+                        "subject" => "subject",
+                        "keyword" => "keywords",
+                        "initial-creator" => "author",
+                        "creator" => "last_modified_by",
+                        "creation-date" => "creation_date",
+                        "date" => "modification_date",
+                        "language" => "language",
+                        "editing-cycles" => "revision_count",
+                        "editing-duration" => "editing_duration",
+                        "generator" => "application",
+                        _ => continue,
+                    };
 
-                        // Try to parse numeric values
-                        if let Ok(num) = text.parse::<i64>() {
-                            metadata.insert(key.to_string(), json!(num));
-                        } else {
-                            metadata.insert(key.to_string(), json!(text));
-                        }
+                    // Try to parse numeric values
+                    if let Ok(num) = text.parse::<i64>() {
+                        metadata.insert(key.to_string(), json!(num));
+                    } else {
+                        metadata.insert(key.to_string(), json!(text));
                     }
                 }
             }

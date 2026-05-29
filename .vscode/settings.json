@@ -1,4 +1,3 @@
 {
-    "python-envs.pythonProjects": [],
     "python.defaultInterpreterPath": "${workspaceFolder}/crates/worker-visualizations-py/venv/bin/python",
 }

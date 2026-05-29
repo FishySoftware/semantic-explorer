@@ -129,7 +129,7 @@ pub(crate) fn hash_username_for_owner(username: &str) -> String {
     hasher.update(username.as_bytes());
     let result = hasher.finalize();
     // Use first 16 chars (64 bits) of hex - sufficient for uniqueness in this context
-    format!("{:x}", result).chars().take(16).collect()
+    hex::encode(result).chars().take(16).collect()
 }
 
 pub(crate) fn extract_email(auth: &Authenticated) -> Result<String, HttpResponse> {
