@@ -22,7 +22,7 @@ httpx==0.28.1  # Latest: Full Python 3.12 support, for local LLM inference API
 boto3==1.42.26  # Latest: Full Python 3.12 support
 
 # Environment variables
-python-dotenv==1.2.1  # Latest: Full Python 3.12 support
+python-dotenv==1.2.2  # Latest: Full Python 3.12 support
 
 # HTTP server and async framework
 aiohttp==3.13.4  # Latest: Full Python 3.12 support
