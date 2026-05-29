@@ -36,20 +36,19 @@ RUN cargo build --target x86_64-unknown-linux-musl --release -p semantic-explore
 RUN useradd -u 10001 appuser
 
 ##### Node Builder
-FROM node:trixie-slim AS node_builder
+FROM oven/bun:latest AS node_builder
 
 WORKDIR /usr/src
 
 # Copy package files first for better caching
-COPY semantic-explorer-ui/package*.json ./
+COPY semantic-explorer-ui/package.json semantic-explorer-ui/bun.lock* ./
 
-RUN npm install -g npm
-RUN npm ci
+RUN bun install --frozen-lockfile
 
 # Copy source files
 COPY semantic-explorer-ui/ ./
 
-RUN npm run build
+RUN bun run build
 
 ##### Runtime
 FROM scratch

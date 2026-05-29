@@ -18,7 +18,7 @@ jobs:
       embedding-inference-api-changed: ${{ steps.changes.outputs.embedding-inference-api }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5 
         with:
           fetch-depth: 0
 
@@ -113,7 +113,7 @@ jobs:
           swap-storage: true
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5 
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -163,7 +163,7 @@ jobs:
       packages: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5 
 
       - name: Login to DockerHub
         uses: docker/login-action@v3
@@ -211,7 +211,7 @@ jobs:
           swap-storage: true
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5 
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -258,7 +258,7 @@ jobs:
       packages: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5 
 
       - name: Login to DockerHub
         uses: docker/login-action@v3
@@ -306,7 +306,7 @@ jobs:
           swap-storage: true
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5 
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -353,7 +353,7 @@ jobs:
       packages: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5 
 
       - name: Login to DockerHub
         uses: docker/login-action@v3
@@ -401,7 +401,7 @@ jobs:
           swap-storage: true
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5 
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -448,7 +448,7 @@ jobs:
       packages: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5 
 
       - name: Login to DockerHub
         uses: docker/login-action@v3
@@ -518,7 +518,7 @@ jobs:
           swap-storage: true
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5 
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -585,7 +585,7 @@ jobs:
             cuda_tag: 'cuda12'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5 
         with:
           fetch-depth: 0
 
@@ -658,7 +658,7 @@ jobs:
           swap-storage: true
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5 
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -711,7 +711,7 @@ jobs:
         cuda_compute_cap: ['86', '89', '90']
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5 
         with:
           fetch-depth: 0
 
