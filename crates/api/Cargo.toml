@@ -52,12 +52,11 @@ moka = { workspace = true }
 [target.'cfg(target_env = "musl")'.dependencies]
 mimalloc = { version = "0.1.51", features = [], default-features = false }
 
+[dev-dependencies]
+tempfile = "3"
+
 [lints.clippy]
 enum_glob_use = "deny"
 
 [lints.rust]
 unsafe_code = "forbid"
-
-[dev-dependencies]
-tempfile = "3"
-
