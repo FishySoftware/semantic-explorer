@@ -30,9 +30,3 @@ futures = { workspace = true }
 async-stream = { workspace = true }
 mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs", tag = "v0.7.0", features = ["cuda", "flash-attn", "cudnn"] }
 hf-hub = { version = "0.5.0", default-features = false, features = ["ureq"] }
-
-[lints.clippy]
-enum_glob_use = "deny"
-
-[lints.rust]
-unsafe_code = "forbid"

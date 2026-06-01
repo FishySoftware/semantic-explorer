@@ -32,9 +32,3 @@ hf-hub = { version = "0.5.0", default-features = false, features = ["ureq"] }
 candle-core = { version = "0.10.2", features = ["cuda", "cudnn"] }
 ort = { version = "2.0.0-rc.11", features = ["cuda", "ndarray", "tracing"], default-features = false }
 futures = "0.3.31"
-
-[lints.clippy]
-enum_glob_use = "deny"
-
-[lints.rust]
-unsafe_code = "forbid"
