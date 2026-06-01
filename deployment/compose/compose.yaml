@@ -48,8 +48,8 @@ services:
       - PUBLIC_URL=http://localhost:8080
       - LOG_FORMAT=json
       - AWS_REGION=us-east-1
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:test_access_key}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:test_secret_key}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-test_access_key}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-test_secret_key}
       - AWS_ENDPOINT_URL=http://minio-1:9000
       - S3_BUCKET_NAME=semantic-explorer-local
       - S3_FORCE_PATH_STYLE=true
@@ -58,7 +58,7 @@ services:
       - QDRANT_URL=http://qdrant:6334
       - QDRANT_TIMEOUT_SECS=30
       - QDRANT_CONNECT_TIMEOUT_SECS=10
-      - DATABASE_URL=postgresql://${POSTGRES_USER:user}:${POSTGRES_PASSWORD:password}@postgres:5432/${POSTGRES_DB:explorer}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-explorer}
       - DB_MIN_CONNECTIONS=2
       - DB_MAX_CONNECTIONS=20
       - DB_ACQUIRE_TIMEOUT_SECS=30
@@ -382,6 +382,10 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     networks:
       - semantic-explorer-net
 
@@ -403,6 +407,10 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     networks:
       - semantic-explorer-net
 
@@ -424,6 +432,10 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     networks:
       - semantic-explorer-net
 
@@ -445,6 +457,10 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     networks:
       - semantic-explorer-net
 
@@ -507,6 +523,8 @@ services:
       start_period: 30s
     deploy:
       resources:
+        limits:
+          memory: 4g
         reservations:
           devices:
             - driver: nvidia
@@ -522,6 +540,12 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+    command: >
+      postgres
+      -c shared_buffers=256MB
+      -c work_mem=16MB
+      -c maintenance_work_mem=128MB
+      -c effective_cache_size=512MB
     volumes:
       - postgres_data:/var/lib/postgresql/data:rw
     ports:
@@ -532,6 +556,10 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
     networks:
       - semantic-explorer-net
 
@@ -544,6 +572,10 @@ services:
       - "9187:9187"
     depends_on:
       - postgres
+    deploy:
+      resources:
+        limits:
+          memory: 128m
     networks:
       - semantic-explorer-net
 
@@ -568,6 +600,10 @@ services:
       timeout: 3s
       retries: 5
       start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 300m
     networks:
       - semantic-explorer-net
 
@@ -585,6 +621,10 @@ services:
       - "5556:5556"
       - "5557:5557"
       - "5558:5558"
+    deploy:
+      resources:
+        limits:
+          memory: 128m
     networks:
       - semantic-explorer-net
 
@@ -618,6 +658,10 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
     networks:
       - semantic-explorer-net
 
@@ -653,6 +697,10 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
     networks:
       - semantic-explorer-net
 
@@ -688,6 +736,10 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
     networks:
       - semantic-explorer-net
 
@@ -705,6 +757,10 @@ services:
       - RUST_LOG=info
     command: ["run"]
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2g
     networks:
       - semantic-explorer-net
 
@@ -713,6 +769,7 @@ services:
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.size=1GB'
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
       - '--web.enable-lifecycle'
@@ -725,6 +782,10 @@ services:
       - ./prometheus.prod.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus:rw
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1g
     networks:
       - semantic-explorer-net
 
@@ -743,6 +804,10 @@ services:
       - quickwit
       - prometheus
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256m
     networks:
       - semantic-explorer-net
 

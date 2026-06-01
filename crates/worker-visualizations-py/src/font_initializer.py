@@ -8,8 +8,12 @@ so that no HTTP requests are made to Google Fonts during execution.
 This should be imported at the very start of the application.
 """
 
+import json
 import logging
+import re
+from pathlib import Path
 from typing import List
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +127,58 @@ def build_font_cache_for_docker() -> None:
         logger.warning(f"Could not import datamapplot.offline_mode_caching: {e}")
 
 
+def patch_js_cache_for_version_compatibility() -> None:
+    """
+    Patch the datamapplot JS cache to add aliases for version-pinned URLs.
+
+    datamapplot 0.7.3 switched from deck.gl@latest to deck.gl@9.1.  If the
+    on-disk cache was built with an older version it only has @latest keys and
+    the new datamapplot templates fail to find deck.gl@9.1.  This function
+    copies any @latest entry to the pinned-version key expected by the
+    currently-installed datamapplot, so offline mode works without a full
+    cache rebuild.
+    """
+    try:
+        import platformdirs
+        from datamapplot.offline_mode_caching import DEFAULT_URLS
+    except ImportError:
+        return
+
+    try:
+        cache_path = Path(platformdirs.user_data_dir("datamapplot")) / "datamapplot_js_encoded.json"
+        if not cache_path.exists():
+            return
+
+        with open(cache_path) as f:
+            cache = json.load(f)
+
+        patched = False
+        for url in DEFAULT_URLS:
+            if url in cache:
+                continue
+            # Derive a @latest equivalent and check whether it was cached
+            latest_url = re.sub(r"@[\d.]+/", "@latest/", url)
+            if latest_url not in cache:
+                continue
+            # Recompute the JS variable name for the pinned URL
+            parsed = urlparse(url)
+            name = (
+                f"{parsed.netloc.replace('.', '_')}"
+                f"_{parsed.path.split('/')[-1].replace('.', '_')}"
+            )
+            cache[url] = dict(cache[latest_url], name=name)
+            logger.info(f"JS cache: aliased {url!r} -> {latest_url!r}")
+            patched = True
+
+        if patched:
+            with open(cache_path, "w") as f:
+                json.dump(cache, f)
+            logger.info("JS cache patched for version compatibility")
+
+    except Exception as e:
+        logger.warning(f"Could not patch JS cache for compatibility: {e}")
+
+
 def init_fonts_for_offline_mode() -> None:
     """
     Initialize fonts for offline mode operation.
@@ -137,6 +193,10 @@ def init_fonts_for_offline_mode() -> None:
 
     # Step 1: Disable datamapplot font requests
     disable_datamapplot_font_requests()
+
+    # Step 2: Patch the JS cache to handle datamapplot version upgrades
+    # (e.g. deck.gl@latest -> deck.gl@9.1 in datamapplot 0.7.3)
+    patch_js_cache_for_version_compatibility()
 
     logger.info("Font initialization complete - all font requests disabled")
 

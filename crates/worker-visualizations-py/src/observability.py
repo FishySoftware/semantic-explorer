@@ -22,7 +22,6 @@ from prometheus_client import (
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor
-from opentelemetry.exporter.jaeger.thrift import JaegerExporter
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
 
@@ -214,20 +213,10 @@ def setup_observability(
     # Setup Tracing
     try:
         trace_provider = TracerProvider(resource=resource)
-
-        # Add Jaeger exporter for traces
-        jaeger_exporter = JaegerExporter(
-            agent_host_name="localhost",
-            agent_port=6831,
-        )
-        trace_provider.add_span_processor(SimpleSpanProcessor(jaeger_exporter))
-
-        # Also add OTLP exporter for traces
         otlp_span_exporter = OTLPSpanExporter(endpoint=otlp_endpoint)
         trace_provider.add_span_processor(BatchSpanProcessor(otlp_span_exporter))
-
         trace.set_tracer_provider(trace_provider)
-        logging.debug("Tracing configured with Jaeger and OTLP exporters")
+        logging.debug("Tracing configured with OTLP exporter")
     except Exception as e:  # noqa: BLE001
         logging.warning(f"Failed to initialize tracing: {e}")
 
