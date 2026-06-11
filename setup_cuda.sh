@@ -5,7 +5,7 @@ set -e
 # Downloads ONNX Runtime with CUDA support for both inference APIs
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ORT_VERSION="1.23.2"
+ORT_VERSION="1.24.2"
 
 echo "=========================================="
 echo "Semantic Explorer CUDA Setup"
@@ -51,22 +51,23 @@ setup_onnx_runtime() {
     cd "$INSTALL_DIR"
 
     if [ ! -f "libonnxruntime.so" ]; then
+        local TARBALL="onnxruntime-linux-x64-gpu-${ORT_VERSION}.tgz"
         echo "Downloading ONNX Runtime ${ORT_VERSION} with CUDA support..."
-        wget --show-progress "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-gpu-${ORT_VERSION}.tgz"
-        
+        wget --show-progress -O "${TARBALL}" "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-gpu-${ORT_VERSION}.tgz"
+
         echo ""
         echo "Extracting..."
-        tar -xzf "onnxruntime-linux-x64-gpu-${ORT_VERSION}.tgz"
-        
+        tar -xzf "${TARBALL}" || { echo "❌ Extraction failed — tarball may be corrupt or incomplete"; rm -f "${TARBALL}"; exit 1; }
+
         mv "onnxruntime-linux-x64-gpu-${ORT_VERSION}"/lib/* .
-        
+
         if [ -d "onnxruntime-linux-x64-gpu-${ORT_VERSION}/include" ]; then
             mkdir -p include
             mv "onnxruntime-linux-x64-gpu-${ORT_VERSION}"/include/* include/
         fi
-        
-        rm -rf "onnxruntime-linux-x64-gpu-${ORT_VERSION}" "onnxruntime-linux-x64-gpu-${ORT_VERSION}.tgz"
-        
+
+        rm -rf "onnxruntime-linux-x64-gpu-${ORT_VERSION}" "${TARBALL}"
+
         echo "✅ ONNX Runtime with CUDA installed"
     else
         echo "✅ ONNX Runtime already installed"

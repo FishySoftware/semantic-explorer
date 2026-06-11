@@ -50,7 +50,7 @@ redis = { workspace = true }
 moka = { workspace = true }
 
 [target.'cfg(target_env = "musl")'.dependencies]
-mimalloc = { version = "0.1.51", features = [], default-features = false }
+mimalloc = { version = "0.1.52", features = [], default-features = false }
 
 [dev-dependencies]
-tempfile = "3"
+tempfile = "3.27.0"
