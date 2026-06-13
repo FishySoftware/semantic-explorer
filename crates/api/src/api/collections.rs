@@ -461,6 +461,32 @@ pub(crate) async fn upload_to_collection(
         let file_path = temp_file.file.path().to_owned();
         let file_size = temp_file.size;
 
+        // Reject filenames with path separators, traversal sequences, or control bytes
+        // before the name is used to build the S3 key.
+        if let Err(e) = validation::validate_file_name(&file_name) {
+            tracing::warn!(file_name = %file_name, error = %e, "Upload rejected: invalid filename");
+            let user_message = match &e {
+                validation::ValidationError::Empty { .. } => {
+                    "Filename cannot be empty.".to_string()
+                }
+                validation::ValidationError::TooLong { max, .. } => {
+                    format!("Filename is too long; the maximum allowed length is {max} characters.")
+                }
+                validation::ValidationError::PathTraversal { .. } => {
+                    "Filename contains path traversal sequences (e.g., '..') which are not permitted.".to_string()
+                }
+                validation::ValidationError::InvalidCharacters { reason, .. } => {
+                    format!("Filename is not valid: {reason}.")
+                }
+                _ => format!("Filename is invalid: {e}."),
+            };
+            failed.push(FailedUploadFile {
+                name: file_name.clone(),
+                error: user_message,
+            });
+            continue;
+        }
+
         let validation_result = validate_upload_file(&file_path, &file_name).await;
 
         if !validation_result.is_valid {

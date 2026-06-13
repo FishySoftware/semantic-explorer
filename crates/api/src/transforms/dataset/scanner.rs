@@ -18,7 +18,6 @@ use semantic_explorer_core::observability::{
 };
 use semantic_explorer_core::storage::{DocumentUpload, upload_document};
 
-use crate::auth::AuthenticatedUser;
 use crate::embedded_datasets::EmbeddedDataset;
 use crate::storage::postgres::dataset_transform_pending_batches::{
     self as pending_batches, CreatePendingBatch,
@@ -417,9 +416,15 @@ async fn process_dataset_transform_scan(
         .iter()
         .map(|ed| ed.embedder_id)
         .collect();
-    let user = AuthenticatedUser(transform.owner_display_name.clone());
-    let embedders_list =
-        embedders::get_embedders_batch(pool, &user, &embedder_ids, encryption).await?;
+    // Use the pre-hashed owner_id from the transform record directly to avoid
+    // constructing a fake AuthenticatedUser.
+    let embedders_list = embedders::get_embedders_batch_by_owner_id(
+        pool,
+        &transform.owner_id,
+        &embedder_ids,
+        encryption,
+    )
+    .await?;
 
     let embedders_map: std::collections::HashMap<i32, _> = embedders_list
         .into_iter()

@@ -94,7 +94,7 @@
         {
             "label": "Run UI Watch",
             "type": "shell",
-            "command": "npm run build-watch",
+            "command": "bun run build-watch",
             "options": {
                 "cwd": "${workspaceFolder}/semantic-explorer-ui"
             },

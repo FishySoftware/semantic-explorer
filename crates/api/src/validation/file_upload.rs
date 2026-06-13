@@ -138,6 +138,18 @@ pub(crate) async fn validate_upload_file(file_path: &Path, filename: &str) -> Fi
         "File validation started"
     );
 
+    // Reject when infer positively identifies a type that is not in the allow-list.
+    // If infer cannot identify the file (returns "application/octet-stream") we let
+    // it through — plain text, CSV, JSON, etc. produce no magic-byte signature.
+    if detected_mime != "application/octet-stream"
+        && !ALLOWED_MIME_TYPES.contains(&detected_mime.as_str())
+    {
+        errors.push(format!(
+            "File type '{}' is not allowed for upload",
+            detected_mime
+        ));
+    }
+
     let is_valid = errors.is_empty();
 
     if !is_valid {
@@ -242,7 +254,29 @@ mod tests {
     #[test]
     fn test_detect_mime_type_rtf() {
         let mime = detect_mime_type(b"{\\rtf1\\ansi Test RTF}");
-        assert_eq!(mime, "text/rtf");
+        // Both text/rtf and application/rtf are valid RTF MIME types and in the allow-list.
+        assert!(
+            mime == "text/rtf" || mime == "application/rtf",
+            "expected an RTF MIME type, got {mime}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_disallowed_mime_type() {
+        // PNG magic bytes — infer detects "image/png", which is not in the allow-list
+        let png_magic = b"\x89PNG\r\n\x1a\n";
+        let f = write_temp_file(png_magic);
+        let result = validate_upload_file(f.path(), "image.png").await;
+        assert!(
+            !result.is_valid,
+            "PNG should be rejected by MIME allow-list"
+        );
+        assert!(
+            result
+                .validation_errors
+                .iter()
+                .any(|e| e.contains("image/png") && e.contains("not allowed"))
+        );
     }
 
     #[test]

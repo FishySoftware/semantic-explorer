@@ -123,10 +123,19 @@ pub(crate) type ExtendedIdToken = IdToken<
     CoreJwsSigningAlgorithm,
 >;
 
-fn get_http_client() -> Result<reqwest::Client> {
-    reqwest::Client::builder()
+/// Process-wide OIDC HTTP client
+/// `reqwest::Client` is `Arc`-backed; cloning reuses the connection pool.
+static OIDC_HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+
+/// Return a clone of the shared OIDC HTTP client, initializing it on first call.
+fn get_http_client() -> anyhow::Result<reqwest::Client> {
+    if let Some(client) = OIDC_HTTP_CLIENT.get() {
+        return Ok(client.clone());
+    }
+    let built = reqwest::Client::builder()
         .build()
-        .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {e}"))
+        .map_err(|e| anyhow::anyhow!("Failed to build OIDC HTTP client: {e}"))?;
+    Ok(OIDC_HTTP_CLIENT.get_or_init(|| built).clone())
 }
 
 impl OpenID {
@@ -323,7 +332,7 @@ impl OpenID {
         let http_client = match get_http_client() {
             Ok(c) => c,
             Err(e) => {
-                tracing::warn!("Failed to build HTTP client for JWKS refresh: {e}");
+                tracing::warn!("Failed to get OIDC HTTP client during JWKS refresh: {e}");
                 return;
             }
         };

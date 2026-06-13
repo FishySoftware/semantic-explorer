@@ -369,8 +369,6 @@ Visualization transforms generate interactive 2D scatter plots from high-dimensi
 
 ## Environment Variables
 
-This service uses shared configuration from `semantic-explorer-core`. See the [root README](../../README.md) for the complete environment variable reference.
-
 ### Required Variables
 
 | Variable | Description |
@@ -384,22 +382,99 @@ This service uses shared configuration from `semantic-explorer-core`. See the [r
 | `OIDC_CLIENT_SECRET` | OIDC client secret |
 | `OIDC_ISSUER_URL` | OIDC issuer URL |
 
-### Optional Variables
+### Server
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `HOSTNAME` | `localhost` | Server bind address |
 | `PORT` | `8080` | Server port |
 | `PUBLIC_URL` | - | External URL for OIDC callbacks |
-| `NATS_URL` | `nats://localhost:4222` | NATS server URL |
-| `QDRANT_URL` | `http://localhost:6334` | Qdrant gRPC endpoint |
-| `EMBEDDING_INFERENCE_API_URL` | `http://localhost:8090` | Local embedding API |
-| `LLM_INFERENCE_API_URL` | `http://localhost:8091` | Local LLM API |
+| `STATIC_FILES_DIR` | `./semantic-explorer-ui/` | Directory to serve static UI files from |
 | `CORS_ALLOWED_ORIGINS` | - | Comma-separated allowed origins |
-| `LOG_FORMAT` | `json` | `json` or `pretty` |
+| `SHUTDOWN_TIMEOUT_SECS` | - | Graceful shutdown timeout; omit for immediate |
+| `MAX_UPLOAD_MEMORY_SIZE_BYTES` | `52428800` (50 MB) | Per-field in-memory buffer before spilling to disk during multipart uploads |
+
+### Database (PostgreSQL)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DB_MAX_CONNECTIONS` | `15` | Maximum connection pool size |
+| `DB_MIN_CONNECTIONS` | `2` | Minimum idle connections |
+| `DB_ACQUIRE_TIMEOUT_SECS` | `5` | Timeout waiting for a connection from the pool |
+| `DB_IDLE_TIMEOUT_SECS` | `300` | Close idle connections after this many seconds |
+| `DB_MAX_LIFETIME_SECS` | `1800` | Maximum connection lifetime |
+
+### NATS
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NATS_URL` | `nats://localhost:4222` | NATS server URL |
+| `NATS_REPLICAS` | `3` | JetStream stream replication factor |
 | `RECONCILIATION_INTERVAL_SECS` | `300` | NATS-coordinated reconciliation interval (batch recovery + backfill scans) |
 
-### Valkey Cache (Optional)
+### Qdrant
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `QDRANT_URL` | `http://localhost:6334` | Qdrant gRPC endpoint |
+| `QDRANT_API_KEY` | - | Qdrant API key (optional) |
+| `QDRANT_TIMEOUT_SECS` | `30` | Request timeout |
+| `QDRANT_CONNECT_TIMEOUT_SECS` | `10` | Connection timeout |
+| `QDRANT_QUANTIZATION_TYPE` | `none` | Quantization mode: `none`, `scalar`, or `product` |
+| `QDRANT_QUANTIZATION_SCALAR_ENABLED` | `false` | Enable scalar quantization (overridden by `QDRANT_QUANTIZATION_TYPE=scalar`) |
+| `QDRANT_QUANTIZATION_PRODUCT_ENABLED` | `false` | Enable product quantization (overridden by `QDRANT_QUANTIZATION_TYPE=product`) |
+
+### S3 / Object Storage
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AWS_ACCESS_KEY_ID` | - | S3 access key (optional; falls back to IAM role / instance profile) |
+| `AWS_SECRET_ACCESS_KEY` | - | S3 secret key (optional; falls back to IAM role / instance profile) |
+| `S3_MAX_DOWNLOAD_SIZE_BYTES` | `104857600` (100 MB) | Maximum file size for downloads |
+| `S3_MAX_UPLOAD_SIZE_BYTES` | `1073741824` (1 GB) | Maximum file size for uploads |
+
+### Authentication (OIDC)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OIDC_USE_PKCE` | `false` | Enable PKCE in the authorization code flow |
+| `OIDC_SESSION_MANAGEMENT_ENABLED` | `true` | Enable enhanced session management |
+| `OIDC_SESSION_TIMEOUT_SECS` | `3600` | Session lifetime (1 hour) |
+| `OIDC_INACTIVITY_TIMEOUT_SECS` | `1800` | Session inactivity timeout (30 minutes) |
+| `OIDC_REFRESH_TOKEN_ROTATION_ENABLED` | `true` | Rotate refresh tokens on every use |
+| `OIDC_MAX_CONCURRENT_SESSIONS` | `5` | Maximum concurrent sessions per user |
+
+### TLS
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SERVER_SSL_ENABLED` | `false` | Enable TLS on the HTTP server |
+| `TLS_SERVER_CERT_PATH` | - | Server certificate (PEM); required when `SERVER_SSL_ENABLED=true` |
+| `TLS_SERVER_KEY_PATH` | - | Server private key (PEM); required when `SERVER_SSL_ENABLED=true` |
+| `CLIENT_MTLS_ENABLED` | `false` | Enable mutual TLS for outbound HTTP clients |
+| `TLS_CLIENT_CERT_PATH` | - | Client certificate (PEM); required when `CLIENT_MTLS_ENABLED=true` |
+| `TLS_CLIENT_KEY_PATH` | - | Client private key (PEM); required when `CLIENT_MTLS_ENABLED=true` |
+| `TLS_CA_CERT_PATH` | `/app/certs/ca-bundle.crt` if it exists, otherwise system roots | CA certificate bundle for verifying server certificates |
+
+### Inference APIs
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `EMBEDDING_INFERENCE_API_URL` | `http://localhost:8090` | Internal embedding inference API URL |
+| `EMBEDDING_INFERENCE_API_TIMEOUT_SECS` | `120` | Embedding request timeout |
+| `EMBEDDING_MAX_CONCURRENT_REQUESTS` | `3` | Maximum concurrent requests to the embedding API |
+| `LLM_INFERENCE_API_URL` | `http://localhost:8091` | Internal LLM inference API URL |
+| `LLM_INFERENCE_API_TIMEOUT_SECS` | `120` | LLM request timeout |
+
+### Observability
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LOG_FORMAT` | `json` | Log format: `json` or `pretty` |
+| `SERVICE_NAME` | `semantic-explorer` | Service name reported in traces and logs |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` | OpenTelemetry collector gRPC endpoint |
+
+### Valkey Cache
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -408,14 +483,14 @@ This service uses shared configuration from `semantic-explorer-core`. See the [r
 | `VALKEY_PASSWORD` | - | Authentication password |
 | `VALKEY_TLS_ENABLED` | `false` | Enable TLS for Valkey connections |
 | `VALKEY_POOL_SIZE` | `10` | Connection pool size |
-| `VALKEY_BEARER_CACHE_TTL_SECS` | `3600` | L2 bearer token cache TTL (1 hour) |
-| `VALKEY_RESOURCE_CACHE_TTL_SECS` | `300` | Resource listing cache TTL (5 min) |
+| `VALKEY_BEARER_CACHE_TTL_SECS` | `3600` | Bearer token cache TTL (1 hour) |
+| `VALKEY_RESOURCE_CACHE_TTL_SECS` | `300` | Resource listing cache TTL (5 minutes) |
 | `VALKEY_CONNECT_TIMEOUT_SECS` | `5` | Connection timeout |
 | `VALKEY_RESPONSE_TIMEOUT_SECS` | `2` | Response timeout |
 
 > Valkey is optional — the system degrades gracefully without it.
 
-### Worker Configuration Variables
+### Worker & Search Tuning
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -424,6 +499,9 @@ This service uses shared configuration from `semantic-explorer-core`. See the [r
 | `WORKER_DATASET_BATCH_SIZE` | `1000` | Batch size for dataset processing |
 | `WORKER_S3_DELETE_BATCH_SIZE` | `1000` | Batch size for S3 delete operations |
 | `WORKER_QDRANT_UPLOAD_CHUNK_SIZE` | `200` | Chunk size for Qdrant uploads |
+| `WORKER_SEARCH_PARALLELISM` | `5` | Maximum concurrent per-dataset searches (embedding + Qdrant) per request |
+| `SEARCH_MAX_LIMIT` | `1000` | Maximum number of results a single search request may return |
+| `SEARCH_MAX_EMBEDDED_DATASET_IDS` | `20` | Maximum number of embedded datasets a single search request may fan out to |
 
 > **Note:** NATS consumer tuning, circuit breaker, retry policy, and embedding retry parameters
 > are hardcoded with production-tested defaults and no longer require environment variables.

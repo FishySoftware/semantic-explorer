@@ -151,7 +151,7 @@
 						<div class="min-w-0 flex-1">
 							<div class="flex items-center gap-2 flex-wrap">
 								<a
-									href="#/visualizations/{item.vizId}/details"
+									href="#/visualizations/{item.transformId}/details"
 									class="text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline truncate"
 								>
 									{item.transform?.title ?? `Transform #${item.transformId}`}

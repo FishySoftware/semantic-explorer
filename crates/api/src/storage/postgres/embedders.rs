@@ -243,13 +243,25 @@ pub(crate) async fn get_embedders_batch(
     embedder_ids: &[i32],
     encryption: &EncryptionService,
 ) -> Result<Vec<Embedder>> {
+    get_embedders_batch_by_owner_id(pool, &user.as_owner(), embedder_ids, encryption).await
+}
+
+/// Batch fetch embedders by pre-hashed owner_id (for background/scanner contexts where
+/// an `AuthenticatedUser` is not available but the hashed owner_id is known).
+#[tracing::instrument(name = "database.get_embedders_batch_by_owner_id", skip(pool, encryption), fields(database.system = "postgresql", database.operation = "SELECT", owner_id = %owner_id))]
+pub(crate) async fn get_embedders_batch_by_owner_id(
+    pool: &Pool<Postgres>,
+    owner_id: &str,
+    embedder_ids: &[i32],
+    encryption: &EncryptionService,
+) -> Result<Vec<Embedder>> {
     if embedder_ids.is_empty() {
         return Ok(Vec::new());
     }
 
     let result = sqlx::query_as::<_, Embedder>(GET_EMBEDDERS_BATCH)
         .bind(embedder_ids.to_vec())
-        .bind(user.as_owner())
+        .bind(owner_id)
         .fetch_all(pool)
         .await;
 

@@ -93,7 +93,7 @@ fn build_removal_cookie(name: String) -> Cookie<'static> {
 /// Cached user info that can be serialized to/from cookies.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CachedUserInfo {
-    sub: Option<String>,
+    pub(crate) sub: Option<String>,
     preferred_username: Option<String>,
     email: Option<String>,
     email_verified: Option<bool>,

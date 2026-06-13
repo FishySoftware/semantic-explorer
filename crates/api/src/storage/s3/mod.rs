@@ -571,12 +571,14 @@ pub(crate) async fn file_exists(client: &Client, bucket_name: &str, key: &str) -
     {
         Ok(_) => Ok(true),
         Err(e) => {
-            // Check if it's a NotFound error
-            if e.to_string().contains("NotFound") || e.to_string().contains("404") {
-                Ok(false)
-            } else {
-                Err(anyhow::anyhow!("Failed to check file existence: {}", e))
+            // Use the HTTP status code from the raw response rather than
+            // matching on debug strings, which are not a stable SDK contract.
+            if let SdkError::ServiceError(ref ctx) = e
+                && ctx.raw().status().as_u16() == 404
+            {
+                return Ok(false);
             }
+            Err(anyhow::anyhow!("Failed to check file existence: {}", e))
         }
     }
 }

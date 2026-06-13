@@ -90,6 +90,9 @@ pub struct ServerConfig {
     /// Public URL for external access (used for OIDC callbacks)
     /// If not set, defaults to http://{hostname}:{port}
     pub public_url: Option<String>,
+    /// Maximum bytes held in memory per multipart upload field before spilling to disk (in bytes)
+    /// Distinct from the total upload size limit; controls actix-web's per-field in-memory buffer
+    pub max_upload_memory_size_bytes: i64,
 }
 
 /// Observability configuration
@@ -176,6 +179,12 @@ pub struct WorkerConfig {
     pub s3_delete_batch_size: usize,
     /// Chunk size for Qdrant uploads (default: 200)
     pub qdrant_upload_chunk_size: usize,
+    /// Maximum number of per-dataset searches (embedding + Qdrant) that run in parallel (default: 5)
+    pub search_parallelism: usize,
+    /// Maximum number of results a single search request may return (default: 1000)
+    pub max_search_limit: u64,
+    /// Maximum number of embedded datasets a single search request may fan out to (default: 20)
+    pub max_embedded_dataset_ids: usize,
 }
 
 /// Valkey (Redis-compatible) cache configuration
@@ -374,6 +383,10 @@ impl ServerConfig {
             cors_allowed_origins: cors_origins,
             shutdown_timeout_secs,
             public_url,
+            max_upload_memory_size_bytes: env::var("MAX_UPLOAD_MEMORY_SIZE_BYTES")
+                .unwrap_or_else(|_| (50 * 1024 * 1024).to_string())
+                .parse()
+                .context("MAX_UPLOAD_MEMORY_SIZE_BYTES must be a number")?,
         })
     }
 }
@@ -565,6 +578,18 @@ impl WorkerConfig {
                 .unwrap_or_else(|_| "200".to_string())
                 .parse()
                 .context("WORKER_QDRANT_UPLOAD_CHUNK_SIZE must be a number")?,
+            search_parallelism: env::var("WORKER_SEARCH_PARALLELISM")
+                .unwrap_or_else(|_| "5".to_string())
+                .parse()
+                .context("WORKER_SEARCH_PARALLELISM must be a number")?,
+            max_search_limit: env::var("SEARCH_MAX_LIMIT")
+                .unwrap_or_else(|_| "1000".to_string())
+                .parse()
+                .context("SEARCH_MAX_LIMIT must be a number")?,
+            max_embedded_dataset_ids: env::var("SEARCH_MAX_EMBEDDED_DATASET_IDS")
+                .unwrap_or_else(|_| "20".to_string())
+                .parse()
+                .context("SEARCH_MAX_EMBEDDED_DATASET_IDS must be a number")?,
         })
     }
 }

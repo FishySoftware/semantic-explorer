@@ -15,7 +15,6 @@ use aws_sdk_s3::Client as S3Client;
 use sqlx::{Pool, Postgres};
 use tracing::{error, info, warn};
 
-use crate::auth::AuthenticatedUser;
 use crate::storage::postgres::dataset_transform_pending_batches::{
     self as pending_batches, PendingBatch,
 };
@@ -315,11 +314,12 @@ async fn recover_failed_batches(ctx: &ReconciliationContext) -> Result<usize> {
                         .await?;
 
                     if let Some(ed) = embedded_datasets_list.first() {
-                        // Look up actual embedder config for recovery
-                        let user = AuthenticatedUser(transform.owner_display_name.clone());
-                        let embedder = match embedders::get_embedder(
+                        // Look up actual embedder config for recovery.
+                        // Use get_embedder_by_owner_id with the pre-hashed owner_id from
+                        // the transform record to avoid constructing a fake AuthenticatedUser.
+                        let embedder = match embedders::get_embedder_by_owner_id(
                             &ctx.pool,
-                            &user,
+                            &transform.owner_id,
                             ed.embedder_id,
                             &ctx.encryption,
                         )

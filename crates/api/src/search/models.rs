@@ -65,6 +65,10 @@ pub(crate) struct EmbeddedDatasetSearchResults {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub documents: Option<Vec<DocumentResult>>,
     pub error: Option<String>,
+    /// True when the error originated from a Qdrant call (distinct from collection-not-found
+    /// or embedding failure). Used by the circuit breaker so it only records Qdrant failures.
+    #[serde(skip)]
+    pub is_qdrant_error: bool,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]

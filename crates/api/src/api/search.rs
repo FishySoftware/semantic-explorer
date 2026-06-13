@@ -4,7 +4,8 @@ use actix_web::{
     HttpRequest, HttpResponse, Responder, ResponseError, post,
     web::{Data, Json},
 };
-use futures_util::future;
+use futures_util::StreamExt;
+use futures_util::stream;
 
 use qdrant_client::Qdrant;
 use sqlx::{Pool, Postgres};
@@ -71,8 +72,39 @@ pub(crate) async fn search(
             .error_response();
     }
 
-    if search_request.query.trim().is_empty() {
-        return ApiError::BadRequest("Query cannot be empty".to_string()).error_response();
+    if search_request.embedded_dataset_ids.len() > worker_config.max_embedded_dataset_ids {
+        return ApiError::BadRequest(format!(
+            "Too many embedded datasets: maximum is {}",
+            worker_config.max_embedded_dataset_ids
+        ))
+        .error_response();
+    }
+
+    if let Err(e) = semantic_explorer_core::validation::validate_search_query(&search_request.query)
+    {
+        return ApiError::BadRequest(e.to_string()).error_response();
+    }
+
+    if search_request.limit > worker_config.max_search_limit {
+        return ApiError::BadRequest(format!(
+            "Limit exceeds maximum allowed value of {}",
+            worker_config.max_search_limit
+        ))
+        .error_response();
+    }
+
+    // Validate filter keys to prevent injection into Qdrant field paths.
+    if let Some(ref filters) = search_request.filters
+        && let Some(obj) = filters.as_object()
+    {
+        for key in obj.keys() {
+            if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                return ApiError::BadRequest(format!(
+                    "Invalid filter key '{key}': only ASCII alphanumeric and underscore are allowed"
+                ))
+                .error_response();
+            }
+        }
     }
 
     let embedded_dataset_ids: Vec<String> = search_request
@@ -122,7 +154,6 @@ pub(crate) async fn search(
             }
         };
 
-    // Process searches in parallel using futures::future::join_all
     let search_tasks: Vec<_> = search_request
         .embedded_dataset_ids
         .iter()
@@ -154,6 +185,7 @@ pub(crate) async fn search(
                             matches: Vec::new(),
                             documents: None,
                             error: Some("Embedded dataset not found or not accessible".to_string()),
+                            is_qdrant_error: false,
                         };
                     }
                 };
@@ -171,6 +203,7 @@ pub(crate) async fn search(
                         matches: Vec::new(),
                         documents: None,
                         error: Some("This embedded dataset does not support search (no embedder configured). Standalone datasets can only be used in visualizations.".to_string()),
+                        is_qdrant_error: false,
                     };
                 }
 
@@ -189,6 +222,7 @@ pub(crate) async fn search(
                             matches: Vec::new(),
                             documents: None,
                             error: Some("Embedder not found or not accessible".to_string()),
+                            is_qdrant_error: false,
                         };
                     }
                 };
@@ -242,6 +276,7 @@ pub(crate) async fn search(
                             matches: Vec::new(),
                             documents: None,
                             error: Some(format!("Failed to generate embedding: {}", e)),
+                            is_qdrant_error: false,
                         };
                     }
                 };
@@ -281,6 +316,7 @@ pub(crate) async fn search(
                                 error: Some(
                                     "This embedded dataset has not been processed yet. Please wait for the embedding process to complete.".to_string()
                                 ),
+                                is_qdrant_error: false,
                             };
                         } else {
                             return EmbeddedDatasetSearchResults {
@@ -294,6 +330,7 @@ pub(crate) async fn search(
                                 matches: Vec::new(),
                                 documents: None,
                                 error: Some(format!("Search failed: {}", e)),
+                                is_qdrant_error: true,
                             };
                         }
                     }
@@ -319,21 +356,21 @@ pub(crate) async fn search(
                     matches,
                     documents,
                     error: None,
+                    is_qdrant_error: false,
                 }
             }
         })
         .collect();
 
-    // Execute all searches in parallel
-    let results = future::join_all(search_tasks).await;
+    // Execute searches with bounded concurrency to prevent unbounded fan-out.
+    let results: Vec<_> = stream::iter(search_tasks)
+        .buffer_unordered(worker_config.search_parallelism)
+        .collect()
+        .await;
 
-    // Record Qdrant circuit breaker outcome based on search results.
-    // If any result has a non-collection-missing error, record as failure.
-    let had_qdrant_failure = results.iter().any(|r| {
-        r.error
-            .as_ref()
-            .is_some_and(|msg| msg.contains("Search failed:"))
-    });
+    // Use the typed `is_qdrant_error` flag set at the Qdrant call site, rather
+    // than inspecting error message strings, to classify circuit-breaker outcomes.
+    let had_qdrant_failure = results.iter().any(|r| r.is_qdrant_error);
     if had_qdrant_failure {
         circuit_breakers.qdrant.record_failure().await;
     } else {
@@ -347,8 +384,8 @@ pub(crate) async fn search(
     // Record search metrics
     semantic_explorer_core::observability::record_search_request(
         duration,
-        0.0, // embedder_duration_secs - would need to track separately
-        0.0, // qdrant_duration_secs - would need to track separately
+        0.0, // embedder_duration_secs
+        0.0, // qdrant_duration_secs
         total_results,
         embedded_datasets_count,
         "success",

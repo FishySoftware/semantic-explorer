@@ -48,7 +48,8 @@ pub(crate) async fn search_collection(
                 break; // No more results
             }
 
-            // Track unique documents in this batch
+            // Track unique documents introduced by this batch
+            let prev_unique_count = unique_item_ids.len();
             for m in &batch {
                 if let Some(item_id) = m.metadata.get("item_id").and_then(|v| v.as_i64()) {
                     unique_item_ids.insert(item_id);
@@ -57,6 +58,11 @@ pub(crate) async fn search_collection(
 
             all_matches.extend(batch);
 
+            // If this batch added no new documents, further batches won't either.
+            if unique_item_ids.len() == prev_unique_count {
+                break;
+            }
+
             // Check if we have enough unique documents
             if unique_item_ids.len() >= target_documents {
                 break;
@@ -64,7 +70,7 @@ pub(crate) async fn search_collection(
 
             offset += search_batch_size;
 
-            // Safety check: don't fetch more than 50 batches (10000 chunks by default)
+            // Safety cap: don't fetch more than 50 batches (10 000 chunks by default)
             if offset >= search_batch_size * 50 {
                 tracing::warn!(
                     "Reached maximum batch limit for collection '{}', stopping at {} chunks",

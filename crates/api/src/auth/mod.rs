@@ -25,26 +25,29 @@ pub(crate) struct User {
 
 /// Extractor for authenticated user information.
 ///
-/// This extractor automatically extracts the username from the OIDC token,
-/// eliminating the need for repetitive `extract_username` calls in handlers.
-///
-/// The username is kept as-is from the OIDC token. When using the username
-/// as an "owner" identifier for database records, NATS subjects, or S3 paths,
-/// use `user.as_owner()` to get a hashed, infrastructure-safe version.
+/// The `username` field holds the display name from the OIDC `preferred_username`
+/// claim. The `sub` field holds the stable subject identifier from the `sub` claim,
+/// which is used as the ownership key (`as_owner()`). Using `sub` avoids the
+/// security issue where a reassigned/renamed `preferred_username` would grant the
+/// new holder access to the previous owner's resources.
 #[derive(Debug, Clone)]
-pub struct AuthenticatedUser(pub String);
+pub struct AuthenticatedUser {
+    /// Display name from OIDC `preferred_username` claim.
+    pub username: String,
+    /// Stable subject identifier from OIDC `sub` claim. Used to derive owner keys.
+    sub: String,
+}
 
 impl AuthenticatedUser {
-    /// Get the hashed version of the username for use as an owner identifier.
-    /// This should be used when the username is stored in database owner fields,
-    /// used in NATS subjects, or used in S3 object paths.
+    /// Deterministic owner identifier derived from the stable `sub` claim.
+    /// Use this for database owner fields, NATS subjects, and S3 paths.
     pub fn as_owner(&self) -> String {
-        hash_username_for_owner(&self.0)
+        hash_sub_for_owner(&self.sub)
     }
 
-    /// Convert to OwnerInfo struct for database operations
+    /// Convert to OwnerInfo struct for database operations.
     pub fn to_owner_info(&self) -> OwnerInfo {
-        OwnerInfo::new(self.as_owner(), self.0.clone())
+        OwnerInfo::new(self.as_owner(), self.username.clone())
     }
 }
 
@@ -52,7 +55,7 @@ impl Deref for AuthenticatedUser {
     type Target = String;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.username
     }
 }
 
@@ -61,24 +64,26 @@ impl FromRequest for AuthenticatedUser {
     type Future = Ready<Result<Self, Self::Error>>;
 
     fn from_request(req: &HttpRequest, payload: &mut Payload) -> Self::Future {
-        // First, extract the Authenticated from the request
         match Authenticated::from_request(req, payload).into_inner() {
             Ok(auth) => {
-                // Then extract the username from the token
-                match auth.access.preferred_username() {
-                    Some(username) => ok(AuthenticatedUser(username.to_string())),
+                let username = match auth.access.preferred_username() {
+                    Some(u) => u.to_string(),
                     None => {
                         events::auth_failed(
                             "unknown",
                             "unknown",
                             "user has no username in the user info claim",
                         );
-                        err(ApiError::Unauthorized(
+                        return err(ApiError::Unauthorized(
                             "user has no username in the user info claim".to_string(),
                         )
-                        .into())
+                        .into());
                     }
-                }
+                };
+                // Use the stable `sub` claim as the owner key; fall back to
+                // username only if the provider omits `sub` (non-compliant provider).
+                let sub = auth.access.sub.clone().unwrap_or(username.clone());
+                ok(AuthenticatedUser { username, sub })
             }
             Err(e) => {
                 events::auth_failed(
@@ -110,26 +115,19 @@ pub(crate) fn extract_username(auth: &Authenticated) -> Result<String, HttpRespo
     }
 }
 
-/// Hash a username to create a safe, deterministic identifier for infrastructure use.
+/// Derive a safe, deterministic owner identifier from the OIDC `sub` claim.
 ///
-/// This is used to convert usernames (which may be email addresses with special
-/// characters like @ and .) into URL-safe identifiers suitable for:
-/// - NATS subject hierarchies (which use . as delimiter)
-/// - S3 object keys
+/// `sub` is the stable, unique subject identifier guaranteed by the OIDC spec
+/// (unlike `preferred_username`, which is mutable and provider-dependent).
+/// The full 256-bit SHA-256 of `sub` is used here to avoid birthday-bound
+/// collisions; the result is safe for use in:
 /// - Database owner fields
-///
-/// The hash is deterministic (same input = same output) and uses the first
-/// 16 characters of the SHA256 hash in hexadecimal format.
-///
-/// The original username is preserved in authentication contexts, but this hashed
-/// version should be used when the username is used as an "owner" identifier
-/// in database records, NATS subjects, or S3 paths.
-pub(crate) fn hash_username_for_owner(username: &str) -> String {
+/// - NATS subject hierarchies (which use `.` as delimiter)
+/// - S3 object key prefixes
+pub(crate) fn hash_sub_for_owner(sub: &str) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(username.as_bytes());
-    let result = hasher.finalize();
-    // Use first 16 chars (64 bits) of hex - sufficient for uniqueness in this context
-    hex::encode(result).chars().take(16).collect()
+    hasher.update(sub.as_bytes());
+    hex::encode(hasher.finalize())
 }
 
 pub(crate) fn extract_email(auth: &Authenticated) -> Result<String, HttpResponse> {

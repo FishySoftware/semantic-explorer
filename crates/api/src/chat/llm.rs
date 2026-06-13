@@ -19,13 +19,25 @@ Context:
 When answering, always cite the specific chunk number (e.g., 'According to Chunk 1' or 'As mentioned in Chunk 2 and Chunk 3') to reference where your information comes from. If the context doesn't contain relevant information to answer the question, say so explicitly.";
 
 /// Configuration for LLM API requests
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct LLMRequestConfig {
     api_base: String,
     model: String,
     api_key: Option<String>,
     temperature: f32,
     max_tokens: i32,
+}
+
+impl std::fmt::Debug for LLMRequestConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LLMRequestConfig")
+            .field("api_base", &self.api_base)
+            .field("model", &self.model)
+            .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
+            .field("temperature", &self.temperature)
+            .field("max_tokens", &self.max_tokens)
+            .finish()
+    }
 }
 
 /// Build the effective system prompt from custom prompt or default

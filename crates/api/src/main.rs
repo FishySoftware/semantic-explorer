@@ -54,11 +54,8 @@ async fn main() -> Result<()> {
 
     // Initialize encryption service for secrets (API keys)
     let encryption_service = EncryptionService::from_env().map_err(|e| {
-        eprintln!(
-            "Warning: Encryption service not initialized: {}. API keys will NOT be encrypted.",
-            e
-        );
-        eprintln!("To enable encryption, set ENCRYPTION_MASTER_KEY environment variable");
+        eprintln!("Fatal: encryption service initialization failed: {e}. Startup aborted.");
+        eprintln!("Set ENCRYPTION_MASTER_KEY to enable API key encryption.");
         eprintln!("Generate a key with: echo $(openssl rand -hex 32)");
         e
     })?;
@@ -119,13 +116,20 @@ async fn main() -> Result<()> {
 
     semantic_explorer_core::nats::initialize_jetstream(&nats_client, &config.nats).await?;
 
-    // Start audit event consumer worker
+    // Start audit event consumer worker with automatic restart on failure.
+    // Without supervision the consumer can silently stop persisting audit events.
     let audit_consumer_handle = {
         let nats = nats_client.clone();
         let db = pool.clone();
         tokio::spawn(async move {
-            if let Err(e) = audit_worker::start_audit_consumer(nats, db).await {
-                tracing::error!(error = %e, "Audit consumer exited with error");
+            loop {
+                if let Err(e) = audit_worker::start_audit_consumer(nats.clone(), db.clone()).await {
+                    tracing::error!(
+                        error = %e,
+                        "Audit consumer exited with error, restarting in 5s"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                }
             }
         })
     };
@@ -148,6 +152,7 @@ async fn main() -> Result<()> {
     let llm_inference_config = config.llm_inference.clone();
     let worker_config = config.worker.clone();
     let max_upload_size = config.s3.max_upload_size_bytes as usize;
+    let max_upload_memory_size = config.server.max_upload_memory_size_bytes as usize;
 
     // Build QdrantConnectionConfig from QdrantConfig (reused across scanners and API)
     let qdrant_connection_config = semantic_explorer_core::models::QdrantConnectionConfig {
@@ -278,7 +283,7 @@ async fn main() -> Result<()> {
             .app_data(
                 MultipartFormConfig::default()
                     .total_limit(max_upload_size)
-                    .memory_limit(max_upload_size),
+                    .memory_limit(max_upload_memory_size),
             )
             .app_data(web::Data::new(static_files_directory.clone()))
             .app_data(web::Data::new(inference_config.clone()))

@@ -629,7 +629,7 @@
 								>
 									<td class="px-4 py-3 font-medium">
 										<a
-											href={`#/visualizations/${visualization.visualization_id}/details`}
+											href={`#/visualizations/${visualization.visualization_transform_id}/details`}
 											class="text-blue-600 dark:text-blue-400 hover:underline"
 										>
 											{visualization.title}
