@@ -3,6 +3,8 @@ use anyhow::{Context, Result, bail};
 use aws_config::{BehaviorVersion, Region};
 use aws_sdk_s3::Client;
 use aws_sdk_s3::config::Credentials;
+use aws_sdk_s3::error::SdkError;
+use aws_sdk_s3::operation::head_object::HeadObjectError;
 use aws_sdk_s3::types::{Delete, ObjectIdentifier};
 use once_cell::sync::Lazy;
 use serde::Serialize;
@@ -114,10 +116,12 @@ pub async fn list_files(
 ) -> Result<PaginatedFiles> {
     let start = Instant::now();
 
+    // Clamp page_size before adding 1 to prevent i32 overflow when page_size = i32::MAX.
+    let clamped_page_size = page_size.min(i32::MAX - 1);
     let mut request = s3_client
         .list_objects_v2()
         .bucket(bucket)
-        .max_keys(page_size + 1);
+        .max_keys(clamped_page_size + 1);
 
     if let Some(cursor) = start_after {
         request = request.start_after(cursor);
@@ -125,11 +129,11 @@ pub async fn list_files(
 
     let output = request.send().await?;
     let all_objects = output.contents();
-    let has_more = all_objects.len() > page_size as usize;
+    let has_more = all_objects.len() > clamped_page_size as usize;
 
     let files: Vec<CollectionFile> = all_objects
         .iter()
-        .take(page_size as usize)
+        .take(clamped_page_size as usize)
         .map(|obj| CollectionFile {
             key: obj.key().unwrap_or_default().to_string(),
             size: obj.size().unwrap_or(0),
@@ -161,12 +165,21 @@ pub async fn ensure_bucket_exists(client: &Client, bucket: &str) -> Result<()> {
     match client.create_bucket().bucket(bucket).send().await {
         Ok(_) => Ok(()),
         Err(e) => {
-            let error_str = format!("{e:?}");
-            if error_str.contains("BucketAlreadyExists")
-                || error_str.contains("BucketAlreadyOwnedByYou")
-            {
+            // aws-sdk-s3 provides typed error variants for bucket-already-exists conditions.
+            let is_already_owned = e
+                .as_service_error()
+                .map(|se| {
+                    // BucketAlreadyOwnedByYou and BucketAlreadyExists both indicate
+                    // the bucket already exists and is accessible.
+                    se.is_bucket_already_owned_by_you() || se.is_bucket_already_exists()
+                })
+                .unwrap_or(false);
+
+            if is_already_owned {
                 Ok(())
             } else {
+                // Fallback: try HEAD then list to handle storage backends that
+                // don't return the typed error codes above.
                 match client.head_bucket().bucket(bucket).send().await {
                     Ok(_) => Ok(()),
                     Err(_) => {
@@ -242,12 +255,47 @@ pub async fn get_file_with_size_check(client: &Client, bucket: &str, key: &str) 
         );
     }
 
-    // Size is acceptable, proceed with download
+    // Size is acceptable — proceed with download. Re-verify content_length on the
+    // GET response to guard against TOCTOU races where the object was replaced
+    // between HEAD and GET, and cap byte collection in case the server lies.
     let result = client.get_object().bucket(bucket).key(key).send().await;
 
     match result {
         Ok(output) => {
-            let data = output.body.collect().await?.into_bytes();
+            // Double-check the size on the GET response itself (TOCTOU fix).
+            let get_content_length = output.content_length().unwrap_or(0);
+            if get_content_length > max_size {
+                let duration = start.elapsed().as_secs_f64();
+                record_storage_operation("download", duration, None, false);
+                crate::observability::record_storage_download(bucket, duration, None, false);
+                warn!(
+                    file_size_mb = get_content_length / (1024 * 1024),
+                    max_size_mb = max_size / (1024 * 1024),
+                    "File size on GET response exceeds limit (TOCTOU check)"
+                );
+                bail!(
+                    "File size ({} MB) exceeds maximum limit of {} MB (detected on GET response).",
+                    get_content_length / (1024 * 1024),
+                    max_size / (1024 * 1024)
+                );
+            }
+
+            // Cap the byte collection to max_size to defend against servers that
+            // lie about content_length or stream more data than declared.
+            let max_bytes = max_size as usize;
+            let raw = output.body.collect().await?.into_bytes();
+            if raw.len() > max_bytes {
+                let duration = start.elapsed().as_secs_f64();
+                record_storage_operation("download", duration, None, false);
+                crate::observability::record_storage_download(bucket, duration, None, false);
+                bail!(
+                    "Downloaded file ({} bytes) exceeds maximum limit of {} bytes.",
+                    raw.len(),
+                    max_bytes
+                );
+            }
+
+            let data = raw.to_vec();
             let duration = start.elapsed().as_secs_f64();
             record_storage_operation("download", duration, Some(data.len() as u64), true);
             crate::observability::record_storage_download(
@@ -256,7 +304,7 @@ pub async fn get_file_with_size_check(client: &Client, bucket: &str, key: &str) 
                 Some(data.len() as u64),
                 true,
             );
-            Ok(data.to_vec())
+            Ok(data)
         }
         Err(e) => {
             let duration = start.elapsed().as_secs_f64();
@@ -320,6 +368,7 @@ pub async fn delete_file_by_key(client: &Client, bucket: &str, key: &str) -> Res
 pub async fn delete_files_by_prefix(client: &Client, bucket: &str, prefix: &str) -> Result<usize> {
     let start = Instant::now();
     let mut deleted_count = 0usize;
+    let mut batch_errors: Vec<String> = Vec::new();
     const BATCH_SIZE: usize = 1000;
 
     tracing::info!(
@@ -402,12 +451,14 @@ pub async fn delete_files_by_prefix(client: &Client, bucket: &str, prefix: &str)
                     }
                 }
                 Err(e) => {
+                    let msg = format!("batch delete failed: {}", e);
                     tracing::warn!(
                         bucket = %bucket,
                         prefix = %prefix,
                         error = %e,
                         "Batch delete failed during prefix cleanup (continuing)"
                     );
+                    batch_errors.push(msg);
                 }
             }
         }
@@ -423,6 +474,16 @@ pub async fn delete_files_by_prefix(client: &Client, bucket: &str, prefix: &str)
         "Completed S3 prefix cleanup"
     );
 
+    if !batch_errors.is_empty() {
+        // Return a combined error summarising all batch failures so callers
+        // can react (e.g. mark the operation as partially failed).
+        return Err(anyhow::anyhow!(
+            "S3 prefix delete completed with {} batch failure(s): {}",
+            batch_errors.len(),
+            batch_errors.join("; ")
+        ));
+    }
+
     Ok(deleted_count)
 }
 
@@ -433,16 +494,9 @@ pub async fn delete_files_by_prefix(client: &Client, bucket: &str, prefix: &str)
 pub async fn file_exists(client: &Client, bucket: &str, key: &str) -> Result<bool> {
     match client.head_object().bucket(bucket).key(key).send().await {
         Ok(_) => Ok(true),
-        Err(e) => {
-            let err_str = format!("{e:?}");
-            if err_str.contains("NotFound")
-                || err_str.contains("404")
-                || err_str.contains("NoSuchKey")
-            {
-                Ok(false)
-            } else {
-                Err(anyhow::anyhow!("Failed to check file existence: {}", e))
-            }
+        Err(SdkError::ServiceError(ref se)) if matches!(se.err(), HeadObjectError::NotFound(_)) => {
+            Ok(false)
         }
+        Err(e) => Err(anyhow::anyhow!("Failed to check file existence: {}", e)),
     }
 }

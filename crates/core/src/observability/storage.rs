@@ -8,7 +8,9 @@ pub fn record_storage_operation(
     file_size_bytes: Option<u64>,
     success: bool,
 ) {
-    let metrics = get_metrics();
+    let Some(metrics) = get_metrics() else {
+        return;
+    };
     let status = if success { "success" } else { "error" };
 
     metrics.storage_operations_total.add(
@@ -41,7 +43,9 @@ pub fn record_storage_upload(
     size_bytes: Option<u64>,
     success: bool,
 ) {
-    let metrics = get_metrics();
+    let Some(metrics) = get_metrics() else {
+        return;
+    };
     let status = if success { "success" } else { "error" };
 
     metrics.storage_upload_duration.record(
@@ -69,7 +73,9 @@ pub fn record_storage_download(
     size_bytes: Option<u64>,
     success: bool,
 ) {
-    let metrics = get_metrics();
+    let Some(metrics) = get_metrics() else {
+        return;
+    };
     let status = if success { "success" } else { "error" };
 
     metrics.storage_download_duration.record(
@@ -92,7 +98,9 @@ pub fn record_storage_download(
 }
 
 pub fn record_storage_delete(bucket: &str, duration_secs: f64, success: bool) {
-    let metrics = get_metrics();
+    let Some(metrics) = get_metrics() else {
+        return;
+    };
     let status = if success { "success" } else { "error" };
 
     metrics.storage_delete_duration.record(
@@ -105,7 +113,9 @@ pub fn record_storage_delete(bucket: &str, duration_secs: f64, success: bool) {
 }
 
 pub fn record_storage_list(bucket: &str, duration_secs: f64, success: bool) {
-    let metrics = get_metrics();
+    let Some(metrics) = get_metrics() else {
+        return;
+    };
     let status = if success { "success" } else { "error" };
 
     metrics.storage_list_duration.record(

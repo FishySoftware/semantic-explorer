@@ -24,6 +24,7 @@ use tracing_subscriber::{
 use crate::adaptive_concurrency::AdaptiveConcurrency;
 use crate::config::NatsConfig;
 use crate::observability;
+use tokio::sync::Semaphore;
 
 /// Configuration for worker initialization
 pub struct WorkerConfig {
@@ -386,31 +387,39 @@ where
         let job: J = match serde_json::from_slice(&msg.payload) {
             Ok(j) => j,
             Err(e) => {
-                error!("Failed to deserialize job: {}", e);
-                // Acknowledge the message to prevent reprocessing bad messages
+                error!("Failed to deserialize job (poison message): {}", e);
+                // Publish the raw payload to DLQ before acking so the message is
+                // not silently dropped — operators can inspect it later.
+                let dlq_subject = get_dlq_subject(&proc_ctx.stream_name);
+                let mut dlq_headers = async_nats::HeaderMap::new();
+                let err_str = format!("deserialization failed: {}", e);
+                dlq_headers.insert("X-Error", err_str.as_str());
+                // msg.subject is already an async_nats::Subject — use it directly.
+                let subject_str = msg.subject.to_string();
+                dlq_headers.insert("X-Original-Subject", subject_str.as_str());
+                // Copy any original headers onto the DLQ message
+                if let Some(ref orig_headers) = msg.headers {
+                    for (key, values) in orig_headers.iter() {
+                        for value in values.iter() {
+                            // HeaderName/HeaderValue both implement Display.
+                            let k = key.to_string();
+                            let v = value.to_string();
+                            dlq_headers.insert(k.as_str(), v.as_str());
+                        }
+                    }
+                }
+                if let Err(dlq_err) = jetstream
+                    .publish_with_headers(dlq_subject, dlq_headers, msg.payload.clone())
+                    .await
+                {
+                    error!("Failed to publish poison message to DLQ: {}", dlq_err);
+                }
                 if let Err(ack_err) = msg.ack().await {
-                    error!("Failed to acknowledge bad message: {}", ack_err);
+                    error!("Failed to acknowledge poison message: {}", ack_err);
                 }
                 continue;
             }
         };
-
-        // If downstream is under pressure (503s), pause before accepting next job.
-        // Also apply adaptive pacing based on server-reported queue state to prevent
-        // building up a deep queue in the first place.
-        if concurrency.is_downstream_pressured() {
-            info!("Downstream pressure active, pausing 2s before accepting next job");
-            tokio::time::sleep(Duration::from_secs(2)).await;
-        } else {
-            let pacing = crate::embedder::adaptive_pacing_delay();
-            if !pacing.is_zero() {
-                debug!(
-                    pacing_ms = pacing.as_millis(),
-                    "Pacing job acceptance based on embedding server queue state"
-                );
-                tokio::time::sleep(pacing).await;
-            }
-        }
 
         // Acquire semaphore permit for backpressure.
         // We use a blocking acquire here instead of try_acquire. Combined with
@@ -449,7 +458,9 @@ where
             }
         };
 
-        // Track in-flight jobs for graceful shutdown
+        // Track in-flight jobs for graceful shutdown.
+        // The InFlightGuard drop-guard ensures the counter is always decremented,
+        // even if the spawned task panics.
         proc_ctx.in_flight.fetch_add(1, Ordering::SeqCst);
 
         let ctx = context.clone();
@@ -459,6 +470,8 @@ where
         let in_flight_clone = proc_ctx.in_flight.clone();
         let jetstream_clone = jetstream.clone();
         let payload = msg.payload.clone();
+        let msg_headers = msg.headers.clone();
+        let msg_subject = msg.subject.clone();
         let concurrency_clone = Arc::clone(&concurrency);
 
         // Create a span with the parent context for distributed tracing
@@ -472,6 +485,7 @@ where
         tokio::spawn(
             async move {
                 let _permit = permit; // Hold permit until task completes
+                let _in_flight_guard = InFlightGuard(in_flight_clone);
 
                 match process_job(job, ctx).await {
                     Ok(_) => {
@@ -507,7 +521,8 @@ where
 
                         // Check if we've exhausted retries
                         if delivery_count >= max_deliver {
-                            // Send to DLQ
+                            // Send to DLQ, re-attaching original headers and adding
+                            // X-Error / X-Original-Subject for operator inspection.
                             let dlq_subject = get_dlq_subject(&stream_name_clone);
                             let transform_type = get_transform_type(&stream_name_clone);
 
@@ -516,8 +531,25 @@ where
                                 max_deliver, dlq_subject
                             );
 
-                            if let Err(dlq_err) =
-                                jetstream_clone.publish(dlq_subject, payload).await
+                            let mut dlq_headers = async_nats::HeaderMap::new();
+                            // Re-attach original message headers first
+                            if let Some(ref orig_headers) = msg_headers {
+                                for (key, values) in orig_headers.iter() {
+                                    for value in values.iter() {
+                                        // HeaderName/HeaderValue both implement Display.
+                                        let k = key.to_string();
+                                        let v = value.to_string();
+                                        dlq_headers.insert(k.as_str(), v.as_str());
+                                    }
+                                }
+                            }
+                            // Overlay DLQ-specific diagnostic headers
+                            dlq_headers.insert("X-Error", format!("{}", e).as_str());
+                            dlq_headers.insert("X-Original-Subject", msg_subject.as_str());
+
+                            if let Err(dlq_err) = jetstream_clone
+                                .publish_with_headers(dlq_subject, dlq_headers, payload)
+                                .await
                             {
                                 error!("Failed to publish to DLQ: {}", dlq_err);
                             } else {
@@ -551,16 +583,42 @@ where
                         }
                     }
                 }
-
-                // Decrement in-flight counter
-                in_flight_clone.fetch_sub(1, Ordering::SeqCst);
+                // _in_flight_guard drops here, decrementing the counter.
             }
             .instrument(job_span),
         );
+
+        // Apply pacing after handing off the message to the spawned task so we
+        // are not sleeping while holding an unacked NATS message.
+        if concurrency.is_downstream_pressured() {
+            info!("Downstream pressure active, pausing 2s before pulling next job");
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        } else {
+            let pacing = crate::embedder::adaptive_pacing_delay();
+            if !pacing.is_zero() {
+                debug!(
+                    pacing_ms = pacing.as_millis(),
+                    "Pacing job acceptance based on embedding server queue state"
+                );
+                tokio::time::sleep(pacing).await;
+            }
+        }
     }
 
     Ok(())
 }
+
+/// Drop-guard that decrements the `in_flight` counter when dropped.
+struct InFlightGuard(Arc<AtomicUsize>);
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Maximum number of concurrent connections to the health check server.
+const HEALTH_SERVER_MAX_CONNECTIONS: usize = 64;
 
 /// Tiny HTTP health check server for K8s liveness/readiness probes.
 ///
@@ -586,6 +644,8 @@ async fn run_health_server(
         }
     };
 
+    let connection_semaphore = Arc::new(Semaphore::new(HEALTH_SERVER_MAX_CONNECTIONS));
+
     loop {
         let (mut stream, _) = listener.accept().await?;
         let is_shutdown = shutdown.load(Ordering::SeqCst);
@@ -596,7 +656,18 @@ async fn run_health_server(
         let pressured = concurrency.is_downstream_pressured();
         let svc = service_name.clone();
 
+        let conn_permit = match connection_semaphore.clone().try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => {
+                // Connection limit reached — drop this connection immediately
+                warn!("Health server connection limit reached, dropping connection");
+                drop(stream);
+                continue;
+            }
+        };
+
         tokio::spawn(async move {
+            let _conn_permit = conn_permit; // Released when handler finishes
             use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
             let mut buf = [0u8; 1024];

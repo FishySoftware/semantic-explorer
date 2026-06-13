@@ -31,6 +31,7 @@ use semantic_explorer_core::observability::{
     record_scanner_scan_duration, record_scanner_trigger_processed,
     record_scanner_trigger_published,
 };
+use std::sync::Arc;
 
 use super::collection::scanner as collection_scanner;
 use super::dataset::reconciliation::{ReconciliationContext, run_reconciliation};
@@ -44,7 +45,7 @@ pub struct ScannerContext {
     pub nats: NatsClient,
     pub s3: S3Client,
     pub s3_bucket_name: String,
-    pub encryption: EncryptionService,
+    pub encryption: Arc<EncryptionService>,
     pub qdrant_config: QdrantConnectionConfig,
     pub scanner_config: ScannerConfig,
 }

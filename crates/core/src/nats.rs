@@ -245,13 +245,29 @@ async fn ensure_stream(
                 );
             }
         }
-        Err(_) => {
-            info!("Stream '{}' does not exist. Creating...", name);
-            jetstream
-                .create_stream(config)
-                .await
-                .context(format!("Failed to create stream '{}'", name))?;
-            info!("Stream '{}' created successfully", name);
+        // Only treat "stream not found" (error code 10059) as the create-it case.
+        // Any other error (network failure, auth error, etc.) is propagated so
+        // callers see the real problem instead of a confusing secondary error.
+        Err(e) => {
+            // async-nats exposes the API error code through the error chain.
+            // Error code 10059 is "stream not found" in NATS JetStream.
+            let is_not_found = {
+                let msg = format!("{}", e);
+                msg.contains("stream not found")
+                    || msg.contains("10059")
+                    || msg.contains("does not exist")
+            };
+
+            if is_not_found {
+                info!("Stream '{}' does not exist. Creating...", name);
+                jetstream
+                    .create_stream(config)
+                    .await
+                    .context(format!("Failed to create stream '{}'", name))?;
+                info!("Stream '{}' created successfully", name);
+            } else {
+                return Err(anyhow::anyhow!("Failed to get stream '{}': {}", name, e));
+            }
         }
     }
     Ok(())
@@ -298,6 +314,22 @@ fn stream_config_differs(current: &StreamConfig, desired: &StreamConfig) -> bool
     false
 }
 
+/// Maximum delivery attempts for collection and dataset transform jobs.
+///
+/// This is the single source of truth: `ConsumerConfig.max_deliver` and
+/// `WorkerConfig.max_deliver` (used for DLQ routing) must both equal this
+/// value so the DLQ decision aligns with what NATS considers "exhausted".
+pub const COLLECTION_TRANSFORM_MAX_DELIVER: i64 = 5;
+
+/// Maximum delivery attempts for dataset transform jobs.
+pub const DATASET_TRANSFORM_MAX_DELIVER: i64 = 5;
+
+/// Maximum delivery attempts for visualization transform jobs.
+pub const VISUALIZATION_TRANSFORM_MAX_DELIVER: i64 = 3;
+
+/// Maximum delivery attempts for scanner trigger jobs.
+pub const SCANNER_MAX_DELIVER: i64 = 3;
+
 /// Create consumer config for collection transforms.
 /// Values are hardcoded — max_ack_pending is clamped to MAX_CONCURRENT_JOBS by the worker.
 pub fn create_transform_file_consumer_config() -> ConsumerConfig {
@@ -306,7 +338,7 @@ pub fn create_transform_file_consumer_config() -> ConsumerConfig {
         description: Some("Consumer for file transformation jobs".to_string()),
         ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
         ack_wait: Duration::from_secs(600), // 10 minutes
-        max_deliver: 5,
+        max_deliver: COLLECTION_TRANSFORM_MAX_DELIVER,
         max_ack_pending: 100, // Clamped to max_concurrent_jobs by worker.rs
         backoff: vec![
             Duration::from_secs(30),
@@ -326,7 +358,7 @@ pub fn create_dataset_transform_consumer_config() -> ConsumerConfig {
         description: Some("Consumer for dataset transform embedding jobs".to_string()),
         ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
         ack_wait: Duration::from_secs(600), // 10 minutes
-        max_deliver: 5,
+        max_deliver: DATASET_TRANSFORM_MAX_DELIVER,
         max_ack_pending: 100, // Clamped to max_concurrent_jobs by worker.rs
         backoff: vec![
             Duration::from_secs(30),
@@ -346,7 +378,7 @@ pub fn create_visualization_consumer_config() -> ConsumerConfig {
         description: Some("Consumer for visualization transform jobs (UMAP/HDBSCAN)".to_string()),
         ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
         ack_wait: Duration::from_secs(3600), // 60 minutes
-        max_deliver: 3,
+        max_deliver: VISUALIZATION_TRANSFORM_MAX_DELIVER,
         max_ack_pending: 10, // Low — viz jobs are very resource-intensive
         ..Default::default()
     }
@@ -361,7 +393,7 @@ pub fn create_scanner_consumer_config() -> ConsumerConfig {
         description: Some("Consumer for scanner trigger messages".to_string()),
         ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
         ack_wait: Duration::from_secs(10 * 60), // 10 minutes to complete scan
-        max_deliver: 3,                         // Retry up to 3 times
+        max_deliver: SCANNER_MAX_DELIVER,
         max_ack_pending: 1, // Only one scanner processes triggers at a time (HA failover)
         filter_subjects: vec!["scan.trigger.>".to_string()],
         ..Default::default()

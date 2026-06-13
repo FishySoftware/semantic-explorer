@@ -2,6 +2,50 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
+
+/// A newtype wrapper for secret strings (API keys, passwords, etc.).
+///
+/// - `Debug` and `Display` always print `[REDACTED]` to prevent accidental log leakage.
+/// - Serializes/deserializes as the raw string value so encrypted payloads remain intact.
+/// - Implements `Deref<Target = str>` for ergonomic access to the inner value.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SecretString(String);
+
+impl SecretString {
+    pub fn new(s: impl Into<String>) -> Self {
+        Self(s.into())
+    }
+
+    /// Expose the inner secret value.
+    pub fn expose_secret(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for SecretString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[REDACTED]")
+    }
+}
+
+impl std::fmt::Display for SecretString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[REDACTED]")
+    }
+}
+
+impl From<String> for SecretString {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl From<&str> for SecretString {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionTransformJob {
     pub job_id: Uuid,
@@ -111,7 +155,10 @@ pub struct DatasetTransformResult {
 pub struct EmbedderConfig {
     pub provider: String,
     pub base_url: String,
-    pub api_key: Option<String>,
+    /// Optional API key, stored as `SecretString` so it never appears in logs.
+    /// When passed over NATS the value is the raw encrypted ciphertext (`enc:v1:…`)
+    /// and is decrypted locally by the worker — it is never logged in plaintext.
+    pub api_key: Option<SecretString>,
     pub model: String,
     pub config: serde_json::Value,
     pub batch_size: i32,
@@ -132,7 +179,7 @@ impl EmbedderConfig {
         Self {
             provider,
             base_url,
-            api_key,
+            api_key: api_key.map(SecretString::new),
             model,
             config,
             batch_size,
@@ -148,7 +195,8 @@ fn default_max_input_tokens() -> i32 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QdrantConnectionConfig {
     pub url: String,
-    pub api_key: Option<String>,
+    /// Optional API key for Qdrant. Stored as `SecretString` to prevent log leakage.
+    pub api_key: Option<SecretString>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -156,7 +204,8 @@ pub struct LLMConfig {
     pub llm_id: i32,
     pub provider: String,
     pub model: String,
-    pub api_key: String,
+    /// API key stored as `SecretString` to prevent log leakage.
+    pub api_key: SecretString,
     #[serde(default)]
     pub config: serde_json::Value,
 }

@@ -79,7 +79,8 @@ pub fn validate_title(title: &str) -> Result<(), ValidationError> {
         return Err(ValidationError::Empty { field: "title" });
     }
 
-    if trimmed.len() > MAX_TITLE_LENGTH {
+    // Use char count (not byte length) because the error message says "characters"
+    if trimmed.chars().count() > MAX_TITLE_LENGTH {
         return Err(ValidationError::TooLong {
             field: "title",
             max: MAX_TITLE_LENGTH,
@@ -132,7 +133,8 @@ pub fn validate_tags(tags: &[String]) -> Result<(), ValidationError> {
             continue; // Skip empty tags
         }
 
-        if trimmed.len() > MAX_TAG_LENGTH {
+        // Use char count (not byte length) because the error message says "characters"
+        if trimmed.chars().count() > MAX_TAG_LENGTH {
             return Err(ValidationError::TooLong {
                 field: "tag",
                 max: MAX_TAG_LENGTH,
@@ -185,7 +187,8 @@ pub fn validate_file_name(name: &str) -> Result<(), ValidationError> {
         return Err(ValidationError::Empty { field: "file name" });
     }
 
-    if trimmed.len() > MAX_TITLE_LENGTH {
+    // Use char count (not byte length) because the error message says "characters"
+    if trimmed.chars().count() > MAX_TITLE_LENGTH {
         return Err(ValidationError::TooLong {
             field: "file name",
             max: MAX_TITLE_LENGTH,
@@ -332,11 +335,15 @@ pub fn validate_bucket_name(name: &str) -> Result<(), ValidationError> {
 }
 
 /// Sanitize a string by removing potentially dangerous characters
-/// while preserving readability
+/// while preserving readability.
+///
+/// Strips all ASCII/Unicode control characters **except** `\n` (newline) and `\t` (tab),
+/// which are commonly legitimate in multi-line text content.
+/// This includes null bytes (`\0`), ESC (`\x1b`), and all other `char::is_control()` chars.
 pub fn sanitize_string(input: &str) -> String {
     input
         .chars()
-        .filter(|c| !matches!(c, '\0' | '\x1b'))
+        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
         .collect()
 }
 

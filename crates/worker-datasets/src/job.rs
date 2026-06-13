@@ -242,7 +242,10 @@ pub(crate) async fn process_dataset_transform_job(
     // Get cached Qdrant client instead of recreating for each job
     let qdrant_client = crate::qdrant_cache::get_or_create_client(
         &job.qdrant_config.url,
-        job.qdrant_config.api_key.clone(),
+        job.qdrant_config
+            .api_key
+            .as_ref()
+            .map(|k| k.expose_secret().to_string()),
     )
     .await?;
 

@@ -110,6 +110,9 @@ struct CircuitBreakerState {
     success_count: u32,
     last_failure_time: Option<Instant>,
     opened_at: Option<Instant>,
+    /// Number of currently in-flight probes while in HalfOpen state.
+    /// At most `success_threshold` probes are allowed concurrently.
+    half_open_in_flight: u32,
 }
 
 /// Thread-safe circuit breaker implementation
@@ -134,6 +137,7 @@ impl CircuitBreaker {
                 success_count: 0,
                 last_failure_time: None,
                 opened_at: None,
+                half_open_in_flight: 0,
             }),
             total_requests: AtomicU64::new(0),
             total_failures: AtomicU64::new(0),
@@ -152,21 +156,40 @@ impl CircuitBreaker {
         &self.config.name
     }
 
-    /// Check if a request should be allowed through
+    /// Check if a request should be allowed through.
+    ///
+    /// `Closed` state uses a read lock — no mutation needed when the failure window
+    /// hasn't expired, which is the common case. A write lock is acquired only when
+    /// the window needs resetting or a state transition occurs.
+    ///
+    /// In `HalfOpen` state at most `success_threshold` probes are allowed
+    /// concurrently; additional requests are rejected until a probe resolves.
     pub async fn should_allow(&self) -> bool {
         self.total_requests.fetch_add(1, Ordering::Relaxed);
 
+        // Fast path: read lock sufficient when the circuit is Closed and the failure window has not expired.
+        {
+            let state = self.state.read().await;
+            if state.state == CircuitState::Closed {
+                // Check whether the failure window has expired — if not, we're done.
+                let window_expired = state
+                    .last_failure_time
+                    .is_some_and(|t| t.elapsed() > self.config.failure_window);
+                if !window_expired {
+                    return true;
+                }
+                // Window expired — need to reset counts; fall through to write path.
+            }
+        }
+
+        // --- Write path for transitions and HalfOpen management ---
         let mut state = self.state.write().await;
 
         match state.state {
             CircuitState::Closed => {
-                // Check if failure window has expired and reset counts
-                if let Some(last_failure) = state.last_failure_time
-                    && last_failure.elapsed() > self.config.failure_window
-                {
-                    state.failure_count = 0;
-                    state.last_failure_time = None;
-                }
+                // Reset failure count now that the window has expired.
+                state.failure_count = 0;
+                state.last_failure_time = None;
                 true
             }
             CircuitState::Open => {
@@ -179,6 +202,7 @@ impl CircuitBreaker {
                         );
                         state.state = CircuitState::HalfOpen;
                         state.success_count = 0;
+                        state.half_open_in_flight = 1; // This probe is the first
                         self.state_transitions.fetch_add(1, Ordering::Relaxed);
                         true
                     } else {
@@ -195,13 +219,35 @@ impl CircuitBreaker {
                 }
             }
             CircuitState::HalfOpen => {
-                // Allow limited requests through to test recovery
-                true
+                // Limit concurrent half-open probes to success_threshold.
+                // This prevents a thundering herd of probes from all succeeding
+                // (or all failing) at once and making the transition noisy.
+                if state.half_open_in_flight < self.config.success_threshold {
+                    state.half_open_in_flight += 1;
+                    debug!(
+                        circuit_breaker = %self.config.name,
+                        in_flight = state.half_open_in_flight,
+                        max = self.config.success_threshold,
+                        "Admitting half-open probe"
+                    );
+                    true
+                } else {
+                    self.total_rejections.fetch_add(1, Ordering::Relaxed);
+                    debug!(
+                        circuit_breaker = %self.config.name,
+                        in_flight = state.half_open_in_flight,
+                        "Half-open probe limit reached, rejecting request"
+                    );
+                    false
+                }
             }
         }
     }
 
-    /// Record a successful operation
+    /// Record a successful operation.
+    ///
+    /// In HalfOpen state, decrements the in-flight probe counter and transitions
+    /// to Closed once `success_threshold` probes have succeeded.
     pub async fn record_success(&self) {
         let mut state = self.state.write().await;
 
@@ -211,6 +257,7 @@ impl CircuitBreaker {
                 state.failure_count = 0;
             }
             CircuitState::HalfOpen => {
+                state.half_open_in_flight = state.half_open_in_flight.saturating_sub(1);
                 state.success_count += 1;
                 if state.success_count >= self.config.success_threshold {
                     info!(
@@ -221,6 +268,7 @@ impl CircuitBreaker {
                     state.state = CircuitState::Closed;
                     state.failure_count = 0;
                     state.success_count = 0;
+                    state.half_open_in_flight = 0;
                     state.opened_at = None;
                     self.state_transitions.fetch_add(1, Ordering::Relaxed);
                 }
@@ -231,7 +279,10 @@ impl CircuitBreaker {
         }
     }
 
-    /// Record a failed operation
+    /// Record a failed operation.
+    ///
+    /// In HalfOpen state, decrements the in-flight probe counter and transitions
+    /// back to Open.
     pub async fn record_failure(&self) {
         self.total_failures.fetch_add(1, Ordering::Relaxed);
 
@@ -255,6 +306,7 @@ impl CircuitBreaker {
                 }
             }
             CircuitState::HalfOpen => {
+                state.half_open_in_flight = state.half_open_in_flight.saturating_sub(1);
                 warn!(
                     circuit_breaker = %self.config.name,
                     "Failure in half-open state, transitioning back to open"
@@ -340,7 +392,44 @@ impl std::fmt::Display for CircuitOpenError {
 
 impl std::error::Error for CircuitOpenError {}
 
-/// Execute an async operation with circuit breaker protection
+/// Classification of an error for circuit breaker purposes.
+///
+/// Only **server/service** errors (5xx, timeouts, connection refused) should trip
+/// the circuit breaker.  Client errors (4xx, validation failures) represent caller
+/// mistakes and should **not** count as service failures.
+pub trait CircuitBreakerErrorClass {
+    /// Return `true` if this error is a server/service-side fault (should trip circuit).
+    /// Return `false` for client errors (4xx, invalid input, etc.).
+    fn is_service_error(&self) -> bool;
+}
+
+/// Blanket implementation for `anyhow::Error`: treat all errors as service errors
+/// unless they clearly look like client errors (the safe/conservative default).
+impl CircuitBreakerErrorClass for anyhow::Error {
+    fn is_service_error(&self) -> bool {
+        let msg = self.to_string().to_lowercase();
+        // Explicitly known client-error patterns — do NOT trip the circuit.
+        let client_patterns = [
+            "400",
+            "401",
+            "403",
+            "404",
+            "422",
+            "invalid",
+            "not found",
+            "unauthorized",
+            "forbidden",
+            "bad request",
+        ];
+        !client_patterns.iter().any(|p| msg.contains(p))
+    }
+}
+
+/// Execute an async operation with circuit breaker protection.
+///
+/// Only records a failure for server/service errors — errors that implement
+/// [`CircuitBreakerErrorClass::is_service_error`].
+/// Client errors (4xx, validation) do not count toward the failure threshold.
 ///
 /// # Arguments
 /// * `circuit` - The circuit breaker to use
@@ -360,6 +449,7 @@ pub async fn with_circuit_breaker<F, Fut, T, E>(
 where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<T, E>>,
+    E: CircuitBreakerErrorClass,
 {
     if !circuit.should_allow().await {
         return Err(CircuitBreakerError::CircuitOpen(CircuitOpenError {
@@ -373,7 +463,9 @@ where
             Ok(result)
         }
         Err(e) => {
-            circuit.record_failure().await;
+            if e.is_service_error() {
+                circuit.record_failure().await;
+            }
             Err(CircuitBreakerError::OperationFailed(e))
         }
     }

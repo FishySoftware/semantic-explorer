@@ -17,15 +17,16 @@
 //!   and gradually increases the limit back toward the configured max.
 //! - **Workers** acquire permits via `acquire()` — identical to bare Semaphore usage.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
 /// Adaptive concurrency controller for worker message processing.
 ///
-/// Drop the returned `Arc<AdaptiveConcurrency>` to stop the background scaler.
+/// The background scaler task holds a [`Weak`] reference to `self` and exits
+/// automatically once the last strong [`Arc`] is dropped.
 #[derive(Debug)]
 pub struct AdaptiveConcurrency {
     /// The underlying semaphore — always created with `max_limit` permits.
@@ -55,10 +56,13 @@ impl AdaptiveConcurrency {
             held_permits: AtomicUsize::new(0),
         });
 
-        // Start background scaler
-        let ac_clone = Arc::clone(&ac);
+        // Hold a Weak reference in the scaler task so it exits automatically
+        // when the last strong Arc<AdaptiveConcurrency> is dropped (no task leak).
+        let weak_ac: Weak<AdaptiveConcurrency> = Arc::downgrade(&ac);
         tokio::spawn(async move {
-            ac_clone.run_scaler().await;
+            while let Some(ac_ref) = weak_ac.upgrade() {
+                ac_ref.run_scaler_tick().await;
+            }
         });
 
         info!(
@@ -121,41 +125,46 @@ impl AdaptiveConcurrency {
         self.semaphore.available_permits()
     }
 
-    /// Background task that adjusts concurrency based on pressure signals.
+    /// Execute one scaling tick, then return.
     ///
-    /// Runs every `ADAPTIVE_CONCURRENCY_SCALING_INTERVAL_SECS` seconds (default 5):
+    /// Called by the background scaler loop which holds a `Weak` reference —
+    /// the loop exits when the `Weak::upgrade()` fails.
+    ///
+    /// Each tick sleeps for `ADAPTIVE_CONCURRENCY_SCALING_INTERVAL_SECS` (default 5s)
+    /// then evaluates downstream pressure:
     /// - If pressure is active: halve the effective limit (min 1)
     /// - If pressure has cleared for 2 consecutive ticks: increase by 1 toward max
-    async fn run_scaler(&self) {
+    async fn run_scaler_tick(&self) {
+        // Use a module-level static to persist tick counter across calls.
+        // This is safe because there is exactly one scaler task per controller.
+        use std::sync::atomic::AtomicU32;
+        static TICKS_WITHOUT_PRESSURE: AtomicU32 = AtomicU32::new(0);
+
         let scaling_interval_secs: u64 =
             std::env::var("ADAPTIVE_CONCURRENCY_SCALING_INTERVAL_SECS")
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(5);
-        let mut ticker = tokio::time::interval(Duration::from_secs(scaling_interval_secs));
-        let mut ticks_without_pressure: u32 = 0;
 
-        loop {
-            ticker.tick().await;
+        tokio::time::sleep(Duration::from_secs(scaling_interval_secs)).await;
 
-            let pressure = self.downstream_pressure.load(Ordering::SeqCst);
-            let current_limit = self.effective_limit.load(Ordering::SeqCst);
+        let pressure = self.downstream_pressure.load(Ordering::SeqCst);
+        let current_limit = self.effective_limit.load(Ordering::SeqCst);
 
-            if pressure {
-                ticks_without_pressure = 0;
+        if pressure {
+            TICKS_WITHOUT_PRESSURE.store(0, Ordering::Relaxed);
 
-                // Scale down: halve the limit (min 1)
-                let new_limit = (current_limit / 2).max(1);
-                if new_limit < current_limit {
-                    self.scale_down_to(new_limit).await;
-                }
-            } else {
-                ticks_without_pressure += 1;
+            // Scale down: halve the limit (min 1)
+            let new_limit = (current_limit / 2).max(1);
+            if new_limit < current_limit {
+                self.scale_down_to(new_limit).await;
+            }
+        } else {
+            let ticks = TICKS_WITHOUT_PRESSURE.fetch_add(1, Ordering::Relaxed) + 1;
 
-                // Only scale up after 2 consecutive ticks (10s) without pressure
-                if ticks_without_pressure >= 2 && current_limit < self.max_limit {
-                    self.scale_up_by_one().await;
-                }
+            // Only scale up after 2 consecutive ticks (10s) without pressure
+            if ticks >= 2 && current_limit < self.max_limit {
+                self.scale_up_by_one().await;
             }
         }
     }

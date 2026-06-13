@@ -82,42 +82,52 @@ fn load_certificates(pem_content: &str) -> Result<Vec<rustls::pki_types::Certifi
 
 /// Load a private key from PEM content.
 ///
-/// Supports PKCS#8, PKCS#1 RSA, and SEC1 EC private key formats.
+/// Parses **all** PEM blocks in the file and returns the first block whose tag
+/// identifies it as a private key.  This correctly handles key files that also
+/// contain a certificate or other non-key PEM entries (e.g., combined PEM files).
+///
+/// Supports PKCS#8 (`PRIVATE KEY`), PKCS#1 RSA (`RSA PRIVATE KEY`), and
+/// SEC1 EC (`EC PRIVATE KEY`) formats.
 fn load_private_key(pem_content: &str) -> Result<rustls::pki_types::PrivateKeyDer<'static>> {
-    let key_pem = pem::parse(pem_content)
-        .map_err(|e| anyhow::anyhow!("Failed to parse private key PEM: {}", e))?;
+    let all_pems = pem::parse_many(pem_content)
+        .map_err(|e| anyhow::anyhow!("Failed to parse PEM blocks from key file: {}", e))?;
 
-    let key_der = key_pem.contents().to_vec();
+    if all_pems.is_empty() {
+        return Err(anyhow::anyhow!("No PEM blocks found in key file"));
+    }
 
-    // Support multiple key formats: PKCS#8, RSA, and EC
-    let private_key = match key_pem.tag() {
-        "PRIVATE KEY" => {
-            // PKCS#8 format (most common for modern certificates)
-            rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
-                key_der,
-            ))
+    for key_pem in all_pems {
+        let key_der = key_pem.contents().to_vec();
+        match key_pem.tag() {
+            "PRIVATE KEY" => {
+                // PKCS#8 format (most common for modern certificates)
+                return Ok(rustls::pki_types::PrivateKeyDer::Pkcs8(
+                    rustls::pki_types::PrivatePkcs8KeyDer::from(key_der),
+                ));
+            }
+            "RSA PRIVATE KEY" => {
+                // PKCS#1 RSA format (legacy OpenSSL format)
+                return Ok(rustls::pki_types::PrivateKeyDer::Pkcs1(
+                    rustls::pki_types::PrivatePkcs1KeyDer::from(key_der),
+                ));
+            }
+            "EC PRIVATE KEY" => {
+                // SEC1 EC format (legacy EC key format)
+                return Ok(rustls::pki_types::PrivateKeyDer::Sec1(
+                    rustls::pki_types::PrivateSec1KeyDer::from(key_der),
+                ));
+            }
+            _ => {
+                // Skip non-key PEM entries (e.g. CERTIFICATE blocks in combined files)
+                continue;
+            }
         }
-        "RSA PRIVATE KEY" => {
-            // PKCS#1 RSA format (legacy OpenSSL format)
-            rustls::pki_types::PrivateKeyDer::Pkcs1(rustls::pki_types::PrivatePkcs1KeyDer::from(
-                key_der,
-            ))
-        }
-        "EC PRIVATE KEY" => {
-            // SEC1 EC format (legacy EC key format)
-            rustls::pki_types::PrivateKeyDer::Sec1(rustls::pki_types::PrivateSec1KeyDer::from(
-                key_der,
-            ))
-        }
-        tag => {
-            return Err(anyhow::anyhow!(
-                "Unsupported private key format: {}. Expected PRIVATE KEY, RSA PRIVATE KEY, or EC PRIVATE KEY",
-                tag
-            ));
-        }
-    };
+    }
 
-    Ok(private_key)
+    Err(anyhow::anyhow!(
+        "No supported private key block found in key file. \
+         Expected a PEM block with tag PRIVATE KEY, RSA PRIVATE KEY, or EC PRIVATE KEY."
+    ))
 }
 
 #[cfg(test)]

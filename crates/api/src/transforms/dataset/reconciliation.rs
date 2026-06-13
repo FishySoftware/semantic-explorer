@@ -31,6 +31,7 @@ use semantic_explorer_core::observability::{
     record_scanner_failed_batch_recovery, record_scanner_orphaned_batch_cleanup,
     record_scanner_pending_batch_recovery,
 };
+use std::sync::Arc;
 
 /// Configuration for the reconciliation job
 #[derive(Clone)]
@@ -63,7 +64,7 @@ pub struct ReconciliationContext {
     pub s3_client: S3Client,
     pub s3_bucket_name: String,
     pub config: ReconciliationConfig,
-    pub encryption: EncryptionService,
+    pub encryption: Arc<EncryptionService>,
     pub qdrant_config: QdrantConnectionConfig,
 }
 

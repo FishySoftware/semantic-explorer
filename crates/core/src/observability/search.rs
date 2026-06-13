@@ -10,7 +10,9 @@ pub fn record_search_request(
     embedded_datasets_count: usize,
     status: &str,
 ) {
-    let metrics = get_metrics();
+    let Some(metrics) = get_metrics() else {
+        return;
+    };
 
     metrics.search_request_total.add(
         1,

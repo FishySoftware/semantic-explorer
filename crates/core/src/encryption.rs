@@ -1,17 +1,29 @@
-use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use anyhow::{Result, anyhow};
 use base64::{Engine, engine::general_purpose::STANDARD as base64_engine};
 use rand::RngExt;
 use std::env;
+use zeroize::Zeroizing;
 
 const ENCRYPTION_PREFIX: &str = "enc:v1:";
 
-/// Encryption service for API keys and secrets
-/// Uses AES-256-GCM for authenticated encryption
-#[derive(Clone)]
+/// Associated Authenticated Data (AAD) bound to every ciphertext.
+/// Including this context string prevents ciphertexts produced by
+/// another application (or a future version with a different AAD) from
+/// being accepted as valid, even if they share the same master key.
+const ENCRYPTION_AAD: &[u8] = b"semantic-explorer-v1";
+
+/// Encryption service for API keys and secrets.
+/// Uses AES-256-GCM for authenticated encryption.
+///
+/// Note: `Clone` is intentionally omitted so the key material stays in a
+/// single memory location and is easier to zeroize.  Pass `&EncryptionService`
+/// or wrap in `Arc<EncryptionService>` where sharing is needed.
 pub struct EncryptionService {
-    master_key: [u8; 32], // 256-bit key for AES-256
+    /// Master key stored in a `Zeroizing` wrapper so it is wiped from memory
+    /// when the service is dropped.
+    master_key: Zeroizing<[u8; 32]>,
 }
 
 impl EncryptionService {
@@ -31,7 +43,7 @@ impl EncryptionService {
             ));
         }
 
-        let mut key = [0u8; 32];
+        let mut key = Zeroizing::new([0u8; 32]);
         key.copy_from_slice(&master_key_bytes);
 
         Ok(EncryptionService { master_key: key })
@@ -44,18 +56,26 @@ impl EncryptionService {
         hex::encode(key)
     }
 
-    /// Encrypt a secret (API key) using AES-256-GCM
-    /// Returns prefixed base64-encoded ciphertext with nonce prepended
+    /// Encrypt a secret (API key) using AES-256-GCM with AAD.
+    ///
+    /// Returns a prefixed base64-encoded blob: `enc:v1:<base64(nonce || ciphertext)>`.
+    /// The AAD (`"semantic-explorer-v1"`) is authenticated but not stored in the
+    /// ciphertext — it must be provided identically during decryption.
     pub fn encrypt(&self, plaintext: &str) -> Result<String> {
-        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&self.master_key));
+        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(self.master_key.as_ref()));
 
         let mut rng = rand::rng();
         let mut nonce_bytes = [0u8; 12];
         rng.fill(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
+        let payload = Payload {
+            msg: plaintext.as_bytes(),
+            aad: ENCRYPTION_AAD,
+        };
+
         let ciphertext = cipher
-            .encrypt(nonce, plaintext.as_bytes())
+            .encrypt(nonce, payload)
             .map_err(|e| anyhow!("Encryption failed: {}", e))?;
 
         let mut encrypted_data = nonce_bytes.to_vec();
@@ -68,9 +88,11 @@ impl EncryptionService {
         ))
     }
 
-    /// Decrypt a secret (API key) encrypted with AES-256-GCM
+    /// Decrypt a secret (API key) encrypted with AES-256-GCM.
+    ///
+    /// The AAD must match what was used during encryption (`"semantic-explorer-v1"`).
     pub fn decrypt(&self, encrypted: &str) -> Result<String> {
-        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&self.master_key));
+        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(self.master_key.as_ref()));
 
         let base64_data = encrypted.strip_prefix(ENCRYPTION_PREFIX).ok_or_else(|| {
             anyhow!("Invalid encrypted data: missing '{ENCRYPTION_PREFIX}' prefix")
@@ -89,8 +111,13 @@ impl EncryptionService {
         let (nonce_bytes, ciphertext) = encrypted_data.split_at(12);
         let nonce = Nonce::from_slice(nonce_bytes);
 
+        let payload = Payload {
+            msg: ciphertext,
+            aad: ENCRYPTION_AAD,
+        };
+
         let plaintext = cipher
-            .decrypt(nonce, ciphertext)
+            .decrypt(nonce, payload)
             .map_err(|e| anyhow!("Decryption failed: {}", e))?;
 
         String::from_utf8(plaintext)
@@ -117,7 +144,7 @@ mod tests {
     #[test]
     fn test_encrypt_decrypt() {
         let service = EncryptionService {
-            master_key: *b"01234567890123456789012345678901",
+            master_key: Zeroizing::new(*b"01234567890123456789012345678901"),
         };
 
         let plaintext = "sk-1234567890abcdef";
@@ -133,7 +160,7 @@ mod tests {
     #[test]
     fn test_decrypt_without_prefix_fails() {
         let service = EncryptionService {
-            master_key: *b"01234567890123456789012345678901",
+            master_key: Zeroizing::new(*b"01234567890123456789012345678901"),
         };
 
         let plaintext = "sk-test-key";
@@ -149,7 +176,7 @@ mod tests {
     #[test]
     fn test_is_encrypted() {
         let service = EncryptionService {
-            master_key: *b"01234567890123456789012345678901",
+            master_key: Zeroizing::new(*b"01234567890123456789012345678901"),
         };
 
         let plaintext = "not_encrypted_key";
@@ -165,11 +192,11 @@ mod tests {
     #[test]
     fn test_decrypt_wrong_key_fails() {
         let service1 = EncryptionService {
-            master_key: *b"01234567890123456789012345678901",
+            master_key: Zeroizing::new(*b"01234567890123456789012345678901"),
         };
 
         let service2 = EncryptionService {
-            master_key: *b"10987654321fedcba9876543210fedcb",
+            master_key: Zeroizing::new(*b"10987654321fedcba9876543210fedcb"),
         };
 
         let plaintext = "secret_api_key";

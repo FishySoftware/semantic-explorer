@@ -615,8 +615,11 @@ pub fn init_metrics_otel() -> Result<()> {
     Ok(())
 }
 
-fn get_metrics() -> &'static Metrics {
-    METRICS.get().expect("Metrics not initialized")
+/// Returns the initialized metrics handle, or `None` if `init_metrics_otel` has not
+/// been called yet.  Callers that record optional metrics should handle `None` gracefully
+/// rather than panicking during tests or early startup (HYGIENE).
+fn get_metrics() -> Option<&'static Metrics> {
+    METRICS.get()
 }
 
 pub fn init_observability_api(

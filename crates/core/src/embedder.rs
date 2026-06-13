@@ -15,7 +15,9 @@ const DEFAULT_OPENAI_BATCH_SIZE: usize = 2048;
 const DEFAULT_COHERE_BATCH_SIZE: usize = 96;
 const DEFAULT_LOCAL_BATCH_SIZE: usize = 128;
 
-// Global semaphore to limit concurrent embedding API requests
+// Global semaphore to limit concurrent embedding API requests.
+// This is process-global; for multi-provider deployments it should be keyed per
+// (provider, endpoint) so backends don't share a concurrency budget.
 static EMBEDDING_SEMAPHORE: OnceLock<Arc<Semaphore>> = OnceLock::new();
 
 /// Circuit breaker for the embedding inference API.
@@ -336,11 +338,11 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
         }
     }
 
-    // Max retries for embedding operations.
-    // For 503 (VRAM pressure) we fail fast after 2 attempts — the VRAM
+    // `0..max_attempts` gives exactly max_attempts tries with no off-by-one.
+    // For 503 (VRAM pressure) we fail fast after max_503_retries attempts — the VRAM
     // situation won't resolve in seconds, and NATS redelivery (with NAK
     // delay) is a better retry granularity for resource exhaustion.
-    let max_retries: u32 = 5;
+    let max_attempts: u32 = 5;
     let max_503_retries: u32 = 2;
     let mut consecutive_503s: u32 = 0;
     let mut last_error = None;
@@ -348,7 +350,7 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
 
     let circuit = inference_circuit_breaker();
 
-    for attempt in 0..=max_retries {
+    for attempt in 0..max_attempts {
         // Check circuit breaker before each attempt
         if !circuit.should_allow().await {
             let batch_duration = batch_start.elapsed().as_secs_f64();
@@ -364,7 +366,8 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
         }
         // Apply exponential backoff only if we didn't already use server's Retry-After delay
         if attempt > 0 && !used_server_retry_delay {
-            let delay = Duration::from_secs(1 << (attempt - 1).min(4)); // Cap at 16 seconds
+            let backoff_steps = (attempt - 1).min(4);
+            let delay = Duration::from_secs(1u64 << backoff_steps); // Cap at 16 seconds
             tracing::warn!(
                 attempt = attempt,
                 delay_secs = delay.as_secs(),
@@ -470,7 +473,7 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
                     }
 
                     // Use the server-suggested retry delay (skip exponential backoff on next iteration)
-                    if attempt < max_retries {
+                    if attempt + 1 < max_attempts {
                         sleep(Duration::from_secs(retry_after)).await;
                         used_server_retry_delay = true; // Skip exponential backoff on next attempt
                     }
@@ -482,16 +485,16 @@ async fn process_single_batch(config: &EmbedderConfig, texts: Vec<&str>) -> Resu
                     continue;
                 }
 
+                // Non-2xx, non-4xx, non-503 server error.
+                // Reset consecutive 503 counter since this is a different error type.
+                consecutive_503s = 0;
                 let text = resp.text().await.unwrap_or_default();
-
-                if status.is_client_error() {
-                    return Err(anyhow::anyhow!("Embedder API error {}: {}", status, text));
-                }
-
                 circuit.record_failure().await;
                 last_error = Some(anyhow::anyhow!("Embedder API error {}: {}", status, text));
             }
             Err(e) => {
+                // Reset consecutive 503 counter — this is a network-level error, not a 503.
+                consecutive_503s = 0;
                 circuit.record_failure().await;
                 last_error = Some(anyhow::anyhow!("Failed to send request to {}: {}", url, e));
             }

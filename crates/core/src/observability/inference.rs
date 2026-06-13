@@ -3,7 +3,9 @@ use opentelemetry::KeyValue;
 use super::get_metrics;
 
 pub fn record_embed_request(model: &str, item_count: u64, duration_secs: f64, success: bool) {
-    let metrics = get_metrics();
+    let Some(metrics) = get_metrics() else {
+        return;
+    };
     let status = if success { "success" } else { "error" };
 
     metrics.inference_embed_requests_total.add(
@@ -38,7 +40,9 @@ pub fn record_embed_request(model: &str, item_count: u64, duration_secs: f64, su
 }
 
 pub fn record_rerank_request(model: &str, document_count: u64, duration_secs: f64, success: bool) {
-    let metrics = get_metrics();
+    let Some(metrics) = get_metrics() else {
+        return;
+    };
     let status = if success { "success" } else { "error" };
 
     metrics.inference_rerank_requests_total.add(
@@ -65,7 +69,9 @@ pub fn record_rerank_request(model: &str, document_count: u64, duration_secs: f6
 }
 
 pub fn record_llm_request(model: &str, tokens_generated: u64, duration_secs: f64, success: bool) {
-    let metrics = get_metrics();
+    let Some(metrics) = get_metrics() else {
+        return;
+    };
     let status = if success { "success" } else { "error" };
 
     metrics.inference_llm_requests_total.add(
@@ -100,7 +106,9 @@ pub fn record_llm_request(model: &str, tokens_generated: u64, duration_secs: f64
 }
 
 pub fn record_embedding_batch(model: &str, duration_secs: f64, chunk_count: usize, success: bool) {
-    let metrics = get_metrics();
+    let Some(metrics) = get_metrics() else {
+        return;
+    };
     let status = if success { "success" } else { "error" };
 
     metrics.embedding_per_chunk_duration.record(
@@ -115,7 +123,9 @@ pub fn record_embedding_batch(model: &str, duration_secs: f64, chunk_count: usiz
 }
 
 pub fn record_embedding_per_chunk(model: &str, duration_secs: f64, success: bool) {
-    let metrics = get_metrics();
+    let Some(metrics) = get_metrics() else {
+        return;
+    };
     let status = if success { "success" } else { "error" };
 
     metrics.embedding_per_chunk_duration.record(
@@ -128,7 +138,9 @@ pub fn record_embedding_per_chunk(model: &str, duration_secs: f64, success: bool
 }
 
 pub fn record_llm_response(model: &str, duration_secs: f64, success: bool) {
-    let metrics = get_metrics();
+    let Some(metrics) = get_metrics() else {
+        return;
+    };
     let status = if success { "success" } else { "error" };
 
     metrics.llm_response_duration.record(
@@ -141,7 +153,9 @@ pub fn record_llm_response(model: &str, duration_secs: f64, success: bool) {
 }
 
 pub fn record_embedding_session_metrics(model_id: &str, request_count: u64, age_seconds: f64) {
-    let metrics = get_metrics();
+    let Some(metrics) = get_metrics() else {
+        return;
+    };
 
     metrics.embedding_session_request_count.record(
         request_count as f64,
@@ -154,7 +168,9 @@ pub fn record_embedding_session_metrics(model_id: &str, request_count: u64, age_
 }
 
 pub fn record_embedding_session_reset(model_id: &str, reason: &str) {
-    let metrics = get_metrics();
+    let Some(metrics) = get_metrics() else {
+        return;
+    };
 
     metrics.embedding_session_resets_total.add(
         1,
@@ -166,7 +182,9 @@ pub fn record_embedding_session_reset(model_id: &str, reason: &str) {
 }
 
 pub fn init_embedding_session_reset_metric(model_id: &str) {
-    let metrics = get_metrics();
+    let Some(metrics) = get_metrics() else {
+        return;
+    };
 
     metrics.embedding_session_resets_total.add(
         0,

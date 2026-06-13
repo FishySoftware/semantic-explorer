@@ -106,6 +106,18 @@ pub trait RetryableError {
 }
 
 /// Default implementation for anyhow::Error - check common retryable patterns
+///
+/// # Last-resort heuristic
+///
+/// This implementation performs **substring matching on the error string representation**.
+/// It is a last-resort heuristic for `anyhow::Error` values that do not carry structured
+/// error type information.  False positives (treating a non-retryable error as retryable)
+/// are possible when an error message happens to contain one of the matched keywords.
+/// False negatives (missing a genuinely retryable error) are also possible if the error
+/// message uses phrasing not in the list.
+///
+/// Prefer implementing `RetryableError` on concrete typed errors instead of relying on
+/// this fallback.
 impl RetryableError for anyhow::Error {
     fn is_retryable(&self) -> bool {
         let error_str = self.to_string().to_lowercase();
@@ -227,8 +239,14 @@ where
     retry_with_policy(&RetryPolicy::default(), operation_name, operation).await
 }
 
-/// Retry policy specifically configured for Qdrant operations.
-/// Uses longer delays to accommodate cluster consensus formation.
+/// Retry policy for Qdrant operations.
+///
+/// Reads configuration from environment variables with the `QDRANT_RETRY_` prefix
+/// (e.g. `QDRANT_RETRY_MAX_ATTEMPTS`, `QDRANT_RETRY_INITIAL_DELAY_MS`).
+/// Falls back to `RetryPolicy::default()` values when the variables are unset.
+///
+/// Suggested values for Qdrant: longer initial delay (500ms+) to accommodate
+/// cluster consensus formation and leader election after node restarts.
 pub fn qdrant_retry_policy() -> RetryPolicy {
     RetryPolicy::from_env_with_prefix("QDRANT_RETRY")
 }

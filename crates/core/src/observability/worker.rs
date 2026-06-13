@@ -3,7 +3,9 @@ use opentelemetry::KeyValue;
 use super::get_metrics;
 
 pub fn record_worker_job(worker: &str, duration_secs: f64, status: &str) {
-    let metrics = get_metrics();
+    let Some(metrics) = get_metrics() else {
+        return;
+    };
 
     metrics.worker_jobs_total.add(
         1,
@@ -29,7 +31,9 @@ pub fn record_worker_job_with_metrics(
     chunk_count: Option<usize>,
     file_size_bytes: Option<u64>,
 ) {
-    let metrics = get_metrics();
+    let Some(metrics) = get_metrics() else {
+        return;
+    };
 
     metrics.worker_jobs_total.add(
         1,
@@ -69,7 +73,9 @@ pub fn record_worker_job_with_metrics(
 }
 
 pub fn set_worker_ready(worker: &str, ready: bool) {
-    let metrics = get_metrics();
+    let Some(metrics) = get_metrics() else {
+        return;
+    };
     let value = if ready { 1.0 } else { 0.0 };
 
     metrics
@@ -78,7 +84,9 @@ pub fn set_worker_ready(worker: &str, ready: bool) {
 }
 
 pub fn record_worker_job_failure(worker: &str, error_type: &str) {
-    let metrics = get_metrics();
+    let Some(metrics) = get_metrics() else {
+        return;
+    };
     metrics.worker_job_failures_total.add(
         1,
         &[
@@ -89,7 +97,9 @@ pub fn record_worker_job_failure(worker: &str, error_type: &str) {
 }
 
 pub fn record_worker_job_retry(worker: &str, attempt: u32) {
-    let metrics = get_metrics();
+    let Some(metrics) = get_metrics() else {
+        return;
+    };
     metrics.worker_job_retries_total.add(
         1,
         &[

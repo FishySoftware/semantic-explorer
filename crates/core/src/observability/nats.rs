@@ -3,7 +3,9 @@ use opentelemetry::KeyValue;
 use super::get_metrics;
 
 pub fn update_nats_stream_stats(stream_name: &str, messages: u64, bytes: u64) {
-    let metrics = get_metrics();
+    let Some(metrics) = get_metrics() else {
+        return;
+    };
     metrics.nats_stream_messages.record(
         messages as f64,
         &[KeyValue::new("stream", stream_name.to_string())],
@@ -20,7 +22,9 @@ pub fn update_nats_consumer_stats(
     pending: u64,
     ack_pending: u64,
 ) {
-    let metrics = get_metrics();
+    let Some(metrics) = get_metrics() else {
+        return;
+    };
     metrics.nats_consumer_pending.record(
         pending as f64,
         &[
@@ -38,7 +42,9 @@ pub fn update_nats_consumer_stats(
 }
 
 pub fn record_dlq_message(transform_type: &str, reason: &str) {
-    let metrics = get_metrics();
+    let Some(metrics) = get_metrics() else {
+        return;
+    };
     metrics.dlq_messages_total.add(
         1,
         &[

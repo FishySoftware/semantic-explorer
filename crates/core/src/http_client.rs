@@ -31,6 +31,7 @@ pub static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
 pub fn build_client(tls_config: &crate::config::TlsConfig) -> Result<reqwest::Client> {
     let mut builder = reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
+        .connect_timeout(Duration::from_secs(10))
         .pool_max_idle_per_host(10)
         .pool_idle_timeout(Duration::from_secs(90));
 

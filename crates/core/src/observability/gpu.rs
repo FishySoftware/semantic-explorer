@@ -9,7 +9,9 @@ pub fn record_gpu_metrics(
     gpu_utilization: u32,
     memory_utilization: u32,
 ) {
-    let metrics = get_metrics();
+    let Some(metrics) = get_metrics() else {
+        return;
+    };
     let device_label = device_index.to_string();
 
     metrics.gpu_memory_used_bytes.record(

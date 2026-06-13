@@ -27,8 +27,10 @@ use actix_web::{
 use anyhow::Result;
 use dotenvy::dotenv;
 use semantic_explorer_core::encryption::EncryptionService;
+use semantic_explorer_core::models::SecretString;
 use semantic_explorer_core::{config::AppConfig, tls::load_tls_config};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tracing::info;
 use utoipa::OpenApi;
 use utoipa_actix_web::AppExt;
@@ -53,12 +55,12 @@ async fn main() -> Result<()> {
     let _ = &*semantic_explorer_core::http_client::HTTP_CLIENT;
 
     // Initialize encryption service for secrets (API keys)
-    let encryption_service = EncryptionService::from_env().map_err(|e| {
+    let encryption_service = Arc::new(EncryptionService::from_env().map_err(|e| {
         eprintln!("Fatal: encryption service initialization failed: {e}. Startup aborted.");
         eprintln!("Set ENCRYPTION_MASTER_KEY to enable API key encryption.");
         eprintln!("Generate a key with: echo $(openssl rand -hex 32)");
         e
-    })?;
+    })?);
 
     let prometheus = observability::init_observability()?;
     let hostname = config.server.hostname.clone();
@@ -157,7 +159,7 @@ async fn main() -> Result<()> {
     // Build QdrantConnectionConfig from QdrantConfig (reused across scanners and API)
     let qdrant_connection_config = semantic_explorer_core::models::QdrantConnectionConfig {
         url: config.qdrant.url.clone(),
-        api_key: config.qdrant.api_key.clone(),
+        api_key: config.qdrant.api_key.clone().map(SecretString::from),
     };
 
     // Load scanner configuration from env at startup
@@ -278,7 +280,7 @@ async fn main() -> Result<()> {
             .app_data(web::Data::new(qdrant_client.clone()))
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(nats_client.clone()))
-            .app_data(web::Data::new(encryption_service.clone()))
+            .app_data(web::Data::from(encryption_service.clone()))
             .app_data(web::Data::new(qdrant_connection_config.clone()))
             .app_data(
                 MultipartFormConfig::default()

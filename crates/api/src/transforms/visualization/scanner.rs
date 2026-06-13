@@ -188,7 +188,7 @@ pub async fn trigger_visualization_transform_scan(
                 .and_then(|m| m.as_str())
                 .map(|s| s.to_string())
                 .unwrap_or_default(),
-            api_key: llm.api_key.clone().unwrap_or_default(),
+            api_key: llm.api_key.clone().unwrap_or_default().into(),
             config: llm.config.clone(),
         })
     } else {

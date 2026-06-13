@@ -6,6 +6,29 @@
 use anyhow::{Context, Result};
 use std::env;
 use std::time::Duration;
+use tracing::warn;
+
+/// Parse an optional environment variable, warning if the variable is set but
+/// unparseable (HYGIENE: silently swallowing parse errors hides operator mistakes).
+fn parse_optional_env<T>(name: &str, default: T) -> T
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    match env::var(name) {
+        Ok(val) => match val.parse::<T>() {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                warn!(
+                    "Failed to parse environment variable {}={:?}: {} — using default",
+                    name, val, e
+                );
+                default
+            }
+        },
+        Err(_) => default,
+    }
+}
 
 /// Main application configuration
 #[derive(Debug, Clone)]
@@ -276,10 +299,7 @@ impl NatsConfig {
     pub fn from_env() -> Result<Self> {
         Ok(Self {
             url: env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string()),
-            replicas: env::var("NATS_REPLICAS")
-                .unwrap_or_else(|_| "3".to_string())
-                .parse()
-                .context("NATS_REPLICAS must be a number")?,
+            replicas: parse_optional_env("NATS_REPLICAS", 3u32),
         })
     }
 }
@@ -365,9 +385,18 @@ impl ServerConfig {
             .map(|s| s.trim().to_string())
             .collect();
 
-        let shutdown_timeout_secs = env::var("SHUTDOWN_TIMEOUT_SECS")
-            .ok()
-            .and_then(|s| s.parse().ok());
+        let shutdown_timeout_secs: Option<u64> =
+            env::var("SHUTDOWN_TIMEOUT_SECS").ok().and_then(|s| {
+                s.parse::<u64>()
+                    .map_err(|e| {
+                        warn!(
+                            "Failed to parse SHUTDOWN_TIMEOUT_SECS={:?}: {} — ignoring",
+                            s, e
+                        );
+                        e
+                    })
+                    .ok()
+            });
 
         // PUBLIC_URL is used for external-facing URLs like OIDC callbacks
         let public_url = env::var("PUBLIC_URL").ok();
