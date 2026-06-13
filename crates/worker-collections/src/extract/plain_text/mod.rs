@@ -222,8 +222,9 @@ fn process_application_type(
                 }),
                 Err(_) => {
                     // Fall back to simple gzip decompression
-                    let decompressed = archive::extract_from_gzip(buffer, options)
-                        .map_err(|e| ExtractionError::archive_error("GZIP", e.to_string()))?;
+                    let decompressed =
+                        archive::extract_from_gzip(buffer, archive_opts.max_total_size)
+                            .map_err(|e| ExtractionError::archive_error("GZIP", e.to_string()))?;
                     let text = String::from_utf8_lossy(&decompressed).to_string();
                     Ok(InternalExtraction::text_only(text))
                 }

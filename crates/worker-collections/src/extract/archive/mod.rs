@@ -82,13 +82,54 @@ impl Default for ArchiveOptions {
     }
 }
 
+/// Tracks the shared decompression budget across an entire archive tree.
+///
+/// A single budget is threaded through nested extraction so the effective memory
+/// ceiling is `max_total_size` for the whole tree rather than per archive level.
+struct ExtractionBudget {
+    remaining: usize,
+    truncated: bool,
+}
+
+impl ExtractionBudget {
+    fn new(max_total_size: usize) -> Self {
+        Self {
+            remaining: max_total_size,
+            truncated: false,
+        }
+    }
+}
+
+/// Read an archive entry without ever allocating more than the remaining budget.
+///
+/// Reads at most `remaining + 1` bytes so a decompression bomb cannot exhaust
+/// memory before the size cap is consulted. Returns `Ok(None)` when the entry
+/// would exceed the budget, marking the extraction as truncated.
+fn read_entry_within_budget(
+    reader: &mut impl Read,
+    budget: &mut ExtractionBudget,
+) -> std::io::Result<Option<Vec<u8>>> {
+    let cap = budget.remaining as u64 + 1;
+    let mut buffer = Vec::new();
+    reader.take(cap).read_to_end(&mut buffer)?;
+
+    if buffer.len() > budget.remaining {
+        budget.truncated = true;
+        return Ok(None);
+    }
+
+    budget.remaining -= buffer.len();
+    Ok(Some(buffer))
+}
+
 /// Extract contents from a ZIP archive
 pub(crate) fn extract_from_zip(
     bytes: &[u8],
     options: &ExtractionOptions,
     archive_options: &ArchiveOptions,
 ) -> Result<ArchiveExtractionResult> {
-    extract_from_zip_with_depth(bytes, options, archive_options, 0)
+    let mut budget = ExtractionBudget::new(archive_options.max_total_size);
+    extract_from_zip_with_depth(bytes, options, archive_options, 0, &mut budget)
 }
 
 fn extract_from_zip_with_depth(
@@ -96,6 +137,7 @@ fn extract_from_zip_with_depth(
     options: &ExtractionOptions,
     archive_options: &ArchiveOptions,
     depth: usize,
+    budget: &mut ExtractionBudget,
 ) -> Result<ArchiveExtractionResult> {
     if depth >= archive_options.max_depth {
         return Err(anyhow!(
@@ -110,7 +152,6 @@ fn extract_from_zip_with_depth(
 
     let mut files = Vec::new();
     let mut failed_files = Vec::new();
-    let mut total_size = 0usize;
 
     for i in 0..archive.len() {
         let mut file = match archive.by_index(i) {
@@ -127,39 +168,32 @@ fn extract_from_zip_with_depth(
             }
         };
 
-        // Skip directories
         if file.is_dir() {
             continue;
         }
 
         let path = file.name().to_string();
 
-        // Check if we should skip this file type
         if should_skip_file(&path, archive_options) {
             continue;
         }
 
-        // Read file contents
-        let mut buffer = Vec::new();
-        if let Err(e) = file.read_to_end(&mut buffer) {
-            if archive_options.continue_on_error {
-                failed_files.push(ArchiveFileError {
-                    path: path.clone(),
-                    error: e.to_string(),
-                });
-                continue;
+        let buffer = match read_entry_within_budget(&mut file, budget) {
+            Ok(Some(buffer)) => buffer,
+            Ok(None) => break,
+            Err(e) => {
+                if archive_options.continue_on_error {
+                    failed_files.push(ArchiveFileError {
+                        path: path.clone(),
+                        error: e.to_string(),
+                    });
+                    continue;
+                }
+                return Err(anyhow!("Failed to read file {}: {}", path, e));
             }
-            return Err(anyhow!("Failed to read file {}: {}", path, e));
-        }
+        };
 
-        // Check size limits
-        total_size += buffer.len();
-        if total_size > archive_options.max_total_size {
-            break; // Stop processing, don't fail
-        }
-
-        // Detect content type and extract
-        let result = extract_file_content(&path, &buffer, options, archive_options, depth);
+        let result = extract_file_content(&path, &buffer, options, archive_options, depth, budget);
         match result {
             Ok(file_result) => files.push(file_result),
             Err(e) => {
@@ -175,16 +209,25 @@ fn extract_from_zip_with_depth(
         }
     }
 
-    build_result(files, failed_files, "zip", options)
+    build_result(files, failed_files, "zip", options, budget.truncated)
 }
 
-/// Extract contents from a gzipped file
-pub(crate) fn extract_from_gzip(bytes: &[u8], _options: &ExtractionOptions) -> Result<Vec<u8>> {
-    let mut decoder = GzDecoder::new(bytes);
+/// Decompress a gzip stream, failing if it expands beyond `max_size` bytes.
+pub(crate) fn extract_from_gzip(bytes: &[u8], max_size: usize) -> Result<Vec<u8>> {
+    let decoder = GzDecoder::new(bytes);
     let mut decompressed = Vec::new();
     decoder
+        .take(max_size as u64 + 1)
         .read_to_end(&mut decompressed)
         .map_err(|e| anyhow!("Failed to decompress gzip: {}", e))?;
+
+    if decompressed.len() > max_size {
+        return Err(anyhow!(
+            "Gzip decompression exceeds maximum size of {} bytes",
+            max_size
+        ));
+    }
+
     Ok(decompressed)
 }
 
@@ -194,7 +237,8 @@ pub(crate) fn extract_from_tar_gz(
     options: &ExtractionOptions,
     archive_options: &ArchiveOptions,
 ) -> Result<ArchiveExtractionResult> {
-    extract_from_tar_gz_with_depth(bytes, options, archive_options, 0)
+    let mut budget = ExtractionBudget::new(archive_options.max_total_size);
+    extract_from_tar_gz_with_depth(bytes, options, archive_options, 0, &mut budget)
 }
 
 fn extract_from_tar_gz_with_depth(
@@ -202,6 +246,7 @@ fn extract_from_tar_gz_with_depth(
     options: &ExtractionOptions,
     archive_options: &ArchiveOptions,
     depth: usize,
+    budget: &mut ExtractionBudget,
 ) -> Result<ArchiveExtractionResult> {
     if depth >= archive_options.max_depth {
         return Err(anyhow!(
@@ -215,7 +260,6 @@ fn extract_from_tar_gz_with_depth(
 
     let mut files = Vec::new();
     let mut failed_files = Vec::new();
-    let mut total_size = 0usize;
 
     let entries = archive
         .entries()
@@ -236,7 +280,6 @@ fn extract_from_tar_gz_with_depth(
             }
         };
 
-        // Get path
         let path = match entry.path() {
             Ok(p) => p.to_string_lossy().to_string(),
             Err(e) => {
@@ -251,37 +294,30 @@ fn extract_from_tar_gz_with_depth(
             }
         };
 
-        // Skip directories
         if entry.header().entry_type().is_dir() {
             continue;
         }
 
-        // Check if we should skip this file type
         if should_skip_file(&path, archive_options) {
             continue;
         }
 
-        // Read file contents
-        let mut buffer = Vec::new();
-        if let Err(e) = entry.read_to_end(&mut buffer) {
-            if archive_options.continue_on_error {
-                failed_files.push(ArchiveFileError {
-                    path: path.clone(),
-                    error: e.to_string(),
-                });
-                continue;
+        let buffer = match read_entry_within_budget(&mut entry, budget) {
+            Ok(Some(buffer)) => buffer,
+            Ok(None) => break,
+            Err(e) => {
+                if archive_options.continue_on_error {
+                    failed_files.push(ArchiveFileError {
+                        path: path.clone(),
+                        error: e.to_string(),
+                    });
+                    continue;
+                }
+                return Err(anyhow!("Failed to read file {}: {}", path, e));
             }
-            return Err(anyhow!("Failed to read file {}: {}", path, e));
-        }
+        };
 
-        // Check size limits
-        total_size += buffer.len();
-        if total_size > archive_options.max_total_size {
-            break;
-        }
-
-        // Detect content type and extract
-        let result = extract_file_content(&path, &buffer, options, archive_options, depth);
+        let result = extract_file_content(&path, &buffer, options, archive_options, depth, budget);
         match result {
             Ok(file_result) => files.push(file_result),
             Err(e) => {
@@ -297,7 +333,7 @@ fn extract_from_tar_gz_with_depth(
         }
     }
 
-    build_result(files, failed_files, "tar.gz", options)
+    build_result(files, failed_files, "tar.gz", options, budget.truncated)
 }
 
 /// Check if file should be skipped based on extension
@@ -312,57 +348,54 @@ fn should_skip_file(path: &str, options: &ArchiveOptions) -> bool {
     }
 }
 
+/// Parse a hard-coded MIME literal, panicking only on a programmer error.
+fn static_mime(literal: &str) -> mime::Mime {
+    literal
+        .parse()
+        .expect("hard-coded MIME literal must be valid")
+}
+
 /// Detect MIME type from file extension
 fn detect_mime_from_extension(path: &str) -> Option<mime::Mime> {
     let ext = path.rsplit('.').next()?.to_lowercase();
 
     match ext.as_str() {
         // Text formats
-        "txt" => Some("text/plain".parse().unwrap()),
-        "md" | "markdown" => Some("text/markdown".parse().unwrap()),
-        "json" => Some("application/json".parse().unwrap()),
-        "ndjson" | "jsonl" => Some("application/x-ndjson".parse().unwrap()),
-        "xml" => Some("application/xml".parse().unwrap()),
-        "html" | "htm" => Some("text/html".parse().unwrap()),
-        "csv" => Some("text/csv".parse().unwrap()),
-        "log" => Some("text/x-log".parse().unwrap()),
+        "txt" => Some(static_mime("text/plain")),
+        "md" | "markdown" => Some(static_mime("text/markdown")),
+        "json" => Some(static_mime("application/json")),
+        "ndjson" | "jsonl" => Some(static_mime("application/x-ndjson")),
+        "xml" => Some(static_mime("application/xml")),
+        "html" | "htm" => Some(static_mime("text/html")),
+        "csv" => Some(static_mime("text/csv")),
+        "log" => Some(static_mime("text/x-log")),
 
         // Documents
-        "pdf" => Some("application/pdf".parse().unwrap()),
-        "doc" => Some("application/msword".parse().unwrap()),
-        "docx" => Some(
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                .parse()
-                .unwrap(),
-        ),
-        "xls" => Some("application/vnd.ms-excel".parse().unwrap()),
-        "xlsx" => Some(
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                .parse()
-                .unwrap(),
-        ),
-        "ppt" => Some("application/vnd.ms-powerpoint".parse().unwrap()),
-        "pptx" => Some(
-            "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                .parse()
-                .unwrap(),
-        ),
-        "odt" => Some("application/vnd.oasis.opendocument.text".parse().unwrap()),
-        "ods" => Some(
-            "application/vnd.oasis.opendocument.spreadsheet"
-                .parse()
-                .unwrap(),
-        ),
-        "odp" => Some(
-            "application/vnd.oasis.opendocument.presentation"
-                .parse()
-                .unwrap(),
-        ),
+        "pdf" => Some(static_mime("application/pdf")),
+        "doc" => Some(static_mime("application/msword")),
+        "docx" => Some(static_mime(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )),
+        "xls" => Some(static_mime("application/vnd.ms-excel")),
+        "xlsx" => Some(static_mime(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )),
+        "ppt" => Some(static_mime("application/vnd.ms-powerpoint")),
+        "pptx" => Some(static_mime(
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        )),
+        "odt" => Some(static_mime("application/vnd.oasis.opendocument.text")),
+        "ods" => Some(static_mime(
+            "application/vnd.oasis.opendocument.spreadsheet",
+        )),
+        "odp" => Some(static_mime(
+            "application/vnd.oasis.opendocument.presentation",
+        )),
 
         // Archives (for nested extraction)
-        "zip" => Some("application/zip".parse().unwrap()),
-        "tar" => Some("application/x-tar".parse().unwrap()),
-        "gz" | "gzip" => Some("application/gzip".parse().unwrap()),
+        "zip" => Some(static_mime("application/zip")),
+        "tar" => Some(static_mime("application/x-tar")),
+        "gz" | "gzip" => Some(static_mime("application/gzip")),
 
         _ => None,
     }
@@ -375,6 +408,7 @@ fn extract_file_content(
     options: &ExtractionOptions,
     archive_options: &ArchiveOptions,
     depth: usize,
+    budget: &mut ExtractionBudget,
 ) -> Result<ArchiveFileResult> {
     let mime_type = detect_mime_from_extension(path);
 
@@ -384,8 +418,13 @@ fn extract_file_content(
     {
         match mime.subtype().as_str() {
             "zip" => {
-                let nested =
-                    extract_from_zip_with_depth(buffer, options, archive_options, depth + 1)?;
+                let nested = extract_from_zip_with_depth(
+                    buffer,
+                    options,
+                    archive_options,
+                    depth + 1,
+                    budget,
+                )?;
                 return Ok(ArchiveFileResult {
                     path: path.to_string(),
                     text: nested.text,
@@ -394,13 +433,13 @@ fn extract_file_content(
                 });
             }
             "gzip" => {
-                // Check if it's a .tar.gz
                 if path.ends_with(".tar.gz") || path.ends_with(".tgz") {
                     let nested = extract_from_tar_gz_with_depth(
                         buffer,
                         options,
                         archive_options,
                         depth + 1,
+                        budget,
                     )?;
                     return Ok(ArchiveFileResult {
                         path: path.to_string(),
@@ -409,8 +448,8 @@ fn extract_file_content(
                         size: buffer.len(),
                     });
                 }
-                // Regular gzip - decompress and try to extract as text
-                let decompressed = extract_from_gzip(buffer, options)?;
+                let decompressed = extract_from_gzip(buffer, budget.remaining)?;
+                budget.remaining -= decompressed.len();
                 let text = String::from_utf8_lossy(&decompressed).to_string();
                 return Ok(ArchiveFileResult {
                     path: path.to_string(),
@@ -423,7 +462,6 @@ fn extract_file_content(
         }
     }
 
-    // Try to extract text using the existing extractors
     let extraction_config = ExtractionConfig {
         options: options.clone(),
         ..Default::default()
@@ -432,18 +470,12 @@ fn extract_file_content(
     let text = if let Some(mime) = mime_type.clone() {
         match plain_text::extract(&mime, buffer, &extraction_config) {
             Ok(content) => content.text,
-            Err(_) => {
-                // Fall back to raw text for unknown but likely text files
-                String::from_utf8_lossy(buffer).to_string()
-            }
+            Err(_) => String::from_utf8_lossy(buffer).to_string(),
         }
+    } else if is_likely_text(buffer) {
+        String::from_utf8_lossy(buffer).to_string()
     } else {
-        // Try as plain text
-        if is_likely_text(buffer) {
-            String::from_utf8_lossy(buffer).to_string()
-        } else {
-            return Err(anyhow!("Cannot extract text from binary file: {}", path));
-        }
+        return Err(anyhow!("Cannot extract text from binary file: {}", path));
     };
 
     Ok(ArchiveFileResult {
@@ -462,7 +494,18 @@ fn is_likely_text(buffer: &[u8]) -> bool {
         return true;
     }
 
-    // Check first 1KB for non-text bytes
+    // A byte-order mark reliably identifies Unicode text whose raw bytes would
+    // otherwise fail the heuristic below (UTF-16 is full of NUL bytes).
+    const UTF8_BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
+    const UTF16_LE_BOM: &[u8] = &[0xFF, 0xFE];
+    const UTF16_BE_BOM: &[u8] = &[0xFE, 0xFF];
+    if buffer.starts_with(UTF8_BOM)
+        || buffer.starts_with(UTF16_LE_BOM)
+        || buffer.starts_with(UTF16_BE_BOM)
+    {
+        return true;
+    }
+
     let sample_size = buffer.len().min(1024);
     let sample = &buffer[..sample_size];
 
@@ -471,7 +514,6 @@ fn is_likely_text(buffer: &[u8]) -> bool {
         .filter(|&&b| b.is_ascii_graphic() || b.is_ascii_whitespace())
         .count();
 
-    // If more than 90% are text characters, likely text
     text_chars as f32 / sample.len() as f32 > 0.9
 }
 
@@ -481,8 +523,15 @@ fn build_result(
     failed_files: Vec<ArchiveFileError>,
     format: &str,
     options: &ExtractionOptions,
+    truncated: bool,
 ) -> Result<ArchiveExtractionResult> {
-    // Combine all text with file path headers
+    if files.is_empty() && !failed_files.is_empty() {
+        return Err(anyhow!(
+            "All {} file(s) in the archive failed to extract",
+            failed_files.len()
+        ));
+    }
+
     let text_parts: Vec<String> = files
         .iter()
         .filter(|f| !f.text.trim().is_empty())
@@ -494,6 +543,7 @@ fn build_result(
     let metadata = if options.include_metadata {
         Some(json!({
             "format": format,
+            "truncated": truncated,
             "file_count": files.len(),
             "failed_count": failed_files.len(),
             "files": files.iter().map(|f| json!({
@@ -656,7 +706,9 @@ mod tests {
             ..Default::default()
         };
 
-        let result = extract_from_zip_with_depth(&zip_data, &options, &archive_opts, 1);
+        let mut budget = ExtractionBudget::new(archive_opts.max_total_size);
+        let result =
+            extract_from_zip_with_depth(&zip_data, &options, &archive_opts, 1, &mut budget);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("depth"));
     }

@@ -234,18 +234,51 @@ impl Default for ChunkingOptions {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "ChunkingConfigRaw")]
 pub struct ChunkingConfig {
-    #[serde(default)]
     pub strategy: ChunkingStrategy,
+    pub chunk_size: usize,
+    pub chunk_overlap: usize,
+    pub options: ChunkingOptions,
+}
+
+#[derive(Deserialize)]
+struct ChunkingConfigRaw {
+    #[serde(default)]
+    strategy: ChunkingStrategy,
 
     #[serde(default = "default_chunk_size")]
-    pub chunk_size: usize,
+    chunk_size: usize,
 
     #[serde(default)]
-    pub chunk_overlap: usize,
+    chunk_overlap: usize,
 
     #[serde(default)]
-    pub options: ChunkingOptions,
+    options: ChunkingOptions,
+}
+
+impl TryFrom<ChunkingConfigRaw> for ChunkingConfig {
+    type Error = String;
+
+    fn try_from(raw: ChunkingConfigRaw) -> Result<Self, Self::Error> {
+        if raw.chunk_size == 0 {
+            return Err("chunk_size must be greater than 0".to_string());
+        }
+
+        if raw.chunk_overlap >= raw.chunk_size {
+            return Err(format!(
+                "chunk_overlap ({}) must be less than chunk_size ({})",
+                raw.chunk_overlap, raw.chunk_size
+            ));
+        }
+
+        Ok(Self {
+            strategy: raw.strategy,
+            chunk_size: raw.chunk_size,
+            chunk_overlap: raw.chunk_overlap,
+            options: raw.options,
+        })
+    }
 }
 
 impl Default for ChunkingConfig {

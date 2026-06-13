@@ -110,10 +110,12 @@ pub(crate) async fn process_file_job(
     );
 
     let extraction_start = Instant::now();
-    // Move extraction to blocking thread pool to avoid blocking the async runtime
-    // PDF parsing, XML processing, and other extraction operations are CPU-intensive
+    // CPU-heavy parsing runs on the blocking pool so it cannot stall the async runtime.
+    // `catch_unwind` guards against parser panics on malformed input; this is sound because
+    // the extractors are pure functions over their inputs and hold no process-global mutable
+    // state, so a caught panic cannot leave shared state inconsistent.
     let extraction_mime = mime_type.clone();
-    let extraction_content = file_content.clone();
+    let extraction_content = file_content;
     let extraction_cfg = extraction_config.clone();
     let extraction_result = tokio::task::spawn_blocking(move || {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -231,9 +233,13 @@ pub(crate) async fn process_file_job(
         );
     }
 
+    let extracted_text = extraction_result.text;
+    let extracted_text_len = extracted_text.len();
+    let extracted_text_is_empty = extracted_text.trim().is_empty();
+
     let chunking_start = Instant::now();
     let chunks_with_metadata = match ChunkingService::chunk_text(
-        extraction_result.text.clone(),
+        extracted_text,
         &chunking_config,
         Some(extraction_metadata),
         job.embedder_config.as_ref(), // Use embedder config from job for semantic chunking
@@ -277,16 +283,17 @@ pub(crate) async fn process_file_job(
 
     if chunks_with_metadata.is_empty() {
         let duration = start_time.elapsed().as_secs_f64();
+        let error_msg = if extracted_text_is_empty {
+            "No extractable text found in file".to_string()
+        } else {
+            "Chunking produced no chunks - check chunking configuration".to_string()
+        };
         record_worker_job("transform-file", duration, "failed_empty_chunks");
-        error!(
-            text_length = extraction_result.text.len(),
-            "Chunking produced no chunks (text too small or invalid). Raw text length: {} chars",
-            extraction_result.text.len()
-        );
+        error!(text_length = extracted_text_len, "{}", error_msg);
         send_result(
             &ctx.nats_client,
             &job,
-            Err("Chunking produced no chunks - text may be too short or invalid".to_string()),
+            Err(error_msg),
             Some((duration * 1000.0) as i64),
         )
         .await?;

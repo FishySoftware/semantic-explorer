@@ -16,7 +16,10 @@ pub(crate) fn extract_text_from_xml(bytes: &[u8]) -> Result<String> {
                 result.push_str(&e.decode()?);
             }
             Ok(Event::Eof) => break,
-            Err(error) => error!("error at position {}: {error:?}", reader.buffer_position()),
+            Err(error) => {
+                error!("error at position {}: {error:?}", reader.buffer_position());
+                break;
+            }
             _ => (),
         }
     }

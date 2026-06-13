@@ -42,10 +42,16 @@ async fn main() -> Result<()> {
         nats_client: nats_client.clone(),
     };
 
-    // Configure and run worker
+    // Peak memory is roughly file_size * ~4 * max_concurrent_jobs since files are
+    // processed in memory; keep concurrency conservative until streaming lands.
     let max_concurrent_jobs = std::env::var("MAX_CONCURRENT_JOBS")
-        .unwrap_or_else(|_| "10".to_string())
-        .parse::<usize>()
+        .ok()
+        .map(|value| {
+            value.parse::<usize>().map_err(|e| {
+                anyhow::anyhow!("Invalid MAX_CONCURRENT_JOBS value '{}': {}", value, e)
+            })
+        })
+        .transpose()?
         .unwrap_or(10);
 
     let health_check_port: u16 = std::env::var("HEALTH_CHECK_PORT")
