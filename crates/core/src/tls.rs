@@ -16,14 +16,6 @@ use std::fs;
 ///
 /// # Returns
 /// A configured `rustls::ServerConfig` ready for use with actix-web
-///
-/// # Example
-/// ```ignore
-/// use semantic_explorer_core::tls::load_tls_config;
-///
-/// let config = load_tls_config("/path/to/cert.pem", "/path/to/key.pem")?;
-/// server.bind_rustls_0_23(("0.0.0.0", 443), config)?;
-/// ```
 pub fn load_tls_config(cert_path: &str, key_path: &str) -> Result<rustls::ServerConfig> {
     // Load certificate(s) - support certificate chains
     let cert_contents = fs::read_to_string(cert_path)

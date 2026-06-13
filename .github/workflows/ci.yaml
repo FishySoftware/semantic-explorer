@@ -78,14 +78,15 @@ jobs:
               echo "worker-visualizations-py=false" >> $GITHUB_OUTPUT
             fi
             
-            # llm-inference-api is excluded from workspace - check its own files and core dependency
-            if git diff --name-only $LAST_TAG HEAD | grep -q "^crates/llm-inference-api/\|^crates/core/"; then
+            # llm-inference-api is a standalone app - check its own files and core dependency
+            if git diff --name-only $LAST_TAG HEAD | grep -q "^llm-inference-api/\|^crates/core/"; then
               echo "llm-inference-api=true" >> $GITHUB_OUTPUT
             else
               echo "llm-inference-api=false" >> $GITHUB_OUTPUT
             fi
             
-            if git diff --name-only $LAST_TAG HEAD | grep -q "^crates/embedding-inference-api/\|^Cargo."; then
+            # embedding-inference-api is a standalone app - check its own files and core dependency
+            if git diff --name-only $LAST_TAG HEAD | grep -q "^embedding-inference-api/\|^crates/core/"; then
               echo "embedding-inference-api=true" >> $GITHUB_OUTPUT
             else
               echo "embedding-inference-api=false" >> $GITHUB_OUTPUT
@@ -548,7 +549,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./crates/llm-inference-api/Dockerfile
+          file: ./llm-inference-api/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -688,7 +689,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./crates/embedding-inference-api/Dockerfile
+          file: ./embedding-inference-api/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

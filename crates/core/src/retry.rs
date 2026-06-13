@@ -153,14 +153,6 @@ impl RetryableError for anyhow::Error {
 /// * `policy` - The retry policy to use
 /// * `operation_name` - Name for logging/metrics
 /// * `operation` - The async operation to execute
-///
-/// # Example
-/// ```ignore
-/// let policy = RetryPolicy::from_env_with_prefix("QDRANT_RETRY");
-/// let result = retry_with_policy(&policy, "qdrant_upsert", || async {
-///     qdrant_client.upsert_points(...).await
-/// }).await?;
-/// ```
 pub async fn retry_with_policy<F, Fut, T, E>(
     policy: &RetryPolicy,
     operation_name: &str,

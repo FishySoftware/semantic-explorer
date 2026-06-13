@@ -52,8 +52,10 @@ WORKDIR /usr/src/app
 
 ##### Planner stage - analyze dependencies
 FROM chef AS planner
-COPY Cargo.toml Cargo.lock ./
-COPY crates ./crates
+COPY crates/core ./crates/core
+COPY llm-inference-api/Cargo.toml llm-inference-api/Cargo.lock ./llm-inference-api/
+COPY llm-inference-api/src ./llm-inference-api/src
+WORKDIR /usr/src/app/llm-inference-api
 RUN cargo chef prepare --recipe-path recipe.json
 
 ##### Builder stage - build dependencies first, then app
@@ -62,13 +64,17 @@ ARG CUDA_COMPUTE_CAP=90
 ENV CUDA_COMPUTE_CAP=${CUDA_COMPUTE_CAP}
 
 # Copy recipe and build dependencies (cached if Cargo.toml/Cargo.lock unchanged)
-COPY --from=planner /usr/src/app/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json -p llm-inference-api
+WORKDIR /usr/src/app/llm-inference-api
+COPY --from=planner /usr/src/app/llm-inference-api/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
 
 # Now copy source and build (only rebuilds if source changed)
-COPY Cargo.toml Cargo.lock ./
-COPY crates ./crates
-RUN cargo build --release -p llm-inference-api
+WORKDIR /usr/src/app
+COPY crates/core ./crates/core
+COPY llm-inference-api/Cargo.toml llm-inference-api/Cargo.lock ./llm-inference-api/
+COPY llm-inference-api/src ./llm-inference-api/src
+WORKDIR /usr/src/app/llm-inference-api
+RUN cargo build --release
 
 # Define a non-root user with home directory
 RUN useradd -u 10001 -m -d /home/appuser appuser
@@ -86,7 +92,7 @@ RUN apt-get update && apt-get install -yq \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy binary
-COPY --from=builder /usr/src/app/target/release/llm-inference-api /usr/local/bin/llm-inference-api
+COPY --from=builder /usr/src/app/llm-inference-api/target/release/llm-inference-api /usr/local/bin/llm-inference-api
 COPY --from=builder /etc/passwd /etc/passwd
 
 # Create directories for models cache and HuggingFace cache

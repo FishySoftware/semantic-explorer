@@ -434,14 +434,6 @@ impl CircuitBreakerErrorClass for anyhow::Error {
 /// # Arguments
 /// * `circuit` - The circuit breaker to use
 /// * `operation` - The async operation to execute
-///
-/// # Example
-/// ```ignore
-/// let circuit = CircuitBreaker::new(CircuitBreakerConfig::new("qdrant"));
-/// let result = with_circuit_breaker(&circuit, || async {
-///     qdrant_client.upsert_points(...).await
-/// }).await?;
-/// ```
 pub async fn with_circuit_breaker<F, Fut, T, E>(
     circuit: &CircuitBreaker,
     operation: F,

@@ -64,8 +64,10 @@ WORKDIR /usr/src/app
 
 ##### Planner stage - analyze dependencies
 FROM chef AS planner
-COPY Cargo.toml Cargo.lock ./
-COPY crates ./crates
+COPY crates/core ./crates/core
+COPY embedding-inference-api/Cargo.toml embedding-inference-api/Cargo.lock ./embedding-inference-api/
+COPY embedding-inference-api/src ./embedding-inference-api/src
+WORKDIR /usr/src/app/embedding-inference-api
 RUN cargo chef prepare --recipe-path recipe.json
 
 ##### Builder stage - build dependencies first, then app
@@ -74,13 +76,17 @@ ARG CUDA_COMPUTE_CAP=89
 ENV CUDA_COMPUTE_CAP=${CUDA_COMPUTE_CAP}
 
 # Copy recipe and build dependencies (cached if Cargo.toml/Cargo.lock unchanged)
-COPY --from=planner /usr/src/app/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json -p embedding-inference-api
+WORKDIR /usr/src/app/embedding-inference-api
+COPY --from=planner /usr/src/app/embedding-inference-api/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
 
 # Now copy source and build (only rebuilds if source changed)
-COPY Cargo.toml Cargo.lock ./
-COPY crates ./crates
-RUN cargo build --release -p embedding-inference-api
+WORKDIR /usr/src/app
+COPY crates/core ./crates/core
+COPY embedding-inference-api/Cargo.toml embedding-inference-api/Cargo.lock ./embedding-inference-api/
+COPY embedding-inference-api/src ./embedding-inference-api/src
+WORKDIR /usr/src/app/embedding-inference-api
+RUN cargo build --release
 
 # Define a non-root user
 RUN useradd -u 10001 -m appuser
@@ -108,7 +114,7 @@ ENV ORT_DYLIB_PATH=/opt/onnxruntime/libonnxruntime.so
 ENV ORT_CUDA_MEM_ARENA_SHRINK=1
 
 # Copy binary
-COPY --from=builder /usr/src/app/target/release/embedding-inference-api /usr/local/bin/embedding-inference-api
+COPY --from=builder /usr/src/app/embedding-inference-api/target/release/embedding-inference-api /usr/local/bin/embedding-inference-api
 COPY --from=builder /etc/passwd /etc/passwd
 
 # Create directories for models and TensorRT cache

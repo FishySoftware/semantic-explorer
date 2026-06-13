@@ -451,17 +451,6 @@ pub enum PublishResult {
 /// * `msg_id` - Unique message ID for deduplication
 /// * `payload` - Message payload bytes
 /// * `max_attempts` - Maximum number of publish attempts (default: 3)
-///
-/// # Example
-/// ```ignore
-/// match publish_with_retry(&nats, "workers.dataset-transform", msg_id, payload, 3).await {
-///     PublishResult::Published => info!("Job published"),
-///     PublishResult::Failed(e) => {
-///         // Insert pending record as fallback
-///         insert_pending_record(...).await?;
-///     }
-/// }
-/// ```
 pub async fn publish_with_retry(
     client: &Client,
     subject: &str,
@@ -596,14 +585,6 @@ impl Injector for HashMapInjector<'_> {
 
 /// Inject the current trace context into NATS headers.
 /// Call this before publishing messages to propagate traces across service boundaries.
-///
-/// # Example
-/// ```ignore
-/// let mut headers = async_nats::HeaderMap::new();
-/// headers.insert("Nats-Msg-Id", msg_id.as_str());
-/// inject_trace_context(&mut headers);
-/// jetstream.publish_with_headers(subject, headers, payload).await?;
-/// ```
 pub fn inject_trace_context(headers: &mut HeaderMap) {
     // Get current span's context
     let current_span = tracing::Span::current();
@@ -645,12 +626,6 @@ pub fn extract_trace_context(headers: &HeaderMap) -> HashMap<String, String> {
 
 /// Extract trace context from NATS headers and return an OpenTelemetry Context.
 /// The returned context can be used to create child spans.
-///
-/// # Example
-/// ```ignore
-/// let parent_context = extract_otel_context(msg.headers.as_ref());
-/// // Use parent_context when creating spans
-/// ```
 pub fn extract_otel_context(headers: Option<&HeaderMap>) -> opentelemetry::Context {
     use opentelemetry::propagation::Extractor;
 

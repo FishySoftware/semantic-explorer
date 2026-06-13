@@ -254,7 +254,7 @@ services:
   #   image: embedding-inference-api:dev
   #   build:
   #     context: ../../
-  #     dockerfile: crates/embedding-inference-api/Dockerfile
+  #     dockerfile: embedding-inference-api/Dockerfile
   #     cache_from:
   #       - embedding-inference-api:dev
   #   depends_on:
@@ -308,7 +308,7 @@ services:
   #   image: llm-inference-api:dev
   #   build:
   #     context: ../../
-  #     dockerfile: crates/llm-inference-api/Dockerfile
+  #     dockerfile: llm-inference-api/Dockerfile
   #     cache_from:
   #       - llm-inference-api:dev
   #   depends_on:

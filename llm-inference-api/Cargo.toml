@@ -1,0 +1,72 @@
+[package]
+name = "llm-inference-api"
+version = "0.1.0"
+edition = "2024"
+authors = ["Jonathan Poisson"]
+readme = "README.md"
+license-file = "LICENSE"
+
+[[bin]]
+name = "llm-inference-api"
+
+[features]
+default = []
+
+[lints]
+workspace = true
+
+[dependencies]
+semantic-explorer-core = { path = "../crates/core" }
+actix-web = { workspace = true }
+actix-cors = { workspace = true }
+actix-web-prom = { workspace = true }
+utoipa = { workspace = true }
+utoipa-actix-web = { workspace = true }
+utoipa-swagger-ui = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+dotenvy = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+futures = { workspace = true }
+async-stream = { workspace = true }
+mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs", tag = "v0.7.0", features = ["cuda", "flash-attn", "cudnn"] }
+hf-hub = { version = "0.5.0", default-features = false, features = ["ureq"] }
+
+[workspace]
+members = ["."]
+
+[workspace.dependencies]
+# Versions mirrored from the root workspace Cargo.toml (source of truth).
+actix-web = { version = "4.13.0", features = ["actix-tls", "rustls-0_23"] }
+actix-cors = { version = "0.7.1" }
+actix-web-prom = { version = "0.10.0", features = ["process"] }
+utoipa = { version = "5.5.0", features = ["actix_extras", "auto_into_responses"] }
+utoipa-actix-web = { version = "0.1.2" }
+utoipa-swagger-ui = { version = "9.0.2", features = ["actix-web", "reqwest", "vendored"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.150" }
+anyhow = { version = "1.0.102" }
+dotenvy = { version = "0.15.7" }
+tracing = { version = "0.1.43" }
+tokio = { version = "1.52.3", features = ["full"] }
+futures = { version = "0.3.32" }
+async-stream = { version = "0.3.6" }
+
+[profile.dev]
+incremental = true
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+opt-level = 3
+strip = "debuginfo"
+lto = true
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+enum_glob_use = "deny"

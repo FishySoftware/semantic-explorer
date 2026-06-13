@@ -210,19 +210,19 @@ These models use the **Candle** transformer backend with SafeTensors weights. Th
 
 For CUDA-accelerated builds (requires NVIDIA GPU):
 ```bash
-# One-time setup (from repository root)
+# One-time setup (from this app directory)
 ./setup_cuda.sh
 
 # Build with CUDA support
-./cargo_cuda.sh build -p embedding-inference-api --release
+./cargo_cuda.sh build --release
 ```
 
-See the [root README](../../README.md#building-from-source) for more details on CUDA builds.
+See the [root README](../README.md#building-from-source) for more details on CUDA builds.
 
 ### Docker (with CUDA)
 
 ```bash
-docker build -f crates/embedding-inference-api/Dockerfile -t embedding-inference-api:latest .
+docker build -f embedding-inference-api/Dockerfile -t embedding-inference-api:latest .
 ```
 
 ---
@@ -232,19 +232,19 @@ docker build -f crates/embedding-inference-api/Dockerfile -t embedding-inference
 ```bash
 # ONNX model only
 export INFERENCE_ALLOWED_EMBEDDING_MODELS="Qdrant/all-MiniLM-L6-v2-onnx"
-cargo run -p embedding-inference-api
+cargo run
 
 # Mix of ONNX and Qwen3 models
 export INFERENCE_ALLOWED_EMBEDDING_MODELS="Qdrant/all-MiniLM-L6-v2-onnx,Qwen/Qwen3-Embedding-0.6B"
-cargo run -p embedding-inference-api
+cargo run
 ```
 
 ### With GPU (Local Development)
 
 ```bash
-# After running setup_cuda.sh once (from repository root)
+# After running setup_cuda.sh once (from this app directory)
 export CUDA_VISIBLE_DEVICES=0
-./cargo_cuda.sh run -p embedding-inference-api
+./cargo_cuda.sh run
 ```
 
 ---

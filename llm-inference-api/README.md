@@ -342,27 +342,27 @@ CUDA support via mistral.rs:
 For CPU-only builds:
 ```bash
 # Debug build
-cargo build -p llm-inference-api
+cargo build
 
 # Release build
-cargo build -p llm-inference-api --release
+cargo build --release
 ```
 
 For CUDA-accelerated builds (requires NVIDIA GPU):
 ```bash
-# One-time setup (from repository root)
+# One-time setup (from this app directory)
 ./setup_cuda.sh
 
 # Build with CUDA support
-./cargo_cuda.sh build -p llm-inference-api --release
+./cargo_cuda.sh build --release
 ```
 
-See the [root README](../../README.md#building-from-source) for more details on CUDA builds.
+See the [root README](../README.md#building-from-source) for more details on CUDA builds.
 
 ### Docker (with CUDA)
 
 ```bash
-docker build -f crates/llm-inference-api/Dockerfile -t llm-inference-api:latest .
+docker build -f llm-inference-api/Dockerfile -t llm-inference-api:latest .
 ```
 
 ---
@@ -371,15 +371,15 @@ docker build -f crates/llm-inference-api/Dockerfile -t llm-inference-api:latest 
 
 ```bash
 export LLM_ALLOWED_MODELS="TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-cargo run -p llm-inference-api
+cargo run
 ```
 
 ### With GPU (Local Development)
 
 ```bash
-# After running setup_cuda.sh once (from repository root)
+# After running setup_cuda.sh once (from this app directory)
 export CUDA_VISIBLE_DEVICES=0
-./cargo_cuda.sh run -p llm-inference-api
+./cargo_cuda.sh run
 ```
 
 ---

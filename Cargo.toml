@@ -3,10 +3,12 @@ resolver = "2"
 members = [
     "crates/api",
     "crates/core",
-    "crates/embedding-inference-api",
-    "crates/llm-inference-api",
     "crates/worker-collections",
     "crates/worker-datasets"
+]
+exclude = [
+    "embedding-inference-api",
+    "llm-inference-api"
 ]
 
 [workspace.dependencies]

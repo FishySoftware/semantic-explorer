@@ -230,7 +230,7 @@ sequenceDiagram
 
 | Provider | Description |
 |-----------|-------------|
-| **Internal** | FastEmbed/ONNX models via [`embedding-inference-api`](crates/embedding-inference-api/) |
+| **Internal** | FastEmbed/ONNX models via [`embedding-inference-api`](embedding-inference-api/) |
 | **OpenAI** | OpenAI embedding API |
 | **Cohere** | Cohere embedding API |
 
@@ -238,7 +238,7 @@ sequenceDiagram
 
 | Provider | Description |
 |-----------|-------------|
-| **Internal** | mistral.rs engine with GGUF/GPTQ quantization support via [`llm-inference-api`](crates/llm-inference-api/) |
+| **Internal** | mistral.rs engine with GGUF/GPTQ quantization support via [`llm-inference-api`](llm-inference-api/) |
 | **OpenAI** | OpenAI chat API |
 | **Cohere** | Cohere chat API |
 
@@ -259,9 +259,9 @@ semantic-explorer/
 │   ├── core/                         # Shared library & utilities (Rust)
 │   ├── worker-collections/           # File extraction worker (Rust)
 │   ├── worker-datasets/              # Embedding worker (Rust)
-│   ├── worker-visualizations-py/     # Visualization worker (Python)
-│   ├── embedding-inference-api/      # Local embedding server (Rust)
-│   └── llm-inference-api/            # Local LLM server (Rust)
+│   └── worker-visualizations-py/     # Visualization worker (Python)
+├── embedding-inference-api/          # Local embedding server (Rust, standalone app)
+├── llm-inference-api/                # Local LLM server (Rust, standalone app)
 ├── semantic-explorer-ui/             # Svelte frontend
 ├── deployment/
 │   ├── compose/                      # Docker Compose configs
@@ -278,8 +278,8 @@ semantic-explorer/
 | **Collections Worker** | File extraction and chunking | [`crates/worker-collections/`](crates/worker-collections/) |
 | **Datasets Worker** | Embedding generation | [`crates/worker-datasets/`](crates/worker-datasets/) |
 | **Visualizations Worker** | UMAP/HDBSCAN processing | [`crates/worker-visualizations-py/`](crates/worker-visualizations-py/) |
-| **Embedding Inference API** | Local embedding server (FastEmbed) | [`crates/embedding-inference-api/`](crates/embedding-inference-api/) |
-| **LLM Inference API** | Local LLM server with quantization support (mistral.rs) | [`crates/llm-inference-api/`](crates/llm-inference-api/) |
+| **Embedding Inference API** | Local embedding server (FastEmbed) | [`embedding-inference-api/`](embedding-inference-api/) |
+| **LLM Inference API** | Local LLM server with quantization support (mistral.rs) | [`llm-inference-api/`](llm-inference-api/) |
 | **Svelte UI** | Frontend application | [`semantic-explorer-ui/`](semantic-explorer-ui/) |
 
 ---
@@ -769,19 +769,26 @@ cargo build -p worker-collections
 
 #### CUDA Build (GPU acceleration for inference APIs)
 
-For systems with NVIDIA GPUs, the inference APIs support CUDA acceleration:
+For systems with NVIDIA GPUs, the inference APIs support CUDA acceleration.
+Each inference API is a standalone app at the repository root with its own
+CUDA tooling:
 
 ```bash
-# 1. One-time setup (downloads ONNX Runtime with CUDA support)
-./setup_cuda.sh
-
-# 2. Build with CUDA support
+# embedding-inference-api
+cd embedding-inference-api
+./setup_cuda.sh                 # one-time: downloads ONNX Runtime with CUDA
 ./cargo_cuda.sh build --release
+cd ..
 
-# Or build specific inference APIs
-./cargo_cuda.sh build -p embedding-inference-api --release
-./cargo_cuda.sh build -p llm-inference-api --release
+# llm-inference-api
+cd llm-inference-api
+./setup_cuda.sh                 # one-time: downloads ONNX Runtime with CUDA
+./cargo_cuda.sh build --release
+cd ..
 ```
+
+The root `./setup_cuda.sh` is a convenience wrapper that runs both apps' setup
+scripts.
 
 **Requirements:**
 - NVIDIA GPU with CUDA 12.x drivers
@@ -808,8 +815,8 @@ docker build -f crates/worker-datasets/Dockerfile -t worker-datasets:latest .
 docker build -f crates/worker-visualizations-py/Dockerfile -t worker-visualizations-py:latest .
 
 # Inference APIs (requires CUDA)
-docker build -f crates/embedding-inference-api/Dockerfile -t embedding-inference-api:latest .
-docker build -f crates/llm-inference-api/Dockerfile -t llm-inference-api:latest .
+docker build -f embedding-inference-api/Dockerfile -t embedding-inference-api:latest .
+docker build -f llm-inference-api/Dockerfile -t llm-inference-api:latest .
 ```
 
 ---
