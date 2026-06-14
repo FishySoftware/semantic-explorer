@@ -739,8 +739,8 @@ class VisualizationProcessor:
                     batch_clusters = unique_clusters[batch_start:batch_end]
 
                     logger.debug(
-                        f"Processing cluster batch {batch_start//batch_size + 1}: "
-                        f"clusters {batch_start+1}-{batch_end} of {len(unique_clusters)}"
+                        f"Processing cluster batch {batch_start // batch_size + 1}: "
+                        f"clusters {batch_start + 1}-{batch_end} of {len(unique_clusters)}"
                     )
 
                     # Create tasks for parallel LLM requests
@@ -784,8 +784,8 @@ class VisualizationProcessor:
 
                         batch_elapsed = time.time() - batch_start_time
                         logger.info(
-                            f"Batch {batch_start//batch_size + 1} complete: {len(tasks)} clusters in {batch_elapsed:.3f}s "
-                            f"({batch_elapsed/len(tasks):.3f}s per cluster)"
+                            f"Batch {batch_start // batch_size + 1} complete: {len(tasks)} clusters in {batch_elapsed:.3f}s "
+                            f"({batch_elapsed / len(tasks):.3f}s per cluster)"
                         )
             else:
                 # Use simple numeric labels

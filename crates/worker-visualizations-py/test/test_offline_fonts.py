@@ -17,13 +17,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 # Initialize fonts BEFORE importing datamapplot or any other modules
 from font_initializer import init_fonts_for_offline_mode
+
 init_fonts_for_offline_mode()
 
 # Configure detailed logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(levelname)s: %(name)s - %(message)s'
-)
+logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(name)s - %(message)s")
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +32,8 @@ def test_font_initialization():
     try:
         # Already initialized at module load, just verify datamapplot is mocked
         import datamapplot.fonts as fonts_module
-        if hasattr(fonts_module.can_reach_google_fonts, '__wrapped__'):
+
+        if hasattr(fonts_module.can_reach_google_fonts, "__wrapped__"):
             print("✓ Font initialization already completed at startup")
         else:
             print("✓ Font functions are available")
@@ -42,6 +41,7 @@ def test_font_initialization():
     except Exception as e:
         print(f"✗ Font initialization verification failed: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
@@ -51,7 +51,7 @@ def test_datamapplot_functions_mocked():
     print("\n=== Testing Datamapplot Mock Functions ===")
     try:
         import datamapplot.fonts as fonts_module
-        
+
         # Test can_reach_google_fonts
         result = fonts_module.can_reach_google_fonts()
         if result is False:
@@ -59,7 +59,7 @@ def test_datamapplot_functions_mocked():
         else:
             print(f"✗ can_reach_google_fonts returned {result}, expected False")
             return False
-        
+
         # Test query_google_fonts
         collection = fonts_module.query_google_fonts("Roboto")
         font_list = list(collection)
@@ -68,11 +68,12 @@ def test_datamapplot_functions_mocked():
         else:
             print(f"✗ query_google_fonts returned {len(font_list)} fonts, expected 0")
             return False
-        
+
         return True
     except Exception as e:
         print(f"✗ Testing mocked functions failed: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
@@ -84,8 +85,9 @@ def test_local_font_css():
         # Import from path
         sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
         from font_patcher import get_local_font_css
+
         css = get_local_font_css()
-        
+
         if css:
             print(f"✓ Loaded {len(css)} bytes of local font CSS")
             if "data:font/" in css:
@@ -100,6 +102,7 @@ def test_local_font_css():
     except Exception as e:
         print(f"✗ Testing local fonts failed: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
@@ -111,11 +114,13 @@ def test_no_network_requests():
         # This should not trigger any network requests because
         # we've already mocked the functions
         import datamapplot
+
         print("✓ datamapplot imported successfully without network requests")
         return True
     except Exception as e:
         print(f"✗ Importing datamapplot failed: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
@@ -125,14 +130,14 @@ def main():
     print("=" * 60)
     print("Font Offline Mode Test Suite")
     print("=" * 60)
-    
+
     tests = [
         ("Font Initialization", test_font_initialization),
         ("Datamapplot Mocking", test_datamapplot_functions_mocked),
         ("Local Font CSS", test_local_font_css),
         ("No Network Requests", test_no_network_requests),
     ]
-    
+
     results = []
     for test_name, test_func in tests:
         try:
@@ -141,22 +146,23 @@ def main():
         except Exception as e:
             print(f"\n✗ Unexpected error in {test_name}: {e}")
             import traceback
+
             traceback.print_exc()
             results.append((test_name, False))
-    
+
     # Summary
     print("\n" + "=" * 60)
     print("Test Summary")
     print("=" * 60)
     passed = sum(1 for _, result in results if result)
     total = len(results)
-    
+
     for test_name, result in results:
         status = "✓ PASS" if result else "✗ FAIL"
         print(f"{status}: {test_name}")
-    
+
     print(f"\nTotal: {passed}/{total} tests passed")
-    
+
     return 0 if passed == total else 1
 
 

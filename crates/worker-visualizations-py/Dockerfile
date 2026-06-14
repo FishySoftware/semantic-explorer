@@ -1,7 +1,10 @@
-# Multi-stage build for Python visualization worker
+# Multi-stage build for Python visualization worker (uv-based)
 FROM python:3.12-slim AS builder
 
-WORKDIR /build
+# Bring in the uv binary from the official distroless image
+COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /uvx /bin/
+
+WORKDIR /app
 
 # Install system dependencies for building
 RUN apt-get update && apt-get install -y \
@@ -13,36 +16,42 @@ RUN apt-get update && apt-get install -y \
 # Update CA certificates to handle corporate proxies
 RUN update-ca-certificates
 
-# Copy requirements and install Python packages
-# Use trusted-host flags to handle SSL inspection/self-signed certificates
-COPY requirements.txt .
-RUN pip install --user --no-cache-dir \
-    --trusted-host pypi.org \
-    --trusted-host pypi.python.org \
-    --trusted-host files.pythonhosted.org \
-    -r requirements.txt
+# uv configuration:
+# - compile bytecode for faster cold starts
+# - copy (not hardlink) since the build cache and target live on different layers
+# - use the system interpreter from the base image rather than downloading one
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
+
+# Install dependencies into /app/.venv using the locked versions.
+# Copy only the lock + manifest first so this layer is cached across code changes.
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --no-dev
+
+# Make the project venv the default interpreter for subsequent steps
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Download Google Fonts for offline use (our own font files)
 COPY download_fonts.sh .
 RUN chmod +x download_fonts.sh && ./download_fonts.sh
 
 # Pre-cache fonts and JS in datamapplot's offline cache format
-# CRITICAL: datamapplot uses platformdirs.user_data_dir() which resolves to ~/.local/share/datamapplot
-# We need to set HOME and ensure fonts are cached there
-ENV HOME=/build
-ENV XDG_DATA_HOME=/build/.local/share
+# CRITICAL: datamapplot uses platformdirs.user_data_dir() which resolves to
+# $XDG_DATA_HOME/datamapplot (falling back to ~/.local/share/datamapplot).
+ENV HOME=/app
+ENV XDG_DATA_HOME=/app/.local/share
 
-# Create the datamapplot data directory and cache fonts/JS
-RUN mkdir -p /build/.local/share/datamapplot && \
-    python3 -c "import sys; sys.path.insert(0, '/root/.local/lib/python3.12/site-packages'); from datamapplot.offline_mode_caching import cache_fonts, cache_js_files; print('Caching datamapplot fonts...'); cache_fonts(); print('Caching datamapplot JS files...'); cache_js_files(); print('Cache complete!')" && \
+RUN mkdir -p /app/.local/share/datamapplot && \
+    python -c "from datamapplot.offline_mode_caching import cache_fonts, cache_js_files; print('Caching datamapplot fonts...'); cache_fonts(); print('Caching datamapplot JS files...'); cache_js_files(); print('Cache complete!')" && \
     echo "=== Datamapplot cache contents ===" && \
-    ls -la /build/.local/share/datamapplot/ && \
+    ls -la /app/.local/share/datamapplot/ && \
     echo "=== Font cache size ===" && \
-    du -h /build/.local/share/datamapplot/
+    du -h /app/.local/share/datamapplot/
 
 # Runtime stage
 FROM python:3.12-slim
-
 
 ARG UID=10001
 ARG GID=10001
@@ -56,19 +65,20 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy installed Python packages from builder
-COPY --from=builder /root/.local/lib/python3.12/site-packages/ /usr/local/lib/python3.12/site-packages/
-COPY --from=builder /root/.local/bin/ /usr/local/bin/
-COPY --from=builder --chown=appuser:appgroup /build/fonts/ /app/fonts/
+# Copy the fully-resolved virtual environment from the builder.
+# The venv lives at the same path (/app/.venv) in both stages so its
+# interpreter symlinks and console scripts resolve correctly.
+COPY --from=builder --chown=appuser:appgroup /app/.venv /app/.venv
+COPY --from=builder --chown=appuser:appgroup /app/fonts/ /app/fonts/
 
 # Copy datamapplot cache from builder for offline font/JS support
-# CRITICAL: datamapplot uses platformdirs.user_data_dir() which resolves to ~/.local/share/datamapplot
-# We need to copy the cache to the appuser's home directory
+# CRITICAL: datamapplot resolves the cache via platformdirs (XDG_DATA_HOME),
+# so we place it under the appuser's data home below.
 RUN mkdir -p /home/appuser/.local/share/datamapplot && \
     chown -R appuser:appgroup /home/appuser/.local
 
 # Copy the pre-built datamapplot cache files
-COPY --from=builder --chown=appuser:appgroup /build/.local/share/datamapplot/ /home/appuser/.local/share/datamapplot/
+COPY --from=builder --chown=appuser:appgroup /app/.local/share/datamapplot/ /home/appuser/.local/share/datamapplot/
 
 # Verify cache was copied correctly
 RUN echo "=== Verifying datamapplot cache in runtime image ===" && \
@@ -80,6 +90,8 @@ RUN echo "=== Verifying datamapplot cache in runtime image ===" && \
 
 RUN mkdir -p /tmp/matplotlib /tmp/numba_cache && chown -R appuser:appgroup /tmp
 
+# Put the project venv first on PATH so `python` is the venv interpreter
+ENV PATH="/app/.venv/bin:$PATH"
 ENV TMPDIR=/tmp
 ENV MPLCONFIGDIR=/tmp/matplotlib
 # Set XDG_DATA_HOME so datamapplot finds the pre-cached fonts using platformdirs

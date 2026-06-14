@@ -145,7 +145,10 @@ def patch_js_cache_for_version_compatibility() -> None:
         return
 
     try:
-        cache_path = Path(platformdirs.user_data_dir("datamapplot")) / "datamapplot_js_encoded.json"
+        cache_path = (
+            Path(platformdirs.user_data_dir("datamapplot"))
+            / "datamapplot_js_encoded.json"
+        )
         if not cache_path.exists():
             return
 

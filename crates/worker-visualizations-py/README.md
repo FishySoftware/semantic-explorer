@@ -544,13 +544,12 @@ export LOG_LEVEL="INFO"  # DEBUG, INFO, WARNING, ERROR
 
 ### Development
 
-```bash
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate
+Dependencies are managed with [uv](https://docs.astral.sh/uv/). The pinned
+versions live in `pyproject.toml` and are locked in `uv.lock`.
 
-# Install dependencies
-pip install -r requirements.txt
+```bash
+# Install dependencies into .venv (uses the locked versions)
+uv sync --frozen
 
 # Set environment variables
 export NATS_URL="nats://localhost:4222"
@@ -561,21 +560,21 @@ export AWS_ENDPOINT_URL="http://localhost:9000"
 export S3_BUCKET_NAME="semantic-explorer-local"
 
 # Run the worker
-python -m src.main
+uv run python src/main.py
 ```
+
+To add or change a dependency, edit `pyproject.toml` (or use `uv add <pkg>`),
+then commit the updated `uv.lock`.
 
 ### Docker
 
-```dockerfile
-FROM python:3.12-slim
+The provided `Dockerfile` performs a multi-stage uv build: it installs the
+locked dependencies into `/app/.venv`, pre-caches datamapplot fonts/JS for
+offline use, and copies the resulting venv into a slim runtime image. Build it
+from the crate directory:
 
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY src/ ./src/
-
-CMD ["python", "-m", "src.main"]
+```bash
+docker build -t worker-visualizations-py .
 ```
 
 ```bash
