@@ -1,5 +1,5 @@
 use anyhow::Result;
-use semantic_explorer_core::config::{EmbeddingInferenceConfig, NatsConfig};
+use semantic_explorer_core::config::{EmbeddingInferenceConfig, NatsConfig, QdrantCacheConfig};
 use semantic_explorer_core::nats::connect_with_retry;
 use semantic_explorer_core::worker::WorkerContext;
 use semantic_explorer_core::{storage::initialize_client, worker};
@@ -38,7 +38,14 @@ async fn main() -> Result<()> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(4);
-    job::init_job_config(qdrant_parallel_uploads);
+    let upsert_max_attempts: u32 = std::env::var("QDRANT_UPSERT_MAX_ATTEMPTS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(job::DEFAULT_UPSERT_MAX_ATTEMPTS);
+    job::init_job_config(qdrant_parallel_uploads, upsert_max_attempts);
+
+    // Initialize Qdrant cache sizing from centralized config at startup
+    qdrant_cache::init_cache_config(QdrantCacheConfig::from_env()?);
 
     // Create worker context with Qdrant client cache
     let context = WorkerContext {
@@ -47,10 +54,18 @@ async fn main() -> Result<()> {
     };
 
     // Configure and run worker
-    let max_concurrent_jobs = std::env::var("MAX_CONCURRENT_JOBS")
-        .unwrap_or_else(|_| "10".to_string())
-        .parse::<usize>()
-        .unwrap_or(10);
+    const DEFAULT_MAX_CONCURRENT_JOBS: usize = 10;
+    let max_concurrent_jobs = match std::env::var("MAX_CONCURRENT_JOBS") {
+        Ok(value) => value.parse::<usize>().unwrap_or_else(|_| {
+            tracing::warn!(
+                value = %value,
+                default = DEFAULT_MAX_CONCURRENT_JOBS,
+                "Invalid MAX_CONCURRENT_JOBS, using default"
+            );
+            DEFAULT_MAX_CONCURRENT_JOBS
+        }),
+        Err(_) => DEFAULT_MAX_CONCURRENT_JOBS,
+    };
 
     let health_check_port: u16 = std::env::var("HEALTH_CHECK_PORT")
         .ok()

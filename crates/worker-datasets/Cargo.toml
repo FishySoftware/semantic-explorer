@@ -14,3 +14,6 @@ tracing = { workspace = true }
 qdrant-client = { workspace = true }
 once_cell = { workspace = true }
 futures-util = { workspace = true }
+moka = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }

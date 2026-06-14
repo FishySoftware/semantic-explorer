@@ -78,11 +78,31 @@ Embedder configuration comes from the job payload, not environment variables.
 |----------|---------|-------------|
 | `SERVICE_NAME` | `worker-datasets` | Service name for telemetry |
 | `NATS_URL` | `nats://localhost:4222` | NATS server URL |
+| `NATS_REPLICAS` | `3` | NATS JetStream replica count |
 | `MAX_CONCURRENT_JOBS` | `10` | Concurrent job limit |
 | `HEALTH_CHECK_PORT` | `8083` | Health check HTTP server port |
+
+### Embedding
+
+| Variable | Default | Description |
+|----------|---------|-------------|
 | `EMBEDDING_INFERENCE_API_URL` | `http://localhost:8090` | Internal embedding API URL |
+| `EMBEDDING_INFERENCE_API_TIMEOUT_SECS` | `120` | Embedding API request timeout (seconds) |
 | `EMBEDDING_MAX_CONCURRENT_REQUESTS` | `3` | Max concurrent embedding requests |
+
+### Qdrant
+
+Connection details (URL, API key) come from the job payload; these tune client behavior.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
 | `QDRANT_PARALLEL_UPLOADS` | `4` | Parallel Qdrant upload tasks |
+| `QDRANT_UPSERT_MAX_ATTEMPTS` | `4` | Max upsert passes over failing chunks before giving up |
+| `QDRANT_COLLECTION_CREATE_MAX_ATTEMPTS` | `5` | Max attempts to create a collection |
+| `QDRANT_TIMEOUT_SECS` | `30` | Qdrant request timeout (seconds) |
+| `QDRANT_CONNECT_TIMEOUT_SECS` | `10` | Qdrant connection timeout (seconds) |
+| `QDRANT_CLIENT_CACHE_CAPACITY` | `128` | Max cached Qdrant clients (keyed by URL + API key) |
+| `QDRANT_COLLECTION_CACHE_CAPACITY` | `10000` | Max cached known-collection entries |
 
 ### S3 Storage (from core)
 
@@ -101,6 +121,7 @@ Embedder configuration comes from the job payload, not environment variables.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` | OTLP collector |
+| `LOG_FORMAT` | `json` | Log format (`json` or `pretty`/`human`/`text`) |
 | `RUST_LOG` | `info` | Log level |
 
 > **Note:** NATS consumer tuning, circuit breaker, and retry policy parameters are hardcoded with

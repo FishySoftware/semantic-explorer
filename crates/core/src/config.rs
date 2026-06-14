@@ -36,6 +36,7 @@ pub struct AppConfig {
     pub database: DatabaseConfig,
     pub nats: NatsConfig,
     pub qdrant: QdrantConfig,
+    pub qdrant_cache: QdrantCacheConfig,
     pub s3: S3Config,
     pub server: ServerConfig,
     pub observability: ObservabilityConfig,
@@ -79,6 +80,40 @@ pub struct QdrantConfig {
     pub quantization_scalar_enabled: bool,
     /// Product quantization parameters
     pub quantization_product_enabled: bool,
+}
+
+/// Sizing for the worker-side Qdrant client and collection-existence caches.
+#[derive(Debug, Clone)]
+pub struct QdrantCacheConfig {
+    /// Maximum number of cached Qdrant clients (keyed by URL + API key hash).
+    pub client_cache_capacity: u64,
+    /// Maximum number of cached known-collection entries.
+    pub collection_cache_capacity: u64,
+}
+
+impl Default for QdrantCacheConfig {
+    fn default() -> Self {
+        Self {
+            client_cache_capacity: 128,
+            collection_cache_capacity: 10_000,
+        }
+    }
+}
+
+impl QdrantCacheConfig {
+    pub fn from_env() -> Result<Self> {
+        let defaults = Self::default();
+        Ok(Self {
+            client_cache_capacity: parse_optional_env(
+                "QDRANT_CLIENT_CACHE_CAPACITY",
+                defaults.client_cache_capacity,
+            ),
+            collection_cache_capacity: parse_optional_env(
+                "QDRANT_COLLECTION_CACHE_CAPACITY",
+                defaults.collection_cache_capacity,
+            ),
+        })
+    }
 }
 
 /// S3-compatible storage configuration
@@ -247,6 +282,7 @@ impl AppConfig {
             database: DatabaseConfig::from_env()?,
             nats: NatsConfig::from_env()?,
             qdrant: QdrantConfig::from_env()?,
+            qdrant_cache: QdrantCacheConfig::from_env()?,
             s3: S3Config::from_env()?,
             server: ServerConfig::from_env()?,
             observability: ObservabilityConfig::from_env()?,
